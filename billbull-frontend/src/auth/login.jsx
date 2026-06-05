@@ -45,6 +45,9 @@ const Login = () => {
       sessionStorage.setItem("user", data.username);
 
       refreshCompany();
+      // Tell BranchProvider to reload — it mounted before the token existed
+      // and otherwise won't refresh until next full page reload.
+      window.dispatchEvent(new CustomEvent('billbull:login'));
 
       // Redirect based on primary role
       const roleRedirects = {

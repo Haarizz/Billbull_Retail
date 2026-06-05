@@ -1346,7 +1346,7 @@ const glAccountOptions = accounts
                 </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="bb-nowrap-table w-full">
                   <thead className="bg-[#F7F7FA] border-b border-slate-100">
                     <tr>
                       <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider w-40">Code</th>
@@ -1424,7 +1424,7 @@ const glAccountOptions = accounts
                 </div>
 
             <div className="overflow-x-auto min-h-[300px]">
-              <table className="w-full text-left text-xs">
+              <table className="bb-nowrap-table w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3">Account Code</th>
@@ -1687,7 +1687,7 @@ const glAccountOptions = accounts
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="bb-nowrap-table w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3">Date</th>
@@ -1958,7 +1958,7 @@ const glAccountOptions = accounts
                 <span className="text-xs text-slate-400">{filteredTxn.length} {filteredTxn.length === 1 ? 'entry' : 'entries'}</span>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="bb-nowrap-table w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3">Date</th>
@@ -2343,7 +2343,7 @@ const glAccountOptions = accounts
                 </div>
               ) : (
                 <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-                  <table className="w-full text-left text-xs">
+                  <table className="bb-nowrap-table w-full text-left text-xs">
                     <thead className="bg-[#F7F7FA] text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-4 py-3">Date</th>

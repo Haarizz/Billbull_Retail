@@ -9,14 +9,17 @@ import { getCostCenters, getAccounts, getBankAccounts, getTransactions } from '.
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 
 const Expenses = () => {
     const { company } = useCompany();
+    useBranch(); // for refetch listener context
     const currency = company?.currency || 'AED';
     // --- MOCK DATA REMOVED ---
 
@@ -85,6 +88,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
     }, []);
 
     const [expenses, setExpenses] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
 
     // --- STATE ---
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -123,6 +127,13 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
         loadExpenses();
     }, []);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => loadExpenses();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     useEffect(() => {
         const handleClickOutside = (e) => {
             if (glAccountRef.current && !glAccountRef.current.contains(e.target)) {
@@ -134,6 +145,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
     }, []);
 
     const loadExpenses = async () => {
+        setIsLoading(true);
         try {
             let data = await fetchExpenses();
             
@@ -179,6 +191,8 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
             setExpenses(data);
         } catch (error) {
             console.error("Failed to load expenses", error);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -503,7 +517,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                 <div className="overflow-x-auto border border-slate-100 rounded-lg min-h-[300px]">
                     <div onClick={() => setActiveActionId(null)} className={`fixed inset-0 z-0 ${activeActionId ? 'block' : 'hidden'}`} />
 
-                    <table className="w-full relative z-10">
+                    <table className="bb-nowrap-table w-full relative z-10">
                         <thead className="bg-[#F7F7FA] border-b border-slate-100">
                             <tr>
                                 <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</th>
@@ -512,6 +526,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                                 <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">GL Account</th>
                                 <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Cost Center</th>
                                 <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Location</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Branch</th>
                                 <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Amount</th>
                                 <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tax %</th>
                                 <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total</th>
@@ -521,6 +536,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
+                            {isLoading && <TableSkeleton cols={7} rows={8} />}
                             {pagedExpenses.map((expense) => (
                                 <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
@@ -537,6 +553,16 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.costCenter}</td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.location}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600">
+                                        {expense.branch?.name ? (
+                                            <>
+                                                <div className="font-medium">{expense.branch.name}</div>
+                                                {expense.branch.code && <div className="text-[10px] text-slate-400">{expense.branch.code}</div>}
+                                            </>
+                                        ) : (
+                                            <span className="text-slate-300">—</span>
+                                        )}
+                                    </td>
                                     <td className="px-4 py-3 text-xs text-slate-600 text-right"><CurrencyAmount value={expense.amount || 0} currency={currency} /></td>
                                     <td className="px-4 py-3 text-xs text-slate-600 text-right">{expense.taxRate}%</td>
                                     <td className="px-4 py-3 text-xs font-bold text-slate-800 text-right"><CurrencyAmount value={expense.total || 0} currency={currency} /></td>

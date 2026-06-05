@@ -59,6 +59,20 @@ export const getTaxReconciliation = async (startDate, endDate) => {
     return res.data;
 };
 
+export const getARAgingReport = async (asOfDate) => {
+    const params = {};
+    if (asOfDate) params.asOfDate = asOfDate;
+    const res = await api.get("/api/financials/reports/ar-aging", { params });
+    return res.data;
+};
+
+export const getAPAgingReport = async (asOfDate) => {
+    const params = {};
+    if (asOfDate) params.asOfDate = asOfDate;
+    const res = await api.get("/api/financials/reports/ap-aging", { params });
+    return res.data;
+};
+
 export const getLedgerStatement = async (accountCode, startDate, endDate) => {
     const params = { accountCode };
     if (startDate) params.startDate = startDate;

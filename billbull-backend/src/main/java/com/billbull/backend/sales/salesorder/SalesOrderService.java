@@ -104,6 +104,15 @@ public class SalesOrderService {
     public SalesOrder save(SalesOrder order) {
         SalesOrder existingOrder = order.getId() != null ? orderRepo.findById(order.getId()).orElse(null) : null;
 
+        // Branch guard + stamp/lock (PDF §3.4 transaction immutability).
+        if (existingOrder != null) {
+            Long existingBranchId = existingOrder.getBranch() != null ? existingOrder.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Sales Order");
+            order.setBranch(existingOrder.getBranch());
+        } else {
+            order.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        }
+
         Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
         Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
         order.setWarehouse(reservationWarehouse);
@@ -317,8 +326,9 @@ public class SalesOrderService {
     @Transactional(readOnly = true)
     public List<SalesOrder> getAll() {
 
-        List<SalesOrder> orders = new ArrayList<>(orderRepo.findAll());
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        List<SalesOrder> orders = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 orders,
                 SalesOrder::getOrderDate,
                 SalesOrder::getSoNumber,
@@ -331,6 +341,23 @@ public class SalesOrderService {
             hydrateOrderItemDisplayData(order);
         });
 
+        return orders;
+    }
+
+    @Transactional(readOnly = true)
+    public List<SalesOrder> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesOrder> orders = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(orderRepo.findByOrderDateBetween(from, to), SalesOrder::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                orders,
+                SalesOrder::getOrderDate,
+                SalesOrder::getSoNumber,
+                SalesOrder::getId);
+        orders.forEach(order -> {
+            Hibernate.initialize(order.getItems());
+            Hibernate.initialize(order.getWarehouse());
+            hydrateOrderItemDisplayData(order);
+        });
         return orders;
     }
 
@@ -694,7 +721,14 @@ public class SalesOrderService {
     /** QA-032: Receipt Vouchers linked to a Sales Order (advance receipts). */
     @Transactional(readOnly = true)
     public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchersForOrder(Long orderId) {
-        return receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId);
+        List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> vouchers =
+                new ArrayList<>(receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                vouchers,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getDate,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getVoucherId,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getId);
+        return vouchers;
     }
 
     private void createAdvanceReceiptForOrder(SalesOrder order) {

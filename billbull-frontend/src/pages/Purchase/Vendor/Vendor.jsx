@@ -13,11 +13,22 @@ import SearchableDropdown from '../../../components/SearchableDropdown';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
-import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { getTemplatesByCategory } from '../../../api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import {
+  buildVendorSoaPrintData,
+  buildPaymentVoucherPrintData,
+  resolvePurchasePrintTemplate
+} from '../../../utils/purchasePrintUtils';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
+import { useBranch } from '../../../context/BranchContext';
+import billBullLogo from '../../../assets/billBullLogo.png';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -39,6 +50,7 @@ import {
   getVendors,
   createVendor,
   createVendorDraft,
+  importVendors,
   updateVendor,
   deleteVendor
 } from "../../../api/vendorsApi";
@@ -179,6 +191,7 @@ import { getBankAccounts } from '../../../api/ledgerApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currency = resolveCurrencyDisplayCode(company || {});
   // State
   const [selectedVendor, setSelectedVendor] = useState(null);
@@ -199,6 +212,9 @@ const PayInvoices = ({ vendors, initialVendor }) => {
   const [chequeDate, setChequeDate] = useState('');
   const [receivedAmount, setReceivedAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaymentPrinting, setIsPaymentPrinting] = useState(false);
+  const [lastSavedPayment, setLastSavedPayment] = useState(null);
+  const [lastSavedInvoice, setLastSavedInvoice] = useState(null);
 
   // History State
   const [history, setHistory] = useState([]);
@@ -398,6 +414,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
     setIsProcessing(true);
     try {
+      let latestSavedPayment = null;
+      let latestSavedInvoice = null;
       const promises = selectedIds.map(async (invId) => {
         const amount = settleAmounts[invId];
         if (!amount || amount <= 0) return;
@@ -421,9 +439,25 @@ const PayInvoices = ({ vendors, initialVendor }) => {
         if (saved && saved.id) {
           await updateVoucherStatus(saved.id, 'POSTED');
         }
+        latestSavedPayment = {
+          ...payload,
+          ...saved,
+          voucherNumber: saved?.voucherNumber || payload.voucherNumber || nextVoucherNo,
+          paymentDate: saved?.paymentDate || saved?.date || paymentDate,
+          paymentMode: saved?.paymentMode || saved?.mode || paymentMethod,
+          referenceNumber: saved?.referenceNumber || saved?.ref || reference,
+          vendorName: saved?.vendorName || selectedVendor.name,
+          vendorId: saved?.vendorId || selectedVendor.code,
+          amount,
+          status: saved?.status || 'POSTED',
+          branchId: saved?.branch?.id ?? saved?.branchId ?? activeBranch?.id,
+        };
+        latestSavedInvoice = invoice || null;
       });
 
       await Promise.all(promises);
+      setLastSavedPayment(latestSavedPayment);
+      setLastSavedInvoice(latestSavedInvoice);
 
       alert("Payment processed successfully!");
       setReference('');
@@ -509,7 +543,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
                 </div>
               ) : (
-                <table className="w-full text-sm text-left">
+                <table className="bb-nowrap-table w-full text-sm text-left">
                   <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 w-10 text-center">
@@ -738,8 +772,13 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   {isProcessing ? 'Processing...' : 'Process Payment'}
                 </button>
 
-                <button className="w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs">
-                  <Printer size={14} /> Print Receipt
+                <button
+                  onClick={() => handlePrintPaymentVoucher()}
+                  disabled={!lastSavedPayment || isPaymentPrinting}
+                  className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment || isPaymentPrinting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isPaymentPrinting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Printer size={14} />}
+                  {isPaymentPrinting ? 'Preparing...' : 'Print Payment Voucher'}
                 </button>
               </div>
             </div>
@@ -793,7 +832,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
 const VendorSoA = ({ vendors }) => {
   const { company } = useCompany();
-  const { print } = usePrintDocument();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currency = resolveCurrencyDisplayCode(company || {});
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -803,6 +842,7 @@ const VendorSoA = ({ vendors }) => {
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [statementData, setStatementData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     if (vendors.length > 0 && !selectedVendorName) {
@@ -831,15 +871,96 @@ const VendorSoA = ({ vendors }) => {
     }
   }, [selectedVendorName]);
 
-  const handlePrint = () => {
-    const filename = generateSOAFilename(
-      selectedVendorDetails?.name || selectedVendorName,
-      selectedVendorDetails?.code || 'N/A',
-      startDate,
-      endDate,
-      currency
-    );
-    print(filename);
+  const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
+
+  const handlePrint = async () => {
+    if (!selectedVendorName || !startDate || !endDate) {
+      toast.error('Select a vendor and statement period first.');
+      return;
+    }
+
+    const loadingToast = toast.loading('Preparing Vendor SOA print layout...');
+    setIsPrinting(true);
+
+    try {
+      const [freshStatement, templates] = await Promise.all([
+        fetchStatementOfAccount('VENDOR', selectedVendorName, startDate, endDate),
+        getTemplatesByCategory('Vendor Statement of Account').catch(() => [])
+      ]);
+      setStatementData(freshStatement);
+
+      const defaultTemplate = resolvePurchasePrintTemplate('Vendor Statement of Account', templates);
+      const printData = buildVendorSoaPrintData(
+        freshStatement,
+        selectedVendorDetails || { name: selectedVendorName },
+        company,
+        { startDate, endDate }
+      );
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: activeBranch?.id,
+        }),
+        billBullLogo,
+      });
+
+      printHtml(html);
+    } catch (error) {
+      console.error('Failed to print Vendor SOA', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate Vendor SOA print layout');
+    } finally {
+      toast.dismiss(loadingToast);
+      setIsPrinting(false);
+    }
+  };
+
+  const handlePrintPaymentVoucher = async (payment = lastSavedPayment, linkedInvoice = lastSavedInvoice) => {
+    if (!payment) {
+      toast.error("Please process a payment first, then print the voucher.");
+      return;
+    }
+
+    const loadingToast = toast.loading('Preparing payment voucher print layout...');
+    setIsPaymentPrinting(true);
+
+    try {
+      const templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+      const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
+      const voucherForPrint = {
+        ...payment,
+        voucherNumber: payment.voucherNumber || payment.paymentNumber || payment.id || nextVoucherNo,
+        paymentDate: payment.paymentDate || payment.date || paymentDate,
+        paymentMode: payment.paymentMode || payment.mode || paymentMethod,
+        referenceNumber: payment.referenceNumber || payment.ref || reference,
+        vendorName: payment.vendorName || selectedVendor?.name,
+        vendorId: payment.vendorId || selectedVendor?.code,
+        bankAccount: payment.bankAccount || bankAccount,
+        chequeDate: payment.chequeDate || chequeDate,
+      };
+      const printData = buildPaymentVoucherPrintData(
+        voucherForPrint,
+        selectedVendor || { name: voucherForPrint.vendorName, code: voucherForPrint.vendorId },
+        company,
+        linkedInvoice
+      );
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: voucherForPrint.branch?.id ?? voucherForPrint.branchId ?? activeBranch?.id,
+        }),
+        billBullLogo,
+      });
+
+      printHtml(html);
+    } catch (error) {
+      console.error('Failed to print payment voucher', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate payment voucher print layout');
+    } finally {
+      toast.dismiss(loadingToast);
+      setIsPaymentPrinting(false);
+    }
   };
 
   const handleExportExcel = () => {
@@ -854,8 +975,6 @@ const VendorSoA = ({ vendors }) => {
 
     exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
   };
-
-  const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
 
   return (
     <div className="space-y-6">
@@ -904,8 +1023,8 @@ const VendorSoA = ({ vendors }) => {
             {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
             Generate Statement
           </button>
-          <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
-            <Printer className="h-4 w-4" /> Print
+          <button onClick={handlePrint} disabled={isPrinting || isLoading || !selectedVendorName} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            {isPrinting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Print
           </button>
           <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
             <Download className="h-4 w-4" /> Export Excel
@@ -954,7 +1073,7 @@ const VendorSoA = ({ vendors }) => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="bb-nowrap-table w-full text-xs">
               <thead className="bg-gray-50 border-y border-slate-200">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">DATE</th>
@@ -1486,6 +1605,12 @@ const Vendor = () => {
     }
   };
 
+  const handleImportVendors = async (file) => {
+    const result = await importVendors(file);
+    await loadVendors();
+    return result;
+  };
+
   const handleEdit = (vendor) => {
     setSelectedVendor(vendor);
     setView("create");
@@ -1496,7 +1621,7 @@ const Vendor = () => {
     if (window.confirm("Are you sure you want to delete this vendor?")) {
       try {
         await deleteVendor(id);
-        fetchVendors();
+        await loadVendors();
       } catch (err) {
         alert(err.response?.data?.message || "Failed to delete vendor");
       }
@@ -1512,6 +1637,7 @@ const Vendor = () => {
           onAddNew={() => { setSelectedVendor(null); setView("create"); }}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onImport={handleImportVendors}
         />
       ) : (
         <CreateVendorWizard
@@ -1525,7 +1651,7 @@ const Vendor = () => {
 };
 
 // Sub-Component: ListView with Actions wired
-const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete }) => {
+const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete, onImport }) => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const [activeTab, setActiveTab] = useState("Vendors List");
@@ -1533,6 +1659,8 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All Status");
   const [filterCategory, setFilterCategory] = useState("All Categories");
+  const importFileRef = useRef(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Calculate Stats
   const totalVendors = vendors.length;
@@ -1621,19 +1749,36 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(filteredVendors.map((vendor, index) => ({
+    exportToExcel(withListSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
-      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredVendors.map((vendor, index) => ({
+    exportToPDF(withListSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
-      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
+  };
+
+  const handleImportFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !onImport) return;
+
+    const toastId = toast.loading(`Importing ${file.name}...`);
+    setIsImporting(true);
+    try {
+      const result = await onImport(file);
+      toast.success(result || 'Vendors imported successfully.', { id: toastId, duration: 6000 });
+    } catch (error) {
+      console.error('Failed to import vendors', error);
+      const message = error.response?.data || error.message || 'Failed to import vendors.';
+      toast.error(message, { id: toastId, duration: 7000 });
+    } finally {
+      setIsImporting(false);
+      e.target.value = null;
+    }
   };
 
   const renderStars = (rating) => (
@@ -1673,7 +1818,21 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
           <div className="flex items-center gap-2">
             {activeTab === "Vendors List" ? (
               <>
-                <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Upload className="h-4 w-4" /> Import</button>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={handleImportFileChange}
+                />
+                <button
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={isImporting}
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isImporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {isImporting ? 'Importing...' : 'Import'}
+                </button>
                 <ExportDropdown
                   onExportExcel={handleExportExcel}
                   onExportPdf={handleExportPdf}
@@ -1795,7 +1954,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="bb-nowrap-table w-full text-sm">
                   <thead className="bg-gray-50 border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 text-center font-medium text-gray-500 uppercase w-16 select-none">S.No.</th>
@@ -1818,7 +1977,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                     ) : (
                       pagedVendors.map((vendor, index) => (
                         <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">
+                            {getListSerialNumber(index, {
+                              page: listPage,
+                              size: LIST_PAGE_SIZE,
+                              totalElements: filteredVendors.length,
+                            })}
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
                           <td className="px-6 py-4"><div className="flex flex-col"><div className="font-medium text-slate-900 flex items-center gap-2">{vendor.name}{vendor.isPreferred && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-700 font-medium"><Star className="h-3 w-3 fill-purple-700" />Preferred</span>}</div><div className="text-xs text-gray-500">{vendor.email}</div></div></td>
                           <td className="px-6 py-4"><span className="text-xs px-2 py-1 rounded font-medium bg-blue-100 text-blue-700">{vendor.category}</span></td>

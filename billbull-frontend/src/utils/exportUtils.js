@@ -4,6 +4,15 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateReportFilename } from './filenameUtils';
 
+// ── Brand colours ────────────────────────────────────────────────────────────
+const AMBER        = [245, 199, 66];   // #F5C742
+const AMBER_DARK   = [229, 180, 38];   // #E5B426
+const AMBER_LIGHT  = [255, 251, 240];  // #FFFBF0
+const AMBER_ARGB   = 'FFF5C742';
+const AMBER_LIGHT_ARGB = 'FFFFF8E7';
+const DARK_TEXT    = [26, 18, 0];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const isImageColumn = (column) => column.type === 'image';
 
 const getImageSize = (column) => ({
@@ -29,20 +38,16 @@ const readBlobAsDataUrl = (blob) => new Promise((resolve, reject) => {
 
 const loadImage = async (url) => {
     if (!url) return null;
-
     if (String(url).startsWith('data:image/')) {
         const extension = String(url).includes('image/png') ? 'png' : 'jpeg';
         return { dataUrl: url, extension, pdfFormat: getPdfImageFormat(extension) };
     }
-
     try {
         const response = await fetch(url);
         if (!response.ok) return null;
-
         const blob = await response.blob();
         const extension = getImageExtension(blob.type, url);
         if (!extension) return null;
-
         const dataUrl = await readBlobAsDataUrl(blob);
         return { dataUrl, extension, pdfFormat: getPdfImageFormat(extension) };
     } catch (error) {
@@ -55,148 +60,100 @@ const loadExportImages = async (data, columns) => {
     const imageColumns = columns.filter(isImageColumn);
     const images = new Map();
     const cache = new Map();
-
     if (imageColumns.length === 0) return images;
-
     await Promise.all(data.flatMap((row, rowIndex) => imageColumns.map(async (column) => {
         const url = row[column.key];
         if (!url) return;
-
-        if (!cache.has(url)) {
-            cache.set(url, loadImage(url));
-        }
-
+        if (!cache.has(url)) cache.set(url, loadImage(url));
         const image = await cache.get(url);
-        if (image) {
-            images.set(`${rowIndex}:${column.key}`, image);
-        }
+        if (image) images.set(`${rowIndex}:${column.key}`, image);
     })));
-
     return images;
 };
 
-/**
- * Generic function to export JSON data to an Excel file (.xlsx)
- * @param {Array} data - Array of objects containing the row data.
- * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey', width: 15, type?: 'image' }
- * @param {string} fileName - Base filename without extension
- */
-export const exportToExcel = async (data, columns, fileName = 'Export') => {
-    try {
-        const workbook = new ExcelJS.Workbook();
-        workbook.creator = 'Billbull ERP';
-        workbook.created = new Date();
-        const sheet = workbook.addWorksheet('Report');
-        const imageColumns = columns.filter(isImageColumn);
-        const imageMap = await loadExportImages(data, columns);
-
-        // Map definitions to ExcelJS columns format
-        sheet.columns = columns.map(col => ({
-            header: col.header,
-            key: col.key,
-            width: col.width || 15
-        }));
-
-        // Style the header row
-        const headerRow = sheet.getRow(1);
-        headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        headerRow.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FF374151' } // Dark gray background
-        };
-        headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
-
-        // Add Data
-        data.forEach((row, rowIndex) => {
-            const mappedRow = {};
-            columns.forEach(col => {
-                let cellValue = isImageColumn(col) ? '' : row[col.key];
-
-                // If it is a number and expected to be formatted nicely, ExcelJS handles JS numbers seamlessly.
-                if (typeof cellValue === 'number') {
-                    // Do nothing, just pass number so Excel registers it as a valid number
-                } else if (cellValue === null || cellValue === undefined) {
-                    cellValue = '';
-                }
-
-                mappedRow[col.key] = cellValue;
-            });
-            const sheetRow = sheet.addRow(mappedRow);
-            sheetRow.alignment = { vertical: 'middle' };
-
-            if (imageColumns.length > 0) {
-                const maxImageHeight = Math.max(...imageColumns.map(col => getImageSize(col).height));
-                sheetRow.height = Math.max(sheetRow.height || 15, Math.ceil((maxImageHeight * 72) / 96) + 8);
-            }
-        });
-
-        imageColumns.forEach((column) => {
-            const columnIndex = columns.findIndex(col => col.key === column.key);
-            const { width, height } = getImageSize(column);
-
-            data.forEach((_, rowIndex) => {
-                const image = imageMap.get(`${rowIndex}:${column.key}`);
-                if (!image) return;
-
-                const imageId = workbook.addImage({
-                    base64: image.dataUrl,
-                    extension: image.extension
-                });
-
-                sheet.addImage(imageId, {
-                    tl: { col: columnIndex + 0.15, row: rowIndex + 1.15 },
-                    ext: { width, height },
-                    editAs: 'oneCell'
-                });
-            });
-        });
-
-        // Write to buffer and save via browser FileSaver
-        const buffer = await workbook.xlsx.writeBuffer();
-        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        saveAs(blob, `${generateReportFilename(fileName)}.xlsx`);
-
-    } catch (error) {
-        console.error('Failed to export to Excel', error);
-        throw error;
+// Convert a 1-based column index to an Excel letter (A, B, ..., Z, AA, ...)
+const colLetter = (n) => {
+    let s = '';
+    while (n > 0) {
+        const r = (n - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        n = Math.floor((n - 1) / 26);
     }
+    return s || 'A';
 };
 
+// ── PDF export ────────────────────────────────────────────────────────────────
 /**
- * Generic function to export JSON data to a PDF file (.pdf)
- * @param {Array} data - Array of objects containing the row data.
- * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey', type?: 'image' }
- * @param {string} title - Title generated into the document header
- * @param {string} fileName - Base filename without extension
+ * Export JSON data to a branded BillBull PDF.
+ * @param {Array}  data     - Array of row objects
+ * @param {Array}  columns  - [{ header, key, type? }]
+ * @param {string} title    - Report title shown in the header
+ * @param {string} fileName - Base filename (no extension)
+ * @param {object} [meta]   - Optional { dateFrom, dateTo, branch, companyProfile } shown as subtitle
  */
-export const exportToPDF = async (data, columns, title = 'Report', fileName = 'Export') => {
+export const exportToPDF = async (data, columns, title = 'Report', fileName = 'Export', meta = {}) => {
     try {
-        // Create an A4 landscape orient
         const doc = new jsPDF('l', 'pt', 'a4');
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
         const imageMap = await loadExportImages(data, columns);
+        const generatedAt = new Date().toLocaleString();
 
-        // Document Details (Header)
-        doc.setFontSize(18);
-        doc.setTextColor(17, 24, 39); // #111827
-        doc.text(title, 40, 40);
+        const cp = meta.companyProfile || {};
+        const companyName = cp.companyName || cp.name || 'BillBull ERP';
+        const branchLabel = meta.branch && meta.branch !== 'All' ? meta.branch : '';
+        const orgLine = branchLabel ? `${companyName}  —  ${branchLabel}` : companyName;
 
-        doc.setFontSize(10);
-        doc.setTextColor(107, 114, 128); // #6b7280
-        doc.text(`Generated on: ${new Date().toLocaleString()}`, 40, 56);
-        doc.text(`Total Rows: ${data.length}`, 40, 70);
+        // ── Amber header bar ────────────────────────────────────────────────
+        doc.setFillColor(...AMBER);
+        doc.rect(0, 0, pageW, 34, 'F');
 
-        // Prep headers
+        // subtle bottom shadow strip
+        doc.setFillColor(...AMBER_DARK);
+        doc.rect(0, 32, pageW, 2, 'F');
+
+        // Company name left
+        doc.setFontSize(13);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...DARK_TEXT);
+        doc.text(orgLine, 22, 22);
+
+        // "OFFICIAL REPORT" badge right
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(80, 60, 0);
+        doc.text('OFFICIAL REPORT', pageW - 22, 22, { align: 'right' });
+
+        // ── Meta section ────────────────────────────────────────────────────
+        const metaY = 50;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(...DARK_TEXT);
+        doc.text(title, 22, metaY);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(107, 114, 128);
+        let metaLine = `Generated: ${generatedAt}`;
+        if (meta.dateFrom || meta.dateTo) metaLine += `  |  Period: ${meta.dateFrom || '—'} to ${meta.dateTo || '—'}`;
+        if (branchLabel) metaLine += `  |  Branch: ${branchLabel}`;
+        doc.text(metaLine, 22, metaY + 14);
+        doc.text(`Total Records: ${data.length}`, 22, metaY + 26);
+
+        // amber separator line
+        doc.setDrawColor(...AMBER_DARK);
+        doc.setLineWidth(0.8);
+        doc.line(22, metaY + 32, pageW - 22, metaY + 32);
+
+        // ── Table ───────────────────────────────────────────────────────────
         const head = [columns.map(col => col.header)];
-
-        // Prep data rows mapping correctly
-        const body = data.map(row => {
-            return columns.map(col => {
+        const body = data.map(row =>
+            columns.map(col => {
                 if (isImageColumn(col)) return '';
                 const val = row[col.key];
                 return val !== null && val !== undefined ? String(val) : '';
-            });
-        });
+            })
+        );
 
         const columnStyles = {};
         columns.forEach((col, index) => {
@@ -210,33 +167,37 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
             };
         });
 
-        // Generate the table
+        let finalY = metaY + 40;
+
         autoTable(doc, {
-            startY: 90,
-            head: head,
-            body: body,
+            startY: finalY,
+            head,
+            body,
             theme: 'grid',
             styles: {
-                fontSize: 9,
-                cellPadding: 4,
-                textColor: [55, 65, 81], // #374151
-                font: 'helvetica'
+                fontSize: 8.5,
+                cellPadding: { top: 4, bottom: 4, left: 6, right: 6 },
+                textColor: [51, 65, 85],
+                font: 'helvetica',
+                lineColor: [226, 232, 240],
+                lineWidth: 0.2,
             },
             headStyles: {
-                fillColor: [243, 244, 246], // #f3f4f6 light gray header
-                textColor: [17, 24, 39], // dark bold text
+                fillColor: AMBER,
+                textColor: DARK_TEXT,
                 fontStyle: 'bold',
-                lineWidth: 0.1,
-                lineColor: [229, 231, 235]
+                fontSize: 8,
+                lineColor: AMBER_DARK,
+                lineWidth: 0.3,
             },
             alternateRowStyles: {
-                fillColor: [250, 250, 250] // light contrast
+                fillColor: AMBER_LIGHT,
             },
             columnStyles,
+            margin: { left: 22, right: 22, bottom: 28 },
             didParseCell: (hookData) => {
                 const column = columns[hookData.column.index];
                 if (hookData.section !== 'body' || !column || !isImageColumn(column)) return;
-
                 const { height } = getImageSize(column);
                 hookData.cell.text = [''];
                 hookData.cell.styles.minCellHeight = height + 10;
@@ -244,29 +205,190 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
             didDrawCell: (hookData) => {
                 const column = columns[hookData.column.index];
                 if (hookData.section !== 'body' || !column || !isImageColumn(column)) return;
-
                 const image = imageMap.get(`${hookData.row.index}:${column.key}`);
                 if (!image) return;
-
                 const { width, height } = getImageSize(column);
                 const padding = 5;
-                const maxWidth = hookData.cell.width - (padding * 2);
-                const maxHeight = hookData.cell.height - (padding * 2);
+                const maxWidth = hookData.cell.width - padding * 2;
+                const maxHeight = hookData.cell.height - padding * 2;
                 const scale = Math.min(maxWidth / width, maxHeight / height, 1);
                 const drawWidth = width * scale;
                 const drawHeight = height * scale;
                 const x = hookData.cell.x + (hookData.cell.width - drawWidth) / 2;
                 const y = hookData.cell.y + (hookData.cell.height - drawHeight) / 2;
-
                 doc.addImage(image.dataUrl, image.pdfFormat, x, y, drawWidth, drawHeight);
             },
-            margin: { left: 40, right: 40 }
+            // ── Per-page footer ─────────────────────────────────────────────
+            didDrawPage: (hookData) => {
+                const pg = hookData.pageNumber;
+                const total = doc.internal.getNumberOfPages();
+                doc.setFontSize(7.5);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(148, 163, 184);
+                // amber footer line
+                doc.setDrawColor(...AMBER_DARK);
+                doc.setLineWidth(0.5);
+                doc.line(22, pageH - 20, pageW - 22, pageH - 20);
+                doc.text(
+                    `Generated by ${companyName}  |  ${generatedAt}  |  Confidential`,
+                    22, pageH - 10
+                );
+                doc.text(`Page ${pg} of ${total}`, pageW - 22, pageH - 10, { align: 'right' });
+            },
         });
 
-        // Save PDF
         doc.save(`${generateReportFilename(fileName)}.pdf`);
     } catch (error) {
         console.error('Failed to export to PDF', error);
+        throw error;
+    }
+};
+
+// ── Excel export ──────────────────────────────────────────────────────────────
+/**
+ * Export JSON data to a branded BillBull Excel file (.xlsx).
+ * @param {Array}  data     - Array of row objects
+ * @param {Array}  columns  - [{ header, key, width?, type? }]
+ * @param {string} fileName - Base filename (no extension)
+ * @param {object} [meta]   - Optional { dateFrom, dateTo, branch, companyProfile }
+ */
+export const exportToExcel = async (data, columns, fileName = 'Export', meta = {}) => {
+    try {
+        const workbook = new ExcelJS.Workbook();
+        const cp = meta.companyProfile || {};
+        const companyName = cp.companyName || cp.name || 'BillBull ERP';
+        const branchLabel = meta.branch && meta.branch !== 'All' ? meta.branch : '';
+        const orgLine = branchLabel ? `${companyName}  —  ${branchLabel}` : companyName;
+
+        workbook.creator = companyName;
+        workbook.created = new Date();
+        const sheet = workbook.addWorksheet('Report');
+
+        const numCols = columns.length;
+        const lastCol = colLetter(numCols);
+
+        // Set column widths (must be done before adding rows in ExcelJS)
+        columns.forEach((col, i) => {
+            sheet.getColumn(i + 1).width = col.width || 18;
+        });
+
+        // ── Row 1: Company / org header ─────────────────────────────────────
+        const brandRow = sheet.getRow(1);
+        brandRow.height = 30;
+        sheet.mergeCells(`A1:${lastCol}1`);
+        const brandCell = brandRow.getCell(1);
+        brandCell.value = orgLine;
+        brandCell.font = { bold: true, color: { argb: 'FF1A1200' }, size: 14, name: 'Calibri' };
+        brandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_ARGB } };
+        brandCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        // ── Row 2: Report title ─────────────────────────────────────────────
+        const titleRow = sheet.getRow(2);
+        titleRow.height = 22;
+        sheet.mergeCells(`A2:${lastCol}2`);
+        const titleCell = titleRow.getCell(1);
+        titleCell.value = fileName.replace(/_/g, ' ');
+        titleCell.font = { bold: true, color: { argb: 'FF374151' }, size: 12, name: 'Calibri' };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        // ── Row 3: Meta info ────────────────────────────────────────────────
+        const metaRow = sheet.getRow(3);
+        metaRow.height = 15;
+        sheet.mergeCells(`A3:${lastCol}3`);
+        let metaText = `Generated: ${new Date().toLocaleString()}  |  Records: ${data.length}`;
+        if (meta.dateFrom || meta.dateTo) metaText += `  |  Period: ${meta.dateFrom || '—'} to ${meta.dateTo || '—'}`;
+        if (branchLabel) metaText += `  |  Branch: ${branchLabel}`;
+        const metaCell = metaRow.getCell(1);
+        metaCell.value = metaText;
+        metaCell.font = { color: { argb: 'FF6B7280' }, size: 9, name: 'Calibri' };
+        metaCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+        metaCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        // ── Row 4: Spacer ───────────────────────────────────────────────────
+        sheet.getRow(4).height = 6;
+
+        // ── Row 5: Column headers ───────────────────────────────────────────
+        const headerRow = sheet.getRow(5);
+        headerRow.height = 20;
+        columns.forEach((col, i) => {
+            const cell = headerRow.getCell(i + 1);
+            cell.value = col.header;
+            cell.font = { bold: true, color: { argb: 'FF1A1200' }, size: 10, name: 'Calibri' };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_ARGB } };
+            cell.alignment = { vertical: 'middle', horizontal: isImageColumn(col) ? 'center' : 'left', wrapText: false };
+            cell.border = {
+                bottom: { style: 'medium', color: { argb: 'FFE5B426' } },
+                top: { style: 'thin', color: { argb: 'FFE5B426' } },
+            };
+        });
+
+        // ── Rows 6+: Data ───────────────────────────────────────────────────
+        const DATA_START_ROW = 6;
+        const imageColumns = columns.filter(isImageColumn);
+        const imageMap = await loadExportImages(data, columns);
+
+        data.forEach((row, rowIndex) => {
+            const sheetRow = sheet.getRow(DATA_START_ROW + rowIndex);
+            sheetRow.alignment = { vertical: 'middle' };
+
+            if (imageColumns.length > 0) {
+                const maxImageHeight = Math.max(...imageColumns.map(col => getImageSize(col).height));
+                sheetRow.height = Math.max(16, Math.ceil((maxImageHeight * 72) / 96) + 8);
+            } else {
+                sheetRow.height = 16;
+            }
+
+            columns.forEach((col, colIndex) => {
+                const cell = sheetRow.getCell(colIndex + 1);
+                if (isImageColumn(col)) {
+                    cell.value = '';
+                } else {
+                    let cellValue = row[col.key];
+                    if (cellValue === null || cellValue === undefined) cellValue = '';
+                    cell.value = cellValue;
+
+                    // Right-align numbers
+                    if (typeof cellValue === 'number') {
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                        cell.numFmt = Number.isInteger(cellValue) ? '#,##0' : '#,##0.00';
+                    }
+                }
+
+                // Alternating row color (amber tint on odd data rows)
+                if (rowIndex % 2 === 1) {
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+                }
+
+                // Light border
+                cell.border = {
+                    bottom: { style: 'hair', color: { argb: 'FFFFE9A0' } },
+                };
+            });
+        });
+
+        // ── Embed images ────────────────────────────────────────────────────
+        imageColumns.forEach((column) => {
+            const columnIndex = columns.findIndex(col => col.key === column.key);
+            const { width, height } = getImageSize(column);
+            data.forEach((_, rowIndex) => {
+                const image = imageMap.get(`${rowIndex}:${column.key}`);
+                if (!image) return;
+                const imageId = workbook.addImage({ base64: image.dataUrl, extension: image.extension });
+                sheet.addImage(imageId, {
+                    tl: { col: columnIndex + 0.15, row: (DATA_START_ROW - 1) + rowIndex + 0.15 },
+                    ext: { width, height },
+                    editAs: 'oneCell'
+                });
+            });
+        });
+
+        // ── Save ────────────────────────────────────────────────────────────
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        saveAs(blob, `${generateReportFilename(fileName)}.xlsx`);
+    } catch (error) {
+        console.error('Failed to export to Excel', error);
         throw error;
     }
 };

@@ -38,8 +38,26 @@ public class PaymentVoucherController {
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String status) {
-        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
-                service.getAllVouchers(), page, size, search, status));
+        // `status` may be a single status or a comma-separated group (e.g. the
+        // History tab = POSTED,REJECTED,CLEARED). Blank/absent → all statuses.
+        java.util.List<PaymentStatus> statuses = new java.util.ArrayList<>();
+        if (status != null && !status.isBlank()) {
+            for (String s : status.split(",")) {
+                String trimmed = s.trim();
+                if (trimmed.isEmpty()) continue;
+                try {
+                    statuses.add(PaymentStatus.valueOf(trimmed.toUpperCase().replace(" ", "_")));
+                } catch (IllegalArgumentException ignored) {
+                    // skip unknown status tokens
+                }
+            }
+        }
+        return ResponseEntity.ok(service.listPage(statuses, search, page, size));
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<Map<String, BigDecimal>> getStats() {
+        return ResponseEntity.ok(service.statsByMode());
     }
 
     // --------------------

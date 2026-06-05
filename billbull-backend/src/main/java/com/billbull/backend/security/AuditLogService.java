@@ -1,9 +1,12 @@
 package com.billbull.backend.security;
 
+import com.billbull.backend.user.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -15,6 +18,9 @@ import java.time.LocalDateTime;
 public class AuditLogService {
 
     private final AuditLogRepository auditLogRepository;
+
+    @Autowired(required = false)
+    private UserRepository userRepository;
 
     public AuditLogService(AuditLogRepository auditLogRepository) {
         this.auditLogRepository = auditLogRepository;
@@ -94,6 +100,48 @@ public class AuditLogService {
                 false,
                 reason,
                 request);
+    }
+
+    /**
+     * Log a domain event (no HTTP context) — for service-layer audit such as
+     * Branch CRUD, HQ-change, and user-branch-assignment changes (PDF §11.3).
+     *
+     * Uses REQUIRES_NEW so an audit-log insert failure (NOT-NULL violations,
+     * stale repo lookup, etc.) doesn't roll back the caller's business
+     * transaction. The caller wraps this in try/catch as a second line of
+     * defense.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logDomainEvent(String entityType, String entityId, String action, String detail) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth != null && auth.getName() != null ? auth.getName() : "SYSTEM";
+
+        Long userId = null;
+        if (userRepository != null && !"SYSTEM".equals(username)) {
+            try {
+                userId = userRepository.findByUsername(username).map(u -> u.getId()).orElse(null);
+            } catch (Exception ignored) {
+                // best-effort lookup
+            }
+        }
+        // audit_logs.user_id is NOT NULL — fall back to a sentinel that won't
+        // collide with a real user (0 would conflict with sequence; use -1
+        // which the schema accepts as a Long but never matches a real PK).
+        if (userId == null) {
+            userId = -1L;
+        }
+
+        AuditLog log = new AuditLog();
+        log.setUserId(userId);
+        log.setUsername(username);
+        log.setRole("DOMAIN");
+        log.setEndpoint(entityType + ":" + (entityId != null ? entityId : "-"));
+        log.setHttpMethod(action);
+        log.setAction("ALLOWED");
+        log.setDenialReason(detail);
+        log.setAccessTime(LocalDateTime.now());
+
+        auditLogRepository.save(log);
     }
 
     /**

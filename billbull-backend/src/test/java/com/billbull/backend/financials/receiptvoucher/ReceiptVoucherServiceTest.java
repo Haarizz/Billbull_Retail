@@ -24,6 +24,7 @@ import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @ExtendWith(MockitoExtension.class)
 class ReceiptVoucherServiceTest {
@@ -46,6 +47,9 @@ class ReceiptVoucherServiceTest {
     @Mock
     private CustomerRepository customerRepository;
 
+    @Mock
+    private BranchAccessService branchAccessService;
+
     private ReceiptVoucherService service;
 
     @BeforeEach
@@ -57,6 +61,7 @@ class ReceiptVoucherServiceTest {
                 salesInvoiceRepository,
                 openingInvoiceRepository,
                 customerRepository,
+                branchAccessService,
                 "target/test-receipts");
     }
 

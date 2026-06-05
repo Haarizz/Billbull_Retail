@@ -269,6 +269,26 @@ public class WarehouseStockService {
                 deadStock);
     }
 
+    /**
+     * Returns all batches with positive on-hand qty for the given product in a
+     * warehouse, optionally scoped to a specific bin. Results are ordered by
+     * expiry date (FEFO) then batch number so callers get the natural pick order.
+     */
+    public List<WarehouseController.BatchStockRow> getAvailableBatchesForProduct(
+            Long warehouseId, Long productId, Long binId) {
+        List<Object[]> rows = stockRepo.findStockIdentitiesByProductAndBin(warehouseId, productId, binId);
+        List<WarehouseController.BatchStockRow> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            String batchNumber = row[0] != null ? row[0].toString() : null;
+            String expiryDate  = row[1] != null ? row[1].toString() : null;
+            int qty = row[2] != null ? ((Number) row[2]).intValue() : 0;
+            if (qty > 0) {
+                result.add(new WarehouseController.BatchStockRow(batchNumber, expiryDate, qty));
+            }
+        }
+        return result;
+    }
+
     public List<Zone> getZonesByWarehouse(Long warehouseId) {
         return zoneRepo.findByWarehouseId(warehouseId);
     }

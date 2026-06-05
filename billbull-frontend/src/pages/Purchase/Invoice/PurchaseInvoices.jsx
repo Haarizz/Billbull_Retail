@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import TableSkeleton from '../../../components/common/TableSkeleton';
 import api from "../../../api/axiosConfig";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
@@ -49,10 +50,13 @@ import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import { useCompany } from '../../../context/CompanyContext';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { compareDocumentValues } from '../../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -126,6 +130,9 @@ const SOURCE = {
 const todayAsInputDate = () => new Date().toISOString().split('T')[0];
 
 const compareInvoiceRows = (left, right) => {
+  const documentNumberCompare = compareDocumentValues(left.id, right.id, 'desc');
+  if (documentNumberCompare !== 0) return documentNumberCompare;
+
   const documentDateCompare = (right.documentDate || "").localeCompare(left.documentDate || "");
   if (documentDateCompare !== 0) return documentDateCompare;
 
@@ -220,6 +227,9 @@ const mapInvoiceFromApi = (inv) => {
     vendorInvoiceNo,
     vendorInvoiceDate,
     vendorId: inv.vendorId || null, // if exists, else null
+    branchId: inv.branchId ?? null,
+    branchName: inv.branchName || '',
+    branchCode: inv.branchCode || '',
     grnId: inv.grnId,
     lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
@@ -530,7 +540,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -680,7 +690,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[1320px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
                 <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
@@ -688,6 +698,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                 <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
+                <th className="px-6 py-3 whitespace-nowrap">Branch</th>
                 <th className="px-6 py-3 whitespace-nowrap">Source</th>
                 <th className="px-6 py-3 whitespace-nowrap">Ref No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Warehouse</th>
@@ -699,13 +710,31 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {isLoading && <TableSkeleton cols={9} rows={8} />}
               {filteredInvoices.map((row, index) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
-                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
+                    {getListSerialNumber(index, {
+                      documentNumber: row.id,
+                      page: currentPage,
+                      size: pageSize,
+                      totalElements,
+                    })}
+                  </td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
                   <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
+                  <td className="px-6 py-4 text-slate-600 text-[11px]">
+                    {row.branchName ? (
+                      <>
+                        <div className="font-medium">{row.branchName}</div>
+                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                      </>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
@@ -717,6 +746,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                     <div className="flex items-center justify-center gap-1 opacity-100">
                       <button onClick={() => onView(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="View"><Eye className="h-3 w-3" /></button>
                       <button onClick={() => onPrint(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Print"><Printer className="h-3 w-3" /></button>
+                      <button onClick={() => onDownload && onDownload(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Download PDF"><Download className="h-3 w-3" /></button>
                       {row.payment !== 'PAID' && row.status !== 'DRAFT' && row.status !== 'Draft' && (
                         <button onClick={() => onPay(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Pay"><CreditCard className="h-3 w-3" /></button>
                       )}
@@ -2117,7 +2147,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
             {/* Items Table */}
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[800px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
@@ -2661,7 +2691,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[800px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium">Invoice No</th>
@@ -2729,7 +2759,7 @@ const PendingPaymentView = ({ pendingPayments, onPay, onView }) => {
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[900px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[900px]">
             <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
               <tr>
                 <th className="p-3 font-medium">Invoice No</th>
@@ -2813,7 +2843,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[800px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium">Invoice No</th>
@@ -2868,6 +2898,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
 
 const PurchaseInvoices = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2880,6 +2911,7 @@ const PurchaseInvoices = () => {
 
   // REAL STATE (No Mocks)
   const [invoices, setInvoices] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   // Client-side pagination over filtered list (page exposes rich filters beyond
   // what /page supports — status tabs, date range, vendor).
   const [listPage, setListPage] = useState(0);
@@ -2902,6 +2934,13 @@ const PurchaseInvoices = () => {
     loadInvoices();
   }, []);
 
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => loadInvoices();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+  }, []);
+
   // Pre-fill editor when navigated from GRN or LPO "Proceed to Invoice"
   useEffect(() => {
     const fromGrn = location.state?.fromGrn;
@@ -2917,6 +2956,7 @@ const PurchaseInvoices = () => {
   }, []);
 
   const loadInvoices = async () => {
+    setIsLoading(true);
     try {
       const res = await getInvoices();
       const list = Array.isArray(res) ? res : (res.data || []);
@@ -2939,6 +2979,8 @@ const PurchaseInvoices = () => {
       );
     } catch (err) {
       console.error("Failed to load invoices", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -3012,6 +3054,7 @@ const PurchaseInvoices = () => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
       const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      const vendorsPromise = getVendors().catch(() => []);
       let printableInvoice = invoice;
 
       if (invoice?.dbId) {
@@ -3022,18 +3065,23 @@ const PurchaseInvoices = () => {
         }
       }
 
-      const templates = await templatesPromise;
+      const [templates, vendorData] = await Promise.all([templatesPromise, vendorsPromise]);
       const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
       const fullVendor = findVendorRecord(
-        [],
+        vendorData,
         printableInvoice,
         printableInvoice?.vendorName,
         printableInvoice?.vendor
       );
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
 
-      const html = generatePrintHtml(defaultTemplate, printData, {
-        companyProfile: company,
+      const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: piBranchId,
+        }),
         billBullLogo: billBullLogo
       });
 
@@ -3042,6 +3090,30 @@ const PurchaseInvoices = () => {
       console.error("Error printing Invoice:", error);
       const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
       toast.error(message);
+    } finally {
+      toast.dismiss(loadingToast);
+    }
+  };
+
+  const handleDownload = async (invoice) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      const vendorsPromise = getVendors().catch(() => []);
+      let printableInvoice = invoice;
+      if (invoice?.dbId) {
+        try { printableInvoice = await getInvoiceById(invoice.dbId); } catch { /* use what we have */ }
+      }
+      const [templates, vendorData] = await Promise.all([templatesPromise, vendorsPromise]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
+      const fullVendor = findVendorRecord(vendorData, printableInvoice, printableInvoice?.vendorName, printableInvoice?.vendor);
+      const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
+      const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: piBranchId }), billBullLogo });
+      await downloadPdf(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
+    } catch (error) {
+      console.error("Error downloading Invoice:", error);
+      toast.error('Failed to generate download');
     } finally {
       toast.dismiss(loadingToast);
     }
@@ -3097,7 +3169,9 @@ const PurchaseInvoices = () => {
 
   const handleExportExcel = () => {
     exportToExcel(
-      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      withListSerialNumbers(filteredInvoices, {
+        documentNumberSelector: (inv) => inv.id,
+      }),
       INVOICE_COLUMNS,
       'Purchase_Invoice_List'
     );
@@ -3105,7 +3179,9 @@ const PurchaseInvoices = () => {
 
   const handleExportPdf = () => {
     exportToPDF(
-      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      withListSerialNumbers(filteredInvoices, {
+        documentNumberSelector: (inv) => inv.id,
+      }),
       INVOICE_COLUMNS,
       'Purchase Invoices',
       'Purchase_Invoice_List'
@@ -3173,13 +3249,17 @@ const PurchaseInvoices = () => {
             setSearchQuery={setSearchQuery}
             onView={handleView}
             onPrint={handlePrint}
+            onDownload={handleDownload}
             onPay={handleOpenPayment}
             onRefresh={loadInvoices}
             dateRange={dateRange}
             setDateRange={setDateRange}
             vendorFilter={vendorFilter}
             setVendorFilter={setVendorFilter}
-            currentPage={0}
+            currentPage={listPage}
+            pageSize={LIST_PAGE_SIZE}
+            totalElements={filteredInvoices.length}
+            isLoading={isLoading}
           />
           <PaginationFooter
             page={listPage}
@@ -3201,6 +3281,7 @@ const PurchaseInvoices = () => {
           onSchedulePayment={handleOpenSchedule}
           editInvoice={editInvoice} // Pass Prop
           onPrint={handlePrint}
+            onDownload={handleDownload}
           mode={editorMode}
           onBackToList={() => {
             setActiveNavTab("list");
@@ -3231,12 +3312,14 @@ const PurchaseInvoices = () => {
           setSearchQuery={setSearchQuery}
           onView={handleView}
           onPrint={handlePrint}
+            onDownload={handleDownload}
           onPay={handleOpenPayment}
           onRefresh={loadInvoices}
           dateRange={dateRange}
           setDateRange={setDateRange}
           vendorFilter={vendorFilter}
           setVendorFilter={setVendorFilter}
+          isLoading={isLoading}
         />;
     }
   };

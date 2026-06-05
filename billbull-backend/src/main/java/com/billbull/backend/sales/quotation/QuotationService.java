@@ -44,6 +44,8 @@ import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,6 +73,7 @@ public class QuotationService {
     private final InquiryFollowUpRepository inquiryFollowUpRepo;
     private final SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
+    private final BranchAccessService branchAccessService;
 
     public QuotationService(
             QuotationRepository quotationRepo,
@@ -88,7 +91,8 @@ public class QuotationService {
             CustomerInquiryRepository customerInquiryRepo,
             InquiryFollowUpRepository inquiryFollowUpRepo,
             SalesSettingsService salesSettingsService,
-            SalesDocumentNumberingService numberingService) {
+            SalesDocumentNumberingService numberingService,
+            BranchAccessService branchAccessService) {
         this.quotationRepo = quotationRepo;
         this.objectMapper = objectMapper;
         this.productRepo = productRepo;
@@ -105,6 +109,35 @@ public class QuotationService {
         this.inquiryFollowUpRepo = inquiryFollowUpRepo;
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
+        this.branchAccessService = branchAccessService;
+    }
+
+    // -------------------------------------------------
+    // BRANCH RESOLUTION (Phase 3 vertical slice)
+    // -------------------------------------------------
+
+    /**
+     * Stamps the originating branch onto a quotation. On create, takes the
+     * session's active branch; on update, branch is locked to the existing
+     * value so an admin who switched branches can't move a saved quotation
+     * (PDF section 3.4 — transaction branch immutability).
+     */
+    private void applyBranchSnapshot(Quotation quotation, Quotation existing) {
+        if (existing != null) {
+            quotation.setBranchId(existing.getBranchId());
+            quotation.setBranchName(existing.getBranchName());
+            quotation.setBranchCode(existing.getBranchCode());
+            quotation.setBranchLocation(existing.getBranchLocation());
+            return;
+        }
+
+        Branch resolved = branchAccessService.getRequiredCurrentUserBranch();
+        if (resolved == null) {
+            return;
+        }
+        quotation.setBranchId(resolved.getId());
+        quotation.setBranchName(resolved.getName());
+        quotation.setBranchCode(resolved.getCode());
     }
 
     private SalesItemPricePolicy activePricePolicy() {
@@ -119,12 +152,23 @@ public class QuotationService {
     // -------------------------------------------------
     @Transactional(readOnly = true)
     public List<Quotation> getAllQuotations() {
-        List<Quotation> quotations = new ArrayList<>(quotationRepo.findAll());
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                quotations,
-                Quotation::getDate,
-                Quotation::getQtnNo,
-                Quotation::getId);
+        List<Quotation> quotations = new ArrayList<>(
+                branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId));
+        quotations.sort((a, b) -> Long.compare(
+                b.getId() == null ? 0 : b.getId(),
+                a.getId() == null ? 0 : a.getId()));
+        quotations.forEach(this::initialize);
+        enrichQuotationImages(quotations);
+        return quotations;
+    }
+
+    @Transactional(readOnly = true)
+    public List<Quotation> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<Quotation> quotations = new ArrayList<>(
+                branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId));
+        quotations.sort((a, b) -> Long.compare(
+                b.getId() == null ? 0 : b.getId(),
+                a.getId() == null ? 0 : a.getId()));
         quotations.forEach(this::initialize);
         enrichQuotationImages(quotations);
         return quotations;
@@ -157,6 +201,14 @@ public class QuotationService {
         Quotation existingQuotation = quotation.getId() != null
                 ? quotationRepo.findById(quotation.getId()).orElse(null)
                 : null;
+
+        // Guard: restricted users can't edit a quotation belonging to another branch.
+        if (existingQuotation != null) {
+            branchAccessService.assertTransactionBranchAccessible(existingQuotation.getBranchId(), "Quotation");
+        }
+
+        // Stamp branch (create) or carry forward existing branch (update — immutable).
+        applyBranchSnapshot(quotation, existingQuotation);
 
         enrichQuotationItemsFromProducts(quotation);
         validateAndCleanQuotationItems(quotation);

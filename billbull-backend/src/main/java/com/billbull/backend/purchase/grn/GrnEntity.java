@@ -11,11 +11,14 @@ import com.billbull.backend.inventory.warehouse.Zone;
 import com.billbull.backend.inventory.warehouse.Locator;
 import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.purchase.lpo.Lpo;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "grns")
+@Table(name = "grns", indexes = {
+    @Index(name = "idx_grn_branch", columnList = "branch_id")
+})
 public class GrnEntity extends BaseEntity {
 
     @Column(unique = true, nullable = false)
@@ -48,9 +51,16 @@ public class GrnEntity extends BaseEntity {
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
     private BigDecimal grandTotal;
+    @Column(name = "branch_id")
     private Long branchId;
     private String branchName;
     private String branchCode;
+
+    /** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id", nullable = false)
@@ -278,4 +288,6 @@ public class GrnEntity extends BaseEntity {
     public void setBranchCode(String branchCode) {
         this.branchCode = branchCode;
     }
+
+    public Branch getBranchEntity() { return branchEntity; }
 }

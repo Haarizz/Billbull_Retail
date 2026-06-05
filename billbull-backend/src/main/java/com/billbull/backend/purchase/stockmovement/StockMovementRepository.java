@@ -308,6 +308,37 @@ public interface StockMovementRepository
                         @Param("productId") Long productId,
                         @Param("warehouseId") Long warehouseId);
 
+        // ✅ Weighted-average cost for a specific batch in a specific warehouse
+        @Query("""
+                            SELECT CASE WHEN COALESCE(SUM(sm.quantity), 0) = 0 THEN null
+                                        ELSE SUM(sm.unitCost * sm.quantity) / SUM(sm.quantity)
+                                   END
+                            FROM StockMovement sm
+                            WHERE sm.productId = :productId
+                              AND sm.warehouseId = :warehouseId
+                              AND sm.batchNumber = :batchNumber
+                              AND sm.quantity > 0
+                              AND sm.unitCost IS NOT NULL
+                              AND sm.unitCost > 0
+                        """)
+        BigDecimal getWeightedAverageCostByBatch(
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("batchNumber") String batchNumber);
+
+        // ✅ On-hand qty for a specific product + batch in a warehouse (all bins)
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId = :productId
+                              AND sm.warehouseId = :warehouseId
+                              AND sm.batchNumber = :batchNumber
+                        """)
+        java.math.BigDecimal getOnHandByBatch(
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("batchNumber") String batchNumber);
+
         // ✅ Batch weighted-average cost per product for a specific warehouse
         // Returns rows: [productId, avgCost]
         @Query("""

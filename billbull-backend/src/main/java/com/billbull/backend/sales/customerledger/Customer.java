@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.CascadeType;
@@ -13,12 +14,18 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "customers")
+@Table(
+    name = "customers",
+    indexes = { @Index(name = "idx_customer_branch", columnList = "branch_id") }
+)
 public class Customer {
 
     public Customer() {} // ✅ REQUIRED BY JPA
@@ -71,7 +78,14 @@ public class Customer {
     private String currency;
     private String salesman;
     private String taxGroup;
+    /** Legacy free-text branch label; kept until all callers migrate to {@link #branchEntity}. */
     private String branch;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
+
     private String warehouse;
 
     @Column(length = 1000)
@@ -222,6 +236,9 @@ public class Customer {
 
     public String getBranch() { return branch; }
     public void setBranch(String branch) { this.branch = branch; }
+
+    public Branch getBranchEntity() { return branchEntity; }
+    public void setBranchEntity(Branch branchEntity) { this.branchEntity = branchEntity; }
 
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }

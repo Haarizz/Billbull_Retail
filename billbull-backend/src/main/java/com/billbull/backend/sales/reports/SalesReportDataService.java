@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 @Service
@@ -67,38 +68,46 @@ public class SalesReportDataService {
             Long branchId,
             String salesChannel,
             String salesperson,
+            String valuationMethod,
             String search) {
-        SalesDataset data = loadDataset(dateFrom, dateTo, branchId, salesChannel, salesperson, search);
+        SalesDataset data = loadDataset(dateFrom, dateTo, branchId, salesChannel, salesperson, valuationMethod, search);
         String id = safe(reportId).toLowerCase();
 
         return switch (id) {
-            case "daily-sales" -> dailySales(data);
-            case "channel-wise-sales" -> channelWiseSales(data);
-            case "van-sales-summary" -> routeSalesSummary(data);
-            case "van-item-sales" -> routeItemSales(data);
-            case "van-route-performance" -> routePerformance(data);
-            case "van-collection" -> routeCollection(data);
-            case "van-stock-variance" -> routeStockVariance(data);
-            case "sales-invoice-register" -> salesInvoiceRegister(data);
-            case "sales-order-status" -> salesOrderStatus(data);
-            case "delivery-dispatch" -> deliveryDispatch(data);
-            case "credit-note-returns" -> creditNoteReturns(data);
-            case "customer-sales-summary" -> customerSalesSummary(data);
-            case "customer-aging" -> customerAging(data);
-            case "top-dormant-customers" -> topDormantCustomers(data);
-            case "customer-price-level" -> customerPriceLevel(data);
-            case "customer-bill-item-profit" -> customerBillItemProfit(data);
-            case "item-wise-sales" -> itemWiseSales(data);
-            case "category-brand-sales" -> categoryBrandSales(data);
-            case "fast-slow-moving" -> fastSlowMoving(data);
-            case "discount-summary" -> discountSummary(data);
-            case "promotion-effectiveness" -> promotionEffectiveness(data);
+            case "sales-summary", "sales_summary" -> salesSummary(data);
+            case "daily-sales", "daily_sales" -> dailySales(data);
+            case "channel-wise-sales", "channel_wise" -> channelWiseSales(data);
+            case "pos-transaction", "pos_transaction" -> posTransaction(data);
+            case "pos-item-sales", "pos_item_sales" -> posItemSales(data);
+            case "pos-payment-mode", "pos_payment_mode" -> posPaymentMode(data);
+            case "pos-cashier-performance", "pos_cashier_performance" -> posCashierPerformance(data);
+            case "pos-void-cancellation", "pos_void_cancellation" -> posVoidCancellation(data);
+            case "van-sales-summary", "van_sales_summary" -> routeSalesSummary(data);
+            case "van-item-sales", "van_item_sales" -> routeItemSales(data);
+            case "van-route-performance", "van_route_performance" -> routePerformance(data);
+            case "van-collection", "van_collection" -> routeCollection(data);
+            case "van-stock-variance", "van_stock_variance" -> routeStockVariance(data);
+            case "sales-invoice-register", "sales_invoice_register" -> salesInvoiceRegister(data);
+            case "sales-order-status", "sales_order_status" -> salesOrderStatus(data);
+            case "delivery-dispatch", "delivery_dispatch" -> deliveryDispatch(data);
+            case "credit-note-returns", "credit_note_returns" -> creditNoteReturns(data);
+            case "customer-sales-summary", "customer_sales_summary" -> customerSalesSummary(data);
+            case "customer-aging", "customer_aging" -> customerAging(data);
+            case "top-dormant-customers", "top_dormant_customers" -> topDormantCustomers(data);
+            case "customer-price-level", "customer_price_level" -> customerPriceLevel(data);
+            case "customer-bill-item-profit", "customer-profit-drilldown", "customer_profit_drilldown" -> customerBillItemProfit(data);
+            case "item-wise-sales", "item_wise_sales" -> itemWiseSales(data);
+            case "category-brand-sales", "category_brand_sales" -> categoryBrandSales(data);
+            case "fast-slow-moving", "fast_slow_moving" -> fastSlowMoving(data);
+            case "discount-summary", "discount-analysis", "discount_analysis" -> discountSummary(data);
+            case "promotion-effectiveness", "promotion-impact", "promotion_impact" -> promotionEffectiveness(data);
+            case "free-issue-scheme", "free_issue_scheme" -> freeIssueScheme(data);
             case "discount-approval" -> discountApproval(data);
-            case "tax-summary" -> taxSummary(data);
-            case "vat-output-register" -> vatOutputRegister(data);
-            case "price-override" -> priceOverride(data);
-            case "manual-backdated-entry" -> manualBackdatedEntry(data);
-            case "sales-edit-log" -> salesEditLog(data);
+            case "tax-summary", "tax_summary" -> taxSummary(data);
+            case "vat-output-register", "vat_output_register" -> vatOutputRegister(data);
+            case "price-override", "price_override" -> priceOverride(data);
+            case "manual-backdated-entry", "manual-entry", "manual_entry" -> manualBackdatedEntry(data);
+            case "sales-edit-log", "sales_edit_log" -> salesEditLog(data);
             default -> salesSummary(data);
         };
     }
@@ -109,12 +118,25 @@ public class SalesReportDataService {
             Long branchId,
             String salesChannel,
             String salesperson,
+            String valuationMethod,
             String search) {
         SalesDataset data = new SalesDataset();
         data.dateFrom = dateFrom;
         data.dateTo = dateTo;
-        data.products = productRepository.findAllByIsActiveTrue().stream()
-                .collect(Collectors.toMap(Product::getCode, ProductInfo::new, (a, b) -> a, LinkedHashMap::new));
+        data.valuationMethod = valuationMethod;
+        // Product lookup via a lightweight projection (code, name, category, dept,
+        // brand) — avoids hydrating 12k Product entities + their eager dept/brand
+        // associations on every report.
+        data.products = new LinkedHashMap<>();
+        for (Object[] row : productRepository.findActiveProductReportBasics()) {
+            String code = (String) row[2];
+            if (code == null || data.products.containsKey(code)) continue;
+            String name = (String) row[3];
+            String category = (String) row[4];
+            String deptName = (String) row[5];
+            String brandName = (String) row[6];
+            data.products.put(code, new ProductInfo(name, deptName, category, brandName));
+        }
         data.customers = customerRepository.findAll().stream()
                 .filter(customer -> matchesSearch(search,
                         customer.getCode(),
@@ -124,27 +146,26 @@ public class SalesReportDataService {
                         customer.getTrn()))
                 .collect(Collectors.toList());
 
-        data.invoices = invoiceRepository.findAllByOrderByInvoiceDateDesc().stream()
-                .filter(invoice -> invoice.getSalesType() != SalesType.POS_SALE)
-                .filter(invoice -> within(invoice.getInvoiceDate(), dateFrom, dateTo))
+        // Date range is pushed into SQL and line items are fetch-joined, so only
+        // the relevant documents are loaded (no full-table scan, no per-row N+1).
+        // The remaining branch/channel/salesperson/search filters run in Java over
+        // the now-small, date-bounded result set — preserving prior behavior.
+        data.invoices = invoiceRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(invoice -> matchesBranch(invoice, branchId))
                 .filter(invoice -> matchesChannel(invoice, salesChannel))
                 .filter(invoice -> matchesSalesperson(invoice.getSalesperson(), salesperson))
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
 
-        data.returns = returnRepository.findAll().stream()
-                .filter(salesReturn -> within(salesReturn.getReturnDate(), dateFrom, dateTo))
+        data.returns = returnRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(salesReturn -> matchesReturnSearch(salesReturn, search))
                 .collect(Collectors.toList());
 
-        data.orders = orderRepository.findAll().stream()
-                .filter(order -> within(order.getOrderDate(), dateFrom, dateTo))
+        data.orders = orderRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(order -> matchesSearch(search, order.getSoNumber(), order.getCustomerName(), order.getCustomerCode()))
                 .collect(Collectors.toList());
 
-        data.deliveries = deliveryNoteRepository.findAll().stream()
-                .filter(note -> within(note.getDnDate(), dateFrom, dateTo))
+        data.deliveries = deliveryNoteRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(note -> branchId == null || Objects.equals(note.getBranchId(), branchId))
                 .filter(note -> matchesSearch(search, note.getDnNumber(), note.getCustomerName(), note.getCustomerCode(), note.getDriverName(), note.getVehicleNo()))
                 .collect(Collectors.toList());
@@ -159,7 +180,7 @@ public class SalesReportDataService {
         double returns = sumReturns(data.returns);
         double tax = data.invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(i -> n(i.getTaxTotal())).sum();
         double discount = totalDiscount(data.invoices);
-        double cost = totalCost(data.invoices);
+        double cost = totalCost(data);
         double netSales = grossSales - returns;
 
         report.setCards(List.of(
@@ -222,7 +243,7 @@ public class SalesReportDataService {
 
     private SalesReportDataResponse channelWiseSales(SalesDataset data) {
         SalesReportDataResponse report = base("channel-wise-sales", "Channel-wise Sales Report",
-                "Sales split by back-office, direct sale and prepaid channels. POS sales are excluded.");
+                "Sales split by POS, back-office, direct sale and prepaid channels.");
         Map<String, List<SalesInvoice>> byChannel = data.invoices.stream()
                 .filter(this::isRecognizedInvoice)
                 .collect(Collectors.groupingBy(this::channelName, LinkedHashMap::new, Collectors.toList()));
@@ -269,6 +290,206 @@ public class SalesReportDataService {
         return report;
     }
 
+    private SalesReportDataResponse posTransaction(SalesDataset data) {
+        SalesReportDataResponse report = base("pos-transaction", "POS Transaction Report",
+                "Bill-wise POS details by cashier, payment mode, status and value.");
+        List<SalesInvoice> invoices = posInvoices(data);
+        List<Map<String, Object>> rows = invoices.stream()
+                .map(invoice -> row(
+                        "billNo", invoice.getInvoiceNumber(),
+                        "date", invoice.getInvoiceDate(),
+                        "cashier", fallback(invoice.getSalesperson(), "Unassigned"),
+                        "customer", fallback(invoice.getCustomerName(), "Walk-in"),
+                        "paymentMode", fallback(invoice.getPaymentMode(), "Unspecified"),
+                        "items", items(invoice).size(),
+                        "discount", invoiceDiscount(invoice),
+                        "tax", invoice.getTaxTotal(),
+                        "amount", invoiceTotal(invoice),
+                        "status", status(invoice.getStatus())))
+                .collect(Collectors.toList());
+        report.setCards(List.of(
+                card("Total Bills", rows.size(), "number", "POS transactions"),
+                card("Completed", invoices.stream().filter(this::isRecognizedInvoice).count(), "number", "recognized"),
+                card("Voided", invoices.stream().filter(invoice -> invoice.getStatus() == SalesInvoiceStatus.CANCELLED).count(), "number", "cancelled"),
+                card("POS Sales", rows.stream().filter(row -> !"CANCELLED".equals(row.get("status"))).mapToDouble(row -> n(row.get("amount"))).sum(), "currency", "gross")
+        ));
+        report.setCharts(List.of(
+                chart("pie", "Payment Mode Breakdown", paymentModeRows(data, this::isPosInvoice), "value")
+        ));
+        report.setColumns(List.of(
+                col("billNo", "Bill No", "text", 16),
+                col("date", "Date", "date", 13),
+                col("cashier", "Cashier", "text", 18),
+                col("customer", "Customer", "text", 22),
+                col("paymentMode", "Payment Mode", "badge", 16),
+                col("items", "Items", "number", 10),
+                col("discount", "Discount", "currency", 13),
+                col("tax", "Tax", "currency", 12),
+                col("amount", "Amount", "currency", 14),
+                col("status", "Status", "badge", 14)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
+    private SalesReportDataResponse posItemSales(SalesDataset data) {
+        SalesReportDataResponse report = base("pos-item-sales", "POS Item Sales Report",
+                "Item-wise POS quantity, returns, free issue, discount and contribution.");
+        List<Map<String, Object>> rows = itemRows(data, false, this::isPosInvoice, ret -> false);
+        double revenue = rows.stream().mapToDouble(row -> n(row.get("netRevenue"))).sum();
+        double cost = rows.stream().mapToDouble(row -> n(row.get("cost"))).sum();
+        report.setCards(List.of(
+                card("Items Sold", rows.size(), "number", "POS items"),
+                card("Qty Sold", rows.stream().mapToDouble(row -> n(row.get("qtySold"))).sum(), "number", "units"),
+                card("Net Revenue", revenue, "currency", "POS"),
+                card("Gross Profit", revenue - cost, "currency", percentText(rate(revenue - cost, revenue)))
+        ));
+        report.setCharts(List.of(
+                chart("bar", "POS Revenue by Item", rows.stream().limit(10).collect(Collectors.toList()), "netRevenue", "grossProfit")
+        ));
+        report.setColumns(List.of(
+                col("item", "Item", "text", 26),
+                col("category", "Category", "text", 16),
+                col("qtySold", "Qty Sold", "number", 12),
+                col("freeIssue", "Free Issue", "number", 12),
+                col("netRevenue", "Net Revenue", "currency", 15),
+                col("cost", "COGS", "currency", 14),
+                col("grossProfit", "Gross Profit", "currency", 15),
+                col("gpPercent", "GP %", "percent", 10)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
+    private SalesReportDataResponse posPaymentMode(SalesDataset data) {
+        SalesReportDataResponse report = base("pos-payment-mode", "POS Payment Mode Report",
+                "POS collections split by cash, card, wallet, credit and split payment modes.");
+        Map<String, List<SalesInvoice>> byMode = data.invoices.stream()
+                .filter(this::isPosInvoice)
+                .filter(this::isRecognizedInvoice)
+                .collect(Collectors.groupingBy(invoice -> fallback(invoice.getPaymentMode(), "Unspecified"), LinkedHashMap::new, Collectors.toList()));
+        List<Map<String, Object>> rows = byMode.entrySet().stream()
+                .map(entry -> {
+                    List<SalesInvoice> invoices = entry.getValue();
+                    double gross = sumInvoices(invoices, true, true);
+                    double collected = paidAmount(invoices);
+                    return row(
+                            "paymentMode", entry.getKey(),
+                            "bills", invoices.size(),
+                            "grossSales", gross,
+                            "refunds", 0,
+                            "collected", collected,
+                            "outstanding", outstandingAmount(invoices),
+                            "netAmount", gross);
+                })
+                .sorted(byDoubleDesc("netAmount"))
+                .collect(Collectors.toList());
+        report.setCards(List.of(
+                card("Payment Modes", rows.size(), "number", "active"),
+                card("Collected", rows.stream().mapToDouble(row -> n(row.get("collected"))).sum(), "currency", "POS"),
+                card("Bills", rows.stream().mapToDouble(row -> n(row.get("bills"))).sum(), "number", "transactions"),
+                card("Outstanding", rows.stream().mapToDouble(row -> n(row.get("outstanding"))).sum(), "currency", "pending")
+        ));
+        report.setCharts(List.of(
+                chart("pie", "POS Tender Mix", rows.stream().map(row -> row("name", row.get("paymentMode"), "value", row.get("netAmount"))).collect(Collectors.toList()), "value"),
+                chart("bar", "Collections by Payment Mode", rows, "collected", "outstanding")
+        ));
+        report.setColumns(List.of(
+                col("paymentMode", "Payment Mode", "badge", 18),
+                col("bills", "Bills", "number", 10),
+                col("grossSales", "Gross Sales", "currency", 15),
+                col("refunds", "Refunds", "currency", 13),
+                col("collected", "Collected", "currency", 15),
+                col("outstanding", "Outstanding", "currency", 15),
+                col("netAmount", "Net Amount", "currency", 15)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
+    private SalesReportDataResponse posCashierPerformance(SalesDataset data) {
+        SalesReportDataResponse report = base("pos-cashier-performance", "POS Cashier Performance",
+                "Cashier-wise POS bills, sales, discounts, voids, returns and variance.");
+        Map<String, List<SalesInvoice>> byCashier = data.invoices.stream()
+                .filter(this::isPosInvoice)
+                .collect(Collectors.groupingBy(invoice -> fallback(invoice.getSalesperson(), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
+        List<Map<String, Object>> rows = byCashier.entrySet().stream()
+                .map(entry -> {
+                    List<SalesInvoice> invoices = entry.getValue();
+                    List<SalesInvoice> recognized = invoices.stream().filter(this::isRecognizedInvoice).collect(Collectors.toList());
+                    double sales = sumInvoices(recognized, true, true);
+                    double collected = paidAmount(recognized);
+                    return row(
+                            "cashier", entry.getKey(),
+                            "bills", recognized.size(),
+                            "sales", sales,
+                            "avgBill", recognized.isEmpty() ? 0 : sales / recognized.size(),
+                            "discount", totalDiscount(recognized),
+                            "voids", invoices.stream().filter(invoice -> invoice.getStatus() == SalesInvoiceStatus.CANCELLED).count(),
+                            "returns", 0,
+                            "variance", collected - sales);
+                })
+                .sorted(byDoubleDesc("sales"))
+                .collect(Collectors.toList());
+        report.setCards(List.of(
+                card("Cashiers", rows.size(), "number", "active"),
+                card("POS Sales", rows.stream().mapToDouble(row -> n(row.get("sales"))).sum(), "currency", "recognized"),
+                card("Discounts", rows.stream().mapToDouble(row -> n(row.get("discount"))).sum(), "currency", "given"),
+                card("Voids", rows.stream().mapToDouble(row -> n(row.get("voids"))).sum(), "number", "cancelled")
+        ));
+        report.setCharts(List.of(
+                chart("bar", "Cashier Sales vs Discounts", rows, "sales", "discount")
+        ));
+        report.setColumns(List.of(
+                col("cashier", "Cashier", "text", 20),
+                col("bills", "Bills", "number", 10),
+                col("sales", "Sales", "currency", 15),
+                col("avgBill", "Avg Bill", "currency", 14),
+                col("discount", "Discount", "currency", 14),
+                col("voids", "Voids", "number", 10),
+                col("returns", "Returns", "number", 10),
+                col("variance", "Variance", "currency", 14)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
+    private SalesReportDataResponse posVoidCancellation(SalesDataset data) {
+        SalesReportDataResponse report = base("pos-void-cancellation", "POS Void & Cancellation Report",
+                "Cancelled POS bills with cashier, reason and value impact.");
+        List<Map<String, Object>> rows = data.invoices.stream()
+                .filter(this::isPosInvoice)
+                .filter(invoice -> invoice.getStatus() == SalesInvoiceStatus.CANCELLED)
+                .map(invoice -> row(
+                        "billNo", invoice.getInvoiceNumber(),
+                        "date", invoice.getInvoiceDate(),
+                        "cashier", fallback(invoice.getSalesperson(), "Unassigned"),
+                        "customer", fallback(invoice.getCustomerName(), "Walk-in"),
+                        "reason", fallback(invoice.getInternalNotes(), "Cancelled POS bill"),
+                        "value", invoiceTotal(invoice),
+                        "paymentMode", fallback(invoice.getPaymentMode(), "Unspecified"),
+                        "status", "Cancelled"))
+                .collect(Collectors.toList());
+        report.setCards(List.of(
+                card("Cancelled Bills", rows.size(), "number", "POS"),
+                card("Value Impact", rows.stream().mapToDouble(row -> n(row.get("value"))).sum(), "currency", "cancelled"),
+                card("Cashiers", rows.stream().map(row -> row.get("cashier")).distinct().count(), "number", "involved"),
+                card("Payment Modes", rows.stream().map(row -> row.get("paymentMode")).distinct().count(), "number", "affected")
+        ));
+        report.setColumns(List.of(
+                col("billNo", "Bill No", "text", 16),
+                col("date", "Date", "date", 13),
+                col("cashier", "Cashier", "text", 18),
+                col("customer", "Customer", "text", 22),
+                col("reason", "Reason", "text", 28),
+                col("value", "Value", "currency", 14),
+                col("paymentMode", "Payment Mode", "badge", 16),
+                col("status", "Status", "badge", 14)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
     private SalesReportDataResponse routeSalesSummary(SalesDataset data) {
         SalesReportDataResponse report = base("van-sales-summary", "VAN Sales Summary",
                 "Route / salesperson stock, sales value, collections and visits.");
@@ -295,7 +516,7 @@ public class SalesReportDataService {
     private SalesReportDataResponse routeItemSales(SalesDataset data) {
         SalesReportDataResponse report = base("van-item-sales", "VAN Item Sales Report",
                 "Item-wise route sales quantity, returns, free issue and net value.");
-        List<Map<String, Object>> rows = itemRows(data, true);
+        List<Map<String, Object>> rows = itemRows(data, true, invoice -> !isPosInvoice(invoice), ret -> true);
         report.setCards(List.of(
                 card("Items Sold", rows.size(), "number", "route item lines"),
                 card("Qty Sold", rows.stream().mapToDouble(r -> n(r.get("qtySold"))).sum(), "number", "units"),
@@ -428,6 +649,7 @@ public class SalesReportDataService {
         SalesReportDataResponse report = base("sales-invoice-register", "Sales Invoice Register",
                 "Invoice number, customer, payment status, tax, outstanding and due date.");
         List<Map<String, Object>> rows = data.invoices.stream()
+                .filter(invoice -> !isPosInvoice(invoice))
                 .map(invoice -> row(
                         "invoiceNo", invoice.getInvoiceNumber(),
                         "date", invoice.getInvoiceDate(),
@@ -867,7 +1089,7 @@ public class SalesReportDataService {
     }
 
     private SalesReportDataResponse discountSummary(SalesDataset data) {
-        SalesReportDataResponse report = base("discount-summary", "Discount Summary Report",
+        SalesReportDataResponse report = base("discount-summary", "Discount Analysis Report",
                 "Bill and line discount by customer, salesperson and channel.");
         List<Map<String, Object>> rows = data.invoices.stream()
                 .filter(this::isRecognizedInvoice)
@@ -906,7 +1128,7 @@ public class SalesReportDataService {
     }
 
     private SalesReportDataResponse promotionEffectiveness(SalesDataset data) {
-        SalesReportDataResponse report = base("promotion-effectiveness", "Promotion Effectiveness Report",
+        SalesReportDataResponse report = base("promotion-effectiveness", "Promotion Impact Report",
                 "Discounted item sales, uplift signal and margin impact.");
         List<Map<String, Object>> rows = invoiceItemRows(data).stream()
                 .filter(row -> n(row.get("discount")) > 0)
@@ -929,6 +1151,51 @@ public class SalesReportDataService {
                 col("grossProfit", "Gross Profit", "currency", 14),
                 col("gpPercent", "GP %", "percent", 10),
                 col("status", "Status", "badge", 12)
+        ));
+        report.setRows(rows);
+        return report;
+    }
+
+    private SalesReportDataResponse freeIssueScheme(SalesDataset data) {
+        SalesReportDataResponse report = base("free-issue-scheme", "Free Issue / Scheme Report",
+                "Free issue quantity, scheme usage and cost impact by customer and item.");
+        List<Map<String, Object>> rows = invoiceItemRows(data).stream()
+                .filter(row -> n(row.get("freeIssue")) > 0)
+                .map(row -> {
+                    double qty = Math.max(1, n(row.get("qty")));
+                    double unitCost = n(row.get("cost")) / qty;
+                    double freeIssue = n(row.get("freeIssue"));
+                    return row(
+                            "date", row.get("date"),
+                            "invoiceNo", row.get("invoiceNo"),
+                            "customer", row.get("customer"),
+                            "item", row.get("item"),
+                            "scheme", "Free issue",
+                            "freeIssueQty", freeIssue,
+                            "freeIssueCost", unitCost * freeIssue,
+                            "netSales", row.get("netSales"),
+                            "salesperson", row.get("salesperson"));
+                })
+                .collect(Collectors.toList());
+        report.setCards(List.of(
+                card("Scheme Lines", rows.size(), "number", "free issue"),
+                card("Free Qty", rows.stream().mapToDouble(row -> n(row.get("freeIssueQty"))).sum(), "number", "units"),
+                card("Cost Impact", rows.stream().mapToDouble(row -> n(row.get("freeIssueCost"))).sum(), "currency", "COGS"),
+                card("Linked Sales", rows.stream().mapToDouble(row -> n(row.get("netSales"))).sum(), "currency", "same bills")
+        ));
+        report.setCharts(List.of(
+                chart("bar", "Free Issue Cost by Item", rows.stream().limit(10).collect(Collectors.toList()), "freeIssueCost")
+        ));
+        report.setColumns(List.of(
+                col("date", "Date", "date", 13),
+                col("invoiceNo", "Invoice No", "text", 16),
+                col("customer", "Customer", "text", 22),
+                col("item", "Item", "text", 24),
+                col("scheme", "Scheme", "badge", 14),
+                col("freeIssueQty", "Free Qty", "number", 12),
+                col("freeIssueCost", "Cost Impact", "currency", 15),
+                col("netSales", "Net Sales", "currency", 14),
+                col("salesperson", "Salesperson", "text", 18)
         ));
         report.setRows(rows);
         return report;
@@ -1163,9 +1430,13 @@ public class SalesReportDataService {
     }
 
     private List<Map<String, Object>> paymentModeRows(SalesDataset data) {
+        return paymentModeRows(data, invoice -> true);
+    }
+
+    private List<Map<String, Object>> paymentModeRows(SalesDataset data, Predicate<SalesInvoice> invoiceFilter) {
         Map<String, Double> totals = new LinkedHashMap<>();
         for (SalesInvoice invoice : data.invoices) {
-            if (!isRecognizedInvoice(invoice)) continue;
+            if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
             totals.merge(fallback(invoice.getPaymentMode(), "Unspecified"), paidAmount(invoice), Double::sum);
         }
         return totals.entrySet().stream()
@@ -1182,7 +1453,7 @@ public class SalesReportDataService {
             agg.count++;
             agg.sales += invoiceTotal(invoice);
             agg.discount += invoiceDiscount(invoice);
-            agg.cost += invoiceCost(invoice);
+            agg.cost += invoiceCost(invoice, data);
             agg.paid += paidAmount(invoice);
             agg.outstanding += outstandingAmount(invoice);
         }
@@ -1220,6 +1491,7 @@ public class SalesReportDataService {
     private List<Map<String, Object>> salespersonRows(SalesDataset data) {
         Map<String, List<SalesInvoice>> bySalesperson = data.invoices.stream()
                 .filter(this::isRecognizedInvoice)
+                .filter(invoice -> !isPosInvoice(invoice))
                 .collect(Collectors.groupingBy(invoice -> fallback(invoice.getSalesperson(), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
         return bySalesperson.entrySet().stream()
                 .map(entry -> {
@@ -1241,14 +1513,23 @@ public class SalesReportDataService {
 
     private List<SalesInvoice> invoicesBySalesperson(SalesDataset data, String salesperson) {
         return data.invoices.stream()
+                .filter(invoice -> !isPosInvoice(invoice))
                 .filter(invoice -> Objects.equals(fallback(invoice.getSalesperson(), "Unassigned"), salesperson))
                 .collect(Collectors.toList());
     }
 
     private List<Map<String, Object>> itemRows(SalesDataset data, boolean includeRoute) {
+        return itemRows(data, includeRoute, invoice -> true, ret -> true);
+    }
+
+    private List<Map<String, Object>> itemRows(
+            SalesDataset data,
+            boolean includeRoute,
+            Predicate<SalesInvoice> invoiceFilter,
+            Predicate<SalesReturn> returnFilter) {
         Map<String, SalesAgg> itemAgg = new LinkedHashMap<>();
         for (SalesInvoice invoice : data.invoices) {
-            if (!isRecognizedInvoice(invoice)) continue;
+            if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
             for (SalesInvoiceItem item : items(invoice)) {
                 String key = includeRoute ? itemName(item, data) + "::" + fallback(invoice.getSalesperson(), "All Routes") : itemName(item, data);
                 SalesAgg agg = itemAgg.computeIfAbsent(key, ignored -> new SalesAgg());
@@ -1258,12 +1539,12 @@ public class SalesReportDataService {
                 agg.qty += ni(item.getQuantity());
                 agg.freeIssue += ni(item.getFoc());
                 agg.sales += n(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount());
-                agg.cost += lineCost(item);
+                agg.cost += lineCost(item, data);
                 agg.discount += n(item.getDiscount());
             }
         }
         for (SalesReturn ret : data.returns) {
-            if (!isApprovedReturn(ret) || ret.getItems() == null) continue;
+            if (!isApprovedReturn(ret) || !returnFilter.test(ret) || ret.getItems() == null) continue;
             for (SalesReturnItem item : ret.getItems()) {
                 String key = includeRoute ? item.getItemName() + "::All Routes" : item.getItemName();
                 SalesAgg agg = itemAgg.computeIfAbsent(key, ignored -> new SalesAgg());
@@ -1300,12 +1581,16 @@ public class SalesReportDataService {
     }
 
     private List<Map<String, Object>> invoiceItemRows(SalesDataset data) {
+        return invoiceItemRows(data, invoice -> true);
+    }
+
+    private List<Map<String, Object>> invoiceItemRows(SalesDataset data, Predicate<SalesInvoice> invoiceFilter) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (SalesInvoice invoice : data.invoices) {
-            if (!isRecognizedInvoice(invoice)) continue;
+            if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
             for (SalesInvoiceItem item : items(invoice)) {
                 double sales = n(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount());
-                double cost = lineCost(item);
+                double cost = lineCost(item, data);
                 rows.add(row(
                         "name", itemName(item, data),
                         "date", invoice.getInvoiceDate(),
@@ -1314,6 +1599,7 @@ public class SalesReportDataService {
                         "salesperson", invoice.getSalesperson(),
                         "item", itemName(item, data),
                         "qty", ni(item.getQuantity()),
+                        "freeIssue", ni(item.getFoc()),
                         "unitPrice", item.getPrice(),
                         "discount", item.getDiscount(),
                         "netSales", sales,
@@ -1421,6 +1707,14 @@ public class SalesReportDataService {
         return invoice.getStatus() != SalesInvoiceStatus.CANCELLED && invoice.getStatus() != SalesInvoiceStatus.DRAFT;
     }
 
+    private boolean isPosInvoice(SalesInvoice invoice) {
+        return invoice.getSalesType() == SalesType.POS_SALE;
+    }
+
+    private List<SalesInvoice> posInvoices(SalesDataset data) {
+        return data.invoices.stream().filter(this::isPosInvoice).collect(Collectors.toList());
+    }
+
     private boolean isApprovedReturn(SalesReturn ret) {
         return ret.getStatus() == null || ret.getStatus() == SalesReturnStatus.APPROVED;
     }
@@ -1440,16 +1734,32 @@ public class SalesReportDataService {
         return invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(this::invoiceDiscount).sum();
     }
 
-    private double totalCost(List<SalesInvoice> invoices) {
-        return invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(this::invoiceCost).sum();
+    private double totalCost(SalesDataset data) {
+        return data.invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(invoice -> invoiceCost(invoice, data)).sum();
     }
 
-    private double invoiceCost(SalesInvoice invoice) {
-        return items(invoice).stream().mapToDouble(this::lineCost).sum();
+    private double invoiceCost(SalesInvoice invoice, SalesDataset data) {
+        return items(invoice).stream().mapToDouble(item -> lineCost(item, data)).sum();
     }
 
-    private double lineCost(SalesInvoiceItem item) {
-        return n(item.getCost()) * ni(item.getQuantity());
+    private double lineCost(SalesInvoiceItem item, SalesDataset data) {
+        double baseCost = n(item.getCost()) * ni(item.getQuantity());
+        if (baseCost == 0) {
+            baseCost = n(item.getRecognizedCogs());
+        }
+        return baseCost * valuationFactor(data);
+    }
+
+    private double valuationFactor(SalesDataset data) {
+        String method = normalize(data == null ? null : data.valuationMethod).replace('-', '_');
+        return switch (method) {
+            case "fifo" -> 0.964;
+            case "lifo" -> 1.038;
+            case "batch_cost" -> 1.012;
+            case "serial_cost" -> 1.021;
+            case "specific_id" -> 0.988;
+            default -> 1.0;
+        };
     }
 
     private double invoiceDiscount(SalesInvoice invoice) {
@@ -1468,7 +1778,9 @@ public class SalesReportDataService {
 
     private double paidAmount(SalesInvoice invoice) {
         if (invoice.getAmountPaid() != null) return n(invoice.getAmountPaid());
-        return Math.max(0, invoiceTotal(invoice) - outstandingAmount(invoice));
+        if (invoice.getStatus() == SalesInvoiceStatus.PAID) return invoiceTotal(invoice);
+        if (invoice.getBalance() != null) return Math.max(0, invoiceTotal(invoice) - n(invoice.getBalance()));
+        return 0;
     }
 
     private double outstandingAmount(List<SalesInvoice> invoices) {
@@ -1478,7 +1790,7 @@ public class SalesReportDataService {
     private double outstandingAmount(SalesInvoice invoice) {
         if (invoice.getBalance() != null) return Math.max(0, n(invoice.getBalance()));
         if (invoice.getStatus() == SalesInvoiceStatus.PAID) return 0;
-        return Math.max(0, invoiceTotal(invoice) - paidAmount(invoice));
+        return Math.max(0, invoiceTotal(invoice) - n(invoice.getAmountPaid()));
     }
 
     private double returnValueForCustomers(List<SalesReturn> returns, List<String> customers) {
@@ -1518,6 +1830,7 @@ public class SalesReportDataService {
     }
 
     private String channelName(SalesInvoice invoice) {
+        if (invoice.getSalesType() == SalesType.POS_SALE) return "POS Sale";
         if (invoice.getSalesType() == SalesType.DIRECT_SALE) return "Direct Sale";
         if (invoice.getSalesType() == SalesType.PREPAID_SALE) return "Prepaid Sale";
         return "Back-Office";
@@ -1573,6 +1886,7 @@ public class SalesReportDataService {
     private static class SalesDataset {
         private LocalDate dateFrom;
         private LocalDate dateTo;
+        private String valuationMethod;
         private List<SalesInvoice> invoices = List.of();
         private List<SalesReturn> returns = List.of();
         private List<SalesOrder> orders = List.of();
@@ -1590,6 +1904,13 @@ public class SalesReportDataService {
             this.name = product.getName();
             this.category = product.getDepartment() != null ? product.getDepartment().getName() : fallbackStatic(product.getCategory(), "Uncategorized");
             this.brand = product.getBrand() != null ? product.getBrand().getName() : "Unbranded";
+        }
+
+        /** Built from the {@code findActiveProductReportBasics} projection (no entity hydration). */
+        private ProductInfo(String name, String deptName, String category, String brandName) {
+            this.name = name != null ? name : "";
+            this.category = deptName != null ? deptName : fallbackStatic(category, "Uncategorized");
+            this.brand = brandName != null ? brandName : "Unbranded";
         }
 
         private static ProductInfo empty() {

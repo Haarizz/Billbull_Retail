@@ -2006,7 +2006,7 @@ const BarcodePrinter = () => {
                                                         <div className="text-sm font-bold text-slate-900">{item.productName}</div>
                                                         <div className="text-[11px] text-slate-500">Code: {item.sku}</div>
                                                     </div>
-                                                    <table className="w-full text-xs">
+                                                    <table className="bb-nowrap-table w-full text-xs">
                                                         <thead className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
                                                             <tr>
                                                                 <th className="px-3 py-1.5 w-8"></th>

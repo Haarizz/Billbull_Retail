@@ -79,7 +79,7 @@ public class BatchSelectionService {
             Integer requiredQuantity) {
 
         Product product = requireProduct(itemCode);
-        Bin bin = resolveBin(binId, locationCode);
+        Bin bin = resolveSelectionBin(product, binId, locationCode);
         int required = normalizeRequiredQuantity(requiredQuantity);
 
         List<BatchMaster> available = batchRepository.findAvailableForSelection(product.getCode(), bin.getId());
@@ -165,6 +165,39 @@ public class BatchSelectionService {
         return saveSourceLineSelection(
                 DOC_TYPE_SALES_INVOICE,
                 invoice.getId(),
+                item.getId(),
+                product,
+                bin,
+                request,
+                requiredQuantity);
+    }
+
+    /**
+     * Fast Sale: auto-reserve FEFO batches for a Sales Invoice line at post time,
+     * when no manual selection is possible (the invoice posts in one step). The
+     * bin is auto-resolved from where the product's FEFO-preferred stock sits if
+     * the line carries none. Reserved against the SALES_INVOICE source so the
+     * auto-generated Delivery Note consumes them via its sourceLineId link.
+     */
+    public List<BatchAllocation> autoReserveFefoForSalesInvoiceLine(
+            Long invoiceId,
+            SalesInvoiceItem item,
+            int requiredQuantity) {
+        if (invoiceId == null || item == null || item.getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved sales invoice and item are required");
+        }
+        Product product = requireBatchProduct(item.getItemCode());
+        Bin bin = resolveSelectionBin(product, item.getBinId(), null);
+        item.setBinId(bin.getId());
+
+        BatchSelectionRequest request = new BatchSelectionRequest();
+        request.mode = BatchAllocationMethod.AUTO_FEFO;
+        request.binId = bin.getId();
+        request.locationCode = bin.getCode();
+        request.requiredQuantity = requiredQuantity;
+        return saveSourceLineSelection(
+                DOC_TYPE_SALES_INVOICE,
+                invoiceId,
                 item.getId(),
                 product,
                 bin,
@@ -727,6 +760,24 @@ public class BatchSelectionService {
             return resolveBin(existingBinId, request != null ? request.locationCode : null);
         }
         return resolveBin(null, request != null ? request.locationCode : null);
+    }
+
+    // For the options preview: honour an explicit bin if the line has one,
+    // otherwise auto-resolve the bin holding the product's FEFO-preferred available
+    // batch. Lets Direct Sale invoice lines (which carry no bin) load batches.
+    private Bin resolveSelectionBin(Product product, Long binId, String locationCode) {
+        if (binId != null || (locationCode != null && !locationCode.isBlank())) {
+            return resolveBin(binId, locationCode);
+        }
+        Long resolvedBinId = batchRepository.findAvailableForSelectionAnyBin(product.getCode()).stream()
+                .map(BatchMaster::getBinId)
+                .filter(id -> id != null)
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "No available batch stock for " + product.getCode()));
+        return binRepository.findByIdEager(resolvedBinId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Bin not found: " + resolvedBinId));
     }
 
     private Bin resolveBin(Long binId, String locationCode) {

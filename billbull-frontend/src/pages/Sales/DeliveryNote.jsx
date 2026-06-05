@@ -39,13 +39,17 @@ import {
 // ==========================================
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendDeliveryNoteEmail } from '../../api/deliveryNoteApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice } from '../../utils/salesPricing';
@@ -54,6 +58,8 @@ import { getActiveVatRate } from '../../api/taxApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -116,18 +122,22 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const DeliveryNote = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { print } = usePrintDocument();
     const { company } = useCompany();
-    const { defaultBranch } = useBranch();
+    const { defaultBranch, branches: availableBranches, activeBranch } = useBranch();
     const { canAction } = usePermissions();
     const currency = company?.currency || 'AED';
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+    // Originating branch of the loaded DN — drives print/email header (PDF §7.1).
+    const [loadedDnBranchId, setLoadedDnBranchId] = useState(null);
 
     // --- DATA LIST STATES ---
     const [deliveryNotesList, setDeliveryNotesList] = useState([]);
@@ -139,6 +149,8 @@ const DeliveryNote = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+    const _todayDN = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayDN, toDate: _todayDN });
     const [pickingSearchTerm, setPickingSearchTerm] = useState('');
     const [selectedPickingId, setSelectedPickingId] = useState(null);
     const [pickingScanValue, setPickingScanValue] = useState('');
@@ -206,6 +218,10 @@ const DeliveryNote = () => {
                     bValue = Number(bValue || 0);
                 }
 
+                if (['dnNo', 'soNo', 'piNo'].includes(sortConfig.key)) {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
+                }
+
                 if (aValue < bValue) {
                     return sortConfig.direction === 'asc' ? -1 : 1;
                 }
@@ -241,11 +257,10 @@ const DeliveryNote = () => {
     );
 
     const handleSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') {
-            direction = 'asc';
-        }
-        setSortConfig({ key, direction });
+        setSortConfig(prev => ({
+            key,
+            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
     };
 
     useEffect(() => {
@@ -450,7 +465,7 @@ const DeliveryNote = () => {
                     {isLoading && <div className="animate-spin h-3.5 w-3.5 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
                 </div>
                 <div className="max-h-[350px] overflow-y-auto">
-                    <table className="w-full text-left text-[11px]">
+                    <table className="bb-nowrap-table w-full text-left text-[11px]">
                         <thead className="bg-[#FBFBFD] text-slate-400 uppercase font-bold sticky top-0 z-10">
                             <tr>
                                 <th className="px-4 py-2 border-b border-slate-100">Customer</th>
@@ -880,6 +895,8 @@ const DeliveryNote = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const data = Array.isArray(resp?.content) ? resp.content : [];
             setListPageMeta({
@@ -895,6 +912,9 @@ const DeliveryNote = () => {
                 date: dn.dnDate,
                 customerCode: dn.customerCode,
                 customerName: dn.customerName,
+                branchId: dn.branchId,
+                branchName: dn.branchName,
+                branchCode: dn.branchCode,
                 soNo: dn.salesOrderNo,
                 piNo: dn.proformaNo || "-",
                 siNo: dn.linkedSalesInvoiceNumber || '',
@@ -934,11 +954,21 @@ const DeliveryNote = () => {
         if (activeTab !== 'list') return;
         loadDeliveryNotes();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
 
     useEffect(() => {
         loadDeliveryNotes();
     }, []);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') loadDeliveryNotes();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
     useEffect(() => {
@@ -1064,6 +1094,7 @@ const DeliveryNote = () => {
 
     const handleCreateNew = () => {
         setCurrentDnId(null);
+        setLoadedDnBranchId(null);
         if (deliveryAutoNumbering) {
             getNextDeliveryNoteNumber().then(setDnNumber).catch(() => setDnNumber(''));
         } else {
@@ -1091,6 +1122,7 @@ const DeliveryNote = () => {
 
     const handleRowClick = (dn) => {
         setCurrentDnId(dn.id);
+        setLoadedDnBranchId(dn.branchId ?? null);
 
         setDnNumber(dn.dnNo);
         setDnDate(dn.date);
@@ -1653,6 +1685,66 @@ const DeliveryNote = () => {
 
     const [isPrinting, setIsPrinting] = useState(false);
 
+    // QA-040: shared payload builder reused by both Print and the Send-Email
+    // modal so the emailed Delivery Note mirrors exactly what Print produces.
+    const buildDnPrintData = () => {
+        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+        const dnBranchId = loadedDnBranchId ?? activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === dnBranchId) || activeBranch || {};
+
+        return {
+            title: 'DELIVERY NOTE',
+            docNo: dnNumber,
+            date: dnDate,
+            customer: {
+                name: selectedCustomer?.name || '',
+                address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                shippingAddress: shippingAddress || '',
+                phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                email: fullCustomer?.email || '',
+                trn: selectedCustomer?.trn || fullCustomer?.trn
+            },
+            items: items.map(i => ({
+                code: i.code,
+                name: i.name || i.desc || '',
+                desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                sku: i.sku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || '',
+                detailedDesc: i.detailedDesc || '',
+                localName: i.localName || '',
+                barcode: i.barcode || '',
+                location: warehouse || '',
+                unit: i.unit,
+                qty: i.currentQty,
+                price: Number(i.price) || 0,
+                disc: Number(i.disc) || 0,
+                tax: Number(i.tax) || 0,
+                taxAmt: Number(i.taxAmt) || 0,
+                total: Number(i.total) || 0,
+                image: i.image ? getImageUrl(i.image) : '',
+                batchNumber: i.batchNumber || '',
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                expiry: i.expiry || i.expiryDate || ''
+            })),
+            totals: {
+                currency: company?.currencySymbol || company?.currency || 'AED'
+            },
+            hideTotalsTable: true,
+            meta: {
+                status: status,
+                linkedSalesOrder: linkedSO || '',
+                linkedSalesInvoice: linkedSI || '',
+                location: warehouse || '',
+                locationStore: printBranch.name || '',
+                warehouse: warehouse || '',
+                deliveryTerms: '',
+                salesPerson: '',
+                notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+            }
+        };
+    };
+
     const handlePrint = async () => {
         if (items.length === 0) {
             alert("Nothing to print. Add items first.");
@@ -1669,61 +1761,9 @@ const DeliveryNote = () => {
             const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
 
             if (defaultTemplate) {
-                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+                const printData = buildDnPrintData();
 
-                const printData = {
-                    title: 'DELIVERY NOTE',
-                    docNo: dnNumber,
-                    date: dnDate,
-                    customer: {
-                        name: selectedCustomer?.name || '',
-                        address: shippingAddress || fullCustomer?.address || '',
-                        trn: selectedCustomer?.trn || fullCustomer?.trn
-                    },
-                    items: items.map(i => ({
-                        code: i.code,
-                        name: i.name || i.desc || '',
-                        desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
-                        sku: i.sku || '',
-                        brand: i.brand || i.brandName || '',
-                        shortDesc: i.shortDesc || '',
-                        detailedDesc: i.detailedDesc || '',
-                        localName: i.localName || '',
-                        barcode: i.barcode || '',
-                        location: warehouse || '',
-                        unit: i.unit,
-                        qty: i.currentQty,
-                        price: Number(i.price) || 0,
-                        disc: Number(i.disc) || 0,
-                        tax: Number(i.tax) || 0,
-                        taxAmt: Number(i.taxAmt) || 0,
-                        total: Number(i.total) || 0,
-                        image: i.image ? getImageUrl(i.image) : '',
-                        // QA-030: thread batch picks through so the print
-                        // template can show the Batch # line when the toggle
-                        // is on (also feeds the Batch # / Batch Barcode cols
-                        // when those columns are enabled).
-                        batchNumber: i.batchNumber || '',
-                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
-                        expiry: i.expiry || i.expiryDate || ''
-                    })),
-                    totals: {
-                        currency: company?.currencySymbol || company?.currency || 'AED'
-                    },
-                    hideTotalsTable: true,
-                    meta: {
-                        status: status,
-                        // QA-031: explicit linked source documents — renderer
-                        // shows each as a labeled row when its template toggle
-                        // is enabled.
-                        linkedSalesOrder: linkedSO || '',
-                        linkedSalesInvoice: linkedSI || '',
-                        location: warehouse || '',
-                        notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
-                    }
-                };
-
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
@@ -1763,7 +1803,10 @@ const DeliveryNote = () => {
                 date: dnDate,
                 customer: {
                     name: selectedCustomer?.name || '',
+                    code: selectedCustomer?.code || '',
                     address: shippingAddress || fullCustomer?.address || '',
+                    shippingAddress: shippingAddress || fullCustomer?.shippingAddress || '',
+                    phone: selectedCustomer?.mobile || fullCustomer?.mobile || fullCustomer?.phone || '',
                     trn: selectedCustomer?.trn || fullCustomer?.trn
                 },
                 items: items.map(i => ({
@@ -1785,6 +1828,7 @@ const DeliveryNote = () => {
                 meta: {
                     status: status,
                     // QA-031: explicit source-doc cross-references for Pick List.
+                    linkedDeliveryNote: dnNumber || '',
                     linkedSalesOrder: linkedSO || '',
                     linkedSalesInvoice: linkedSI || '',
                     location: warehouse || '',
@@ -1793,7 +1837,7 @@ const DeliveryNote = () => {
                 }
             };
 
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
             printHtml(html);
         } catch (error) {
             console.error("Pick List print error:", error);
@@ -1991,7 +2035,14 @@ const DeliveryNote = () => {
                                 {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
                                     <button
                                         key={label}
-                                        onClick={label === 'Print' ? handlePrint : undefined}
+                                        onClick={
+                                            label === 'Print' ? handlePrint
+                                                : label === 'Email' ? () => {
+                                                    if (!currentDnId) { alert('Please save the Delivery Note before sending an email.'); return; }
+                                                    setIsEmailModalOpen(true);
+                                                }
+                                                : undefined
+                                        }
                                         disabled={label === 'Print' && isPrinting}
                                         className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
                                     >
@@ -2037,6 +2088,7 @@ const DeliveryNote = () => {
                             {/* Toolbar */}
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
                                 <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input
@@ -2060,12 +2112,22 @@ const DeliveryNote = () => {
                                 </div>
                                 <ExportDropdown
                                     onExportExcel={() => exportToExcel(
-                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredDeliveryNotes, {
+                                            documentNumberSelector: (dn) => dn.dnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         DELIVERY_NOTE_COLUMNS,
                                         'Delivery_Notes'
                                     )}
                                     onExportPdf={() => exportToPDF(
-                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredDeliveryNotes, {
+                                            documentNumberSelector: (dn) => dn.dnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         DELIVERY_NOTE_COLUMNS,
                                         'Delivery Notes',
                                         'Delivery_Notes'
@@ -2081,7 +2143,7 @@ const DeliveryNote = () => {
 
                             {/* Table */}
                             <div className="overflow-x-auto hidden md:block">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th>
@@ -2094,6 +2156,7 @@ const DeliveryNote = () => {
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
+                                            <th className="px-4 py-3">Branch</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('soNo')}>
                                                 <div className="flex items-center gap-1">SO No {sortConfig.key === 'soNo' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -2119,9 +2182,17 @@ const DeliveryNote = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isListLoading && <TableSkeleton cols={8} rows={8} />}
                                         {filteredDeliveryNotes.map((dn, index) => (
                                             <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
-                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: dn.dnNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {dn.dnNo}
@@ -2131,7 +2202,13 @@ const DeliveryNote = () => {
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(dn.date)}</td>
-                                                <td className="px-4 py-3 text-slate-600 font-medium">{dn.customerCode} - {dn.customerName}</td>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-700">{dn.customerName}</div>
+                                                    {dn.customerCode && <div className="text-[10px] text-slate-400">{dn.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {dn.branchCode ? dn.branchCode : <span className="text-slate-300">—</span>}
+                                                </td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.soNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.piNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.warehouse}</td>
@@ -2504,7 +2581,7 @@ const DeliveryNote = () => {
                                         </div>
 
                                         <div className="overflow-auto max-h-[380px]">
-                                            <table className="w-full text-xs text-left min-w-[880px]">
+                                            <table className="bb-nowrap-table w-full text-xs text-left min-w-[880px]">
                                                 <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                     <tr>
                                                         <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -3018,7 +3095,7 @@ const DeliveryNote = () => {
                                 )}
 
                                 <div className="hidden md:block overflow-x-auto">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                             <tr>
                                                 <th className="px-4 py-3">Picking Note</th>
@@ -3216,7 +3293,7 @@ const DeliveryNote = () => {
                                             </div>
 
                                             <div className="overflow-x-auto">
-                                                <table className="w-full text-xs text-left min-w-[760px]">
+                                                <table className="bb-nowrap-table w-full text-xs text-left min-w-[760px]">
                                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                                         <tr>
                                                             <th className="px-4 py-3">Item</th>
@@ -3352,7 +3429,7 @@ const DeliveryNote = () => {
                                 </div>
 
                                 <div className="overflow-x-auto hidden md:block">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                             <tr>
                                                 <th className="px-4 py-3">Picking Note</th>
@@ -3581,7 +3658,7 @@ const DeliveryNote = () => {
                 </div>
 
                 {/* Items */}
-                <table className="w-full text-left text-sm mb-12 border-collapse">
+                <table className="bb-nowrap-table w-full text-left text-sm mb-12 border-collapse">
                     <thead>
                         <tr className="border-b-2 border-slate-800">
                             <th className="py-2 w-12 text-slate-500">#</th>
@@ -3620,6 +3697,20 @@ const DeliveryNote = () => {
             </div>
 
         </div>
+
+        {/* QA-040: Send Delivery Note Email */}
+        <SendDocumentEmailModal
+            isOpen={isEmailModalOpen}
+            onClose={() => setIsEmailModalOpen(false)}
+            category="Delivery Note (DO/DN)"
+            docId={currentDnId}
+            docNumber={dnNumber}
+            customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+            docLabel="Delivery Note"
+            companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id })}
+            apiFn={sendDeliveryNoteEmail}
+            buildPayload={buildDnPrintData}
+        />
 
         </>
     );

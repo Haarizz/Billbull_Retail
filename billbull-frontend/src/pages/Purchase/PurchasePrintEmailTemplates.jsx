@@ -1,934 +1,824 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    FaFileAlt,
-    FaFileInvoice,
-    FaClipboardList,
-    FaTruck,
-    FaFileInvoiceDollar,
-    FaCog,
-    FaDownload,
-    FaUpload,
-    FaLightbulb,
-    FaPlus,
-    FaEdit,
-    FaCopy,
-    FaEye,
-    FaSave,
-    FaCode,
-    FaListUl,
-    FaSlidersH,
-    FaToggleOn,
-    FaAlignLeft,
-    FaTrash,
-    FaArrowLeft,
-    FaExclamationTriangle,
-    FaCheckCircle
-} from 'react-icons/fa';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { getCompanyProfile } from '../../api/companyProfileApi';
+    Check,
+    ChevronRight,
+    Copy,
+    Download,
+    Edit,
+    FileText,
+    Mail,
+    Plus,
+    Printer,
+    RefreshCw,
+    Trash2,
+    Upload
+} from "lucide-react";
+import toast from "react-hot-toast";
 import {
     createPrintTemplate,
     deletePrintTemplate,
     getPrintTemplates,
-    setDefaultTemplate,
     updatePrintTemplate
-} from '../../api/printTemplateApi';
-import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
-import { useCompany } from '../../context/CompanyContext';
-import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
+} from "../../api/printTemplateApi";
+import ChequePrintingDesigner, {
+    defaultChequePrintSettings
+} from "../Financials/ChequePrintingDesigner";
 import {
-    buildPurchasePreviewData,
-    getDefaultPurchaseTemplates,
-    normalizePurchaseTemplate,
-    PURCHASE_TEMPLATE_CATEGORIES,
-    serializeTemplateForApi
-} from '../../utils/purchasePrintUtils';
-import toast from 'react-hot-toast';
+    DocumentTemplateDesigner,
+    docTypeLabel
+} from "./Templates/DocumentTemplateDesigner";
+import { GRNTemplateDesigner } from "./Templates/GRNTemplateDesigner";
+import { GRVTemplateDesigner } from "./Templates/GRVTemplateDesigner";
+import { PaymentReceiptDesigner } from "./Templates/PaymentReceiptDesigner";
+import {
+    VendorSoATemplateDesigner,
+    defaultVendorSoaTemplateSettings
+} from "./Templates/VendorSoATemplateDesigner";
 
-const PURCHASE_CATEGORY_META = [
-    { title: 'Local Purchase Order', description: 'Vendor purchase order template', icon: FaClipboardList },
-    { title: 'Goods Receipt Note', description: 'Goods receipt confirmation template', icon: FaTruck },
-    { title: 'Purchase Invoice', description: 'Vendor purchase invoice template', icon: FaFileInvoiceDollar },
-    { title: 'Payment Voucher', description: 'Vendor payment voucher template', icon: FaFileInvoice }
+const TEMPLATE_TYPES = [
+    {
+        id: "lpo",
+        category: "Local Purchase Order",
+        label: "Local Purchase Order (LPO)",
+        description: "Purchase order issued to vendors for goods and services",
+        designer: "document",
+        docType: "lpo"
+    },
+    {
+        id: "purchase-invoice",
+        category: "Purchase Invoice",
+        label: "Purchase Invoice",
+        description: "Vendor invoice received for purchase accounting",
+        designer: "document",
+        docType: "purchase-invoice"
+    },
+    {
+        id: "grn",
+        category: "Goods Receipt Note",
+        label: "Goods Received Note (GRN)",
+        description: "Receiving note for goods delivered by a vendor",
+        designer: "grn"
+    },
+    {
+        id: "grv",
+        category: "Goods Return Voucher",
+        label: "Goods Return Voucher (GRV)",
+        description: "Goods return document sent back to a vendor",
+        designer: "grv"
+    },
+    {
+        id: "purchase-return",
+        category: "Purchase Return",
+        label: "Purchase Return",
+        description: "Return note for rejected or returned supplier goods",
+        designer: "document",
+        docType: "purchase-return"
+    },
+    {
+        id: "debit-note",
+        category: "Debit Note",
+        label: "Debit Note",
+        description: "Debit adjustment issued against vendor accounts",
+        designer: "document",
+        docType: "debit-note"
+    },
+    {
+        id: "vendor-payment",
+        category: "Payment Voucher",
+        label: "Vendor Payment Voucher",
+        description: "Payment voucher issued to vendors",
+        designer: "payment"
+    },
+    {
+        id: "vendor-soa",
+        category: "Vendor Statement of Account",
+        label: "Vendor Statement of Account",
+        description: "Periodic statement of vendor purchases and payments",
+        designer: "soa"
+    },
+    {
+        id: "cheque-printing",
+        category: "Cheque",
+        label: "Cheque Printing",
+        description: "Printable cheque layout used for vendor payments",
+        designer: "cheque"
+    }
 ];
 
-const formatTemplateDate = (template) => {
-    const rawValue =
-        template?.lastModified ||
-        template?.updatedAt ||
-        template?.updatedDate ||
-        template?.modifiedDate ||
-        template?.createdAt ||
-        template?.createdDate;
+const CATEGORY_SET = new Set(TEMPLATE_TYPES.map((type) => type.category));
+const typeMetaByType = (id) => TEMPLATE_TYPES.find((type) => type.id === id);
+const typeMetaByCategory = (category) => TEMPLATE_TYPES.find((type) => type.category === category);
 
-    if (!rawValue) return new Date().toISOString().split('T')[0];
+const parseSettings = (raw) => {
+    if (!raw) return {};
+    if (typeof raw === "object") return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+};
 
-    const parsedDate = new Date(rawValue);
-    if (Number.isNaN(parsedDate.getTime())) {
-        return String(rawValue).split('T')[0];
+const formatDate = (template) => {
+    const raw = template.updatedAt || template.updatedDate || template.modifiedDate || template.createdAt || template.createdDate;
+    if (!raw) return "-";
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? String(raw).slice(0, 10) : parsed.toISOString().slice(0, 10);
+};
+
+const toApiOrientation = (value) => {
+    const raw = String(value || "portrait").toLowerCase();
+    return raw === "landscape" ? "Landscape" : "Portrait";
+};
+
+const getDesignerSettings = (template, meta) => {
+    const displayOptions = parseSettings(template.displayOptions);
+    const columns = parseSettings(template.columns);
+    const stored = displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
+    if (stored && typeof stored === "object") {
+        return {
+            ...stored,
+            templateName: stored.templateName || template.name,
+            paperSize: stored.paperSize || template.paperSize || "A4",
+            orientation: stored.orientation || String(template.orientation || "portrait").toLowerCase()
+        };
     }
 
-    return parsedDate.toISOString().split('T')[0];
+    return {
+        templateName: template.name,
+        paperSize: template.paperSize || "A4",
+        orientation: String(template.orientation || "portrait").toLowerCase(),
+        accentColor: displayOptions.accentColor || displayOptions.primaryColor || "#F5C742",
+        primaryColor: displayOptions.primaryColor || displayOptions.accentColor || "#F5C742",
+        showLogo: displayOptions.showLogo !== false,
+        showCompanyLogo: displayOptions.showLogo !== false,
+        showCompanyName: displayOptions.showCompanyDetails !== false,
+        showCompanyAddress: displayOptions.showCompanyDetails !== false,
+        showBillTo: displayOptions.showCustomerDetails !== false,
+        showVendorCard: displayOptions.showCustomerDetails !== false,
+        showCustomerName: displayOptions.showCustomerDetails !== false,
+        showTerms: displayOptions.showTerms !== false,
+        showTermsConditions: displayOptions.showTerms !== false,
+        showItemImage: !!displayOptions.showItemImage,
+        colProductImage: !!displayOptions.showItemImage,
+        colItemCode: !!columns.productId,
+        colSKU: !!columns.sku,
+        colBarcode: !!columns.barcode,
+        colBrand: !!columns.brand,
+        colDescription: columns.description !== false,
+        colQty: columns.qty !== false,
+        colUnitPrice: columns.unitPrice !== false,
+        colTaxableAmount: !!columns.taxableAmount,
+        colDiscount: !!columns.discount,
+        colVAT: columns.tax !== false,
+        colVATAmount: !!columns.tax,
+        colLineTotal: columns.total !== false,
+        showOrderedQty: !!columns.lpoQty,
+        showReceivedQty: !!columns.received,
+        showBatchNo: !!columns.batchNumber,
+        showExpiry: !!columns.expiry,
+        showTotalReturn: columns.total !== false,
+        docType: meta?.docType
+    };
 };
 
-const TemplateCard = ({ title, description, count, icon: Icon, onClick, disabled }) => (
-    <div
-        onClick={!disabled ? onClick : undefined}
-        className={`bg-white p-6 rounded-xl border border-gray-200 shadow-sm transition-shadow group relative ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'hover:shadow-md cursor-pointer'
-            }`}
-    >
-        {disabled && (
-            <div className="absolute top-3 right-3 bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-full">
-                COMING SOON
-            </div>
-        )}
-        <div className="flex justify-between items-start mb-4">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${disabled ? 'bg-gray-100 text-gray-400' : 'bg-yellow-50 text-yellow-600 group-hover:bg-yellow-100'
-                }`}>
-                <Icon size={18} />
-            </div>
-            {!disabled && <span className="text-gray-400 group-hover:text-gray-600 transition-colors">&gt;</span>}
-        </div>
-        <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
-        <p className="text-sm text-gray-500 mb-4 h-10">{description}</p>
-        <div className="text-xs font-medium text-gray-400">
-            {disabled ? 'Feature unavailable' : `${count} ${count === 1 ? 'template' : 'templates'}`}
-        </div>
-    </div>
-);
-
-const ActionCard = ({ icon: Icon, title, description, colorClass = 'text-blue-600 bg-blue-50' }) => (
-    <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4 cursor-pointer hover:bg-gray-50 transition-colors">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClass}`}>
-            <Icon size={18} />
-        </div>
-        <div>
-            <h4 className="font-medium text-sm text-gray-900">{title}</h4>
-            <p className="text-xs text-gray-500">{description}</p>
-        </div>
-    </div>
-);
-
-const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
-    if (!isOpen) return null;
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/10">
-            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md transform transition-all scale-100">
-                <div className="flex items-center gap-3 text-red-600 mb-4">
-                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                        <FaExclamationTriangle size={20} />
-                    </div>
-                    <h3 className="text-lg font-bold">{title}</h3>
-                </div>
-
-                <p className="text-gray-600 mb-6 text-sm leading-relaxed">
-                    {message}
-                </p>
-
-                <div className="flex justify-end gap-3">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 rounded-lg text-gray-700 font-semibold hover:bg-gray-100 transition-colors text-sm"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={onConfirm}
-                        className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 transition-colors shadow-sm text-sm"
-                    >
-                        Delete Template
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
+const templateToRow = (template) => {
+    const meta = typeMetaByCategory(template.category);
+    const settings = getDesignerSettings(template, meta);
+    return {
+        id: template.id,
+        name: template.name,
+        category: template.category,
+        type: meta?.id || "lpo",
+        isDefault: !!template.isDefault,
+        lastModified: formatDate(template),
+        primaryColor: settings.accentColor || settings.primaryColor || "#F5C742",
+        paperSize: template.paperSize || settings.paperSize || settings.pageSize || "A4",
+        orientation: template.orientation || settings.orientation || "Portrait",
+        settings,
+        raw: template
+    };
 };
 
-const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewCompany }) => {
-    const [showPreview, setShowPreview] = useState(false);
-
-    const baseTemplate = useMemo(
-        () => normalizePurchaseTemplate(initialData || { category: category.title }, category.title),
-        [initialData, category.title]
-    );
-
-    const [templateName, setTemplateName] = useState(baseTemplate?.name || `New ${category.title} Template`);
-    const [paperSize, setPaperSize] = useState(baseTemplate?.paperSize || 'A4');
-    const [orientation, setOrientation] = useState(baseTemplate?.orientation || 'Portrait');
-    const [headerContent, setHeaderContent] = useState(baseTemplate?.headerContent || '');
-    const [termsContent, setTermsContent] = useState(baseTemplate?.termsContent || '');
-    const [footerContent, setFooterContent] = useState(baseTemplate?.footerContent || '');
-    const [displayOptions, setDisplayOptions] = useState(baseTemplate?.displayOptions || {
+const defaultSettingsFor = (typeId, name) => {
+    const meta = typeMetaByType(typeId);
+    if (typeId === "cheque-printing") {
+        return defaultChequePrintSettings(name || "Default Cheque Template");
+    }
+    if (typeId === "vendor-soa") {
+        return defaultVendorSoaTemplateSettings(name || "Default Vendor Statement of Account");
+    }
+    return {
+        templateName: name || `Default ${meta?.label || "Purchase"} Template`,
+        docType: meta?.docType,
+        accentColor: "#F5C742",
+        primaryColor: "#F5C742",
+        paperSize: "A4",
+        orientation: "portrait",
         showLogo: true,
-        showCompanyDetails: true,
-        showCustomerDetails: true,
-        showTerms: true,
-        showItemImage: false
-    });
-    const [columns, setColumns] = useState(baseTemplate?.columns || {
-        productId: false,
-        sku: false,
-        arabicName: false,
-        description: true,
-        qty: true,
-        unitPrice: true,
-        discount: false,
-        tax: true,
-        total: true
-    });
+        showCompanyLogo: true,
+        showCompanyName: true,
+        showCompanyAddress: true,
+        showCompanyPhone: true,
+        showCompanyEmail: true,
+        showBillTo: true,
+        showVendorCard: true,
+        showCustomerName: true,
+        showTerms: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
+        showTermsConditions: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
+        colDescription: true,
+        colQty: typeId !== "vendor-payment" && typeId !== "cheque-printing",
+        colUnitPrice: typeId !== "vendor-payment" && typeId !== "cheque-printing",
+        colVAT: typeId === "purchase-invoice",
+        colLineTotal: true,
+        emailSubject: `${meta?.label || "Purchase Document"} #{number} from {company_name}`,
+        emailBody: `Dear {vendor_name},\n\nPlease find attached ${meta?.label || "the document"} #{number}.\n\nBest regards,\n{company_name}`
+    };
+};
 
-    const previewTemplate = useMemo(() => normalizePurchaseTemplate({
-        ...baseTemplate,
-        id: initialData?.id,
-        category: category.title,
-        name: templateName,
+const buildRendererDisplayOptions = (settings = {}, typeId) => ({
+    showLogo: settings.showLogo ?? settings.showCompanyLogo ?? true,
+    showCompanyDetails: [
+        settings.showCompanyName,
+        settings.showCompanyAddress,
+        settings.showCompanyPhone,
+        settings.showCompanyEmail,
+        settings.showCompanyWebsite,
+        settings.showTRN,
+        settings.showCRN,
+        settings.showCompanyTaxId,
+        settings.showCompanyRegNumber
+    ].some((value) => value !== false),
+    showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showVendorCard ?? settings.showCustomerName ?? typeId !== "cheque-printing",
+    showTerms: typeId === "vendor-soa" ? false : (settings.showTerms ?? settings.showTermsConditions ?? false),
+    showItemImage: settings.colProductImage ?? settings.showItemImage ?? false
+});
+
+const buildRendererColumns = (settings = {}, typeId) => {
+    const isVoucherLike = typeId === "vendor-payment" || typeId === "cheque-printing" || typeId === "vendor-soa";
+    return {
+        productId: !!settings.colItemCode,
+        sku: !!settings.colSKU,
+        barcode: !!(settings.colBarcode || settings.showBarcode),
+        brand: !!settings.colBrand,
+        detailedDesc: !!settings.colDescription,
+        description: settings.colDescription !== false && settings.showItemDescription !== false,
+        qty: settings.colQty ?? settings.showReceivedQty ?? !isVoucherLike,
+        unitPrice: settings.colUnitPrice ?? !isVoucherLike,
+        taxableAmount: !!settings.colTaxableAmount,
+        discount: !!settings.colDiscount,
+        tax: settings.colVAT ?? settings.showVATTotal ?? typeId === "purchase-invoice",
+        taxPercent: !!settings.colVAT,
+        total: settings.colLineTotal ?? settings.showTotalReturn ?? !isVoucherLike,
+        lpoQty: !!settings.showOrderedQty,
+        received: !!settings.showReceivedQty,
+        accepted: !!settings.showAcceptedQty,
+        batchNumber: !!(settings.colBatchNumber || settings.showBatchNo),
+        expiry: !!settings.showExpiry,
+        location: !!settings.showBinLocation
+    };
+};
+
+const buildPayload = ({ typeId, name, isDefault, settings }) => {
+    const meta = typeMetaByType(typeId);
+    const designerSettings = {
+        ...defaultSettingsFor(typeId, name),
+        ...settings,
+        templateName: settings.templateName || name || `Default ${meta.label}`
+    };
+    const displayOptions = {
+        ...buildRendererDisplayOptions(designerSettings, typeId),
+        purchaseDesigner: meta.designer,
+        purchaseDesignerSettings: designerSettings
+    };
+
+    const paperSize = typeId === "cheque-printing"
+        ? `${designerSettings.widthMm || 216}x${designerSettings.heightMm || 96}mm`
+        : designerSettings.paperSize || designerSettings.pageSize || "A4";
+
+    return {
+        category: meta.category,
+        name: designerSettings.templateName || name || `Default ${meta.label}`,
+        isDefault: !!isDefault,
         paperSize,
-        orientation,
-        headerContent,
-        termsContent,
-        footerContent,
-        displayOptions,
-        columns,
-        isDefault: initialData?.isDefault || false
-    }, category.title), [baseTemplate, category.title, columns, displayOptions, footerContent, headerContent, initialData?.id, initialData?.isDefault, orientation, paperSize, templateName, termsContent]);
-
-    const previewHtml = useMemo(() => generatePrintHtml(
-        previewTemplate,
-        buildPurchasePreviewData(category.title, previewCompany),
-        {
-            companyProfile: previewCompany,
-            billBullLogo
-        }
-    ), [previewTemplate, category.title, previewCompany]);
-
-    const previewEmailHtml = useMemo(() => generateEmailHtml(
-        previewTemplate,
-        buildPurchasePreviewData(category.title, previewCompany),
-        {
-            companyProfile: previewCompany,
-            billBullLogo
-        }
-    ), [previewTemplate, category.title, previewCompany]);
-
-    const handleDisplayOptionChange = (key) => {
-        setDisplayOptions((prev) => ({ ...prev, [key]: !prev[key] }));
+        orientation: toApiOrientation(designerSettings.orientation),
+        headerContent: designerSettings.headerContent || "",
+        termsContent: designerSettings.termsText || designerSettings.termsConditions || designerSettings.footerText || "",
+        footerContent: designerSettings.footerContent || "",
+        displayOptions: JSON.stringify(displayOptions),
+        columns: JSON.stringify(buildRendererColumns(designerSettings, typeId))
     };
-
-    const handleColumnChange = (key) => {
-        setColumns((prev) => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    const handleSave = () => {
-        onSave({
-            id: initialData?.id,
-            category: category.title,
-            name: templateName,
-            paperSize,
-            orientation,
-            headerContent,
-            termsContent,
-            footerContent,
-            displayOptions,
-            columns,
-            isDefault: initialData?.isDefault || false
-        });
-    };
-
-    const CategoryIcon = category.icon;
-
-    return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors &amp; Purchases &gt; Print &amp; Email Templates &gt; Template Designer
-                </div>
-                <div className="flex justify-between items-center">
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                        <span className="text-yellow-500"><CategoryIcon /></span>
-                        {initialData ? 'Edit' : 'New'} {category.title} Template
-                    </h1>
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => setShowPreview(!showPreview)}
-                            className={`flex items-center gap-2 border px-4 py-2 rounded-lg text-sm font-bold transition-colors ${showPreview ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-                        >
-                            <FaEye size={14} /> {showPreview ? 'Hide Preview' : 'Preview'}
-                        </button>
-                        <button
-                            onClick={onCancel}
-                            className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={handleSave}
-                            className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-slate-900 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
-                        >
-                            <FaSave size={14} /> Save Template
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div className="p-8 flex-1 overflow-auto">
-                <div className="flex flex-col lg:flex-row gap-6">
-                    <div className="flex-1 space-y-6">
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaSlidersH />
-                                <h3 className="font-bold text-gray-900 text-sm">Basic Settings</h3>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Template Name</label>
-                                    <input
-                                        type="text"
-                                        value={templateName}
-                                        onChange={(e) => setTemplateName(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Paper Size</label>
-                                    <select
-                                        value={paperSize}
-                                        onChange={(e) => setPaperSize(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400"
-                                    >
-                                        <option>A3</option>
-                                        <option>A4</option>
-                                        <option>A5</option>
-                                        <option>Letter</option>
-                                        <option>Legal</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Orientation</label>
-                                    <select
-                                        value={orientation}
-                                        onChange={(e) => setOrientation(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400"
-                                    >
-                                        <option>Portrait</option>
-                                        <option>Landscape</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaToggleOn />
-                                <h3 className="font-bold text-gray-900 text-sm">Display Options</h3>
-                            </div>
-                            <div className="space-y-3">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!displayOptions.showLogo}
-                                        onChange={() => handleDisplayOptionChange('showLogo')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Company Logo</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showCompanyDetails !== false}
-                                        onChange={() => handleDisplayOptionChange('showCompanyDetails')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Company Details</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!displayOptions.showCustomerDetails}
-                                        onChange={() => handleDisplayOptionChange('showCustomerDetails')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Vendor Details</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!displayOptions.showTerms}
-                                        onChange={() => handleDisplayOptionChange('showTerms')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Terms &amp; Conditions</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!displayOptions.showItemImage}
-                                        onChange={() => handleDisplayOptionChange('showItemImage')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Item Images</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaListUl />
-                                <h3 className="font-bold text-gray-900 text-sm">Table Columns</h3>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-3">Select columns to display in the item table:</p>
-                            <div className="space-y-3">
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Item Identity</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.description !== false} onChange={() => handleColumnChange('description')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Description of Product / Services</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.productId} onChange={() => handleColumnChange('productId')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Item Code</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.sku} onChange={() => handleColumnChange('sku')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">SKU</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.barcode} onChange={() => handleColumnChange('barcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.brand} onChange={() => handleColumnChange('brand')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Brand</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.detailedDesc} onChange={() => handleColumnChange('detailedDesc')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Detailed Description</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Quantities & Pricing</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.qty} onChange={() => handleColumnChange('qty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Qty</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.unitPrice} onChange={() => handleColumnChange('unitPrice')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Unit Price</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.taxableAmount} onChange={() => handleColumnChange('taxableAmount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Taxable Amount</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.total !== false} onChange={() => handleColumnChange('total')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Line Total</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Discount & Tax</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.discount} onChange={() => handleColumnChange('discount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Discount % (in Taxable Amount col)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.discountPercent} onChange={() => handleColumnChange('discountPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Discount % (separate column)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.tax} onChange={() => handleColumnChange('tax')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">VAT Amount</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.taxPercent} onChange={() => handleColumnChange('taxPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Tax % (separate column)</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Document / Line Info</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.salesPerson} onChange={() => handleColumnChange('salesPerson')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Sales Person</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
-                                </label>
-                                {category.title === 'Goods Receipt Note' && (
-                                    <>
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">GRN Columns</p>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={!!columns.lpoQty} onChange={() => handleColumnChange('lpoQty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                            <span className="text-sm text-gray-700 font-medium">LPO Qty</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={!!columns.received} onChange={() => handleColumnChange('received')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                            <span className="text-sm text-gray-700 font-medium">Received Qty</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={!!columns.accepted} onChange={() => handleColumnChange('accepted')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                            <span className="text-sm text-gray-700 font-medium">Accepted Qty</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={!!columns.receivedBy} onChange={() => handleColumnChange('receivedBy')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                            <span className="text-sm text-gray-700 font-medium">Received By</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" checked={!!columns.checkedBy} onChange={() => handleColumnChange('checkedBy')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                            <span className="text-sm text-gray-700 font-medium">Checked By</span>
-                                        </label>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex-[2] space-y-6">
-                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
-                            <h3 className="text-sm font-bold text-blue-900">System-Controlled Layout</h3>
-                            <p className="mt-2 text-xs leading-6 text-blue-800">
-                                Purchase documents now render through a fixed layout system: document header, vendor and reference cards, structured item columns, totals, terms, and footer stay consistent while the fields below add supporting content inside those regions.
-                            </p>
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Header Add-on</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered inside the system header area. Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
-                            <textarea
-                                value={headerContent}
-                                onChange={(e) => setHeaderContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
-                                placeholder="<div>...</div>"
-                            />
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaAlignLeft />
-                                <h3 className="font-bold text-gray-900 text-sm">Terms &amp; Conditions</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter terms and conditions</p>
-                            <textarea
-                                value={termsContent}
-                                onChange={(e) => setTermsContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 focus:outline-none focus:border-yellow-400"
-                                placeholder="1. Goods once received are subject to final verification..."
-                            />
-                        </div>
-
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Footer Add-on</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered near the standard footer bar. Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
-                            <textarea
-                                value={footerContent}
-                                onChange={(e) => setFooterContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
-                                placeholder="<div>...</div>"
-                            />
-                        </div>
-
-                        {showPreview && (
-                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-in fade-in slide-in-from-bottom-4">
-                                <DocumentPreviewCanvas
-                                    printHtml={previewHtml}
-                                    emailHtml={previewEmailHtml}
-                                    paperSize={paperSize}
-                                    orientation={orientation}
-                                    subtitle="Print preview uses an A4 paper canvas and email preview uses the same structured layout in a responsive wrapper."
-                                />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
 };
 
-const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onDuplicate, onDelete, onSetDefault }) => {
-    const CategoryIcon = category.icon;
-
-    return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors &amp; Purchases &gt;
-                    <span className="cursor-pointer hover:text-yellow-600" onClick={onBack}> Print &amp; Email Templates </span>
-                    &gt; <span className="text-gray-900">{category.title}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={onBack}
-                            className="p-2 rounded-full hover:bg-gray-200 text-gray-600 transition-colors"
-                            title="Go Back"
-                        >
-                            <FaArrowLeft size={16} />
-                        </button>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                            <span className="text-yellow-500"><CategoryIcon /></span>
-                            {category.title} Templates
-                        </h1>
-                    </div>
-                    <button
-                        onClick={onCreate}
-                        className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-slate-900 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
-                    >
-                        <FaPlus size={14} /> Create New Template
-                    </button>
-                </div>
-                <p className="text-gray-500 mt-1 text-sm">{category.description}</p>
-            </div>
-
-            <div className="p-8 flex-1 overflow-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {templates.length === 0 ? (
-                        <div className="col-span-full text-center py-10 text-gray-500">
-                            <div className="mb-4 bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto text-gray-400">
-                                <FaFileAlt size={24} />
-                            </div>
-                            <h3 className="text-lg font-medium text-gray-900">No templates found</h3>
-                            <p className="text-sm">Create a new template to get started.</p>
-                        </div>
-                    ) : (
-                        templates.map((template) => (
-                            <div key={template.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col relative group">
-                                <div className="flex justify-between items-start mb-4">
-                                    <div>
-                                        <div className="flex items-center gap-2">
-                                            <h3 className="font-bold text-gray-900 text-lg">{template.name}</h3>
-                                            {template.isDefault && (
-                                                <span className="bg-yellow-400 text-xs font-bold px-2 py-0.5 rounded text-slate-900">Default</span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-gray-500 mt-2 space-y-1">
-                                            <p>Last modified: {formatTemplateDate(template)}</p>
-                                            <p>Paper: {template.paperSize} ({template.orientation})</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-gray-300">
-                                        <FaFileAlt size={40} />
-                                    </div>
-                                </div>
-
-                                <div className="mt-auto flex gap-3 pt-6">
-                                    <button
-                                        onClick={() => onEdit(template)}
-                                        className="flex-1 flex items-center justify-center gap-2 border border-gray-300 rounded-lg py-2 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors"
-                                    >
-                                        <FaEdit size={14} /> Edit
-                                    </button>
-                                    {!template.isDefault && (
-                                        <button
-                                            onClick={() => onSetDefault(template)}
-                                            className="w-10 flex items-center justify-center border border-gray-300 rounded-lg py-2 text-gray-600 hover:bg-gray-50 transition-colors"
-                                            title="Set as Default"
-                                        >
-                                            <FaCheckCircle size={14} />
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => onDuplicate(template)}
-                                        className="w-10 flex items-center justify-center border border-gray-300 rounded-lg py-2 text-gray-600 hover:bg-gray-50 transition-colors"
-                                        title="Duplicate"
-                                    >
-                                        <FaCopy size={14} />
-                                    </button>
-                                    <button
-                                        onClick={() => onDelete(template.id)}
-                                        className="w-10 flex items-center justify-center border border-red-200 rounded-lg py-2 text-red-600 hover:bg-red-50 transition-colors"
-                                        title="Delete"
-                                    >
-                                        <FaTrash size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-            </div>
-        </div>
-    );
+const iconBg = {
+    blue: ["bg-blue-100", "text-blue-600"],
+    green: ["bg-green-100", "text-green-600"],
+    purple: ["bg-purple-100", "text-purple-600"],
+    orange: ["bg-orange-100", "text-orange-600"]
 };
 
-const PurchasePrintEmailTemplates = () => {
-    const { company } = useCompany();
-    const [selectedCategory, setSelectedCategory] = useState(null);
-    const [isCreating, setIsCreating] = useState(false);
+export default function PurchasePrintEmailTemplates() {
+    const [templates, setTemplates] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [selectedType, setSelectedType] = useState(null);
+    const [activeDesigner, setActiveDesigner] = useState(null);
+    const [designerSettings, setDesignerSettings] = useState({});
+    const [designerTemplateName, setDesignerTemplateName] = useState("");
     const [editingTemplate, setEditingTemplate] = useState(null);
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
-    const [templateToDelete, setTemplateToDelete] = useState(null);
-    const [allTemplates, setAllTemplates] = useState([]);
-    const [previewCompanyProfile, setPreviewCompanyProfile] = useState(company || null);
+    const importInputRef = useRef(null);
 
-    useEffect(() => {
-        loadTemplates();
+    const refresh = useCallback(async ({ seedMissing = false } = {}) => {
+        setLoading(true);
+        try {
+            const all = await getPrintTemplates();
+            const rows = (all || [])
+                .filter((template) => CATEGORY_SET.has(template.category))
+                .map(templateToRow);
+
+            if (seedMissing) {
+                const missingTypes = TEMPLATE_TYPES.filter(
+                    (type) => !rows.some((row) => row.type === type.id)
+                );
+                if (missingTypes.length > 0) {
+                    await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
+                        typeId: type.id,
+                        name: `Default ${type.label}`,
+                        isDefault: true,
+                        settings: defaultSettingsFor(type.id, `Default ${type.label}`)
+                    }))));
+                    const refreshed = await getPrintTemplates();
+                    setTemplates(
+                        (refreshed || [])
+                            .filter((template) => CATEGORY_SET.has(template.category))
+                            .map(templateToRow)
+                    );
+                    return;
+                }
+            }
+
+            setTemplates(rows);
+        } catch (error) {
+            console.error("Failed to load purchase templates", error);
+            toast.error("Failed to load purchase templates");
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
-        if (company) {
-            setPreviewCompanyProfile(company);
+        refresh({ seedMissing: true });
+    }, [refresh]);
+
+    const getTemplatesByType = (typeId) => templates.filter((template) => template.type === typeId);
+
+    const openDesigner = (typeId, row = null) => {
+        const meta = typeMetaByType(typeId);
+        const settings = row?.settings && Object.keys(row.settings).length
+            ? row.settings
+            : defaultSettingsFor(typeId, row?.name || `New ${meta.label} Template`);
+        const templateName = row?.name || settings.templateName || `New ${meta.label} Template`;
+
+        setActiveDesigner(typeId);
+        setDesignerSettings({ ...settings, templateName });
+        setDesignerTemplateName(templateName);
+        setEditingTemplate(row);
+    };
+
+    const closeDesigner = () => {
+        setActiveDesigner(null);
+        setEditingTemplate(null);
+        setDesignerSettings({});
+        setDesignerTemplateName("");
+    };
+
+    const persistSave = async (typeId, settings) => {
+        const payload = buildPayload({
+            typeId,
+            name: settings.templateName || designerTemplateName,
+            isDefault: editingTemplate?.isDefault ?? getTemplatesByType(typeId).length === 0,
+            settings
+        });
+
+        try {
+            if (editingTemplate?.id) {
+                await updatePrintTemplate(editingTemplate.id, payload);
+                toast.success(`${payload.name} updated`);
+            } else {
+                await createPrintTemplate(payload);
+                toast.success(`${payload.name} created`);
+            }
+            closeDesigner();
+            await refresh();
+        } catch (error) {
+            console.error("Failed to save purchase template", error);
+            toast.error("Failed to save template");
+        }
+    };
+
+    const handleDuplicate = async (row) => {
+        const payload = buildPayload({
+            typeId: row.type,
+            name: `${row.name} (Copy)`,
+            isDefault: false,
+            settings: { ...row.settings, templateName: `${row.name} (Copy)` }
+        });
+        try {
+            await createPrintTemplate(payload);
+            toast.success("Template duplicated");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to duplicate purchase template", error);
+            toast.error("Failed to duplicate template");
+        }
+    };
+
+    const handleDelete = async (row) => {
+        if (row.isDefault) {
+            toast.error("Cannot delete a default template");
             return;
         }
+        if (!window.confirm(`Delete "${row.name}"?`)) return;
+        try {
+            await deletePrintTemplate(row.id);
+            toast.success("Template deleted");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to delete purchase template", error);
+            toast.error("Failed to delete template");
+        }
+    };
 
-        let isActive = true;
-        getCompanyProfile()
-            .then((res) => {
-                if (isActive) {
-                    setPreviewCompanyProfile(res.data || null);
-                }
-            })
-            .catch(() => {});
+    const handleSetDefault = async (row) => {
+        try {
+            const sameType = getTemplatesByType(row.type);
+            await Promise.all(sameType.map((template) => updatePrintTemplate(template.id, buildPayload({
+                typeId: template.type,
+                name: template.name,
+                isDefault: template.id === row.id,
+                settings: template.settings
+            }))));
+            toast.success("Default template updated");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to set purchase template default", error);
+            toast.error("Failed to set default template");
+        }
+    };
 
-        return () => {
-            isActive = false;
+    const handleExport = (row) => {
+        const exportData = {
+            name: row.name,
+            category: row.category,
+            type: row.type,
+            paperSize: row.paperSize,
+            orientation: row.orientation,
+            settings: row.settings
         };
-    }, [company]);
+        const anchor = document.createElement("a");
+        anchor.href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(exportData, null, 2))}`;
+        anchor.download = `${row.name.replace(/\s+/g, "_")}.json`;
+        anchor.click();
+        toast.success("Template exported");
+    };
 
-    const loadTemplates = async () => {
+    const handleExportAll = () => {
+        const anchor = document.createElement("a");
+        anchor.href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(templates, null, 2))}`;
+        anchor.download = "purchase_print_templates.json";
+        anchor.click();
+        toast.success("Templates exported");
+    };
+
+    const handleImport = async (event) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
         try {
-            const data = await getPrintTemplates();
-            const purchaseTemplates = data
-                .filter((template) => PURCHASE_TEMPLATE_CATEGORIES.includes(template.category))
-                .map((template) => normalizePurchaseTemplate(template, template.category));
+            const content = await file.text();
+            const data = JSON.parse(content);
+            const items = Array.isArray(data) ? data : [data];
+            for (const item of items) {
+                const meta = typeMetaByType(item.type) || typeMetaByCategory(item.category);
+                if (!meta) continue;
+                await createPrintTemplate(buildPayload({
+                    typeId: meta.id,
+                    name: item.name || `Imported ${meta.label}`,
+                    isDefault: false,
+                    settings: item.settings || defaultSettingsFor(meta.id, item.name)
+                }));
+            }
+            toast.success("Templates imported");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to import purchase template", error);
+            toast.error("Invalid template file");
+        }
+    };
 
-            const missingCategories = PURCHASE_TEMPLATE_CATEGORIES.filter(
-                (category) => !purchaseTemplates.some((template) => template.category === category)
+    const stats = useMemo(() => ({
+        total: templates.length,
+        defaults: templates.filter((template) => template.isDefault).length,
+        custom: templates.filter((template) => !template.isDefault).length,
+        types: TEMPLATE_TYPES.length
+    }), [templates]);
+
+    if (activeDesigner) {
+        const meta = typeMetaByType(activeDesigner);
+        const commonProps = {
+            templateName: designerTemplateName,
+            initialSettings: designerSettings,
+            onClose: closeDesigner,
+            onSave: (settings) => persistSave(activeDesigner, settings)
+        };
+
+        if (meta.designer === "document") {
+            return <DocumentTemplateDesigner docType={meta.docType} {...commonProps} />;
+        }
+        if (meta.designer === "grn") return <GRNTemplateDesigner {...commonProps} />;
+        if (meta.designer === "grv") return <GRVTemplateDesigner {...commonProps} />;
+        if (meta.designer === "payment") return <PaymentReceiptDesigner {...commonProps} />;
+        if (meta.designer === "cheque") return <ChequePrintingDesigner {...commonProps} />;
+        if (meta.designer === "soa") {
+            return (
+                <VendorSoATemplateDesigner
+                    onBack={closeDesigner}
+                    editingTemplate={{
+                        id: editingTemplate?.id,
+                        name: designerTemplateName,
+                        isDefault: editingTemplate?.isDefault ?? false,
+                        settings: designerSettings
+                    }}
+                    onSave={(settings) => persistSave(activeDesigner, settings)}
+                />
             );
-
-            if (missingCategories.length > 0) {
-                const defaultsToCreate = getDefaultPurchaseTemplates()
-                    .filter((template) => missingCategories.includes(template.category));
-
-                for (const template of defaultsToCreate) {
-                    await createPrintTemplate(template);
-                }
-
-                const refreshedData = await getPrintTemplates();
-                setAllTemplates(
-                    refreshedData
-                        .filter((template) => PURCHASE_TEMPLATE_CATEGORIES.includes(template.category))
-                        .map((template) => normalizePurchaseTemplate(template, template.category))
-                );
-                return;
-            }
-
-            setAllTemplates(purchaseTemplates);
-        } catch (error) {
-            console.error('Error loading purchase templates:', error);
         }
-    };
-
-    const categoryTemplates = PURCHASE_CATEGORY_META.map((category) => ({
-        ...category,
-        count: allTemplates.filter((template) => template.category === category.title).length
-    }));
-
-    const handleCreateNew = () => {
-        setEditingTemplate(null);
-        setIsCreating(true);
-    };
-
-    const handleEdit = (template) => {
-        setEditingTemplate(template);
-        setIsCreating(true);
-    };
-
-    const handleDuplicate = async (template) => {
-        try {
-            const duplicatePayload = serializeTemplateForApi({
-                ...normalizePurchaseTemplate(template, template.category),
-                id: undefined,
-                name: `${template.name} - Copy`,
-                isDefault: false
-            });
-
-            const { id, ...createPayload } = duplicatePayload;
-            await createPrintTemplate(createPayload);
-            await loadTemplates();
-        } catch (error) {
-            console.error('Error duplicating purchase template:', error);
-            toast.error('Failed to duplicate template');
-        }
-    };
-
-    const handleDelete = (id) => {
-        setTemplateToDelete(id);
-        setShowDeleteModal(true);
-    };
-
-    const confirmDelete = async () => {
-        if (!templateToDelete) return;
-
-        try {
-            await deletePrintTemplate(templateToDelete);
-            setShowDeleteModal(false);
-            setTemplateToDelete(null);
-            await loadTemplates();
-        } catch (error) {
-            console.error('Error deleting purchase template:', error);
-            toast.error('Failed to delete template');
-        }
-    };
-
-    const handleSaveTemplate = async (templateData) => {
-        try {
-            const normalizedTemplate = normalizePurchaseTemplate(templateData, templateData.category);
-            const payload = serializeTemplateForApi(normalizedTemplate);
-
-            if (templateData.id && allTemplates.some((template) => template.id === templateData.id)) {
-                await updatePrintTemplate(templateData.id, payload);
-            } else {
-                const { id, ...createPayload } = payload;
-                await createPrintTemplate(createPayload);
-            }
-
-            setIsCreating(false);
-            setEditingTemplate(null);
-            await loadTemplates();
-        } catch (error) {
-            console.error('Error saving purchase template:', error);
-            toast.error('Failed to save template');
-        }
-    };
-
-    const handleSetDefault = async (template) => {
-        try {
-            await setDefaultTemplate(template.id, serializeTemplateForApi({
-                ...normalizePurchaseTemplate(template, template.category),
-                isDefault: true
-            }));
-            await loadTemplates();
-        } catch (error) {
-            console.error('Error setting purchase default template:', error);
-            toast.error('Failed to set default template');
-        }
-    };
-
-    if (isCreating && selectedCategory) {
-        return (
-            <TemplateDesigner
-                category={selectedCategory}
-                initialData={editingTemplate}
-                previewCompany={previewCompanyProfile}
-                onSave={handleSaveTemplate}
-                onCancel={() => {
-                    setIsCreating(false);
-                    setEditingTemplate(null);
-                }}
-            />
-        );
     }
 
-    if (selectedCategory) {
-        const templates = allTemplates.filter((template) => template.category === selectedCategory.title);
+    if (selectedType) {
+        const typeTemplates = getTemplatesByType(selectedType);
+        const typeInfo = typeMetaByType(selectedType);
+
         return (
-            <>
-                <TemplateDetailView
-                    category={selectedCategory}
-                    templates={templates}
-                    onBack={() => setSelectedCategory(null)}
-                    onCreate={handleCreateNew}
-                    onEdit={handleEdit}
-                    onDuplicate={handleDuplicate}
-                    onDelete={handleDelete}
-                    onSetDefault={handleSetDefault}
-                />
-                <ConfirmationModal
-                    isOpen={showDeleteModal}
-                    onClose={() => {
-                        setShowDeleteModal(false);
-                        setTemplateToDelete(null);
-                    }}
-                    onConfirm={confirmDelete}
-                    title="Delete Template?"
-                    message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."
-                />
-            </>
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+                <div className="mx-auto max-w-[1800px] space-y-6 p-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedType(null)}
+                                    className="flex items-center gap-1 hover:text-slate-900"
+                                >
+                                    <span>Vendors & Purchases</span>
+                                    <ChevronRight className="h-4 w-4" />
+                                    <span>Print & Email Templates</span>
+                                </button>
+                                <ChevronRight className="h-4 w-4" />
+                                <span className="font-medium text-slate-900">{typeInfo.label}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <FileText className="h-6 w-6 text-[#F5C742]" />
+                                <h1 className="text-3xl font-semibold text-[#1E1E1E]">{typeInfo.label} Templates</h1>
+                            </div>
+                            <p className="text-sm text-slate-600">{typeInfo.description}</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => openDesigner(selectedType)}
+                            className="inline-flex items-center rounded-md bg-[#F5C742] px-4 py-2 text-sm font-medium text-black hover:bg-[#F5C742]/90"
+                        >
+                            <Plus className="mr-2 h-4 w-4" />
+                            Create New Template
+                        </button>
+                    </div>
+
+                    {loading ? (
+                        <div className="py-12 text-center text-slate-500">Loading...</div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                            {typeTemplates.map((template) => (
+                                <div key={template.id} className="rounded-lg border border-gray-200 bg-white p-6 transition-shadow hover:shadow-lg">
+                                    <div className="mb-4 flex items-start justify-between">
+                                        <div className="min-w-0 flex-1">
+                                            <h3 className="truncate text-lg font-semibold">{template.name}</h3>
+                                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                                {template.isDefault && <span className="rounded bg-[#F5C742] px-2 py-0.5 text-xs font-medium text-black">Default</span>}
+                                                <span className="rounded border border-gray-300 px-2 py-0.5 text-xs font-medium">{template.paperSize}</span>
+                                            </div>
+                                        </div>
+                                        <div
+                                            className="flex h-16 w-16 items-center justify-center rounded-lg"
+                                            style={{ backgroundColor: `${template.primaryColor}20` }}
+                                        >
+                                            <FileText className="h-8 w-8" style={{ color: template.primaryColor }} />
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-4 space-y-2 text-sm text-slate-600">
+                                        <div className="flex justify-between gap-4"><span>Last modified:</span><span className="font-medium">{template.lastModified}</span></div>
+                                        <div className="flex justify-between gap-4"><span>Paper size:</span><span className="font-medium">{template.paperSize}</span></div>
+                                        <div className="flex justify-between gap-4"><span>Designer:</span><span className="font-medium capitalize">{typeInfo.designer}</span></div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => openDesigner(template.type, template)}
+                                            className="inline-flex flex-1 items-center justify-center rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+                                        >
+                                            <Edit className="mr-1 h-3 w-3" />
+                                            Edit
+                                        </button>
+                                        <button type="button" onClick={() => handleDuplicate(template)} title="Duplicate" className="rounded-md border border-gray-300 p-2 hover:bg-gray-50"><Copy className="h-3 w-3" /></button>
+                                        <button type="button" onClick={() => handleExport(template)} title="Export" className="rounded-md border border-gray-300 p-2 hover:bg-gray-50"><Download className="h-3 w-3" /></button>
+                                        {!template.isDefault && (
+                                            <button type="button" onClick={() => handleDelete(template)} title="Delete" className="rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-3 w-3" /></button>
+                                        )}
+                                    </div>
+
+                                    {!template.isDefault && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSetDefault(template)}
+                                            className="mt-2 inline-flex w-full items-center justify-center rounded-md px-3 py-1.5 text-sm text-[#B88A1A] hover:bg-[#F5C742]/10"
+                                        >
+                                            <Check className="mr-1 h-3 w-3" />
+                                            Set as Default
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+
+                            {typeTemplates.length === 0 && (
+                                <div className="col-span-full rounded-lg border-2 border-dashed border-gray-300 bg-white py-16 text-center">
+                                    <FileText className="mx-auto mb-4 h-16 w-16 text-gray-300" />
+                                    <h3 className="mb-2 text-lg font-semibold">No templates yet</h3>
+                                    <p className="mb-4 text-sm text-slate-600">Create your first {typeInfo.label.toLowerCase()} template.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => openDesigner(selectedType)}
+                                        className="inline-flex items-center rounded-md bg-[#F5C742] px-4 py-2 text-sm font-medium text-black hover:bg-[#F5C742]/90"
+                                    >
+                                        <Plus className="mr-2 h-4 w-4" />
+                                        Create Template
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors &amp; Purchases &gt; <span className="text-gray-900">Print &amp; Email Templates</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                    <span className="text-yellow-500"><FaFileAlt /></span>
-                    Print &amp; Email Templates
-                </h1>
-                <p className="text-gray-500 mt-1 text-sm">
-                    Design and customize templates for purchase orders, GRNs, vendor invoices, and payment vouchers
-                </p>
-            </div>
-
-            <div className="p-8 flex-1 overflow-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    {categoryTemplates.map((template, index) => (
-                        <TemplateCard
-                            key={index}
-                            {...template}
-                            onClick={() => setSelectedCategory(template)}
-                        />
-                    ))}
-                </div>
-
-                <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider">Quick Actions</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <ActionCard
-                        icon={FaUpload}
-                        title="Import Template"
-                        description="Upload from file"
-                        colorClass="text-blue-600 bg-blue-50"
-                    />
-                    <ActionCard
-                        icon={FaDownload}
-                        title="Export Templates"
-                        description="Download all templates"
-                        colorClass="text-green-600 bg-green-50"
-                    />
-                    <ActionCard
-                        icon={FaCog}
-                        title="Global Settings"
-                        description="Configure defaults"
-                        colorClass="text-purple-600 bg-purple-50"
-                    />
-                </div>
-
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
-                    <div className="flex items-center gap-2 mb-3 text-blue-800 font-semibold">
-                        <FaLightbulb />
-                        <h3 className="text-sm">Email &amp; Print Tips</h3>
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+            <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImport} />
+            <div className="mx-auto max-w-[1800px] space-y-6 p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <span>Vendors & Purchases</span>
+                            <ChevronRight className="h-4 w-4" />
+                            <span className="font-medium text-slate-900">Print & Email Templates</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <Printer className="h-6 w-6 text-[#F5C742]" />
+                            <h1 className="text-3xl font-semibold text-[#1E1E1E]">Print & Email Templates</h1>
+                        </div>
+                        <p className="text-sm text-slate-600">
+                            Design professional templates for purchase orders, invoices, GRN/GRV, vendor payments, SoA, and cheques.
+                        </p>
                     </div>
-                    <ul className="list-disc list-inside text-sm text-blue-700 space-y-1 ml-1">
-                        <li>Templates are automatically used when printing or emailing purchase documents</li>
-                        <li>Set a default template for each purchase document type to keep layouts consistent</li>
-                        <li>Use HTML and CSS in headers and footers for advanced vendor-facing formatting</li>
-                        <li>Preview templates before saving to confirm the print layout matches sales-style output</li>
-                    </ul>
+                    <button
+                        type="button"
+                        onClick={() => refresh()}
+                        className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-gray-50"
+                    >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Refresh
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    {[
+                        { label: "Total Templates", value: stats.total, color: "blue" },
+                        { label: "Default Templates", value: stats.defaults, color: "green" },
+                        { label: "Custom Templates", value: stats.custom, color: "purple" },
+                        { label: "Document Types", value: stats.types, color: "orange" }
+                    ].map((stat) => {
+                        const [bg, fg] = iconBg[stat.color];
+                        return (
+                            <div key={stat.label} className="rounded-lg border border-gray-200 bg-white p-6">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-sm text-slate-600">{stat.label}</p>
+                                        <p className="mt-1 text-2xl font-bold">{stat.value}</p>
+                                    </div>
+                                    <div className={`flex h-12 w-12 items-center justify-center rounded-lg ${bg}`}>
+                                        <FileText className={`h-6 w-6 ${fg}`} />
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div>
+                    <h2 className="mb-4 text-xl font-semibold">Document Templates</h2>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                        {TEMPLATE_TYPES.map((type) => {
+                            const typeTemplates = getTemplatesByType(type.id);
+                            const defaultTemplate = typeTemplates.find((template) => template.isDefault);
+                            const subtitle = type.designer === "document" && type.docType ? docTypeLabel(type.docType) : type.label;
+
+                            return (
+                                <button
+                                    key={type.id}
+                                    type="button"
+                                    onClick={() => setSelectedType(type.id)}
+                                    className="group rounded-lg border border-gray-200 bg-white p-6 text-left transition-all hover:border-[#F5C742] hover:shadow-lg"
+                                >
+                                    <div className="mb-4 flex items-start justify-between">
+                                        <div className="rounded-lg bg-[#F5C742]/10 p-3 transition-colors group-hover:bg-[#F5C742]/20">
+                                            <FileText className="h-6 w-6 text-[#F5C742]" />
+                                        </div>
+                                        <ChevronRight className="h-5 w-5 text-gray-400 transition-colors group-hover:text-[#F5C742]" />
+                                    </div>
+                                    <h3 className="mb-1 text-base font-semibold">{type.label}</h3>
+                                    <p className="mb-3 text-xs leading-relaxed text-slate-600">{type.description}</p>
+                                    <div className="flex items-center justify-between gap-3 text-xs">
+                                        <span className="text-slate-500">
+                                            {typeTemplates.length} template{typeTemplates.length !== 1 ? "s" : ""}
+                                        </span>
+                                        {defaultTemplate && (
+                                            <span className="rounded border border-gray-300 px-2 py-0.5">
+                                                {defaultTemplate.paperSize || subtitle}
+                                            </span>
+                                        )}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-6">
+                    <h2 className="mb-4 text-lg font-semibold">Quick Actions</h2>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <button
+                            type="button"
+                            onClick={() => importInputRef.current?.click()}
+                            className="flex items-center gap-4 rounded-lg border border-gray-200 p-4 text-left transition-all hover:border-[#F5C742] hover:bg-[#F5C742]/5"
+                        >
+                            <div className="rounded-lg bg-blue-50 p-3"><Upload className="h-5 w-5 text-blue-600" /></div>
+                            <div><p className="text-sm font-medium">Import Template</p><p className="text-xs text-slate-600">Upload a JSON template file</p></div>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleExportAll}
+                            className="flex items-center gap-4 rounded-lg border border-gray-200 p-4 text-left transition-all hover:border-[#F5C742] hover:bg-[#F5C742]/5"
+                        >
+                            <div className="rounded-lg bg-green-50 p-3"><Download className="h-5 w-5 text-green-600" /></div>
+                            <div><p className="text-sm font-medium">Export All Templates</p><p className="text-xs text-slate-600">Download purchase template backup</p></div>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => refresh({ seedMissing: true })}
+                            className="flex items-center gap-4 rounded-lg border border-gray-200 p-4 text-left transition-all hover:border-[#F5C742] hover:bg-[#F5C742]/5"
+                        >
+                            <div className="rounded-lg bg-purple-50 p-3"><RefreshCw className="h-5 w-5 text-purple-600" /></div>
+                            <div><p className="text-sm font-medium">Reset Missing Defaults</p><p className="text-xs text-slate-600">Restore any missing document types</p></div>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-6">
+                        <h3 className="mb-3 flex items-center gap-2 font-semibold">
+                            <Printer className="h-5 w-5 text-blue-600" />
+                            Template Features
+                        </h3>
+                        <ul className="space-y-2 text-sm text-blue-900">
+                            {["Live document previews with granular field toggles", "Separate designers for GRN, GRV, vendor payments, SoA, and cheques", "Colors, fonts, signatures, QR codes, and stamp placeholders", "Default template selection per purchase document type"].map((item) => (
+                                <li key={item} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0" /><span>{item}</span></li>
+                            ))}
+                        </ul>
+                    </div>
+                    <div className="rounded-lg border border-green-200 bg-green-50 p-6">
+                        <h3 className="mb-3 flex items-center gap-2 font-semibold">
+                            <Mail className="h-5 w-5 text-green-600" />
+                            Email & Print Tips
+                        </h3>
+                        <ul className="space-y-2 text-sm text-green-900">
+                            {["Templates are stored through the existing print-template API", "Core LPO, GRN, purchase invoice, and payment voucher prints keep using the current renderer", "Use variables like {vendor_name} in email content", "Export templates before major layout changes for an easy rollback"].map((item) => (
+                                <li key={item} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0" /><span>{item}</span></li>
+                            ))}
+                        </ul>
+                    </div>
                 </div>
             </div>
-
-            <ConfirmationModal
-                isOpen={showDeleteModal}
-                onClose={() => {
-                    setShowDeleteModal(false);
-                    setTemplateToDelete(null);
-                }}
-                onConfirm={confirmDelete}
-                title="Delete Template?"
-                message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."
-            />
         </div>
     );
-};
-
-export default PurchasePrintEmailTemplates;
+}

@@ -3,6 +3,8 @@ package com.billbull.backend.settings.branch;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 
 import java.util.List;
 
@@ -29,6 +31,13 @@ public class BranchController {
         return def != null ? ResponseEntity.ok(def) : ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/headquarters")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<BranchResponse> getHeadquarters() {
+        BranchResponse hq = service.getHeadquarters();
+        return hq != null ? ResponseEntity.ok(hq) : ResponseEntity.noContent().build();
+    }
+
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> create(@RequestBody BranchRequest req) {
@@ -47,10 +56,40 @@ public class BranchController {
         return ResponseEntity.ok(service.setDefault(id));
     }
 
+    @PutMapping("/{id}/headquarters")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<BranchResponse> setHeadquarters(@PathVariable Long id) {
+        return ResponseEntity.ok(service.setHeadquarters(id));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/logo")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<BranchResponse> uploadLogo(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(service.uploadLogo(id, file));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @PostMapping("/{id}/stamp")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<BranchResponse> uploadStamp(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(service.uploadStamp(id, file));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
     }
 }

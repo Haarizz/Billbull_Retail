@@ -229,6 +229,21 @@ public class StatementService {
         return new StatementEntryDTO(startDate, sortTime, documentNo, OPENING_BALANCE_TYPE, debit, credit, "OPENING");
     }
 
+    // Vendor (AP) opening-balance row. Positive balance means "We Owe" → credit,
+    // matching the AP running-balance formula (running = previous + credit - debit).
+    private StatementEntryDTO buildVendorOpeningBalanceEntry(LocalDate startDate, BigDecimal openingBalance) {
+        if (openingBalance == null || openingBalance.compareTo(BigDecimal.ZERO) == 0) {
+            return null;
+        }
+
+        BigDecimal credit = openingBalance.compareTo(BigDecimal.ZERO) > 0 ? openingBalance : BigDecimal.ZERO;
+        BigDecimal debit = openingBalance.compareTo(BigDecimal.ZERO) < 0 ? openingBalance.abs() : BigDecimal.ZERO;
+
+        LocalDateTime sortTime = startDate.atStartOfDay().minusNanos(1);
+        return new StatementEntryDTO(startDate, sortTime, "Opening Balance", OPENING_BALANCE_TYPE, debit, credit,
+                "OPENING");
+    }
+
     private String resolveOpeningBalanceDocumentNo(List<OpeningInvoice> openingInvoices) {
         if (openingInvoices == null || openingInvoices.isEmpty()) {
             return "Opening Balance";
@@ -290,6 +305,10 @@ public class StatementService {
                 endDate);
 
         List<StatementEntryDTO> combined = new ArrayList<>();
+        StatementEntryDTO openingEntry = buildVendorOpeningBalanceEntry(startDate, openingBalance);
+        if (openingEntry != null) {
+            combined.add(openingEntry);
+        }
         combined.addAll(invoices);
         combined.addAll(payments);
 
@@ -305,6 +324,11 @@ public class StatementService {
         BigDecimal totalCredit = BigDecimal.ZERO;
 
         for (StatementEntryDTO entry : combined) {
+            if (isOpeningBalanceEntry(entry)) {
+                entry.setRunningBalance(openingBalance);
+                continue;
+            }
+
             BigDecimal debit = entry.getDebit() != null ? entry.getDebit() : BigDecimal.ZERO;
             BigDecimal credit = entry.getCredit() != null ? entry.getCredit() : BigDecimal.ZERO;
 
@@ -354,7 +378,10 @@ public class StatementService {
 
         for (StatementEntryDTO entry : entries) {
             String type = entry.getType() == null ? "" : entry.getType();
-            if ("INVOICE".equals(type)) {
+            if (OPENING_BALANCE_TYPE.equals(type)) {
+                if (entry.getDescription() == null) entry.setDescription("Opening Balance");
+                if (entry.getReference() == null) entry.setReference("Brought forward");
+            } else if ("INVOICE".equals(type)) {
                 PurchaseInvoice inv = invoiceMap.get(entry.getDocumentNo());
                 entry.setDescription("Purchase Invoice"
                         + (inv != null && inv.getVendorName() != null ? " — " + inv.getVendorName() : ""));

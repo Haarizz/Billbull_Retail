@@ -1,10 +1,14 @@
 package com.billbull.backend.financials.chartofaccounts;
 
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 
 @Entity
-@Table(name = "cost_centers")
+@Table(
+    name = "cost_centers",
+    indexes = { @Index(name = "idx_cost_center_branch", columnList = "branch_id") }
+)
 public class CostCenter {
     @Id
     private String id;
@@ -14,7 +18,14 @@ public class CostCenter {
 
     private String name;
     private String manager;
+
+    /** Legacy free-text branch label; kept until all callers migrate to {@link #branchEntity}. */
     private String branch;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
 
     private BigDecimal budget;
     private BigDecimal spent; // Automatically updated by transactions
@@ -67,6 +78,14 @@ public class CostCenter {
 
     public void setBranch(String branch) {
         this.branch = branch;
+    }
+
+    public Branch getBranchEntity() {
+        return branchEntity;
+    }
+
+    public void setBranchEntity(Branch branchEntity) {
+        this.branchEntity = branchEntity;
     }
 
     public BigDecimal getBudget() {

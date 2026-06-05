@@ -26,9 +26,15 @@ const CustomerSelector = ({
 }) => {
     const { defaultBranchName } = useBranch();
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
     const [highlightedIndex, setHighlightedIndex] = useState(0);
     const searchInputRef = useRef(null);
     const listRef = useRef(null);
+
+    // Cap rendered rows: with thousands of customers, rendering the whole list
+    // on every keystroke is what makes selection feel heavy. We filter the full
+    // list but only paint the first MAX_VISIBLE matches.
+    const MAX_VISIBLE = 50;
 
     // New Customer Panel
     const [isNewCustomerOpen, setIsNewCustomerOpen] = useState(false);
@@ -47,10 +53,17 @@ const CustomerSelector = ({
     useEffect(() => {
         if (isOpen) {
             setSearchQuery('');
+            setDebouncedQuery('');
             setHighlightedIndex(0);
             setTimeout(() => searchInputRef.current?.focus(), 100);
         }
     }, [isOpen]);
+
+    // Debounce the query so fast typing doesn't re-filter/re-render every keystroke
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedQuery(searchQuery), 180);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
 
     // Filter customers
     const filtered = useMemo(() => {
@@ -73,14 +86,17 @@ const CustomerSelector = ({
             }, ...list];
         }
 
-        if (!searchQuery.trim()) return list;
-        const q = searchQuery.toLowerCase();
+        if (!debouncedQuery.trim()) return list;
+        const q = debouncedQuery.toLowerCase();
         return list.filter(c =>
             (c.code || '').toLowerCase().includes(q) ||
             (c.name || '').toLowerCase().includes(q) ||
             (c.mobile || c.phone || '').toLowerCase().includes(q)
         );
-    }, [customers, searchQuery]);
+    }, [customers, debouncedQuery]);
+
+    // Only the first MAX_VISIBLE matches are rendered/navigable.
+    const visible = useMemo(() => filtered.slice(0, MAX_VISIBLE), [filtered]);
 
     // Keyboard navigation
     useEffect(() => {
@@ -88,20 +104,20 @@ const CustomerSelector = ({
         const handleKey = (e) => {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setHighlightedIndex(prev => Math.min(prev + 1, filtered.length - 1));
+                setHighlightedIndex(prev => Math.min(prev + 1, visible.length - 1));
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 setHighlightedIndex(prev => Math.max(prev - 1, 0));
-            } else if (e.key === 'Enter' && filtered.length > 0) {
+            } else if (e.key === 'Enter' && visible.length > 0) {
                 e.preventDefault();
-                handleSelect(filtered[highlightedIndex]);
+                handleSelect(visible[highlightedIndex]);
             } else if (e.key === 'Escape') {
                 onClose();
             }
         };
         document.addEventListener('keydown', handleKey);
         return () => document.removeEventListener('keydown', handleKey);
-    }, [isOpen, filtered, highlightedIndex]);
+    }, [isOpen, visible, highlightedIndex]);
 
     // Scroll highlighted into view  
     useEffect(() => {
@@ -226,8 +242,8 @@ const CustomerSelector = ({
 
                 {/* Customer List */}
                 <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 max-h-[50vh]">
-                    {filtered.length > 0 ? (
-                        filtered.map((cust, idx) => {
+                    {visible.length > 0 ? (
+                        visible.map((cust, idx) => {
                             const isSelected = cust.code === selectedCode;
                             const isHighlighted = idx === highlightedIndex;
 
@@ -285,7 +301,10 @@ const CustomerSelector = ({
 
                 {/* Footer */}
                 <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 rounded-b-xl flex justify-between items-center">
-                    <span className="text-xs text-slate-400">{filtered.length} customer{filtered.length !== 1 ? 's' : ''} found</span>
+                    <span className="text-xs text-slate-400">
+                        {filtered.length} customer{filtered.length !== 1 ? 's' : ''} found
+                        {filtered.length > MAX_VISIBLE ? ` — showing first ${MAX_VISIBLE}, refine search` : ''}
+                    </span>
                     <button
                         onClick={() => setIsNewCustomerOpen(true)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-800 text-xs font-bold rounded-md hover:bg-yellow-500 transition-colors"

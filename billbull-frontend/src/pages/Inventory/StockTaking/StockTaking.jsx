@@ -14,6 +14,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // CONFIGURATION
@@ -280,7 +281,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                 </div>
                 {seededLots.length > 0 ? (
                     <div className="border border-amber-100 bg-amber-50/30 rounded-lg overflow-hidden">
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                             <thead className="bg-amber-50 text-[10px] uppercase tracking-wide text-amber-700">
                                 <tr>
                                     {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
@@ -309,7 +310,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                 </div>
                 {newLots.length > 0 && (
                     <div className="border border-emerald-100 bg-emerald-50/20 rounded-lg overflow-hidden mb-3">
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                             <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-700">
                                 <tr>
                                     {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
@@ -826,12 +827,16 @@ const ListView = ({
                     </button>
                     <ExportDropdown
                         onExportExcel={() => exportToExcel(
-                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            withListSerialNumbers(filteredSessions, {
+                                documentNumberSelector: (session) => session.id,
+                            }),
                             STOCK_TAKING_COLUMNS,
                             'StockTaking'
                         )}
                         onExportPdf={() => exportToPDF(
-                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            withListSerialNumbers(filteredSessions, {
+                                documentNumberSelector: (session) => session.id,
+                            }),
                             STOCK_TAKING_COLUMNS,
                             'Stock Taking Sessions',
                             'StockTaking'
@@ -872,7 +877,7 @@ const ListView = ({
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="bb-nowrap-table w-full text-sm">
                         <thead className="bg-[#F8FAFC] border-b border-slate-200">
                             <tr>
                                 <th className="text-center px-4 py-2 font-semibold text-slate-500 w-16 select-none uppercase">S.No.</th>
@@ -889,7 +894,14 @@ const ListView = ({
                         <tbody className="divide-y divide-slate-100">
                             {pagedSessions.map((session, index) => (
                                 <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
-                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">
+                                        {getListSerialNumber(index, {
+                                            documentNumber: session.id,
+                                            page: listPage,
+                                            size: LIST_PAGE_SIZE,
+                                            totalElements: filteredSessions.length,
+                                        })}
+                                    </td>
                                     <td className="px-4 py-2 whitespace-nowrap">
                                         <div className="space-y-1">
                                             <p className="font-bold text-slate-800 text-[13px]">{session.id}</p>
@@ -937,18 +949,32 @@ const ListView = ({
                                         </div>
                                     </td>
                                     <td className="px-4 py-2">
-                                        {session.total > 0 ? (
+                                        {session.type === 'OPENING_INVENTORY' ? (
+                                            <div className="space-y-1 min-w-[90px]">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-[10px] font-bold text-slate-600">
+                                                        {session.progress} Units Counted
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-emerald-600">
+                                                        100%
+                                                    </span>
+                                                </div>
+                                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-emerald-400 rounded-full" style={{ width: '100%' }}></div>
+                                                </div>
+                                            </div>
+                                        ) : session.total > 0 ? (
                                             <div className="space-y-1 min-w-[90px]">
                                                 <div className="flex items-center justify-between gap-2">
                                                     <span className="text-[10px] font-bold text-slate-600">
                                                         {session.progress} / {session.total}
                                                     </span>
                                                     <span className="text-[10px] font-bold text-amber-600">
-                                                        {Math.round((session.progress / session.total) * 100)}%
+                                                        {session.total > 0 ? Math.round((session.progress / session.total) * 100) : (session.progress > 0 ? 100 : 0)}%
                                                     </span>
                                                 </div>
                                                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${(session.progress / session.total) * 100}%` }}></div>
+                                                    <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${session.total > 0 ? Math.min((session.progress / session.total) * 100, 100) : (session.progress > 0 ? 100 : 0)}%` }}></div>
                                                 </div>
                                             </div>
                                         ) : (
@@ -1348,7 +1374,7 @@ const SessionView = ({
 
                     {/* Product Table */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px] flex flex-col">
-                        <table className="w-full text-sm">
+                        <table className="bb-nowrap-table w-full text-sm">
                             <thead className="bg-[#F8FAFC] border-b border-slate-200 text-[9px] uppercase tracking-wider text-slate-400 font-bold">
                                 <tr>
                                     <th className="text-left px-4 py-2.5 w-10">#</th>
@@ -2052,13 +2078,8 @@ const StockTaking = () => {
                 const totalQty = countedItems.reduce((sum, item) => sum + (item.variance || 0), 0);
                 const sessionTimestamps = mapSessionTimestamps(s);
 
-                const sessionItemCount = s.items?.length || 0;
-                const isOpening = s.type === 'OPENING_INVENTORY';
-                const warehouseSkuCount = skuCountByWarehouse[s.warehouseId];
-                const total = isOpening
-                    ? sessionItemCount
-                    : (warehouseSkuCount != null ? warehouseSkuCount : sessionItemCount);
-                const progress = Math.min(sessionItemCount, total);
+                const progress = (s.items || []).reduce((sum, item) => sum + (item.countedQty || 0), 0);
+                const total = (s.items || []).reduce((sum, item) => sum + (item.systemQty || 0), 0);
 
                 return {
                     ...s,
@@ -2135,8 +2156,8 @@ const StockTaking = () => {
                 dbId: newSessionRes.id,
                 warehouse: newSessionRes.warehouseName || newSessionRes.warehouse || '',
                 ...sessionTimestamps,
-                progress: newSessionRes.items?.length || 0,
-                total: newSessionRes.items?.length || 0,
+                progress: (newSessionRes.items || []).reduce((sum, item) => sum + (item.countedQty || 0), 0),
+                total: (newSessionRes.items || []).reduce((sum, item) => sum + (item.systemQty || 0), 0),
                 status: 'In Progress',
                 action: 'Continue',
                 // Session starts empty — products are added on-demand via search/scan
@@ -3436,7 +3457,7 @@ const StockTaking = () => {
                                     <h4 className="text-[11px] font-bold text-slate-700 uppercase tracking-widest">Variance Details</h4>
                                 </div>
                                 <div className="max-h-[250px] overflow-y-auto bg-white">
-                                    <table className="w-full text-left">
+                                    <table className="bb-nowrap-table w-full text-left">
                                         <thead className="sticky top-0 bg-white shadow-sm ring-1 ring-slate-100 z-10">
                                             <tr>
                                                 <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Product</th>

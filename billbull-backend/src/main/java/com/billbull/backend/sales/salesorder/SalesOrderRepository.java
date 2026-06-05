@@ -87,4 +87,13 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
   List<String> findSoNumbersByPrefix(@Param("prefix") String prefix);
 
   boolean existsByCustomerCode(String customerCode);
+
+  List<SalesOrder> findByOrderDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
+  /** Sales-report loader: date-bounded orders with line items fetched in one query. */
+  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items "
+          + "WHERE (:dateFrom IS NULL OR o.orderDate >= :dateFrom) "
+          + "AND (:dateTo IS NULL OR o.orderDate <= :dateTo)")
+  List<SalesOrder> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+          @Param("dateTo") java.time.LocalDate dateTo);
 }

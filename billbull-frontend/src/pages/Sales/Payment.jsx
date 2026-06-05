@@ -23,25 +23,31 @@ import {
     Receipt,
     ArrowUpRight,
     ArrowDownRight,
-    Banknote
+    Banknote,
+    Download
 } from 'lucide-react';
 
 // API Imports
 import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import DateFilter from '../../components/common/DateFilter';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import billBullLogo from '../../assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -80,6 +86,7 @@ const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
 
 const Payment = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
@@ -94,6 +101,8 @@ const Payment = () => {
     const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
+    const _todayPay = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayPay, toDate: _todayPay });
     const [salesSettings, setSalesSettings] = useState(null);
     const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
 
@@ -153,12 +162,19 @@ const Payment = () => {
         if (activeTab !== 'list') return;
         fetchPayments();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage]);
+    }, [activeTab, listPage, dateRange]);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchPayments();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
 
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
-            const resp = await getSalesPaymentsPage({ page: listPage, size: 30 });
+            const resp = await getSalesPaymentsPage({ page: listPage, size: 30, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
             const data = Array.isArray(resp?.content) ? resp.content : [];
             setListPageMeta({
                 page: resp?.page ?? listPage,
@@ -174,8 +190,12 @@ const Payment = () => {
                 type: p.paymentType === 'RECEIVED' ? 'Received' : 'Made',
                 customerCode: p.customerCode,
                 customerName: p.customerName,
+                branchId: p.branch?.id ?? null,
+                branchName: p.branch?.name || '',
+                branchCode: p.branch?.code || '',
                 invoiceNo: p.linkedInvoice || '',
                 invoiceAmount: p.invoiceAmount || 0,
+                invoiceBalance: p.invoiceBalance != null ? p.invoiceBalance : null,
                 amount: p.amount || 0, // This is the paid amount for this record
                 mode: p.paymentMode,
                 reference: p.referenceNumber || '',
@@ -254,71 +274,101 @@ const Payment = () => {
         }
     };
 
+    const buildPaymentPrintData = (payment) => {
+        const amount = Number(payment.amount) || 0;
+        const invoiceAmt = Number(payment.invoiceAmount) || amount;
+        const balance = payment.invoiceBalance != null ? Math.max(Number(payment.invoiceBalance), 0) : Math.max(invoiceAmt - amount, 0);
+        const invoiceNos = payment.invoiceNo
+            ? payment.invoiceNo.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+        const perInvoiceAmount = invoiceNos.length > 1 ? amount / invoiceNos.length : amount;
+        return {
+            receiptData: {
+                receiptNumber: payment.paymentNo || '',
+                date: payment.date || '',
+                status: payment.status || 'Completed',
+                session: null,
+                invoiceCount: invoiceNos.length > 0 ? `${invoiceNos.length} invoice${invoiceNos.length > 1 ? 's' : ''}` : null,
+                account: null,
+                bankAccount: payment.bankName || null,
+            },
+            customerData: {
+                name: payment.customerName || '',
+                code: payment.customerCode || '',
+                address: '',
+                phone: '',
+                email: '',
+                trn: '',
+                crn: '',
+            },
+            invoices: invoiceNos.map(inv => ({
+                ref: inv,
+                soRef: '',
+                date: payment.date || '',
+                total: invoiceAmt / Math.max(invoiceNos.length, 1),
+                outstanding: invoiceAmt / Math.max(invoiceNos.length, 1),
+                received: perInvoiceAmount,
+                balance: balance / Math.max(invoiceNos.length, 1),
+                status: (balance / Math.max(invoiceNos.length, 1)) <= 0 ? 'Fully paid' : 'Partial',
+            })),
+            summary: {
+                totalOutstanding: invoiceAmt,
+                discount: 0,
+                remaining: balance,
+                totalReceived: amount,
+            },
+            payment: {
+                method: payment.mode || '',
+                depositedTo: payment.bankName || '',
+                chequeRef: payment.reference || '',
+                chequeDate: payment.chequeDate || '',
+            },
+            note: payment.notes || '',
+        };
+    };
+
+    const resolveReceiptTemplate = (templates) =>
+        (templates && templates.find(t => t.isDefault)) || {
+            category: 'Receipt Voucher',
+            paperSize: 'A4',
+            orientation: 'Portrait',
+            headerContent: '',
+            footerContent: '',
+            termsContent: '',
+            displayOptions: '{}',
+            columns: '{}',
+        };
+
     const handlePrint = async (payment) => {
         if (!payment) return;
         try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
-            const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
-                category: 'Sales Invoice',
-                paperSize: 'A4',
-                orientation: 'Portrait',
-                headerContent: '',
-                footerContent: '',
-                termsContent: '',
-                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
-                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true },
-            };
-
-            const amount = Number(payment.amount) || 0;
-            const printData = {
-                title: 'PAYMENT RECEIPT',
-                docNo: payment.paymentNo,
-                date: payment.date,
-                customer: {
-                    name: payment.customerName || '',
-                    address: '',
-                    trn: '',
-                    phone: '',
-                },
-                items: [{
-                    name: 'Payment Received',
-                    description: { title: 'Payment Received', details: [
-                        `Mode: ${payment.mode || '-'}`,
-                        payment.reference ? `Ref: ${payment.reference}` : null,
-                        payment.invoiceNo ? `Invoice: ${payment.invoiceNo}` : null,
-                    ].filter(Boolean) },
-                    unit: '',
-                    qty: 1,
-                    price: amount,
-                    taxableAmount: amount,
-                    taxAmt: 0,
-                    taxPercent: 0,
-                    total: amount,
-                }],
-                totals: {
-                    subTotal: amount,
-                    tax: 0,
-                    grandTotal: amount,
-                    currency: company?.currencySymbol || company?.currency || 'AED',
-                    billDiscount: 0,
-                    billDiscountAmount: 0,
-                },
-                meta: {
-                    status: payment.status || 'Completed',
-                    paymentTerm: '',
-                    validTill: '',
-                    notes: payment.notes || '',
-                },
-            };
-
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const defaultTemplate = resolveReceiptTemplate(templates);
+            const branchProfile = buildDocumentHeaderProfile({
+                company,
+                branches: availableBranches || [],
+                branchId: payment?.branchId ?? activeBranch?.id,
+            });
+            const html = await generatePrintHtmlAsync(defaultTemplate, buildPaymentPrintData(payment), {
+                companyProfile: branchProfile,
+                billBullLogo,
+            });
             printHtml(html);
         } catch (err) {
             console.error('Failed to print payment receipt', err);
         }
     };
 
-
+    const handleDownload = async (payment) => {
+        if (!payment) return;
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const defaultTemplate = resolveReceiptTemplate(templates);
+            const branchProfile = buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: payment?.branchId ?? activeBranch?.id });
+            const html = await generatePrintHtmlAsync(defaultTemplate, buildPaymentPrintData(payment), { companyProfile: branchProfile, billBullLogo });
+            await downloadPdf(html, payment.paymentNo || 'Payment-Receipt');
+        } catch (err) { console.error('Download error', err); }
+    };
 
     // ==========================================
     // HANDLERS
@@ -497,7 +547,7 @@ const Payment = () => {
                     customerName: selectedCustomer.name,
                     linkedInvoice: invNo,
                     invoiceAmount: invTotal,
-                    invoiceBalance: invBalance,
+                    invoiceBalance: Math.max(invBalance - amountToSettle, 0),
                     amount: amountToSettle,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
@@ -728,6 +778,9 @@ const Payment = () => {
                             {/* FILTERS */}
                             <div className="mb-6">
                                 <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Payment Filters</h3>
+                                <div className="flex items-center gap-3 mb-3">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                                     <div className="md:col-span-2 relative">
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
@@ -739,15 +792,6 @@ const Payment = () => {
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                         />
-                                    </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
-                                        <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600">
-                                            <option>All Time</option>
-                                            <option>Today</option>
-                                            <option>This Week</option>
-                                            <option>This Month</option>
-                                        </select>
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>
@@ -766,12 +810,22 @@ const Payment = () => {
                                     <div className="flex gap-2">
                                         <ExportDropdown
                                             onExportExcel={() => exportToExcel(
-                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredPayments, {
+                                                    documentNumberSelector: (payment) => payment.paymentNo,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 PAYMENT_COLUMNS,
                                                 'Sales_Payments'
                                             )}
                                             onExportPdf={() => exportToPDF(
-                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredPayments, {
+                                                    documentNumberSelector: (payment) => payment.paymentNo,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 PAYMENT_COLUMNS,
                                                 'Sales Payments List',
                                                 'Sales_Payments'
@@ -789,13 +843,14 @@ const Payment = () => {
 
                             {/* TABLE */}
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left text-xs">
+                                <table className="bb-nowrap-table w-full text-left text-xs">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200 sticky top-0 z-10">
                                         <tr>
                                             <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase">S.No.</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Payment No</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Date</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Customer/Vendor</th>
+                                            <th className="px-4 py-3 font-semibold text-xs uppercase">Branch</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Invoice/PO</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase text-right">Invoice Amount</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase text-right">Paid Amount</th>
@@ -805,14 +860,25 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isLoading && <TableSkeleton cols={10} rows={8} />}
                                         {filteredPayments.map((payment, index) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
-                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: payment.paymentNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{payment.customerName}</div>
-                                                    <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
+                                                    {payment.customerCode && <div className="text-[10px] text-slate-400">{payment.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {payment.branchCode ? payment.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium">{payment.invoiceNo}</td>
                                                 <td className="px-4 py-3 text-right text-slate-600"><CurrencyAmount value={payment.invoiceAmount} currency={currency} /></td>
@@ -831,6 +897,7 @@ const Payment = () => {
                                                             <button onClick={() => handleLoadPayment(payment)} title="Edit" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         )}
                                                         <button onClick={() => handlePrint(payment)} title="Print" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Printer size={14} /></button>
+                                                        <button onClick={() => handleDownload(payment)} title="Download PDF" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Download size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -913,7 +980,7 @@ const Payment = () => {
                                             </button>
                                         </div>
                                         <div className="overflow-x-auto">
-                                            <table className="w-full text-sm text-left">
+                                            <table className="bb-nowrap-table w-full text-sm text-left">
                                                 <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                                     <tr>
                                                         <th className="px-4 py-3 w-10 text-center">
@@ -1215,10 +1282,59 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Remaining</p>
-                                        <CurrencyAmount value={selectedPayment.invoiceAmount - selectedPayment.amount} currency={currency} className="text-xs font-bold text-red-600" />
+                                        <CurrencyAmount value={selectedPayment.invoiceBalance != null ? selectedPayment.invoiceBalance : Math.max(selectedPayment.invoiceAmount - selectedPayment.amount, 0)} currency={currency} className="text-xs font-bold text-red-600" />
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Payment History for the same invoice */}
+                            {(() => {
+                                if (!selectedPayment.invoiceNo) return null;
+                                const siblings = paymentsList
+                                    .filter(p => p.invoiceNo === selectedPayment.invoiceNo)
+                                    .sort((a, b) => (a.id > b.id ? 1 : -1));
+                                if (siblings.length <= 1) return null;
+                                const totalPaid = siblings.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                                return (
+                                    <div className="mb-6">
+                                        <h4 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100 pb-2">
+                                            Payment History — {selectedPayment.invoiceNo}
+                                        </h4>
+                                        <div className="rounded-lg border border-slate-100 overflow-hidden">
+                                            {siblings.map((p, i) => {
+                                                const isCurrent = p.id === selectedPayment.id;
+                                                return (
+                                                    <div
+                                                        key={p.id}
+                                                        className={`flex items-center gap-3 px-3 py-2.5 text-xs ${isCurrent ? 'bg-[#FFF8E7] border-l-2 border-[#F5C742]' : 'bg-white hover:bg-slate-50 cursor-pointer'} ${i > 0 ? 'border-t border-slate-100' : ''}`}
+                                                        onClick={() => !isCurrent && handleViewPayment(p)}
+                                                    >
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className={`font-bold ${isCurrent ? 'text-amber-700' : 'text-blue-600'}`}>{p.paymentNo}</span>
+                                                                {isCurrent && <span className="text-[9px] font-bold bg-[#F5C742] text-slate-800 px-1.5 py-0.5 rounded-full">Current</span>}
+                                                            </div>
+                                                            <div className="text-slate-400 mt-0.5">{formatDisplayDate(p.date)} · {p.mode}</div>
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <CurrencyAmount value={p.amount} currency={currency} className={`font-bold ${isCurrent ? 'text-amber-700' : 'text-emerald-600'}`} />
+                                                            <div className="text-[10px] text-slate-400 mt-0.5">
+                                                                {p.invoiceBalance != null
+                                                                    ? <><span className="text-slate-300">rem </span><CurrencyAmount value={p.invoiceBalance} currency={currency} className="text-slate-500" /></>
+                                                                    : null}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                            <div className="flex justify-between items-center px-3 py-2 bg-slate-50 border-t border-slate-200">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Collected</span>
+                                                <CurrencyAmount value={totalPaid} currency={currency} className="text-xs font-bold text-slate-700" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Drawer Footer */}

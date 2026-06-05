@@ -14,20 +14,23 @@ import {
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
-  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail
+  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
+  UserCircle, TrendingUp
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
 import { useCompany } from "../context/CompanyContext";
 import { formatUserDisplayName } from "../utils/displayName";
+import BranchSelector from "../components/common/BranchSelector";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
-  const username = formatUserDisplayName(getUsernameFromToken()) || "BillBull Admin";
+  const rawUsername = getUsernameFromToken() || "";
+  const username = formatUserDisplayName(rawUsername.includes('@') ? rawUsername.split('@')[0] : rawUsername) || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
   const { setCompany } = useCompany();
-  const userEmail = "admin@billbull.app";
+  const userEmail = rawUsername || "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 1024);
@@ -42,6 +45,8 @@ const Sidebar = ({ children }) => {
   const [payrollOpen, setPayrollOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [enterpriseOpen, setEnterpriseOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -74,6 +79,8 @@ const Sidebar = ({ children }) => {
     if (path.startsWith("/tally")) setTallyOpen(true);
     if (path.startsWith("/payroll")) setPayrollOpen(true);
     if (path.startsWith("/settings")) setSettingsOpen(true);
+    if (path.startsWith("/enterprise")) setEnterpriseOpen(true);
+    if (path.startsWith("/myprofile")) setProfileOpen(true);
   }, [location.pathname, collapsed]);
 
   // Toggle Handler
@@ -228,6 +235,21 @@ const Sidebar = ({ children }) => {
     //   ],
     // },
     {
+      id: "enterprise-group",
+      label: "Enterprise Console",
+      icon: <Building2 size={16} />,
+      isDropdown: true,
+      isOpen: enterpriseOpen,
+      onToggle: () => handleToggle(enterpriseOpen, setEnterpriseOpen),
+      module: "userManagement",
+      roles: ["ADMIN"],
+      subItems: [
+        { path: "/enterprise/branches",        label: "Branch / Outlets",  module: "userManagement.setup", icon: <Building2 size={14} /> },
+        { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
+        { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
+      ],
+    },
+    {
       id: "settings-group",
       label: "Settings",
       icon: <Settings size={16} />,
@@ -238,17 +260,23 @@ const Sidebar = ({ children }) => {
       roles: ["ADMIN"],
       subItems: [
         { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
-        { path: "/settings/roles",     label: "User & Role Config", module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
-        { path: "/settings/branches",  label: "Branch Setup",       module: "userManagement.setup", icon: <Warehouse size={14} /> },
         { path: "/settings/email",     label: "Email Settings",     module: "userManagement.setup", icon: <Mail size={14} /> },
       ],
     },
     {
-      path: "/myprofile",
+      id: "profile-group",
       label: "My Profile",
       icon: <FaUser />,
+      isDropdown: true,
+      isOpen: profileOpen,
+      onToggle: () => handleToggle(profileOpen, setProfileOpen),
       module: null, // always visible to any authenticated user
-      roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR", "SALES"],
+      roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR"],
+      subItems: [
+        { path: "/myprofile/overview", label: "Overview",            icon: <UserCircle size={14} /> },
+        { path: "/myprofile/sales",    label: "My Sales",            icon: <TrendingUp size={14} /> },
+        { path: "/myprofile/tasks",    label: "Tasks & Activities",  icon: <ClipboardList size={14} /> },
+      ],
     },
   ];
 
@@ -585,7 +613,7 @@ const Sidebar = ({ children }) => {
     }
 
     .mobile-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 70;
     }
     
     .close-mobile {
@@ -609,6 +637,7 @@ const Sidebar = ({ children }) => {
         position: fixed; left: 0; top: 0; bottom: 0; 
         transform: translateX(-105%); 
         width: 280px !important; /* Wider on mobile */
+        z-index: 80;
       }
       .sidebar.mobile-open { transform: translateX(0); box-shadow: 10px 0 30px rgba(0,0,0,0.15); }
       .sidebar.collapsed { width: 280px !important; } /* No collapse on mobile */
@@ -673,6 +702,9 @@ const Sidebar = ({ children }) => {
             </div>
             <span>BillBull</span>
           </div>
+          <div style={{ marginLeft: 'auto' }}>
+            <BranchSelector />
+          </div>
         </header>
       )}
 
@@ -710,6 +742,11 @@ const Sidebar = ({ children }) => {
               </div>
             )}
           </div>
+          {!collapsed && (
+            <div style={{ marginTop: 12 }}>
+              <BranchSelector />
+            </div>
+          )}
         </div>
 
         {/* NAVIGATION */}

@@ -31,6 +31,7 @@ import { salaryAdvanceApi } from '../../../api/salaryAdvanceApi';
 import { employeesApi } from '../../../api/employeesApi';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // --- Configuration ---
 
@@ -469,6 +470,7 @@ const SalaryAdvances = () => {
 
   // Data States
   const [requestsList, setRequestsList] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [repaymentList, setRepaymentList] = useState([]);
   const [employeeList, setEmployeeList] = useState([]);
   const [statsData, setStatsData] = useState(null);
@@ -495,6 +497,7 @@ const SalaryAdvances = () => {
   }, []);
 
   const fetchData = async () => {
+    setIsLoading(true);
     try {
       const [requests, schedules, stats] = await Promise.all([
         salaryAdvanceApi.getAllRequests(),
@@ -506,6 +509,8 @@ const SalaryAdvances = () => {
       setStatsData(stats);
     } catch (error) {
       console.error("Failed to fetch salary advance data:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -860,7 +865,7 @@ const SalaryAdvances = () => {
                   <p className="text-sm text-slate-500">View and manage all salary advance requests</p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm whitespace-nowrap">
+                  <table className="bb-nowrap-table w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase">Employee</th>
@@ -873,6 +878,7 @@ const SalaryAdvances = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
+                      {isLoading && <TableSkeleton cols={7} rows={8} />}
                       {filteredRequests.length > 0 ? (
                         pagedRequests.map((req) => (
                           <tr key={req.id} className="hover:bg-slate-50/50 transition-colors">
@@ -1097,7 +1103,7 @@ const SalaryAdvances = () => {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
+                  <table className="bb-nowrap-table w-full text-left text-sm">
                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestReportSort('dept')}>

@@ -136,3 +136,14 @@ label,
   vertical-align: -0.08em;
   margin: 0 0.06em;
 }
+
+@media (min-width: 768px) {
+  .bb-nowrap-table {
+    min-width: var(--bb-table-min-width, 100%);
+  }
+
+  .bb-nowrap-table th,
+  .bb-nowrap-table td {
+    white-space: nowrap;
+  }
+}

@@ -1,5 +1,7 @@
 package com.billbull.backend.settings.email;
 
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.util.ByteArrayDataSource;
@@ -26,9 +28,12 @@ import java.util.Map;
 public class DocumentEmailSender {
 
     private final EmailConfigService emailConfigService;
+    private final BranchRepository branchRepository;
 
-    public DocumentEmailSender(EmailConfigService emailConfigService) {
+    public DocumentEmailSender(EmailConfigService emailConfigService,
+                               BranchRepository branchRepository) {
         this.emailConfigService = emailConfigService;
+        this.branchRepository = branchRepository;
     }
 
     /**
@@ -37,6 +42,20 @@ public class DocumentEmailSender {
      */
     public String getFromName() {
         return emailConfigService.getFromName();
+    }
+
+    /**
+     * PDF §7.4: "From" display name reflects the branch under which the
+     * originating transaction was created — e.g. "MyCompany — Dubai Branch".
+     * Returns the suffix "{Company} — {Branch}" when {@code branchId} resolves,
+     * else the plain configured From name.
+     */
+    public String getFromNameForBranch(Long branchId) {
+        String base = emailConfigService.getFromName();
+        if (branchId == null) return base;
+        Branch branch = branchRepository.findById(branchId).orElse(null);
+        if (branch == null || branch.getName() == null || branch.getName().isBlank()) return base;
+        return base + " — " + branch.getName();
     }
 
     /**
@@ -53,6 +72,17 @@ public class DocumentEmailSender {
     public void send(String toEmail, String subject, String htmlBody,
                      List<Map<String, String>> inlineAttachments)
             throws MessagingException, UnsupportedEncodingException {
+        send(toEmail, subject, htmlBody, inlineAttachments, null);
+    }
+
+    /**
+     * Branch-aware variant — sets From display name and reply-to from the
+     * branch profile when available (PDF §7.4). Falls back to globals.
+     */
+    public void send(String toEmail, String subject, String htmlBody,
+                     List<Map<String, String>> inlineAttachments,
+                     Long branchId)
+            throws MessagingException, UnsupportedEncodingException {
 
         if (toEmail == null || toEmail.isBlank()) {
             throw new IllegalArgumentException("Recipient email is required.");
@@ -64,12 +94,28 @@ public class DocumentEmailSender {
         JavaMailSender sender = emailConfigService.buildMailSender();
         String fromAddress = emailConfigService.getFromAddress();
         String fromName = emailConfigService.getFromName();
+        String replyTo = null;
+
+        if (branchId != null) {
+            Branch branch = branchRepository.findById(branchId).orElse(null);
+            if (branch != null) {
+                if (branch.getName() != null && !branch.getName().isBlank()) {
+                    fromName = fromName + " — " + branch.getName();
+                }
+                if (branch.getEmail() != null && !branch.getEmail().isBlank()) {
+                    replyTo = branch.getEmail();
+                }
+            }
+        }
 
         boolean hasInlineParts = inlineAttachments != null && !inlineAttachments.isEmpty();
 
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, hasInlineParts, "UTF-8");
         helper.setFrom(fromAddress, fromName);
+        if (replyTo != null) {
+            helper.setReplyTo(replyTo);
+        }
         helper.setTo(toEmail);
         helper.setSubject(subject);
         helper.setText(htmlBody, true);

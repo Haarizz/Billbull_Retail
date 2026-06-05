@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -62,18 +62,21 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
   buildLpoPrintData,
   buildPaymentVoucherPrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { compareDocumentValues } from '../../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -95,6 +98,7 @@ const LPO_COLUMNS = [
 // API Imports
 import {
   getLpos,
+  getLposPage,
   getLpoSuggestions,
   getLpoByNumber,
   createLpo,
@@ -126,6 +130,7 @@ import { useBranch } from '../../../context/BranchContext';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ProductSelector from '../../../components/ProductSelector';
 import VendorSelector from '../../../components/VendorSelector';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 const statusTabs = [
   "All LPOs",
@@ -173,6 +178,9 @@ const mapApiToUi = (data) => {
     lpoNumber: item.id,             // string LPO number
     vendorName: item.vendorName,
     vendorCode: item.vendorCode,
+    branchId: item.branchId ?? null,
+    branchName: item.branchName || '',
+    branchCode: item.branchCode || '',
     status: item.status,
     approvedBy: item.approvedBy,
     date: item.date,
@@ -323,7 +331,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, pageSize, totalElements, loading = false }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -410,7 +418,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
       {/* DESKTOP TABLE VIEW */}
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden flex-1 hidden md:block">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left table-auto">
+          <table className="bb-nowrap-table w-full text-xs text-left table-auto">
 
             <thead className="bg-[#F7F7FA] text-slate-600 font-semibold border-b border-slate-200">
               <tr>
@@ -433,6 +441,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                     {sortConfig.key === 'vendorName' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
                   </div>
                 </th>
+                <th className="px-4 py-3 whitespace-nowrap font-medium">Branch</th>
                 <th className="px-4 py-3 whitespace-nowrap font-medium">Created From</th>
                 <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
@@ -487,12 +496,21 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {processedData.length === 0 ? (
+              {loading ? (
+                <TableSkeleton cols={9} rows={8} />
+              ) : processedData.length === 0 ? (
                 <tr><td colSpan="14" className="text-center py-8 text-slate-400">No records found.</td></tr>
               ) : processedData
                 .map((row, index) => (
                   <tr key={row.lpoNumber} className="hover:bg-slate-50 transition-colors group">
-                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                      {getListSerialNumber(index, {
+                        documentNumber: row.lpoNumber,
+                        page: currentPage,
+                        size: pageSize,
+                        totalElements,
+                      })}
+                    </td>
                     <td
                       onClick={() => onView(row)} // View by default on click
                       className="px-4 py-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline"
@@ -504,6 +522,16 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                         <div className="font-medium text-slate-900">{row.vendorName || 'No Vendor'}</div>
                         <div className="text-[10px] text-slate-400 font-mono">{row.vendorCode || 'V001'}</div>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-[11px]">
+                      {row.branchName ? (
+                        <>
+                          <div className="font-medium">{row.branchName}</div>
+                          {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                        </>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {getSourceBadge(row.createdFrom)}
@@ -632,6 +660,13 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                           onClick={() => onPrint(row)}
                         >
                           <Printer className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
+                          title="Download PDF"
+                          onClick={(e) => { e.stopPropagation(); onDownload && onDownload(row); }}
+                        >
+                          <Download className="h-3.5 w-3.5" />
                         </button>
                         <button
                           className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
@@ -776,7 +811,7 @@ const ApprovalQueueView = ({ queue, onApprove, onReject }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[700px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[700px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium text-nowrap">LPO No.</th>
@@ -853,7 +888,7 @@ const HistoryView = ({ lpos }) => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[700px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[700px]">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
                 <th className="px-4 py-3 whitespace-nowrap">LPO No.</th>
@@ -1770,7 +1805,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               </div>
             </div>
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[800px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
@@ -2331,19 +2366,24 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
 const LPOList = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
 
-  // Master State
-  const [lpos, setLpos] = useState([]);
-  // Client-side pagination over the filtered/processed list (backend /page
-  // doesn't support all the filters this page exposes — status tab + date
-  // range + vendor — so we slice processedData here).
-  const [listPage, setListPage] = useState(0);
+  // Server-side pagination state. The list/approval/history tabs each fetch a
+  // single page from the backend (/api/lpos/page) so we never load the whole
+  // table (and never trigger the per-row fulfillment N+1 across all rows).
   const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 });
+  const [loadingPage, setLoadingPage] = useState(false);
   const [approvalQueue, setApprovalQueue] = useState([]);
+  const [approvalPage, setApprovalPage] = useState(0);
+  const [approvalMeta, setApprovalMeta] = useState({ totalElements: 0, totalPages: 0 });
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyData, setHistoryData] = useState({ content: [], totalElements: 0, totalPages: 0 });
   const [autoSuggestions, setAutoSuggestions] = useState([]);
   const [currentEditorData, setCurrentEditorData] = useState(null);
   const [vendors, setVendors] = useState([]);
@@ -2398,19 +2438,26 @@ const LPOList = () => {
     loadData();
   }, []);
 
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => loadData();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+  }, []);
+
   const loadData = async () => {
     try {
       setLoading(true);
 
-      // Load all data in parallel (products removed — ProductSelector fetches server-side)
-      const [lposData, suggestionsData, vendorsData, warehousesData] = await Promise.all([
-        getLpos(null).catch(() => []),
+      // Reference data only — the LPO rows themselves are now fetched a page at
+      // a time by the per-tab effects below. (Products are fetched server-side
+      // by ProductSelector.)
+      const [suggestionsData, vendorsData, warehousesData] = await Promise.all([
         getLpoSuggestions().catch(() => []),
         getVendors().catch(() => []),
         getWarehouses().catch(() => [])
       ]);
 
-      setLpos(mapApiToUi(lposData));
       setAutoSuggestions(suggestionsData);
       setVendors(vendorsData);
       setWarehouses(warehousesData);
@@ -2422,20 +2469,94 @@ const LPOList = () => {
     }
   };
 
-  // Filter approval queue whenever lpos change
+  // Debounce the free-text search so each keystroke doesn't hit the server.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
-    const pending = lpos.filter(l => l.status === "PENDING_APPROVAL");
-    setApprovalQueue(
-      pending.map(p => ({
-        dbId: p.dbId,                 // ✅ KEEP numeric ID
-        lpoNumber: p.lpoNumber,       // ✅ Business number
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // Active status tab → backend LpoStatus param ("" = all).
+  const statusParam = useMemo(
+    () => (activeStatusTab === "All LPOs" ? "" : activeStatusTab.toUpperCase().replace(/ /g, "_")),
+    [activeStatusTab]
+  );
+
+  // Reset to the first page whenever a filter changes.
+  useEffect(() => {
+    setListPage(0);
+  }, [statusParam, debouncedSearch, dateRange.from, dateRange.to, selectedVendor]);
+
+  // Fetch one page of the LIST tab from the server.
+  const fetchListPage = useCallback(async () => {
+    setLoadingPage(true);
+    try {
+      const res = await getLposPage({
+        page: listPage,
+        size: LIST_PAGE_SIZE,
+        search: debouncedSearch,
+        status: statusParam,
+        dateFrom: dateRange.from,
+        dateTo: dateRange.to,
+        vendor: selectedVendor,
+      });
+      setPageData({
+        content: mapApiToUi(res.content || []),
+        totalElements: res.totalElements || 0,
+        totalPages: res.totalPages || 0,
+      });
+    } catch (error) {
+      console.error("Failed to load LPO page:", error);
+      setPageData({ content: [], totalElements: 0, totalPages: 0 });
+    } finally {
+      setLoadingPage(false);
+    }
+  }, [listPage, debouncedSearch, statusParam, dateRange.from, dateRange.to, selectedVendor]);
+
+  useEffect(() => {
+    if (activeNavTab === "list") fetchListPage();
+  }, [activeNavTab, fetchListPage]);
+
+  // Approval Queue tab — server-paginated PENDING_APPROVAL rows.
+  const fetchApprovalQueue = useCallback(async () => {
+    try {
+      const res = await getLposPage({ page: approvalPage, size: LIST_PAGE_SIZE, status: "PENDING_APPROVAL" });
+      const rows = mapApiToUi(res.content || []);
+      setApprovalQueue(rows.map(p => ({
+        dbId: p.dbId,
+        lpoNumber: p.lpoNumber,
         vendorName: p.vendorName,
         date: p.date,
         totalValue: p.totalValue,
-        urgency: "Normal"
-      }))
-    );
-  }, [lpos]);
+        urgency: "Normal",
+      })));
+      setApprovalMeta({ totalElements: res.totalElements || 0, totalPages: res.totalPages || 0 });
+    } catch (error) {
+      console.error("Failed to load approval queue:", error);
+    }
+  }, [approvalPage]);
+
+  useEffect(() => {
+    if (activeNavTab === "approval") fetchApprovalQueue();
+  }, [activeNavTab, fetchApprovalQueue]);
+
+  // History tab — server-paginated full history.
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await getLposPage({ page: historyPage, size: LIST_PAGE_SIZE });
+      setHistoryData({
+        content: mapApiToUi(res.content || []),
+        totalElements: res.totalElements || 0,
+        totalPages: res.totalPages || 0,
+      });
+    } catch (error) {
+      console.error("Failed to load LPO history:", error);
+    }
+  }, [historyPage]);
+
+  useEffect(() => {
+    if (activeNavTab === "history") fetchHistory();
+  }, [activeNavTab, fetchHistory]);
 
   // --- Handlers ---
 
@@ -2503,18 +2624,25 @@ const LPOList = () => {
 
       const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
 
-      const templates = await getTemplatesByCategory('Local Purchase Order');
+      const [templates, latestVendors] = await Promise.all([
+        getTemplatesByCategory('Local Purchase Order'),
+        getVendors().catch(() => vendors || [])
+      ]);
+      if (Array.isArray(latestVendors) && latestVendors.length > 0) {
+        setVendors(latestVendors);
+      }
 
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Local Purchase Order'
-      );
+      const defaultTemplate = resolvePurchasePrintTemplate('Local Purchase Order', templates);
 
       if (defaultTemplate) {
-        const fullVendor = findVendorRecord(vendors, detailedLpo, detailedLpo?.vendorName);
+        const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
-        const html = generatePrintHtml(defaultTemplate, printData, {
-          companyProfile: company,
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: detailedLpo?.branchId ?? activeBranch?.id,
+          }),
           billBullLogo
         });
         printHtml(html);
@@ -2524,6 +2652,30 @@ const LPOList = () => {
     } catch (error) {
       console.error("Print error:", error);
       toast.error("Failed to generate print layout.");
+    } finally {
+      toast.dismiss(loadingToast);
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadLPO = async (lpo) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      setLoading(true);
+      const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
+      const [templates, latestVendors] = await Promise.all([getTemplatesByCategory('Local Purchase Order'), getVendors().catch(() => vendors || [])]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Local Purchase Order', templates);
+      if (defaultTemplate) {
+        const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
+        const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: detailedLpo?.branchId ?? activeBranch?.id }), billBullLogo });
+        await downloadPdf(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
+      } else {
+        toast.error("No default template for LPO found.");
+      }
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Failed to generate download.");
     } finally {
       toast.dismiss(loadingToast);
       setLoading(false);
@@ -2559,8 +2711,9 @@ const LPOList = () => {
 
   const refreshLpos = async () => {
     try {
-      const data = await getLpos(null);
-      setLpos(mapApiToUi(data));
+      await fetchListPage();
+      if (activeNavTab === 'approval') await fetchApprovalQueue();
+      if (activeNavTab === 'history') await fetchHistory();
     } catch (error) {
       console.error('Failed to refresh LPOs:', error);
     }
@@ -2693,10 +2846,7 @@ const LPOList = () => {
         return toast.error('No payment vouchers found for this LPO.');
       }
       const templates = await getTemplatesByCategory('Payment Voucher');
-      const template = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Payment Voucher'
-      );
+      const template = resolvePurchasePrintTemplate('Payment Voucher', templates);
 
       const voucher = vouchers[0];
       const fullVendor = findVendorRecord(vendors, row.vendorCode, row.vendorName);
@@ -2706,7 +2856,14 @@ const LPOList = () => {
         company,
         null
       );
-      const html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+      const html = await generatePrintHtmlAsync(template, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: voucher?.branch?.id ?? row?.branchId ?? activeBranch?.id,
+        }),
+        billBullLogo
+      });
       printHtml(html);
     } catch (err) {
       console.error(err);
@@ -2761,92 +2918,72 @@ const LPOList = () => {
 
   // --- ACTUAL EXECUTION HANDLERS (Called by Modal) ---
   const executeStockApprove = async (dbId) => {
-
-
-    // Optimistic update
-    setLpos(prevLpos =>
-      prevLpos.map(lpo =>
+    // Optimistic update of the visible page.
+    setPageData(prev => ({
+      ...prev,
+      content: prev.content.map(lpo =>
         lpo.dbId === dbId ? { ...lpo, status: 'COMPLETED', received: 100 } : lpo
-      )
-    );
+      ),
+    }));
     // await createGRN(dbId); // Hypothetical API call
   };
 
   const executeStockReject = async (dbId) => {
-    // Optimistic update
-    setLpos(prevLpos =>
-      prevLpos.map(lpo =>
+    // Optimistic update of the visible page.
+    setPageData(prev => ({
+      ...prev,
+      content: prev.content.map(lpo =>
         lpo.dbId === dbId ? { ...lpo, status: 'REJECTED' } : lpo
-      )
-    );
+      ),
+    }));
   };
 
-  const processedData = useMemo(() => {
-    let data = [...lpos];
-
-    // 1. Filter by Status
-    if (activeStatusTab !== "All LPOs") {
-      const dbStatus = activeStatusTab.toUpperCase().replace(/ /g, '_');
-      data = data.filter(l => l.status === dbStatus);
-    }
-
-    // 2. Filter by Search Query
-    if (searchQuery) {
-      const lowerQuery = searchQuery.toLowerCase();
-      data = data.filter(l =>
-        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
-        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
-      );
-    }
-
-    // 3. Filter by Date Range
-    if (dateRange.from) {
-      data = data.filter(l => l.date >= dateRange.from);
-    }
-    if (dateRange.to) {
-      data = data.filter(l => l.date <= dateRange.to);
-    }
-
-    // 4. Filter by Vendor
-    if (selectedVendor) {
-      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
-    }
-
-    // 5. Sort
+  // Client-side sort applied to the current page only (the server already
+  // returns rows ordered by newest serial first; this lets a column header
+  // reorder the visible page without an extra round-trip).
+  const visibleRows = useMemo(() => {
+    const data = [...pageData.content];
     if (sortConfig && sortConfig.key) {
       data.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
+        if (sortConfig.key === 'lpoNumber') {
+          return compareDocumentValues(a.lpoNumber, b.lpoNumber, sortConfig.direction);
         }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
+        if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
       });
     }
-
     return data;
-  }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
+  }, [pageData.content, sortConfig]);
 
-  // Reset page when filters change, then slice processedData for the visible page.
-  useEffect(() => { setListPage(0); }, [activeStatusTab, searchQuery, dateRange, selectedVendor]);
-  const pagedProcessedData = useMemo(
-    () => processedData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-    [processedData, listPage]
-  );
-
-  const exportProcessedData = useMemo(() => processedData.map((row, index) => ({
-    ...row,
-    sNo: index + 1,
-    totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel)
-  })), [currencyLabel, processedData]);
-
-  const handleExportExcel = () => {
-    exportToExcel(exportProcessedData, LPO_COLUMNS, 'LPO_List');
+  // Export pulls the full filtered result set on demand (one heavier request,
+  // only when the user explicitly exports — not on every page view).
+  const buildExportRows = async () => {
+    const all = await getLpos(statusParam || null).catch(() => []);
+    let data = mapApiToUi(all);
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      data = data.filter(l =>
+        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(q)) ||
+        (l.vendorName && l.vendorName.toLowerCase().includes(q)));
+    }
+    if (dateRange.from) data = data.filter(l => l.date >= dateRange.from);
+    if (dateRange.to) data = data.filter(l => l.date <= dateRange.to);
+    if (selectedVendor) data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
+    return withListSerialNumbers(data, {
+      documentNumberSelector: (row) => row.lpoNumber,
+    }).map((row) => ({
+      ...row,
+      totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel),
+    }));
   };
 
-  const handleExportPdf = () => {
-    exportToPDF(exportProcessedData, LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
+  const handleExportExcel = async () => {
+    exportToExcel(await buildExportRows(), LPO_COLUMNS, 'LPO_List');
+  };
+
+  const handleExportPdf = async () => {
+    exportToPDF(await buildExportRows(), LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
   };
 
   return (
@@ -2986,10 +3123,12 @@ const LPOList = () => {
             {/* View Content */}
             {activeNavTab === 'list' && (
               <ListView
-                lpos={lpos}
-                processedData={pagedProcessedData}
+                lpos={pageData.content}
+                processedData={visibleRows}
                 activeFilter={activeStatusTab}
-                currentPage={0}
+                currentPage={listPage}
+                pageSize={LIST_PAGE_SIZE}
+                totalElements={pageData.totalElements}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}
                 onApprove={handleApprove}
@@ -2999,6 +3138,7 @@ const LPOList = () => {
                 onProceedToInvoice={handleProceedToInvoice}
                 onConvertToGrn={handleConvertToGrn}
                 onPrint={handlePrintLPO}
+                onDownload={handleDownloadLPO}
                 onAdvancePayment={handleOpenAdvancePaymentModal}
                 onPrintPaymentVoucher={handlePrintPaymentVoucher}
                 searchQuery={searchQuery}
@@ -3019,9 +3159,9 @@ const LPOList = () => {
               <PaginationFooter
                 page={listPage}
                 size={LIST_PAGE_SIZE}
-                totalElements={processedData.length}
-                totalPages={Math.ceil(processedData.length / LIST_PAGE_SIZE)}
-                loading={loading}
+                totalElements={pageData.totalElements}
+                totalPages={pageData.totalPages}
+                loading={loadingPage}
                 onPageChange={setListPage}
               />
             )}
@@ -3039,20 +3179,39 @@ const LPOList = () => {
                 onSave={handleSaveDraft}
                 onSubmit={handleSubmitForApproval}
                 onPrint={handlePrintLPO}
+                onDownload={handleDownloadLPO}
                 onRevert={handleRevertLPO}
                 isReadOnly={isViewOnly}
                 followUpNotes={isViewOnly ? followUpNotes : undefined}
               />
             )}
             {activeNavTab === 'approval' && (
-              <ApprovalQueueView
-                queue={approvalQueue}
-                onApprove={handleApprove}
-                onReject={handleReject}
-              />
+              <>
+                <ApprovalQueueView
+                  queue={approvalQueue}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                />
+                <PaginationFooter
+                  page={approvalPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={approvalMeta.totalElements}
+                  totalPages={approvalMeta.totalPages}
+                  onPageChange={setApprovalPage}
+                />
+              </>
             )}
             {activeNavTab === 'history' && (
-              <HistoryView lpos={lpos} />
+              <>
+                <HistoryView lpos={historyData.content} />
+                <PaginationFooter
+                  page={historyPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={historyData.totalElements}
+                  totalPages={historyData.totalPages}
+                  onPageChange={setHistoryPage}
+                />
+              </>
             )}
 
             {/* BB-023: Follow-Up Tab */}

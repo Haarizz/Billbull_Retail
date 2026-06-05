@@ -7,13 +7,23 @@ const api = axios.create({
   },
 });
 
-// 🔐 Attach JWT automatically
+// 🔐 Attach JWT + active branch on every request
 api.interceptors.request.use(
   (config) => {
     const token = sessionStorage.getItem("token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
+    // The active branch is mirrored to sessionStorage by BranchContext so the
+    // interceptor stays stateless. "ALL" / null means admin "All Branches".
+    const activeBranchId = sessionStorage.getItem("activeBranchId");
+    if (activeBranchId && activeBranchId !== "ALL") {
+      config.headers["X-Branch-Id"] = activeBranchId;
+    } else if (activeBranchId === "ALL") {
+      config.headers["X-Branch-Id"] = "ALL";
+    }
+
     return config;
   },
   (error) => Promise.reject(error)

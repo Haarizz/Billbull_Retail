@@ -1,8 +1,11 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getBranches, getDefaultBranch } from '../api/branchApi';
-import { getUserProfile } from '../api/auth';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { getBranches, getDefaultBranch, switchBranchSession } from '../api/branchApi';
+import { getUserProfile, getRoles } from '../api/auth';
 
 const BranchContext = createContext(null);
+
+const ALL_BRANCH_ROLES = ['ADMIN', 'SUPER_ADMIN'];
+const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 const normalizeText = (value) => {
     if (typeof value !== 'string') {
@@ -22,9 +25,28 @@ const normalizeBranch = (branch) => {
         id: branch.id ?? null,
         name: normalizeText(branch.name),
         code: normalizeText(branch.code),
+        // Address (top-level and structured sub-parts for print header assembly)
         address: normalizeText(branch.address),
+        addressLine2: normalizeText(branch.addressLine2),
+        city: normalizeText(branch.city),
+        state: normalizeText(branch.state),
+        postalCode: normalizeText(branch.postalCode),
+        country: normalizeText(branch.country),
+        // Contact & identity fields used by print/email header (PDF §7.1 / §7.3)
         phone: normalizeText(branch.phone),
+        fax: normalizeText(branch.fax),
+        email: normalizeText(branch.email),
+        trnNumber: normalizeText(branch.trnNumber),
+        logoUrl: normalizeText(branch.logoUrl),
+        stampUrl: normalizeText(branch.stampUrl),
+        bankName: normalizeText(branch.bankName),
+        bankAccountNumber: normalizeText(branch.bankAccountNumber),
+        bankIban: normalizeText(branch.bankIban),
+        bankSwift: normalizeText(branch.bankSwift),
+        sortOrder: typeof branch.sortOrder === 'number' ? branch.sortOrder : 0,
+        type: normalizeText(branch.type) || 'BRANCH',
         isDefault: Boolean(branch.isDefault),
+        isHeadquarters: Boolean(branch.isHeadquarters),
         defaultWarehouseId: branch.defaultWarehouseId ?? null,
         defaultWarehouseName: normalizeText(branch.defaultWarehouseName),
         defaultWarehouseBranchName: normalizeText(branch.defaultWarehouseBranchName),
@@ -57,7 +79,12 @@ const mergeBranchData = (preferred, fallback) => {
         ...(normalizedFallback || {}),
         ...(normalizedPreferred || {}),
         id: normalizedPreferred?.id ?? normalizedFallback?.id ?? null,
-        isDefault: normalizedPreferred?.isDefault ?? normalizedFallback?.isDefault ?? false,
+        // Use || (not ??) because ?? does not coalesce `false`.
+        // isDefault and isHeadquarters are branch properties set by the API;
+        // the profile branch never carries them, so its `false` must NOT
+        // override the API's `true`.
+        isDefault: normalizedPreferred?.isDefault || normalizedFallback?.isDefault || false,
+        isHeadquarters: normalizedPreferred?.isHeadquarters || normalizedFallback?.isHeadquarters || false,
     };
 };
 
@@ -110,10 +137,33 @@ const formatBranchLocationLabel = (branch) => {
     return location ? `${branchLabel} / ${location}` : branchLabel;
 };
 
+const persistActiveBranchId = (value) => {
+    if (value === null || value === undefined) {
+        sessionStorage.removeItem(ACTIVE_BRANCH_STORAGE_KEY);
+    } else {
+        sessionStorage.setItem(ACTIVE_BRANCH_STORAGE_KEY, String(value));
+    }
+};
+
+const userCanAccessAllBranches = () => {
+    const roles = getRoles();
+    return Array.isArray(roles) && roles.some((r) => ALL_BRANCH_ROLES.includes(r));
+};
+
 export const BranchProvider = ({ children }) => {
     const [defaultBranch, setDefaultBranch] = useState(null);
     const [branches, setBranches] = useState([]);
+    const [activeBranchId, setActiveBranchIdState] = useState(() => {
+        const stored = sessionStorage.getItem(ACTIVE_BRANCH_STORAGE_KEY);
+        if (!stored) return null;
+        if (stored === 'ALL') return 'ALL';
+        const parsed = Number(stored);
+        return Number.isFinite(parsed) ? parsed : null;
+    });
     const [isLoading, setIsLoading] = useState(() => Boolean(sessionStorage.getItem("token")));
+
+    const isAdmin = userCanAccessAllBranches();
+    const isAllBranches = isAdmin && activeBranchId === 'ALL';
 
     const mapProfileBranch = (profile) => {
         if (!profile?.branchId) {
@@ -137,6 +187,7 @@ export const BranchProvider = ({ children }) => {
             setDefaultBranch(null);
             setBranches([]);
             setIsLoading(false);
+            persistActiveBranchId(null);
             return;
         }
 
@@ -191,12 +242,51 @@ export const BranchProvider = ({ children }) => {
 
         const finalBranches = sortBranches(mergedBranches);
         setBranches(finalBranches);
-        setDefaultBranch(resolvedDefaultBranch || finalBranches.find((branch) => branch.isDefault) || null);
+        const resolvedDefault = resolvedDefaultBranch || finalBranches.find((branch) => branch.isDefault) || null;
+        setDefaultBranch(resolvedDefault);
+
+        // Seed activeBranchId on first load: admins default to "ALL", restricted users to their branch.
+        const stored = sessionStorage.getItem(ACTIVE_BRANCH_STORAGE_KEY);
+        if (!stored) {
+            const seedAdmin = userCanAccessAllBranches();
+            if (seedAdmin) {
+                persistActiveBranchId('ALL');
+                setActiveBranchIdState('ALL');
+            } else if (resolvedDefault?.id != null) {
+                persistActiveBranchId(resolvedDefault.id);
+                setActiveBranchIdState(resolvedDefault.id);
+            }
+        }
+
         setIsLoading(false);
     };
 
     useEffect(() => {
         load();
+        // BranchProvider mounts above the login route, so it runs before the
+        // JWT exists. Login emits 'billbull:login' so we can re-load with the
+        // newly-issued token (and therefore the user's allowed branch list).
+        const handler = () => load();
+        window.addEventListener('billbull:login', handler);
+        return () => window.removeEventListener('billbull:login', handler);
+    }, []);
+
+    const switchBranch = useCallback(async (branchId) => {
+        const isAll = branchId === 'ALL' || branchId === null || branchId === undefined;
+        const payload = isAll ? null : Number(branchId);
+
+        const result = await switchBranchSession(payload);
+        if (result?.token) {
+            sessionStorage.setItem('token', result.token);
+        }
+
+        const nextValue = isAll ? 'ALL' : payload;
+        persistActiveBranchId(nextValue);
+        setActiveBranchIdState(nextValue);
+
+        // Notify list pages (or any consumer) so they can re-fetch under the new scope.
+        window.dispatchEvent(new CustomEvent('billbull:branch-changed', { detail: { branchId: nextValue } }));
+        return result;
     }, []);
 
     const branchNames = branches
@@ -205,6 +295,10 @@ export const BranchProvider = ({ children }) => {
     const defaultBranchName = defaultBranch?.name || branchNames[0] || '';
     const defaultBranchLabel = formatBranchLabel(defaultBranch);
     const defaultBranchLocationLabel = formatBranchLocationLabel(defaultBranch);
+
+    const activeBranch = activeBranchId === 'ALL' || activeBranchId == null
+        ? null
+        : branches.find((b) => b.id === Number(activeBranchId)) || null;
 
     return (
         <BranchContext.Provider value={{
@@ -219,6 +313,12 @@ export const BranchProvider = ({ children }) => {
             formatBranchLocationLabel,
             refreshDefaultBranch: load,
             refreshBranches: load,
+            // Phase 1 branch-context additions
+            activeBranchId,
+            activeBranch,
+            isAllBranches,
+            canSwitchBranches: isAdmin,
+            switchBranch,
         }}>
             {children}
         </BranchContext.Provider>

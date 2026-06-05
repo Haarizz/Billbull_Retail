@@ -11,6 +11,7 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.Zone;
 import com.billbull.backend.inventory.warehouse.Locator;
 import com.billbull.backend.inventory.warehouse.Bin;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -21,13 +22,18 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "purchase_invoices")
+@Table(name = "purchase_invoices", indexes = {
+    @Index(name = "idx_purchase_invoice_branch", columnList = "branch_id"),
+    // Speeds the per-vendor invoiced-total aggregate used by the vendor list.
+    @Index(name = "idx_purchase_invoice_vendor_name", columnList = "vendor_name")
+})
 public class PurchaseInvoice extends BaseEntity {
 
 	@Id
@@ -46,9 +52,16 @@ public class PurchaseInvoice extends BaseEntity {
 
 	private String sourceType; // DIRECT / AGAINST_LPO / AGAINST_GRN
 	private String referenceNo;
+	@Column(name = "branch_id")
 	private Long branchId;
 	private String branchName;
 	private String branchCode;
+
+	/** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "branch_id", insertable = false, updatable = false)
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Branch branchEntity;
 
 	private String warehouseName;
 
@@ -223,6 +236,8 @@ public class PurchaseInvoice extends BaseEntity {
 	public void setBranchCode(String branchCode) {
 		this.branchCode = branchCode;
 	}
+
+	public Branch getBranchEntity() { return branchEntity; }
 
 	public String getWarehouseName() {
 		return warehouseName;

@@ -1,18 +1,25 @@
 package com.billbull.backend.sales.payment;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "sales_payments")
+@Table(name = "sales_payments", indexes = {
+    @Index(name = "idx_sales_payment_branch", columnList = "branch_id")
+})
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class Payment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(unique = true)
     private String paymentNumber;
@@ -58,6 +65,9 @@ public class Payment {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
 
     public String getPaymentNumber() {
         return paymentNumber;

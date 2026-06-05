@@ -47,13 +47,17 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendSalesOrderEmail } from '../../api/salesorderApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
@@ -83,9 +87,12 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ PERMISSIONS
 import { usePermissions } from '../../context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -171,6 +178,7 @@ const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPri
 
 const SalesOrders = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyLabel(company);
   const orderCurrency = company?.currency || currencyLabel || 'AED';
   const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
@@ -179,6 +187,9 @@ const SalesOrders = () => {
 
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+  // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
+  const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
 
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
@@ -195,6 +206,8 @@ const SalesOrders = () => {
   const [listPage, setListPage] = useState(0);
   const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
   const [isListLoading, setIsListLoading] = useState(false);
+  const _todaySO = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ fromDate: _todaySO, toDate: _todaySO });
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
     orderTotal: formatCurrencyAmount(order.orderTotal, company),
@@ -499,7 +512,7 @@ const SalesOrders = () => {
   const fetchSalesOrders = async () => {
     setIsListLoading(true);
     try {
-      const data = await getSalesOrdersPage({ page: listPage, size: 30 });
+      const data = await getSalesOrdersPage({ page: listPage, size: 30, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
       const rows = Array.isArray(data?.content) ? data.content : [];
       setOrdersList(rows);
       setListPageMeta({
@@ -520,7 +533,14 @@ const SalesOrders = () => {
     if (activeTab !== 'list') return;
     fetchSalesOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, listPage]);
+  }, [activeTab, listPage, dateRange]);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchSalesOrders();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+  }, []);
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
@@ -897,7 +917,13 @@ const SalesOrders = () => {
         { name: selectedCustomer?.name, code: selectedCustomer?.code },
         company
       );
-      const html = generatePrintHtml(template, printData, { companyProfile: company });
+      const html = await generatePrintHtmlAsync(template, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: loadedSoBranchId ?? activeBranch?.id,
+        }),
+      });
       printHtml(html);
     } catch (err) {
       console.error('Failed to print advance receipt', err);
@@ -957,6 +983,73 @@ const SalesOrders = () => {
   // ✅ PRINT FUNCTIONALITY
   const [isPrinting, setIsPrinting] = useState(false);
 
+  // QA-040: shared payload builder reused by both Print and the Send-Email
+  // modal so the emailed Sales Order mirrors exactly what Print produces.
+  const buildSoPrintData = () => {
+    const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+
+    return {
+      title: 'SALES ORDER',
+      docNo: soNumber,
+      date: orderDate,
+      customer: {
+        name: selectedCustomer?.name || '',
+        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        shippingAddress: shippingAddress || '',
+        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+        email: fullCustomer?.email || '',
+        trn: selectedCustomer?.trn || fullCustomer?.trn
+      },
+      items: items.filter(i => i.code || i.desc).map(i => ({
+        code: i.code,
+        name: i.name || i.productName || i.itemName || '',
+        desc: i.desc || '',
+        sku: i.sku || i.productSku || '',
+        brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
+        detailedDesc: i.detailedDesc || '',
+        localName: i.localName || i.productLocalName || '',
+        barcode: i.barcode || '',
+        salesPerson: '',
+        location: '',
+        unit: i.unit,
+        qty: Number(i.qty),
+        price: Number(i.price),
+        disc: Number(i.disc),
+        tax: Number(i.tax),
+        taxAmt: Number(i.taxAmt || 0),
+        total: Number(i.total),
+        image: i.image ? getImageUrl(i.image) : '',
+        batchNumber: i.batchNumber || '',
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        expiry: i.expiry || i.expiryDate || ''
+      })),
+      totals: {
+        subTotal,
+        tax: totalTax,
+        grandTotal: orderTotal,
+        currency: company?.currencySymbol || company?.currency || 'AED',
+        billDiscount: Number(billDiscount) || 0,
+        billDiscountAmount
+      },
+      meta: (() => {
+        const printBranchId = loadedSoBranchId ?? activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === printBranchId) || activeBranch || {};
+        return {
+          paymentTerm: '30 Days',
+          status,
+          notes: customerNotes,
+          reference: linkedQtn || linkedPi || '',
+          location: printBranch.name || '',
+          locationStore: printBranch.name || printBranch.code || '',
+          warehouse: printBranch.defaultWarehouseName || '',
+          deliveryTerms: deliveryType || '',
+          salesPerson: ''
+        };
+      })()
+    };
+  };
+
   const handlePrintClick = async () => {
     setIsPrinting(true);
     try {
@@ -964,60 +1057,16 @@ const SalesOrders = () => {
       const defaultTemplate = templates.find(t => t.isDefault);
 
       if (defaultTemplate) {
-        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+        const printData = buildSoPrintData();
 
-        const printData = {
-          title: 'SALES ORDER',
-          docNo: soNumber,
-          date: orderDate,
-          customer: {
-            name: selectedCustomer?.name || '',
-            address: fullCustomer?.address || fullCustomer?.billingAddress || '',
-            trn: selectedCustomer?.trn || fullCustomer?.trn
-          },
-          items: items.filter(i => i.code || i.desc).map(i => ({
-            code: i.code,
-            name: i.name || i.productName || i.itemName || '',
-            desc: i.desc || '',
-            sku: i.sku || i.productSku || '',
-            brand: i.brand || i.brandName || '',
-            shortDesc: i.shortDesc || '',
-            detailedDesc: i.detailedDesc || '',
-            localName: i.localName || i.productLocalName || '',
-            barcode: i.barcode || '',
-            salesPerson: '',
-            location: '',
-            unit: i.unit,
-            qty: Number(i.qty),
-            price: Number(i.price),
-            disc: Number(i.disc),
-            tax: Number(i.tax),
-            taxAmt: Number(i.taxAmt || 0),
-            total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : '',
-            // QA-030: include batch picks so the Batch # line / column shows
-            // when the template toggle is on.
-            batchNumber: i.batchNumber || '',
-            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
-            expiry: i.expiry || i.expiryDate || ''
-          })),
-          totals: {
-            subTotal,
-            tax: totalTax,
-            grandTotal: orderTotal,
-            currency: company?.currencySymbol || company?.currency || 'AED',
-            billDiscount: Number(billDiscount) || 0,
-            billDiscountAmount
-          },
-          meta: {
-            paymentTerm: '30 Days',
-            status,
-            notes: customerNotes,
-            reference: linkedQtn || linkedPi || ''
-          }
-        };
-
-        const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: loadedSoBranchId ?? activeBranch?.id,
+          }),
+          billBullLogo
+        });
         printHtml(html);
       } else {
         alert("No default template selected for Sales Order. Please configure one in Settings.");
@@ -1296,6 +1345,7 @@ const SalesOrders = () => {
   // ✅ FIX 2: SET ID WHEN LOADING
   const handleLoadOrder = (order) => {
     setOrderId(order.id); // <--- Capture Backend ID
+    setLoadedSoBranchId(order.branch?.id ?? null);
 
     setSoNumber(order.soNumber);
     setOrderDate(order.orderDate);
@@ -1533,7 +1583,14 @@ const SalesOrders = () => {
         {canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
             {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-              <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+              <button key={label} onClick={
+                label === 'Print' ? handlePrintClick
+                  : label === 'Email' ? () => {
+                    if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+                    setIsEmailModalOpen(true);
+                  }
+                  : undefined
+              } disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
                 {label === 'Email' && <Mail size={14} />}
                 {label === 'WhatsApp' && <MessageCircle size={14} />}
                 {label === 'SMS' && <Smartphone size={14} />}
@@ -1570,6 +1627,7 @@ const SalesOrders = () => {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
             <h2 className="font-bold text-slate-700 text-sm">Sales Orders</h2>
             <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
+              <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
               <div className="relative w-full md:w-auto">
                 <input type="text" placeholder="Search by SO / customer / quotation" className="pl-3 pr-3 py-1.5 text-xs border border-slate-200 rounded-md w-full md:w-64 focus:outline-none focus:border-yellow-400" />
               </div>
@@ -1583,12 +1641,22 @@ const SalesOrders = () => {
                 {canExport('sales.order') && (
                   <ExportDropdown
                     onExportExcel={() => exportToExcel(
-                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      withListSerialNumbers(exportOrdersList, {
+                        documentNumberSelector: (order) => order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      }),
                       SALES_ORDER_COLUMNS,
                       'Sales_Orders'
                     )}
                     onExportPdf={() => exportToPDF(
-                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      withListSerialNumbers(exportOrdersList, {
+                        documentNumberSelector: (order) => order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      }),
                       SALES_ORDER_COLUMNS,
                       'Sales Orders',
                       'Sales_Orders'
@@ -1608,30 +1676,45 @@ const SalesOrders = () => {
           <div className="space-y-4">
 
             {/* DESKTOP TABLE VIEW */}
-            <table className="w-full text-xs text-left hidden md:table">
+            <div className="hidden overflow-x-auto md:block">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
                   <th className="px-4 py-3">SO No</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Branch</th>
                   <th className="px-4 py-3">Quotation</th>
                   <th className="px-4 py-3">PI No</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Advance</th>
                   <th className="px-4 py-3">Balance</th>
                   <th className="px-4 py-3 text-right">Status</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
+                {isListLoading && <TableSkeleton cols={10} rows={8} />}
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
                     <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                      {idx + 1}
+                      {getListSerialNumber(idx, {
+                        documentNumber: order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      })}
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
-                    <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-700">{order.customerName}</div>
+                      {order.customerCode && <div className="text-[10px] text-slate-400">{order.customerCode}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-[11px] text-slate-600">
+                      {order.branch?.code ? order.branch.code : <span className="text-slate-300">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
                     <td className="px-4 py-3 font-medium"><CurrencyAmount value={order.orderTotal} currency={orderCurrency} /></td>
@@ -1640,10 +1723,18 @@ const SalesOrders = () => {
                     <td className="px-4 py-3 text-right">
                       {renderStatusBadge(order.status)}
                     </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => handleLoadOrder(order)} className="p-1 hover:bg-yellow-100 rounded text-yellow-600 transition-colors" title="Edit / View"><FileText size={14} /></button>
+                        <button onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }} className="p-1 hover:bg-sky-100 rounded text-sky-500 transition-colors" title="Send Email"><Mail size={14} /></button>
+                        <button onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }} className="p-1 hover:bg-slate-200 rounded text-slate-500 transition-colors" title="Load & Print"><Printer size={14} /></button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* MOBILE CARD VIEW */}
             <div className="md:hidden">
@@ -1913,7 +2004,7 @@ const SalesOrders = () => {
               </div>
 
               <div className="overflow-auto max-h-[380px]">
-                <table className="w-full text-xs text-left min-w-[800px]">
+                <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                   <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                     <tr>
                       <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -2334,6 +2425,15 @@ const SalesOrders = () => {
                 </button>
               )}
 
+              {canExport('sales') && (
+                <button onClick={() => {
+                  if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+                  setIsEmailModalOpen(true);
+                }} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                  <Mail size={14} /> Email
+                </button>
+              )}
+
               {status === 'DRAFT' && (
                 <>
                   {/* ── VERTICAL: canEdit('sales') for Save Draft ── */}
@@ -2517,6 +2617,20 @@ const SalesOrders = () => {
           </div>
         </div>
       )}
+
+      {/* QA-040: Send Sales Order Email */}
+      <SendDocumentEmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        category="Sales Order (SO)"
+        docId={orderId}
+        docNumber={soNumber}
+        customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+        docLabel="Sales Order"
+        companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedSoBranchId ?? activeBranch?.id })}
+        apiFn={sendSalesOrderEmail}
+        buildPayload={buildSoPrintData}
+      />
     </div>
   );
 };

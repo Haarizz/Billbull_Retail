@@ -41,12 +41,13 @@ public class CompanyProfileService {
      */
     @Transactional
     public CompanyProfile updateProfile(CompanyProfile incoming) {
-        // Preserve existing file paths and stamp toggles if not provided in the update payload
+        // Preserve existing file paths only when the field was not sent at all (null).
+        // An empty string ("") means the user explicitly cleared the image — honour it.
         repo.findById(1L).ifPresent(existing -> {
-            if (incoming.getLogoPath() == null || incoming.getLogoPath().isBlank()) {
+            if (incoming.getLogoPath() == null) {
                 incoming.setLogoPath(existing.getLogoPath());
             }
-            if (incoming.getStampPath() == null || incoming.getStampPath().isBlank()) {
+            if (incoming.getStampPath() == null) {
                 incoming.setStampPath(existing.getStampPath());
             }
             if (incoming.getShowStampInPrint() == null) {

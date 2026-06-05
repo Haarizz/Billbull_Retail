@@ -26,6 +26,7 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -49,38 +50,94 @@ public class PaymentService {
     @Autowired
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     public List<Payment> getAllPayments() {
-        List<Payment> payments = new ArrayList<>(paymentRepository.findAll());
+        List<Payment> payments = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                payments,
+                Payment::getPaymentDate,
+                Payment::getPaymentNumber,
+                Payment::getId);
+        recomputeInvoiceBalances(payments);
+        return payments;
+    }
+
+    public List<Payment> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<Payment> payments = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(paymentRepository.findByPaymentDateBetween(from, to), Payment::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
         return payments;
     }
 
     public Payment getPaymentById(Long id) {
-        return paymentRepository.findById(id)
+        Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Payment not found with ID: " + id));
+        if (payment.getLinkedInvoice() != null && !payment.getLinkedInvoice().isBlank()) {
+            recomputeInvoiceBalances(new ArrayList<>(paymentRepository.findByLinkedInvoice(payment.getLinkedInvoice())))
+                    .stream().filter(p -> p.getId().equals(id)).findFirst()
+                    .ifPresent(p -> payment.setInvoiceBalance(p.getInvoiceBalance()));
+        }
+        return payment;
     }
 
     public List<Payment> getPaymentsByCustomer(String customerCode) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByCustomerCode(customerCode));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
         return payments;
     }
 
     public List<Payment> getPaymentsByInvoice(String invoiceNumber) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByLinkedInvoice(invoiceNumber));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
+        return payments;
+    }
+
+    /**
+     * Recomputes invoiceBalance on each payment as the running remaining balance
+     * after each payment, ordered oldest-first per invoice.
+     * Oldest payment: remaining = invoiceAmount - thisPayment
+     * Each subsequent payment: remaining = previousRemaining - thisPayment
+     * This fixes stale/wrong invoiceBalance values stored in the DB.
+     */
+    private List<Payment> recomputeInvoiceBalances(List<Payment> payments) {
+        // Group by linkedInvoice, process oldest-first (reverse of the desc-sorted list)
+        java.util.Map<String, List<Payment>> byInvoice = new java.util.LinkedHashMap<>();
+        for (Payment p : payments) {
+            String inv = p.getLinkedInvoice();
+            if (inv != null && !inv.isBlank()) {
+                byInvoice.computeIfAbsent(inv, k -> new ArrayList<>()).add(p);
+            }
+        }
+        for (List<Payment> group : byInvoice.values()) {
+            // group is desc-sorted; reverse to process oldest first
+            List<Payment> asc = new ArrayList<>(group);
+            java.util.Collections.reverse(asc);
+            double invoiceTotal = asc.isEmpty() ? 0 : (asc.get(0).getInvoiceAmount() != null ? asc.get(0).getInvoiceAmount() : 0);
+            double running = invoiceTotal;
+            for (Payment p : asc) {
+                double paid = p.getAmount() != null ? p.getAmount() : 0;
+                running = Math.max(running - paid, 0);
+                p.setInvoiceBalance(running);
+            }
+        }
         return payments;
     }
 
@@ -96,6 +153,15 @@ public class PaymentService {
             if (payment.getReceiptVoucherRecordId() == null && existingPayment != null) {
                 payment.setReceiptVoucherRecordId(existingPayment.getReceiptVoucherRecordId());
             }
+        }
+
+        // Branch guard + stamp/lock (PDF §3.4).
+        if (existingPayment != null) {
+            Long existingBranchId = existingPayment.getBranch() != null ? existingPayment.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Payment");
+            payment.setBranch(existingPayment.getBranch());
+        } else {
+            payment.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         }
 
         if (payment.getId() == null) {

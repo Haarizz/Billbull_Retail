@@ -13,6 +13,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         boolean existsByCodeAndStatusNot(String code, ProductStatus status);
 
+        Optional<Product> findByCode(String code);
+
         Optional<Product> findByIdAndIsActiveTrue(Long id);
 
         List<Product> findAllByIsActiveTrue();
@@ -53,6 +55,27 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         /** Count query needed alongside the paginated fetch above. */
         @Query("SELECT COUNT(p) FROM Product p WHERE p.isActive = true")
         long countAllActive();
+
+        /**
+         * Status totals across the whole non-deleted set (respecting the same
+         * search/department/brand filters as findAllActiveFiltered), grouped by
+         * ProductStatus. Drives the "Active Products" / "Draft Items" cards so they
+         * reflect the full catalog instead of just the current page.
+         */
+        @Query("SELECT p.status, COUNT(p) FROM Product p " +
+                        "WHERE p.isActive = true " +
+                        "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
+                        "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
+                        "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "GROUP BY p.status")
+        List<Object[]> countByStatusFiltered(
+                        @org.springframework.data.repository.query.Param("search") String search,
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId);
 
         /**
          * Paginated list of products that have stock movements in the given warehouse.

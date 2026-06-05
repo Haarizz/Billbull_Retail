@@ -5,6 +5,7 @@ import com.billbull.backend.purchase.invoice.InvoicePayment;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,14 +30,61 @@ public class PaymentVoucherService {
     @Autowired
     private PostingEngineService postingEngineService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     public List<PaymentVoucher> getAllVouchers() {
-        List<PaymentVoucher> vouchers = new ArrayList<>(repository.findAll());
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        List<PaymentVoucher> vouchers = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 vouchers,
                 PaymentVoucher::getPaymentDate,
                 PaymentVoucher::getVoucherNumber,
                 PaymentVoucher::getId);
         return vouchers;
+    }
+
+    /**
+     * True database-level paginated voucher list. Branch scope, status filter,
+     * search and ordering are pushed into SQL so only one page is loaded.
+     */
+    public com.billbull.backend.util.PageResponse<PaymentVoucher> listPage(
+            List<PaymentStatus> statuses, String search, int page, int size) {
+        int normalizedPage = Math.max(page, 0);
+        int normalizedSize = Math.max(1, Math.min(size, com.billbull.backend.util.PaginationUtil.MAX_PAGE_SIZE));
+        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(java.util.Locale.ROOT);
+
+        BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        boolean allStatuses = statuses == null || statuses.isEmpty();
+        // Never pass an empty IN () list — supply a harmless sentinel when skipping.
+        List<PaymentStatus> statusFilter = allStatuses ? List.of(PaymentStatus.PENDING_APPROVAL) : statuses;
+
+        org.springframework.data.domain.Page<PaymentVoucher> pg = repository.searchPage(
+                scope.allBranches(), scope.branchIds(), allStatuses, statusFilter, normalizedSearch,
+                org.springframework.data.domain.PageRequest.of(normalizedPage, normalizedSize));
+
+        return new com.billbull.backend.util.PageResponse<>(
+                pg.getContent(), normalizedPage, normalizedSize, pg.getTotalElements(), pg.getTotalPages());
+    }
+
+    /**
+     * Branch-scoped payment stats for the dashboard cards: total paid plus
+     * per-mode totals across POSTED/CLEARED vouchers. Replaces the old
+     * client-side reduction over the entire voucher list.
+     */
+    public java.util.Map<String, BigDecimal> statsByMode() {
+        BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        java.util.Map<String, BigDecimal> stats = new java.util.HashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (Object[] row : repository.sumPostedByModeScoped(scope.allBranches(), scope.branchIds())) {
+            if (row[0] == null) continue;
+            String mode = ((PaymentMode) row[0]).name();
+            BigDecimal amount = row[1] != null ? new BigDecimal(row[1].toString()) : BigDecimal.ZERO;
+            stats.merge(mode, amount, BigDecimal::add);
+            total = total.add(amount);
+        }
+        stats.put("TOTAL", total);
+        return stats;
     }
 
     public Optional<PaymentVoucher> getVoucherById(Long id) {
@@ -60,6 +108,7 @@ public class PaymentVoucherService {
 
     @Transactional
     public PaymentVoucher createVoucher(PaymentVoucher voucher) {
+        voucher.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
         voucher.setUnallocated(voucher.getAmount());
 

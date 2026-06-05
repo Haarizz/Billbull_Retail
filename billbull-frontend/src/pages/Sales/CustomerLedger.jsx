@@ -4,6 +4,7 @@ import {
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
     Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
@@ -11,7 +12,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount'
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
-import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
+import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 // ✅ Import Warehouse API
 import { getWarehouses } from '../../api/warehouseApi';
@@ -33,15 +34,23 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
-import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
-import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import {
+    normalizePurchaseTemplate,
+    buildReceiptVoucherPrintData,
+    buildCustomerSoaPrintData,
+    resolvePurchasePrintTemplate
+} from '../../utils/purchasePrintUtils';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import billBullLogo from '../../assets/billBullLogo.png';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -72,6 +81,104 @@ const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
         : invoice.openingBalanceAmount;
     const value = Number(source || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const createDefaultReceiptVoucherTemplate = () => normalizePurchaseTemplate({
+    category: 'Receipt Voucher',
+    name: 'Default Receipt Voucher',
+    isDefault: true,
+    paperSize: 'A4',
+    orientation: 'Portrait',
+    headerContent: '',
+    footerContent: '',
+    termsContent: 'Received with thanks the amount stated above. This receipt is valid after cheque or bank-transfer clearance.',
+    displayOptions: {
+        showLogo: true,
+        showCompanyDetails: true,
+        showCustomerDetails: true,
+        showTerms: false,
+        showItemImage: false,
+        salesDesigner: 'payment',
+        salesDesignerSettings: {
+            templateName: 'Default Receipt Voucher',
+            salesDesigner: 'payment',
+            docType: 'receipt',
+            accentColor: '#F5C742',
+            primaryColor: '#F5C742',
+            headerBg: '#1e293b',
+            borderColor: '#dbe2ea',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 9,
+            paperSize: 'A4',
+            orientation: 'portrait',
+            showLogo: true,
+            showCompanyLogo: true,
+            showCompanyName: true,
+            showCompanyAddress: true,
+            showCompanyPhone: true,
+            showCompanyEmail: true,
+            showTRN: true,
+            showBillTo: true,
+            showCustomerName: true,
+            showCustomerCode: true,
+            showCustomerPhone: true,
+            showCustomerEmail: true,
+            showCustomerTRN: true,
+            showReceiptNumber: true,
+            showReceiptDate: true,
+            showDocNumber: true,
+            showDocDate: true,
+            showStatusBadge: true,
+            showItemsTable: false,
+            showGrandTotalBanner: true,
+            showTotalReceivedBold: true,
+            showAmountPaid: true,
+            showBalanceDue: false,
+            showTerms: false,
+            showTermsConditions: false,
+            showNote: true,
+            showNotes: true,
+            showCompanyStamp: true,
+            showGeneratedBy: true,
+            showReceivedByLine: true,
+        }
+    },
+    columns: {
+        qty: false,
+        unitPrice: false,
+        taxableAmount: false,
+        tax: false,
+        discount: false,
+        total: false,
+    }
+}, 'Receipt Voucher');
+
+const resolveReceiptVoucherPrintTemplate = (templates = []) => {
+    const selectedTemplate = Array.isArray(templates)
+        ? (templates.find((template) => template?.isDefault) || templates[0])
+        : null;
+    const normalizedTemplate = selectedTemplate
+        ? normalizePurchaseTemplate({ ...selectedTemplate, category: 'Receipt Voucher' }, 'Receipt Voucher')
+        : createDefaultReceiptVoucherTemplate();
+    const displayOptions = { ...(normalizedTemplate.displayOptions || {}) };
+    const designerSettings = {
+        ...(displayOptions.salesDesignerSettings || displayOptions.designerSettings || {}),
+    };
+
+    if (designerSettings.showCustomerName !== false) {
+        designerSettings.showBillTo = true;
+        displayOptions.showCustomerDetails = true;
+    }
+
+    return {
+        ...normalizedTemplate,
+        displayOptions: {
+            ...displayOptions,
+            salesDesigner: displayOptions.salesDesigner || 'payment',
+            salesDesignerSettings: designerSettings,
+            designerSettings,
+        },
+    };
 };
 
 // ==========================================
@@ -1364,8 +1471,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
 const ReceiveMoneyView = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
+    const [isReceiptPrinting, setIsReceiptPrinting] = useState(false);
 
     // Data States
     const [customers, setCustomers] = useState([]);
@@ -1665,25 +1774,37 @@ const ReceiveMoneyView = () => {
 
     const handlePrintReceipt = async () => {
         if (!lastSavedPayment) {
-            alert("Please record a payment first, then print the receipt.");
+            toast.error("Please record a payment first, then print the receipt.");
             return;
         }
+
+        const loadingToast = toast.loading('Preparing receipt print layout...');
+        setIsReceiptPrinting(true);
+
         try {
-            let templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
-            if (!templates || templates.length === 0) {
-                templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
-            }
-            const rawTemplate = (templates && (templates.find(t => t.isDefault) || templates[0])) || null;
-            const template = normalizePurchaseTemplate(
-                { ...(rawTemplate || {}), category: 'Receipt Voucher' },
-                'Receipt Voucher'
-            );
-            const printData = buildReceiptVoucherPrintData(lastSavedPayment, selectedCustomer, company);
-            const html = generatePrintHtml(template, printData, { companyProfile: company });
+            const templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
+            const template = resolveReceiptVoucherPrintTemplate(templates);
+            const receiptForPrint = {
+                ...lastSavedPayment,
+                customerCode: lastSavedPayment.customerCode || selectedCustomer?.code,
+                customerName: lastSavedPayment.customerName || selectedCustomer?.name,
+            };
+            const printData = buildReceiptVoucherPrintData(receiptForPrint, selectedCustomer, company);
+            const html = await generatePrintHtmlAsync(template, printData, {
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: lastSavedPayment?.branchId ?? activeBranch?.id,
+                }),
+                billBullLogo,
+            });
             printHtml(html);
         } catch (err) {
             console.error('Failed to print receipt', err);
-            alert('Failed to generate print layout');
+            toast.error(err?.response?.data?.message || err?.message || 'Failed to generate receipt print layout');
+        } finally {
+            toast.dismiss(loadingToast);
+            setIsReceiptPrinting(false);
         }
     };
 
@@ -1743,7 +1864,7 @@ const ReceiveMoneyView = () => {
                         </div>
 
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left">
+                            <table className="bb-nowrap-table w-full text-sm text-left">
                                 <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                     <tr>
                                         <th className="px-4 py-3 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} className="rounded border-slate-300 text-yellow-500 focus:ring-yellow-500" /></th>
@@ -1757,6 +1878,7 @@ const ReceiveMoneyView = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
+                                    {isLoading && <TableSkeleton cols={8} rows={8} />}
                                     {customerInvoices.length > 0 ? (
                                         customerInvoices.map(inv => {
                                             const balance = (inv.balance != null ? inv.balance : (inv.invoiceTotal - (inv.amountPaid || 0)));
@@ -1930,10 +2052,10 @@ const ReceiveMoneyView = () => {
 
                                 <button
                                     onClick={handlePrintReceipt}
-                                    disabled={!lastSavedPayment}
-                                    className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    disabled={!lastSavedPayment || isReceiptPrinting}
+                                    className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment || isReceiptPrinting ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
-                                    <Printer size={14} /> Print Receipt
+                                    {isReceiptPrinting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Printer size={14} />} {isReceiptPrinting ? 'Preparing...' : 'Print Receipt'}
                                 </button>
                                 <button
                                     onClick={() => setIsReceiptEmailOpen(true)}
@@ -2001,7 +2123,7 @@ const ReceiveMoneyView = () => {
 
 const CustomerSOAView = ({ customers = [] }) => {
     const { company } = useCompany();
-    const { print } = usePrintDocument();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const defaultStartDate = `${new Date().getFullYear()}-01-01`;
     const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -2011,6 +2133,7 @@ const CustomerSOAView = ({ customers = [] }) => {
     const [endDate, setEndDate] = useState(defaultEndDate);
     const [statementData, setStatementData] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isPrinting, setIsPrinting] = useState(false);
 
     useEffect(() => {
         if (customers.length > 0 && !selectedCustomerCode) {
@@ -2038,15 +2161,46 @@ const CustomerSOAView = ({ customers = [] }) => {
         }
     }, [selectedCustomerCode]);
 
-    const handlePrint = () => {
-        const filename = generateSOAFilename(
-            selectedCustomerDetails?.name || 'Customer',
-            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
-            startDate,
-            endDate,
-            currency
-        );
-        print(filename);
+    const handlePrint = async () => {
+        if (!selectedCustomerCode || !startDate || !endDate) {
+            toast.error('Select a customer and statement period first.');
+            return;
+        }
+
+        const loadingToast = toast.loading('Preparing Customer SOA print layout...');
+        setIsPrinting(true);
+
+        try {
+            const [freshStatement, templates] = await Promise.all([
+                fetchStatementOfAccount('CUSTOMER', selectedCustomerCode, startDate, endDate),
+                getTemplatesByCategory('Customer Statement of Account').catch(() => [])
+            ]);
+            setStatementData(freshStatement);
+
+            const defaultTemplate = resolvePurchasePrintTemplate('Customer Statement of Account', templates);
+            const printData = buildCustomerSoaPrintData(
+                freshStatement,
+                selectedCustomerDetails || { code: selectedCustomerCode },
+                company,
+                { startDate, endDate }
+            );
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: activeBranch?.id,
+                }),
+                billBullLogo,
+            });
+
+            printHtml(html);
+        } catch (error) {
+            console.error('Failed to print Customer SOA', error);
+            toast.error(error?.response?.data?.message || error?.message || 'Failed to generate Customer SOA print layout');
+        } finally {
+            toast.dismiss(loadingToast);
+            setIsPrinting(false);
+        }
     };
 
     const handleExportExcel = () => {
@@ -2115,8 +2269,8 @@ const CustomerSOAView = ({ customers = [] }) => {
                         {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                         Generate Statement
                     </button>
-                    <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
-                        <Printer className="h-4 w-4" /> Print
+                    <button onClick={handlePrint} disabled={isPrinting || isLoading || !selectedCustomerCode} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {isPrinting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Print
                     </button>
                     <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
                         <Download className="h-4 w-4" /> Export Excel
@@ -2148,7 +2302,7 @@ const CustomerSOAView = ({ customers = [] }) => {
 
             {/* Table */}
             <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
-                <table className="w-full text-sm text-left">
+                <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
                             <th className="px-6 py-3 font-semibold text-xs uppercase">Date</th>
@@ -2258,6 +2412,8 @@ const CustomerLedger = () => {
 
     // Customer Data State (Empty init, API fetch)
     const [customers, setCustomers] = useState([]);
+    const customerImportInputRef = useRef(null);
+    const [isImportingCustomers, setIsImportingCustomers] = useState(false);
 
     // Fetch Customers on Mount
     useEffect(() => {
@@ -2285,6 +2441,26 @@ const CustomerLedger = () => {
         } catch (err) {
             console.error("Failed to load customers", err);
             setCustomers([]); // 🔥 NEVER leave it undefined
+        }
+    };
+
+    const handleCustomerImport = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const toastId = toast.loading(`Importing ${file.name}...`);
+        setIsImportingCustomers(true);
+        try {
+            const result = await importCustomers(file);
+            await loadCustomers();
+            toast.success(result || 'Customers imported successfully.', { id: toastId, duration: 6000 });
+        } catch (error) {
+            console.error('Failed to import customers', error);
+            const message = error.response?.data || error.message || 'Failed to import customers.';
+            toast.error(message, { id: toastId, duration: 7000 });
+        } finally {
+            setIsImportingCustomers(false);
+            e.target.value = null;
         }
     };
 
@@ -2432,7 +2608,7 @@ const CustomerLedger = () => {
                         {/* Customer Table */}
                         <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
                             <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
+                                <table className="bb-nowrap-table w-full text-sm text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th className="px-3 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center w-12">S.No.</th>
@@ -2452,7 +2628,13 @@ const CustomerLedger = () => {
                                         {filteredCustomers.length > 0 ? (
                                             pagedCustomers.map((cust, index) => (
                                                 <tr key={cust.id} className="hover:bg-slate-50 transition-colors group">
-                                                    <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">{index + 1}</td>
+                                                    <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">
+                                                        {getListSerialNumber(index, {
+                                                            page: listPage,
+                                                            size: LIST_PAGE_SIZE,
+                                                            totalElements: filteredCustomers.length,
+                                                        })}
+                                                    </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
 
                                                     <td className="px-2 py-4 whitespace-nowrap align-top pt-4 text-center">
@@ -2594,21 +2776,33 @@ const CustomerLedger = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                            <input
+                                ref={customerImportInputRef}
+                                type="file"
+                                accept=".xlsx,.xls"
+                                className="hidden"
+                                onChange={handleCustomerImport}
+                            />
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
-                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customers'
                                 )}
                                 onExportPdf={() => exportToPDF(
-                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customer List',
                                     'Customers'
                                 )}
                             />
-                            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
-                                <Upload size={16} /> Import
+                            <button
+                                onClick={() => customerImportInputRef.current?.click()}
+                                disabled={isImportingCustomers}
+                                className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {isImportingCustomers ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+                                {isImportingCustomers ? 'Importing...' : 'Import'}
                             </button>
                             <button
                                 onClick={() => setIsAddModalOpen(true)}

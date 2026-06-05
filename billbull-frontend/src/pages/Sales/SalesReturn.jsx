@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import billBullLogo from '../../assets/billBullLogo.png';
 import {
    RotateCcw,
@@ -29,10 +31,12 @@ import {
    Trash2,
    Box,
    RefreshCw,
-   Mail
+   Mail,
+   Download
 } from 'lucide-react';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -55,6 +59,7 @@ import {
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -77,6 +82,8 @@ const SALES_RETURN_COLUMNS = [
 const SalesReturn = () => {
    const { print } = usePrintDocument();
    const { company } = useCompany();
+   const { branches: availableBranches, activeBranch } = useBranch();
+   const [loadedReturnBranchId, setLoadedReturnBranchId] = useState(null);
    const currency = company?.currency || 'AED';
    const [activeTab, setActiveTab] = useState('list');
    const [isLoading, setIsLoading] = useState(false);
@@ -87,6 +94,8 @@ const SalesReturn = () => {
    const [searchQuery, setSearchQuery] = useState('');
    const [statusFilter, setStatusFilter] = useState('All Status');
    const [returnsPage, setReturnsPage] = useState(0);
+   const _todayRet = new Date().toISOString().slice(0, 10);
+   const [dateRange, setDateRange] = useState({ fromDate: _todayRet, toDate: _todayRet });
    const [returnsPageMeta, setReturnsPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
    const [salesSettings, setSalesSettings] = useState(null);
    const returnAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_RETURN');
@@ -138,11 +147,18 @@ const SalesReturn = () => {
       getSalesSettings().then(setSalesSettings).catch(() => {});
    }, []);
 
+   // Refetch when the global Branch Selector changes the active branch.
+   useEffect(() => {
+      const handler = () => fetchReturns();
+      window.addEventListener('billbull:branch-changed', handler);
+      return () => window.removeEventListener('billbull:branch-changed', handler);
+   }, []);
+
    useEffect(() => {
       if (activeTab === 'list') {
          fetchReturns();
       }
-   }, [activeTab, returnsPage, searchQuery, statusFilter]);
+   }, [activeTab, returnsPage, searchQuery, statusFilter, dateRange]);
 
    const fetchReturns = async () => {
       setIsLoading(true);
@@ -151,7 +167,9 @@ const SalesReturn = () => {
             page: returnsPage,
             size: 30,
             search: searchQuery,
-            status: statusFilter === 'All Status' ? '' : statusFilter.toUpperCase()
+            status: statusFilter === 'All Status' ? '' : statusFilter.toUpperCase(),
+            fromDate: dateRange?.fromDate,
+            toDate: dateRange?.toDate,
          });
          setReturnsList(Array.isArray(data?.content) ? data.content : []);
          setReturnsPageMeta({
@@ -299,6 +317,7 @@ const SalesReturn = () => {
 
    const handleLoadReturn = (ret) => {
       setReturnId(ret.id);
+      setLoadedReturnBranchId(ret.branch?.id ?? null);
       setReturnNo(ret.returnNumber);
       setReturnDate(ret.returnDate);
       setReturnStatus(ret.status);
@@ -501,6 +520,8 @@ const SalesReturn = () => {
          const taxAmt = Number(ret.taxAmount) || 0;
          const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
 
+         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
          const printData = {
             title: 'CREDIT NOTE',
             docNo: ret.returnNumber,
@@ -508,8 +529,10 @@ const SalesReturn = () => {
             customer: {
                name: ret.customerName || '',
                address: '',
-               trn: '',
+               shippingAddress: '',
                phone: '',
+               email: '',
+               trn: '',
             },
             items: (ret.items || []).map(item => ({
                name: item.itemName || item.itemCode || '',
@@ -537,14 +560,42 @@ const SalesReturn = () => {
                validTill: '',
                validTillLabel: 'Original Invoice',
                notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`,
+               location: printBranch.name || '',
+               locationStore: printBranch.name || printBranch.code || '',
+               warehouse: printBranch.defaultWarehouseName || '',
+               deliveryTerms: '',
+               salesPerson: '',
             },
          };
 
-         const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+            companyProfile: buildDocumentHeaderProfile({
+               company,
+               branches: availableBranches || [],
+               branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id,
+            }),
+            billBullLogo
+         });
          printHtml(html);
       } catch (err) {
          console.error('Failed to print credit note', err);
       }
+   };
+
+   const handleDownload = async (ret) => {
+      if (!ret) return;
+      try {
+         const templates = await getTemplatesByCategory('Sales Return');
+         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || { category: 'Sales Return', paperSize: 'A4', orientation: 'Portrait', headerContent: '', footerContent: '', termsContent: '', displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false }, columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: false, total: true } };
+         const subTotal = Number(ret.subTotal) || (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
+         const taxAmt = Number(ret.taxAmount) || 0;
+         const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
+         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
+         const printData = { title: 'CREDIT NOTE', docNo: ret.returnNumber, date: ret.returnDate, customer: { name: ret.customerName || '', address: '', shippingAddress: '', phone: '', email: '', trn: '' }, items: (ret.items || []).map(item => ({ name: item.itemName || item.itemCode || '', description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] }, code: item.itemCode || '', unit: item.unit || 'PCS', qty: Number(item.returnQty), price: Number(item.price), taxableAmount: Number(item.price) * Number(item.returnQty), taxAmt: 0, taxPercent: 0, total: Number(item.total) })), totals: { subTotal, tax: taxAmt, grandTotal, currency: company?.currencySymbol || company?.currency || 'AED', billDiscount: 0, billDiscountAmount: 0 }, meta: { status: ret.status || '', paymentTerm: '', validTill: '', validTillLabel: 'Original Invoice', notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`, location: printBranch.name || '', locationStore: printBranch.name || printBranch.code || '', warehouse: printBranch.defaultWarehouseName || '', deliveryTerms: '', salesPerson: '' } };
+         const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id }), billBullLogo });
+         await downloadPdf(html, ret.returnNumber || 'Credit-Note');
+      } catch (err) { console.error('Download error', err); }
    };
 
    // ==========================================
@@ -668,6 +719,9 @@ const SalesReturn = () => {
                      {/* FILTERS */}
                      <div className="mb-6">
                         <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Filters</h3>
+                        <div className="flex items-center gap-3 mb-3">
+                           <DateFilter onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                            <div className="md:col-span-2 relative">
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
@@ -679,14 +733,6 @@ const SalesReturn = () => {
                                  value={searchQuery}
                                  onChange={(e) => { setSearchQuery(e.target.value); setReturnsPage(0); }}
                               />
-                           </div>
-                           <div>
-                              <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
-                              <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 font-medium">
-                                 <option>All Time</option>
-                                 <option>Today</option>
-                                 <option>This Month</option>
-                              </select>
                            </div>
                            <div>
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>
@@ -718,12 +764,13 @@ const SalesReturn = () => {
 
                      {/* TABLE */}
                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
+                        <table className="bb-nowrap-table w-full text-left text-xs">
                            <thead className="bg-[#F8FAFC] text-slate-600 font-semibold border-b border-slate-200">
                               <tr>
                                  <th className="px-4 py-3">Return No</th>
                                  <th className="px-4 py-3">Date</th>
                                  <th className="px-4 py-3">Customer</th>
+                                 <th className="px-4 py-3">Branch</th>
                                  <th className="px-4 py-3">Invoice Ref</th>
                                  <th className="px-4 py-3">Reason</th>
                                  <th className="px-4 py-3 text-right">Credit Amount</th>
@@ -732,13 +779,17 @@ const SalesReturn = () => {
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-100">
+                              {isLoading && <TableSkeleton cols={9} rows={8} />}
                               {filteredReturns.map((ret) => (
                                  <tr key={ret.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewReturn(ret)}>
                                     <td className="px-4 py-3 font-bold text-slate-700">{ret.returnNumber}</td>
                                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(ret.returnDate)}</td>
                                     <td className="px-4 py-3">
                                        <div className="font-medium text-slate-700">{ret.customerName}</div>
-                                       <div className="text-[10px] text-slate-400">{ret.customerCode}</div>
+                                       {ret.customerCode && <div className="text-[10px] text-slate-400">{ret.customerCode}</div>}
+                                    </td>
+                                    <td className="px-4 py-3 text-[11px] text-slate-600">
+                                       {ret.branch?.code ? ret.branch.code : <span className="text-slate-300">—</span>}
                                     </td>
                                     <td className="px-4 py-3">
                                        <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md font-medium border border-blue-100">
@@ -752,7 +803,8 @@ const SalesReturn = () => {
                                        <div className="flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                                           <button onClick={() => handleViewReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Eye size={14} /></button>
                                           <button onClick={() => handleLoadReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
-                                          <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Printer size={14} /></button>
+                                          <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Print"><Printer size={14} /></button>
+                                          <button onClick={() => handleDownload(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Download PDF"><Download size={14} /></button>
                                           <button onClick={() => { if (window.confirm('Delete this record?')) deleteSalesReturn(ret.id).then(fetchReturns); }} className="p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
                                        </div>
                                     </td>
@@ -922,7 +974,7 @@ const SalesReturn = () => {
                            </div>
 
                            <div className="overflow-x-auto">
-                              <table className="w-full text-xs">
+                              <table className="bb-nowrap-table w-full text-xs">
                                  <thead className="bg-[#F8FAFC] text-slate-600 font-semibold border-b border-slate-200">
                                     <tr>
                                        <th className="p-3 text-left">Item Details</th>
@@ -1146,7 +1198,7 @@ const SalesReturn = () => {
                      {/* Item Table */}
                      <div className="bg-white rounded-lg border border-slate-100 overflow-hidden">
                         <h4 className="px-4 py-3 text-xs font-bold text-slate-700 bg-slate-50 border-b border-slate-100 uppercase tracking-wider">Returned Items</h4>
-                        <table className="w-full text-[11px] text-left">
+                        <table className="bb-nowrap-table w-full text-[11px] text-left">
                            <thead className="bg-[#fcfdfe] text-slate-500 font-semibold border-b border-slate-100">
                               <tr>
                                  <th className="px-4 py-2">Item</th>
@@ -1216,7 +1268,7 @@ const SalesReturn = () => {
                            No returnable batches found for this item. All units may have been returned already.
                         </div>
                      ) : (
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                            <thead className="bg-slate-50 text-slate-500">
                               <tr>
                                  <th className="p-2 text-left">Batch #</th>

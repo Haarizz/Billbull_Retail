@@ -139,16 +139,39 @@ const appendTextWithAedSymbols = (text, fragment, currencyConfig) => {
   }
 };
 
+const isReactManagedTextNode = (textNode) => {
+  // React attaches __reactFiber$xxx to every DOM element it renders.
+  // If the immediate parent carries that key, this text node is owned by
+  // React's reconciler. Replacing it via replaceChild() leaves React with
+  // a stale fiber reference; on the next commit React calls
+  // parent.removeChild(staleNode) → NotFoundError crash.
+  // Text nodes inside dangerouslySetInnerHTML DO NOT have a fibre on their
+  // parent (the innerHTML children are not fibre-tracked), so those are
+  // still safe to process.
+  const parent = textNode.parentElement;
+  if (!parent) return false;
+  return Object.keys(parent).some((k) => k.startsWith('__reactFiber'));
+};
+
 const replaceTextNode = (node, currencyConfig) => {
   const text = node.nodeValue || '';
   if (!text || !hasAedToken(text) || shouldSkipNode(node)) {
+    return;
+  }
+  if (!node.isConnected || !node.parentNode) {
+    return;
+  }
+  // Skip nodes React reconciles — replacing them breaks React's fiber refs.
+  if (isReactManagedTextNode(node)) {
     return;
   }
 
   const fragment = document.createDocumentFragment();
   appendTextWithAedSymbols(text, fragment, currencyConfig);
 
-  node.parentNode?.replaceChild(fragment, node);
+  if (node.isConnected && node.parentNode) {
+    node.parentNode.replaceChild(fragment, node);
+  }
 };
 
 const processNode = (node, currencyConfig) => {
@@ -210,15 +233,48 @@ const AedSymbolRenderer = () => {
 
     processNode(document.body, currencyConfig);
 
+    // Deferred processing state — all observer callbacks are batched and
+    // executed in a requestAnimationFrame so they run AFTER React finishes
+    // committing its own DOM mutations. This prevents the race where React
+    // tries to removeChild a text node we already replaced mid-commit.
+    let rafId = null;
+    let isProcessing = false;
+    const pendingTargets = new Set();
+
+    const flush = () => {
+      rafId = null;
+      if (isProcessing) return;
+      isProcessing = true;
+      const targets = [...pendingTargets];
+      pendingTargets.clear();
+      try {
+        targets.forEach((target) => {
+          if (target.isConnected) {
+            processNode(target, currencyConfig);
+          }
+        });
+      } finally {
+        isProcessing = false;
+      }
+    };
+
     const observer = new MutationObserver((mutations) => {
+      // Ignore mutations we caused ourselves to avoid infinite loops.
+      if (isProcessing) return;
+
       mutations.forEach((mutation) => {
         if (mutation.type === 'characterData') {
-          processNode(mutation.target.parentElement || mutation.target, currencyConfig);
+          const target = mutation.target.parentElement || mutation.target;
+          if (target) pendingTargets.add(target);
           return;
         }
-
-        processNode(mutation.target, currencyConfig);
+        pendingTargets.add(mutation.target);
       });
+
+      // Batch into a single rAF so we always run after React's commit.
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flush);
+      }
     });
 
     observer.observe(document.body, {
@@ -227,7 +283,10 @@ const AedSymbolRenderer = () => {
       characterData: true
     });
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [currencyConfig.ariaLabel, currencyConfig.hasImage, currencyConfig.label]);
 
   return null;

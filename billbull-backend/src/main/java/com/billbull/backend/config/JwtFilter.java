@@ -1,7 +1,9 @@
 package com.billbull.backend.config;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import jakarta.servlet.FilterChain;
@@ -15,6 +17,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.billbull.backend.security.BranchContextHolder;
 
 @Component
 public class JwtFilter extends OncePerRequestFilter {
@@ -33,6 +37,7 @@ public class JwtFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String authHeader = request.getHeader("Authorization");
+        boolean contextSet = false;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
 
@@ -58,9 +63,58 @@ public class JwtFilter extends OncePerRequestFilter {
                         new WebAuthenticationDetailsSource().buildDetails(request));
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                // ── Branch context ────────────────────────────────────────────
+                boolean isAllBranches = jwtUtil.extractIsAllBranches(token);
+                List<Long> allowedFromToken = jwtUtil.extractBranchIds(token);
+                Long jwtBranchId = jwtUtil.extractBranchId(token);
+
+                Set<Long> allowed = new HashSet<>(allowedFromToken);
+                if (jwtBranchId != null) {
+                    allowed.add(jwtBranchId);
+                }
+
+                Long activeBranchId = resolveActiveBranchId(request, jwtBranchId, isAllBranches, allowed);
+
+                BranchContextHolder.set(new BranchContextHolder.BranchContext(
+                        activeBranchId,
+                        allowed,
+                        isAllBranches));
+                contextSet = true;
             }
         }
 
-        filterChain.doFilter(request, response);
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            if (contextSet) {
+                BranchContextHolder.clear();
+            }
+        }
+    }
+
+    /**
+     * Header value wins when the user is allowed to access that branch.
+     * Otherwise fall back to the JWT's primary branch. Admins viewing
+     * "all branches" send no header (or "ALL") and active stays null.
+     */
+    private Long resolveActiveBranchId(
+            HttpServletRequest request,
+            Long jwtBranchId,
+            boolean isAllBranches,
+            Set<Long> allowed) {
+        String headerValue = request.getHeader("X-Branch-Id");
+        if (headerValue == null || headerValue.isBlank() || "ALL".equalsIgnoreCase(headerValue)) {
+            return isAllBranches ? null : jwtBranchId;
+        }
+        try {
+            long parsed = Long.parseLong(headerValue.trim());
+            if (isAllBranches || allowed.contains(parsed)) {
+                return parsed;
+            }
+        } catch (NumberFormatException ignored) {
+            // fall through to JWT default
+        }
+        return jwtBranchId;
     }
 }

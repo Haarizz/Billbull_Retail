@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -30,6 +31,8 @@ import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
+import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class ReceiptVoucherService {
@@ -41,6 +44,7 @@ public class ReceiptVoucherService {
     private final SalesInvoiceRepository salesInvoiceRepository;
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
+    private final BranchAccessService branchAccessService;
 
     public ReceiptVoucherService(
             ReceiptVoucherRepository repository,
@@ -49,6 +53,7 @@ public class ReceiptVoucherService {
             SalesInvoiceRepository salesInvoiceRepository,
             OpeningInvoiceRepository openingInvoiceRepository,
             CustomerRepository customerRepository,
+            BranchAccessService branchAccessService,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
         this.repository = repository;
         this.postingEngineService = postingEngineService;
@@ -56,6 +61,7 @@ public class ReceiptVoucherService {
         this.salesInvoiceRepository = salesInvoiceRepository;
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
+        this.branchAccessService = branchAccessService;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
         try {
@@ -66,7 +72,14 @@ public class ReceiptVoucherService {
     }
 
     public List<ReceiptVoucher> getAllReceipts() {
-        return repository.findAllByOrderByDateDesc();
+        List<ReceiptVoucher> receipts = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
+                repository.findAll(), ReceiptVoucher::getBranchEntity));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                receipts,
+                ReceiptVoucher::getDate,
+                ReceiptVoucher::getVoucherId,
+                ReceiptVoucher::getId);
+        return receipts;
     }
 
     public ReceiptVoucher getReceiptById(Long id) {
@@ -96,6 +109,7 @@ public class ReceiptVoucherService {
     @Transactional
     public ReceiptVoucher createReceipt(ReceiptVoucher receipt, MultipartFile file) {
         receipt.setVoucherId(generateNextVoucherId());
+        receipt.setBranchEntity(branchAccessService.getRequiredCurrentUserBranch());
 
         if (receipt.getStatus() == null) {
             receipt.setStatus("Completed");
@@ -125,6 +139,10 @@ public class ReceiptVoucherService {
     @Transactional
     public ReceiptVoucher updateReceipt(Long id, ReceiptVoucher receiptDetails, MultipartFile file) {
         ReceiptVoucher receipt = getReceiptById(id);
+        Long existingBranchId = receipt.getBranchEntity() != null ? receipt.getBranchEntity().getId() : null;
+        branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Receipt Voucher");
+        // Branch is immutable on update — receipt.branchEntity stays as-is, never copied from receiptDetails.
+
         String previousStatus = receipt.getStatus();
         Long previousInvoiceId = receipt.getSalesInvoiceId();
         Long previousOpeningInvoiceId = receipt.getOpeningInvoiceId();
@@ -197,7 +215,7 @@ public class ReceiptVoucherService {
         syncOpeningInvoice(linkedOpeningInvoiceId);
     }
 
-    private String generateNextVoucherId() {
+    public String generateNextVoucherId() {
         String year = java.time.Year.now().toString();
         String prefix = "RV-" + year + "-";
         String lastId = repository.findMaxVoucherIdByPrefix(prefix);

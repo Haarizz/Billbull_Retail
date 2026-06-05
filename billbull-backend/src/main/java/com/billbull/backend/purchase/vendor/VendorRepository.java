@@ -9,4 +9,6 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
     List<Vendor> findByIsActiveTrue();
 
     Optional<Vendor> findByName(String name);
+
+    Optional<Vendor> findByCode(String code);
 }

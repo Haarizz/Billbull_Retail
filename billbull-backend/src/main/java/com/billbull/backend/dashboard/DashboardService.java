@@ -67,7 +67,8 @@ public class DashboardService {
         }).collect(Collectors.toList()));
 
         // Sales totals
-        Object[] totals = invoiceRepo.findSalesTotals(startDate, endDate);
+        Object[] totalsResult = invoiceRepo.findSalesTotals(startDate, endDate);
+        Object[] totals = (totalsResult != null && totalsResult.length > 0 && totalsResult[0] instanceof Object[]) ? (Object[]) totalsResult[0] : totalsResult;
         double totalRevenue = totals[0] instanceof Number ? ((Number) totals[0]).doubleValue() : 0d;
         long invoiceCount = totals[1] instanceof Number ? ((Number) totals[1]).longValue() : 0L;
         double outstanding = totals[2] instanceof Number ? ((Number) totals[2]).doubleValue() : 0d;

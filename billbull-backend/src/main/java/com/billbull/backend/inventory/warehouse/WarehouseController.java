@@ -101,6 +101,23 @@ public class WarehouseController {
         return stockService.getAvailableStockWithFilters(id, null, zoneId, locatorId, binId);
     }
 
+    /**
+     * Returns all batches (batchNumber, expiryDate, availableQty) for a given
+     * product in this warehouse, optionally filtered down to a specific bin.
+     * Only batches with qty > 0 are returned.
+     * Used by the Stock Transfer batch picker.
+     */
+    @GetMapping("/{id}/stock/product/{productId}/batches")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    public List<BatchStockRow> getProductBatches(
+            @PathVariable Long id,
+            @PathVariable Long productId,
+            @RequestParam(required = false) Long binId) {
+        return stockService.getAvailableBatchesForProduct(id, productId, binId);
+    }
+
+    public record BatchStockRow(String batchNumber, String expiryDate, int availableQty) {}
+
     public record WarehouseStockSummary(
             int totalSkus,
             int totalQty,

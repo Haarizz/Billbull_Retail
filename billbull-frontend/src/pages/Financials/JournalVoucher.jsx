@@ -12,6 +12,8 @@ import { journalVoucherApi } from '../../api/journalVoucherApi';
 import { getAuditTrail } from '../../api/auditApi';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { printHtml } from '../../utils/printGenerator';
 import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -21,6 +23,7 @@ import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTempla
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import { formatUserDisplayName } from '../../utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const formatAccountLedgerLabel = (account = {}) => {
     const code = account.code ? `${account.code} - ` : '';
@@ -129,6 +132,7 @@ const JournalVoucher = () => {
     const currentUserDisplay = formatUserDisplayName(currentUser) || 'System';
     // --- STATE ---
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'create' | 'edit'
     const [costCenters, setCostCenters] = useState([]);
     const [fullAccounts, setFullAccounts] = useState([]);
@@ -186,6 +190,13 @@ const JournalVoucher = () => {
         fetchJournalVouchers();
     }, []);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchJournalVouchers();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     const fetchJournalVouchers = async () => {
         setLoading(true);
         try {
@@ -239,6 +250,9 @@ const JournalVoucher = () => {
                 date: jv.date,
                 reference: jv.reference,
                 narration: jv.narration,
+                branchId: jv.branch?.id ?? null,
+                branchName: jv.branch?.name || '',
+                branchCode: jv.branch?.code || '',
                 status: jv.status || 'Posted',
                 preparedBy: formatUserDisplayName(jv.preparedBy || 'System'),
                 postedBy: formatUserDisplayName(jv.postedBy || ''),
@@ -689,10 +703,15 @@ const JournalVoucher = () => {
             } catch { return false; }
         })();
 
+        const branchProfile = buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: jv?.branchId ?? activeBranch?.id,
+        });
         if (hasNewSettings) {
-            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company, template });
+            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company: branchProfile, template });
         }
-        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company, template });
+        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company: branchProfile, template });
     };
 
     const getCurrentJvPrintPayload = () => {
@@ -995,12 +1014,13 @@ const JournalVoucher = () => {
 
                         {/* TABLE */}
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
+                            <table className="bb-nowrap-table w-full text-left border-collapse">
                                 <thead className="bg-[#F7F7FA] text-slate-600 font-semibold text-xs border-b border-slate-200">
                                     <tr>
                                         <th className="px-4 py-3">JV No.</th>
                                         <th className="px-4 py-3">Date</th>
                                         <th className="px-4 py-3">Reference</th>
+                                        <th className="px-4 py-3">Branch</th>
                                         <th className="px-4 py-3">Narration</th>
                                         <th className="px-4 py-3 text-right">Debit (<CurrencySymbol />)</th>
                                         <th className="px-4 py-3 text-right">Credit (<CurrencySymbol />)</th>
@@ -1009,11 +1029,22 @@ const JournalVoucher = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-xs">
+                                    {loading && <TableSkeleton cols={6} rows={8} />}
                                     {pagedData.map((row) => (
                                         <tr key={row.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-medium text-slate-700">{row.jvNumber}</td>
                                             <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-500">{row.reference}</td>
+                                            <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                {row.branchName ? (
+                                                    <>
+                                                        <div className="font-medium">{row.branchName}</div>
+                                                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                                                    </>
+                                                ) : (
+                                                    <span className="text-slate-300">—</span>
+                                                )}
+                                            </td>
                                             <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{row.narration}</td>
                                             <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.debit} /></td>
                                             <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.credit} /></td>
@@ -1353,7 +1384,7 @@ const JournalVoucher = () => {
                             <h3 className="text-sm font-bold text-slate-700 mb-6 pb-2 border-b border-slate-100">Ledger Breakdown</h3>
 
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
+                                <table className="bb-nowrap-table w-full text-left border-collapse">
                                     <thead className="text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th className="py-3">Account Ledger</th>

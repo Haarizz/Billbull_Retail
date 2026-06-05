@@ -14,6 +14,7 @@ import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.chartofaccounts.AccountSelectionRules;
 import com.billbull.backend.financials.generalledger.LedgerEntry;
 import com.billbull.backend.financials.generalledger.LedgerEntryRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @Service
 public class ReconciliationService {
@@ -21,13 +22,16 @@ public class ReconciliationService {
     private final ReconciliationSessionRepository sessionRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
+    private final BranchAccessService branchAccessService;
 
     public ReconciliationService(ReconciliationSessionRepository sessionRepository,
             LedgerEntryRepository ledgerEntryRepository,
-            AccountRepository accountRepository) {
+            AccountRepository accountRepository,
+            BranchAccessService branchAccessService) {
         this.sessionRepository = sessionRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.accountRepository = accountRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     @Transactional
@@ -35,6 +39,7 @@ public class ReconciliationService {
         Account bankAccount = resolveBankAccount(request);
 
         ReconciliationSession session = new ReconciliationSession();
+        session.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         session.setBankAccountId(bankAccount.getId());
         session.setStatementDate(request.getStatementDate());
         session.setStatementBalance(request.getStatementBalance());

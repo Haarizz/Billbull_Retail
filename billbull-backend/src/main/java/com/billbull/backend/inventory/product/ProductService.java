@@ -2,6 +2,7 @@ package com.billbull.backend.inventory.product;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.cache.annotation.CacheEvict;
@@ -22,6 +23,9 @@ import com.billbull.backend.inventory.warehouse.LocatorRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.security.BranchContextHolder;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 @Service
 @Transactional
@@ -30,6 +34,7 @@ public class ProductService {
     // --- CORE REPOSITORIES ---
     private final ProductRepository productRepo;
     private final ProductPricingRepository pricingRepo;
+    private final ProductBranchPricingRepository branchPricingRepo;
     private final ProductTaxRepository taxRepo;
     private final ProductInventoryPolicyRepository inventoryRepo;
     private final ProductMediaRepository mediaRepo;
@@ -50,10 +55,12 @@ public class ProductService {
 
     private final ProductImageStorageService imageStorage;
     private final StockMovementRepository stockMovementRepo;
+    private final BranchRepository branchRepo;
 
     public ProductService(
             ProductRepository productRepo,
             ProductPricingRepository pricingRepo,
+            ProductBranchPricingRepository branchPricingRepo,
             ProductTaxRepository taxRepo,
             ProductInventoryPolicyRepository inventoryRepo,
             ProductMediaRepository mediaRepo,
@@ -68,9 +75,11 @@ public class ProductService {
             LocatorRepository locatorRepo,
             BinRepository binRepo,
             ProductImageStorageService imageStorage,
-            StockMovementRepository stockMovementRepo) {
+            StockMovementRepository stockMovementRepo,
+            BranchRepository branchRepo) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
+        this.branchPricingRepo = branchPricingRepo;
         this.taxRepo = taxRepo;
         this.inventoryRepo = inventoryRepo;
         this.mediaRepo = mediaRepo;
@@ -86,6 +95,7 @@ public class ProductService {
         this.binRepo = binRepo;
         this.imageStorage = imageStorage;
         this.stockMovementRepo = stockMovementRepo;
+        this.branchRepo = branchRepo;
     }
 
     // ==================================================
@@ -118,6 +128,109 @@ public class ProductService {
             product.setSubDepartment(subDept);
         } else {
             product.setSubDepartment(null);
+        }
+    }
+
+    private Long activeBranchId() {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        return ctx != null ? ctx.activeBranchId() : null;
+    }
+
+    private <T> T firstNonNull(T preferred, T fallback) {
+        return preferred != null ? preferred : fallback;
+    }
+
+    private ProductPricing cloneEffectivePricing(ProductPricing base, ProductBranchPricing branchPrice) {
+        ProductPricing effective = new ProductPricing();
+        if (base != null) {
+            effective.setCost(base.getCost());
+            effective.setLandingCost(base.getLandingCost());
+            effective.setNlc(base.getNlc());
+            effective.setCostMethod(base.getCostMethod());
+            effective.setCostInclusive(base.isCostInclusive());
+            effective.setRetailPrice(base.getRetailPrice());
+            effective.setWholesalePrice(base.getWholesalePrice());
+            effective.setMinPrice(base.getMinPrice());
+            effective.setMaxPrice(base.getMaxPrice());
+            effective.setOnlinePrice(base.getOnlinePrice());
+            effective.setMarkup(base.getMarkup());
+            effective.setGp(base.getGp());
+        }
+        if (branchPrice != null) {
+            effective.setCost(firstNonNull(branchPrice.getCost(), effective.getCost()));
+            effective.setRetailPrice(firstNonNull(branchPrice.getRetailPrice(), effective.getRetailPrice()));
+            effective.setWholesalePrice(firstNonNull(branchPrice.getWholesalePrice(), effective.getWholesalePrice()));
+            effective.setMinPrice(firstNonNull(branchPrice.getMinPrice(), effective.getMinPrice()));
+            effective.setMaxPrice(firstNonNull(branchPrice.getMaxPrice(), effective.getMaxPrice()));
+            effective.setOnlinePrice(firstNonNull(branchPrice.getOnlinePrice(), effective.getOnlinePrice()));
+            effective.setMarkup(firstNonNull(branchPrice.getMarkup(), effective.getMarkup()));
+            effective.setGp(firstNonNull(branchPrice.getGp(), effective.getGp()));
+        }
+        return effective;
+    }
+
+    private ProductBranchPricing findActiveBranchPrice(Long productId, List<ProductBranchPricing> branchPrices) {
+        Long branchId = activeBranchId();
+        if (branchId == null) {
+            return null;
+        }
+        if (branchPrices != null) {
+            for (ProductBranchPricing branchPrice : branchPrices) {
+                Branch branch = branchPrice.getBranch();
+                if (branch != null && branchId.equals(branch.getId())) {
+                    return branchPrice;
+                }
+            }
+        }
+        return branchPricingRepo.findByProductIdAndBranchId(productId, branchId).orElse(null);
+    }
+
+    private void saveBranchPrices(Product product, List<ProductBranchPricing> requestRows) {
+        if (requestRows == null) {
+            return;
+        }
+
+        List<ProductBranchPricing> existingRows = branchPricingRepo.findByProductId(product.getId());
+        Map<Long, ProductBranchPricing> existingByBranch = existingRows.stream()
+                .filter(row -> row.getBranch() != null && row.getBranch().getId() != null)
+                .collect(Collectors.toMap(row -> row.getBranch().getId(), row -> row, (a, b) -> a));
+
+        java.util.Set<Long> incomingBranchIds = new java.util.HashSet<>();
+        List<ProductBranchPricing> rowsToSave = new ArrayList<>();
+
+        for (ProductBranchPricing requestRow : requestRows) {
+            Long branchId = requestRow.getBranch() != null ? requestRow.getBranch().getId() : null;
+            if (branchId == null) {
+                continue;
+            }
+            Branch branch = branchRepo.findById(branchId)
+                    .orElseThrow(() -> new IllegalArgumentException("Invalid branch in product pricing: " + branchId));
+            incomingBranchIds.add(branchId);
+
+            ProductBranchPricing row = existingByBranch.getOrDefault(branchId, new ProductBranchPricing());
+            row.setProduct(product);
+            row.setBranch(branch);
+            row.setCost(requestRow.getCost());
+            row.setMarkup(requestRow.getMarkup());
+            row.setGp(requestRow.getGp());
+            row.setRetailPrice(requestRow.getRetailPrice());
+            row.setMinPrice(requestRow.getMinPrice());
+            row.setMaxPrice(requestRow.getMaxPrice());
+            row.setWholesalePrice(requestRow.getWholesalePrice());
+            row.setOnlinePrice(requestRow.getOnlinePrice());
+            row.setStatus(requestRow.getStatus());
+            rowsToSave.add(row);
+        }
+
+        List<ProductBranchPricing> rowsToDelete = existingRows.stream()
+                .filter(row -> row.getBranch() == null || !incomingBranchIds.contains(row.getBranch().getId()))
+                .toList();
+
+        if (!rowsToDelete.isEmpty()) {
+            branchPricingRepo.deleteAll(rowsToDelete);
+        }
+        if (!rowsToSave.isEmpty()) {
+            branchPricingRepo.saveAll(rowsToSave);
         }
     }
 
@@ -225,6 +338,8 @@ public class ProductService {
 
             pricingRepo.save(pricing);
         }
+
+        saveBranchPrices(product, req.getBranchPrices());
 
         // ================= TAX =================
         if (req.getTax() != null) {
@@ -581,18 +696,39 @@ public class ProductService {
         List<Product> products = productPage.getContent();
         List<Long> ids = products.stream().map(Product::getId).collect(Collectors.toList());
 
+        // Status totals across the whole filtered set (not just this page) so the
+        // "Active Products" / "Draft Items" cards are correct. Warehouse-filtered
+        // lists are not covered (the products page never sends a warehouse).
+        java.util.Map<String, Long> statusCounts = new java.util.HashMap<>();
+        if (warehouseId == null) {
+            for (Object[] row : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId)) {
+                if (row[0] == null) {
+                    continue;
+                }
+                statusCounts.put(row[0].toString(), ((Number) row[1]).longValue());
+            }
+        }
+
         if (ids.isEmpty()) {
-            return java.util.Map.of(
-                    "content", java.util.Collections.emptyList(),
-                    "totalElements", productPage.getTotalElements(),
-                    "totalPages", productPage.getTotalPages(),
-                    "page", page,
-                    "size", size);
+            java.util.Map<String, Object> empty = new java.util.HashMap<>();
+            empty.put("content", java.util.Collections.emptyList());
+            empty.put("totalElements", productPage.getTotalElements());
+            empty.put("totalPages", productPage.getTotalPages());
+            empty.put("page", page);
+            empty.put("size", size);
+            empty.put("statusCounts", statusCounts);
+            return empty;
         }
 
         // Query 2: pricing bulk
         java.util.Map<Long, ProductPricing> pricingMap = pricingRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.toMap(pr -> pr.getProduct().getId(), pr -> pr));
+        Long activeBranchId = activeBranchId();
+        java.util.Map<Long, ProductBranchPricing> activeBranchPricingMap = activeBranchId != null
+                ? branchPricingRepo.findByProductIdIn(ids).stream()
+                        .filter(row -> row.getBranch() != null && activeBranchId.equals(row.getBranch().getId()))
+                        .collect(Collectors.toMap(row -> row.getProduct().getId(), row -> row, (a, b) -> a))
+                : java.util.Collections.emptyMap();
 
         // Query 3: primary images bulk
         java.util.Map<Long, String> imageMap = mediaRepo.findByProductIdInAndIsPrimaryTrue(ids)
@@ -640,7 +776,9 @@ public class ProductService {
             item.put("departmentId", p.getDepartment() != null ? p.getDepartment().getId() : null);
             item.put("departmentName", p.getDepartment() != null ? p.getDepartment().getName() : null);
 
-            ProductPricing pr = pricingMap.get(p.getId());
+            ProductPricing basePricing = pricingMap.get(p.getId());
+            ProductBranchPricing activeBranchPrice = activeBranchPricingMap.get(p.getId());
+            ProductPricing pr = cloneEffectivePricing(basePricing, activeBranchPrice);
             item.put("cost", pr != null ? pr.getCost() : null);
             item.put("retailPrice", pr != null ? pr.getRetailPrice() : null);
             // Expose min/max sale prices so the sales-side "Default Item Price"
@@ -648,6 +786,9 @@ public class ProductService {
             // field directly from the product list payload.
             item.put("minPrice", pr != null ? pr.getMinPrice() : null);
             item.put("maxPrice", pr != null ? pr.getMaxPrice() : null);
+            item.put("wholesalePrice", pr != null ? pr.getWholesalePrice() : null);
+            item.put("onlinePrice", pr != null ? pr.getOnlinePrice() : null);
+            item.put("branchStatus", activeBranchPrice != null ? activeBranchPrice.getStatus() : p.getStatus());
 
             ProductTax tx = taxMap.get(p.getId());
             item.put("salesTax", tx != null ? tx.getSalesTax() : null);
@@ -699,7 +840,9 @@ public class ProductService {
                     String uName = pkg.getUnit().getName();
                     availableUnits.add(uName);
                     unitConversions.put(uName, pkg.getConversion());
-                    if (pkg.getPrice() != null) {
+                    if (activeBranchPrice != null && activeBranchPrice.getRetailPrice() != null && pkg.getConversion() != null) {
+                        unitPrices.put(uName, activeBranchPrice.getRetailPrice().multiply(pkg.getConversion()));
+                    } else if (pkg.getPrice() != null) {
                         unitPrices.put(uName, pkg.getPrice());
                     }
                     if (pkg.getCost() != null) {
@@ -719,12 +862,14 @@ public class ProductService {
             return item;
         }).collect(Collectors.toList());
 
-        return java.util.Map.of(
-                "content", content,
-                "totalElements", productPage.getTotalElements(),
-                "totalPages", productPage.getTotalPages(),
-                "page", page,
-                "size", size);
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("content", content);
+        response.put("totalElements", productPage.getTotalElements());
+        response.put("totalPages", productPage.getTotalPages());
+        response.put("page", page);
+        response.put("size", size);
+        response.put("statusCounts", statusCounts);
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -748,7 +893,19 @@ public class ProductService {
     private ProductAggregateResponse buildResponse(Product product) {
         ProductAggregateResponse res = new ProductAggregateResponse();
         res.setProduct(product);
-        pricingRepo.findByProductId(product.getId()).ifPresent(res::setPricing);
+        ProductPricing basePricing = pricingRepo.findByProductId(product.getId()).orElse(null);
+        List<ProductBranchPricing> branchPrices = branchPricingRepo.findByProductId(product.getId());
+        ProductBranchPricing activeBranchPrice = findActiveBranchPrice(product.getId(), branchPrices);
+        branchPrices.forEach(row -> {
+            if (row.getBranch() != null) {
+                row.getBranch().getName();
+            }
+        });
+
+        res.setPricing(basePricing);
+        res.setBranchPrices(branchPrices);
+        res.setActiveBranchPrice(activeBranchPrice);
+        res.setEffectivePricing(cloneEffectivePricing(basePricing, activeBranchPrice));
         taxRepo.findByProductId(product.getId()).ifPresent(res::setTax);
 
         // -------------------------------------------------------------
@@ -812,7 +969,11 @@ public class ProductService {
                 dto.setPurchase(p.isPurchase());
                 dto.setLPO(p.isLPO());
                 dto.setCost(p.getCost());
-                dto.setPrice(p.getPrice());
+                if (activeBranchPrice != null && activeBranchPrice.getRetailPrice() != null && p.getConversion() != null) {
+                    dto.setPrice(activeBranchPrice.getRetailPrice().multiply(p.getConversion()));
+                } else {
+                    dto.setPrice(p.getPrice());
+                }
 
                 // 4. FIND BARCODE for this packing
                 dbBarcodes.stream()

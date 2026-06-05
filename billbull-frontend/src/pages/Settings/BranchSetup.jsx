@@ -250,7 +250,7 @@ const BranchSetup = () => {
                             No branches yet. Click <strong>Add Branch</strong> to create one.
                         </div>
                     ) : (
-                        <table className="w-full text-sm">
+                        <table className="bb-nowrap-table w-full text-sm">
                             <thead>
                                 <tr className="border-b border-slate-100 bg-slate-50">
                                     <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Branch</th>

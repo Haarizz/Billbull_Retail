@@ -22,6 +22,15 @@ export const createVendorDraft = async (payload) => {
   return res.data;
 };
 
+export const importVendors = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post("/api/vendors/import/excel", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+};
+
 // UPDATE
 export const updateVendor = async (id, payload) => {
   const res = await api.put(`/api/vendors/${id}`, payload);

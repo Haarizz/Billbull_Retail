@@ -42,7 +42,8 @@ import {
   UserCheck,
   LayoutList,
   LayoutGrid,
-  Star
+  Star,
+  Building2
 } from 'lucide-react';
 
 // Import the API helpers
@@ -54,6 +55,7 @@ import { usePermissions } from '../../../context/PermissionContext';
 import { useBranch } from '../../../context/BranchContext';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -1804,6 +1806,11 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const [rolesSaving, setRolesSaving]   = useState(false);
   const [rolesLayout, setRolesLayout]   = useState('vertical'); // 'vertical' | 'horizontal'
 
+  // Assign-branches sub-view state (PDF §2.3 multi-branch user)
+  const [showBranches, setShowBranches] = useState(false);
+  const [selectedBranchIds, setSelectedBranchIds] = useState(new Set());
+  const [branchesSaving, setBranchesSaving] = useState(false);
+
   const resolvedEmployeeBranch = useMemo(() => {
     const branchLabel = normalizeOptionLabel(employee?.branch);
     if (!branchLabel) {
@@ -1941,6 +1948,41 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
     }
   };
 
+  // ── assign-branches flow (PDF §2.3 multi-branch user) ────────
+  const openBranches = () => {
+    setInlineError(null);
+    const current = new Set(
+      (accessData?.additionalBranchIds || [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id))
+    );
+    setSelectedBranchIds(current);
+    setShowBranches(true);
+  };
+
+  const toggleBranch = (id) => {
+    setSelectedBranchIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSaveBranches = async () => {
+    setBranchesSaving(true);
+    setInlineError(null);
+    try {
+      await usersApi.assignBranches(accessData.linkedUserId, [...selectedBranchIds]);
+      await loadAccess();
+      setShowBranches(false);
+    } catch (e) {
+      setInlineError(e.response?.data?.message || e.message || 'Failed to save branches');
+    } finally {
+      setBranchesSaving(false);
+    }
+  };
+
   // ── derived display ───────────────────────────────────────
   const statusInfo = !accessData?.hasLinkedUser
     ? ACCESS_STATUS.noAccess
@@ -1970,8 +2012,8 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            {showRoles && (
-              <button onClick={() => setShowRoles(false)}
+            {(showRoles || showBranches) && (
+              <button onClick={() => { setShowRoles(false); setShowBranches(false); }}
                 className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors mr-1">
                 <ChevronDown size={16} className="rotate-90" />
               </button>
@@ -1979,7 +2021,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
             <div>
               <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
                 <Lock size={14} className="text-slate-400" />
-                {showRoles ? 'Assign Roles' : 'System Access'}
+                {showBranches ? 'Assign Branches' : showRoles ? 'Assign Roles' : 'System Access'}
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">{employee.name} · {employee.code}</p>
             </div>
@@ -2137,6 +2179,70 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
               </div>
             </div>
 
+          ) : showBranches ? (
+            /* ────────── ASSIGN BRANCHES SUB-VIEW (PDF §2.3) ────────── */
+            <div className="space-y-4">
+              <p className="text-xs text-slate-500">
+                Select extra branches this user may switch into. The user's primary
+                branch is always available and doesn't need to be checked here.
+              </p>
+
+              <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                {(branches || []).length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-slate-400">
+                    No branches configured.
+                  </div>
+                ) : (
+                  branches.map((b) => {
+                    const isPrimary = accessData?.primaryBranchId === b.id
+                      || (accessData?.primaryBranchName && b.name && accessData.primaryBranchName === b.name);
+                    const checked = selectedBranchIds.has(b.id);
+                    return (
+                      <label
+                        key={b.id}
+                        className={`flex items-center gap-3 px-3 py-2 text-xs ${isPrimary ? 'bg-yellow-50' : 'hover:bg-slate-50'} cursor-pointer`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-yellow-500"
+                          checked={checked || isPrimary}
+                          disabled={isPrimary}
+                          onChange={() => toggleBranch(b.id)}
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-700">{b.name}</div>
+                          {b.code && <div className="text-[10px] text-slate-400">{b.code}</div>}
+                        </div>
+                        {isPrimary && (
+                          <span className="text-[10px] font-semibold text-yellow-700 px-2 py-0.5 bg-yellow-100 rounded">Primary</span>
+                        )}
+                        {b.isHeadquarters && (
+                          <span className="text-[10px] font-semibold text-indigo-700 px-2 py-0.5 bg-indigo-50 rounded">HQ</span>
+                        )}
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+
+              {inlineError && (
+                <div className="text-xs text-red-500 bg-red-50 border border-red-100 rounded px-3 py-2">
+                  {inlineError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => setShowBranches(false)} disabled={branchesSaving}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                  Cancel
+                </button>
+                <button onClick={handleSaveBranches} disabled={branchesSaving}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-md bg-[#F5C742] text-slate-900 hover:bg-yellow-400 disabled:opacity-50 transition-colors">
+                  {branchesSaving ? 'Saving…' : 'Save Branches'}
+                </button>
+              </div>
+            </div>
+
           ) : (
             /* ────────── MAIN ACCESS VIEW ────────── */
             <div className="space-y-4">
@@ -2210,6 +2316,14 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                   </button>
                 )}
 
+                {/* Has user — Assign Branches (PDF §2.3 multi-branch) */}
+                {hasUser && (
+                  <button onClick={openBranches} disabled={actionLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                    <Building2 size={13} /> Assign Branches
+                  </button>
+                )}
+
                 {/* Active-only actions */}
                 {hasUser && accessData.userActive && (
                   <button onClick={handleFreeze} disabled={actionLoading}
@@ -2277,6 +2391,7 @@ const Employees = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState("All Roles");
   const [filterBranch, setFilterBranch] = useState("All Branches");
+  const [isLoading, setIsLoading] = useState(false);
 
   // --- 1. Fetch Data on Mount ---
   useEffect(() => {
@@ -2284,6 +2399,7 @@ const Employees = () => {
   }, []);
 
   const fetchData = async () => {
+    setIsLoading(true);
     try {
       // Parallel Fetch
       const [active, pending] = await Promise.all([
@@ -2295,6 +2411,8 @@ const Employees = () => {
       setPendingRequests(pending.map(mapBackendToFrontend));
     } catch (err) {
       console.error("Failed to load employees", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -2777,7 +2895,7 @@ const Employees = () => {
                   /* ==================================== */
                   /* APPROVAL WORKFLOW TABLE VIEW         */
                   /* ==================================== */
-                  <table className="w-full text-sm text-left">
+                  <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Pending Employee</th>
@@ -2788,7 +2906,8 @@ const Employees = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredEmployees.length === 0 ? (
+                      {isLoading && <TableSkeleton cols={7} rows={8} />}
+                      {!isLoading && filteredEmployees.length === 0 ? (
                         <tr>
                           <td colSpan="5" className="px-6 py-12 text-center text-slate-400">
                             <div className="flex flex-col items-center gap-2">
@@ -2855,7 +2974,7 @@ const Employees = () => {
                   /* ==================================== */
                   /* STANDARD EMPLOYEE TABLE VIEW         */
                   /* ==================================== */
-                  <table className="w-full text-sm text-left">
+                  <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Employee</th>
@@ -2870,7 +2989,8 @@ const Employees = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredEmployees.length === 0 ? (
+                      {isLoading && <TableSkeleton cols={9} rows={8} />}
+                      {!isLoading && filteredEmployees.length === 0 ? (
                         <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
                       ) : (
                         pagedEmployees.map((emp) => (

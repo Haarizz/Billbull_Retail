@@ -53,7 +53,8 @@ import {
     recordInvoicePayment,
     getItemPriceHistory,
     updateInvoiceStatus,
-    getCustomerOutstanding
+    getCustomerOutstanding,
+    sendSalesInvoiceEmail
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
@@ -64,8 +65,13 @@ import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/sale
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import InvoicePreviewModal from './components/InvoicePreviewModal';
+import InvoiceSettlementModal from './components/InvoiceSettlementModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -75,10 +81,42 @@ import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+
+// Round-off adjustment for an exact total, per the Sales Settings rounding rule.
+// Returns (rounded − exact) so net = exact + roundOff lands on a clean figure.
+const computeRoundOff = (exact, mode = 'NEAREST', precision = 1) => {
+    const step = Number(precision) > 0 ? Number(precision) : 1;
+    if (!mode || mode === 'NONE') return 0;
+    const units = Number(exact) / step;
+    let roundedUnits;
+    if (mode === 'UP') roundedUnits = Math.ceil(units - 1e-9);
+    else if (mode === 'DOWN') roundedUnits = Math.floor(units + 1e-9);
+    else roundedUnits = Math.round(units);
+    return Number((roundedUnits * step - Number(exact)).toFixed(2));
+};
+
+// A template is an overlay (pre-printed / letterhead) template when its
+// templateType says so, or its saved designer settings use the overlay designer.
+const isOverlayInvoiceTemplate = (tpl) => {
+    if (!tpl) return false;
+    const type = String(tpl.templateType || '').toUpperCase();
+    if (type === 'PREPRINTED' || type === 'LETTERHEAD') return true;
+    try {
+        const opts = typeof tpl.displayOptions === 'string'
+            ? JSON.parse(tpl.displayOptions)
+            : (tpl.displayOptions || {});
+        return opts.salesDesigner === 'overlay' || opts?.salesDesignerSettings?.mode === 'preprinted';
+    } catch {
+        return false;
+    }
+};
 
 // ==========================================
 // 1. CONFIGURATION
@@ -151,12 +189,13 @@ const SalesInvoice = () => {
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const { print } = usePrintDocument();
     const { company } = useCompany();
-    const { defaultBranch } = useBranch();
+    const { defaultBranch, branches: availableBranches, activeBranch } = useBranch();
     const invoiceCurrency = company?.currency || company?.currencySymbol || 'AED';
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
     const fromDNHandled = useRef(false);
+    const editorDataLoaded = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -172,6 +211,8 @@ const SalesInvoice = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterPayMode, setFilterPayMode] = useState('All');
+    const _today = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _today, toDate: _today });
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
     const filteredInvoices = useMemo(() => {
@@ -192,7 +233,7 @@ const SalesInvoice = () => {
 
         if (filterPayMode !== 'All') {
             data = data.filter(inv => {
-                const mode = inv.paymentMode || 'Cash';
+                const mode = inv.paymentMode || '';
                 return mode === filterPayMode;
             });
         }
@@ -219,6 +260,10 @@ const SalesInvoice = () => {
                     bValue = Number(bValue || 0);
                 }
 
+                if (sortConfig.key === 'invoiceNumber') {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
+                }
+
                 if (aValue < bValue) {
                     return sortConfig.direction === 'asc' ? -1 : 1;
                 }
@@ -233,11 +278,11 @@ const SalesInvoice = () => {
     }, [invoicesList, searchTerm, filterStatus, filterPayMode, sortConfig]);
 
     const handleSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') {
-            direction = 'asc';
+        if (sortConfig.key === key) {
+            setSortConfig({ key, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' });
+        } else {
+            setSortConfig({ key, direction: 'asc' });
         }
-        setSortConfig({ key, direction });
     };
 
     const [customersList, setCustomersList] = useState([]);
@@ -248,6 +293,7 @@ const SalesInvoice = () => {
 
     // ✅ Invoice ID for tracking edit vs create
     const [invoiceId, setInvoiceId] = useState(null);
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
 
     // --- FORM STATES ---
     const [status, setStatus] = useState('Draft');
@@ -257,6 +303,7 @@ const SalesInvoice = () => {
     const [invoiceDate, setInvoiceDate] = useState('2026-01-21');
     const [deliveryDate, setDeliveryDate] = useState(''); // Due Date
     const [reference, setReference] = useState('');
+    const [salesChannel, setSalesChannel] = useState('Retail');
 
     // Linking
     const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -281,7 +328,7 @@ const SalesInvoice = () => {
     }, []);
 
     // Payment Details
-    const [paymentMode, setPaymentMode] = useState('Cash');
+    const [paymentMode, setPaymentMode] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
@@ -356,6 +403,11 @@ const SalesInvoice = () => {
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
+    const [deliveryCharge, setDeliveryCharge] = useState(0);
+    // Round Off is auto-computed (nearest ฿1.00) by default; the user can flip
+    // `roundOffManual` on to override the figure by hand for edge cases.
+    const [roundOff, setRoundOff] = useState(0);
+    const [roundOffManual, setRoundOffManual] = useState(false);
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
@@ -376,6 +428,14 @@ const SalesInvoice = () => {
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
+    // Preview-before-save + post-confirm AR settlement flow.
+    // previewMode: null | 'Draft' | 'Confirmed' — drives the review modal and
+    // which save action its primary button fires. settlementInvoice holds the
+    // freshly saved invoice so the AR settlement modal can record payment.
+    const [previewMode, setPreviewMode] = useState(null);
+    const [settlementInvoice, setSettlementInvoice] = useState(null);
+    const [isSettlementSaving, setIsSettlementSaving] = useState(false);
 
     // QA-038: Receipts modal — shows the history of all receipts (sales
     // payments + financials receipt vouchers) tied to a given sales invoice,
@@ -413,13 +473,14 @@ const SalesInvoice = () => {
     const resolveInvoiceTypeUI = ({
         linkedSalesOrder = '',
         linkedDeliveryNote = '',
-        linkedProforma = '',
-        salesType: resolvedSalesType = 'STANDARD_FLOW'
+        linkedProforma = ''
     } = {}) => {
         if (linkedDeliveryNote) return 'Against Delivery Note';
         if (linkedProforma) return 'Against Proforma Invoice';
         if (linkedSalesOrder) return 'Against Sales Order';
-        return resolvedSalesType === 'DIRECT_SALE' ? 'Direct Sale' : 'Direct Sale';
+        // No source document: the dropdown has no "Standard" option, so a
+        // no-link invoice is always a Direct Sale.
+        return 'Direct Sale';
     };
 
     // ✅ GLOBAL SHORTCUTS
@@ -431,7 +492,7 @@ const SalesInvoice = () => {
             if (activeTab === 'create' && !isReadOnlyInvoice) setIsProductSelectorOpen(prev => !prev);
         },
         'ctrl+s': (e) => {
-            if (activeTab === 'create') handleSave('Draft');
+            if (activeTab === 'create') openPreview('Draft');
         },
         'alt+c': (e) => {
             if (activeTab === 'create' && !isReadOnlyInvoice && !isGeneratedFromDN) setIsCustomerSearchOpen(prev => !prev);
@@ -446,7 +507,7 @@ const SalesInvoice = () => {
         try {
             const [stockData, priceData] = await Promise.all([
                 getStockAvailability(itemCode),
-                getItemPriceHistory(itemCode)
+                getItemPriceHistory(itemCode, selectedCustomer?.code)
             ]);
             setFocusedItemStock(stockData);
             setFocusedItemPriceHistory(priceData || []);
@@ -554,7 +615,7 @@ const SalesInvoice = () => {
                     {isLoading && <div className="animate-spin h-3.5 w-3.5 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
                 </div>
                 <div className="max-h-[350px] overflow-y-auto">
-                    <table className="w-full text-left text-[11px]">
+                    <table className="bb-nowrap-table w-full text-left text-[11px]">
                         <thead className="bg-[#FBFBFD] text-slate-400 uppercase font-bold sticky top-0 z-10">
                             <tr>
                                 <th className="px-4 py-2 border-b border-slate-100">Customer</th>
@@ -597,12 +658,8 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData, empData] = await Promise.all([
+                const [custData, whsData, settingsData, bankAccData, empData] = await Promise.all([
                     getAllCustomers(),
-                    getAllSalesOrders(),
-                    getAllProformas(),
-                    getDeliveryNotes(),
-                    getAllSalesInvoices(),
                     getWarehouses(),
                     getSalesSettings().catch(() => null),
                     api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
@@ -622,12 +679,23 @@ const SalesInvoice = () => {
                     }, ...validCustomers];
                 }
                 setCustomersList(validCustomers);
-                setSalesOrdersList(Array.isArray(soData) ? soData : []);
-                setProformaList(Array.isArray(piData) ? piData : []);
-                setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
-                setInvoicesList(Array.isArray(invData) ? invData : []);
                 setWarehousesList(Array.isArray(whsData) ? whsData : []);
                 if (settingsData) setSalesSettings(settingsData);
+
+                // Load editor-only data (SOs, Proformas, DNs) if navigating directly into editor
+                // or if a fromDeliveryNote navigation is pending.
+                const needsEditorData = location.state?.fromDeliveryNote || location.state?.fromSalesOrder || location.state?.fromProforma;
+                if (needsEditorData && !editorDataLoaded.current) {
+                    editorDataLoaded.current = true;
+                    const [soData, piData, dnData] = await Promise.all([
+                        getAllSalesOrders().catch(() => []),
+                        getAllProformas().catch(() => []),
+                        getDeliveryNotes().catch(() => []),
+                    ]);
+                    setSalesOrdersList(Array.isArray(soData) ? soData : []);
+                    setProformaList(Array.isArray(piData) ? piData : []);
+                    setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
+                }
 
             } catch (err) {
                 console.error("Failed to load master data", err);
@@ -894,6 +962,8 @@ const SalesInvoice = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const rows = Array.isArray(data?.content) ? data.content : [];
             setInvoicesList(rows);
@@ -918,7 +988,33 @@ const SalesInvoice = () => {
         if (activeTab !== 'list') return;
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+
+    // Lazy-load editor data (SOs, Proformas, DNs) only when the create tab is first opened.
+    useEffect(() => {
+        if (activeTab !== 'create' || editorDataLoaded.current) return;
+        editorDataLoaded.current = true;
+        Promise.all([
+            getAllSalesOrders().catch(() => []),
+            getAllProformas().catch(() => []),
+            getDeliveryNotes().catch(() => []),
+        ]).then(([soData, piData, dnData]) => {
+            setSalesOrdersList(Array.isArray(soData) ? soData : []);
+            setProformaList(Array.isArray(piData) ? piData : []);
+            setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
+        }).catch(err => console.error('Failed to load editor reference data', err));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') fetchInvoices();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     const verifyPickingNoteAfterSave = async (savedInvoice) => {
         if (!savedInvoice?.id) {
@@ -985,7 +1081,32 @@ const SalesInvoice = () => {
     // ==========================================
     // CALCULATIONS
     // ==========================================
-    const invoiceSummary = useMemo(() => summarizeSalesItems(items, billDiscount), [items, billDiscount]);
+    // Total before round-off, used to derive the automatic rounding adjustment.
+    const preRoundSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: 0 }),
+        [items, billDiscount, deliveryCharge]
+    );
+    // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
+    const autoRoundOff = useMemo(
+        () => computeRoundOff(preRoundSummary.grandTotal, salesSettings?.roundingMode, salesSettings?.roundingPrecision),
+        [preRoundSummary.grandTotal, salesSettings?.roundingMode, salesSettings?.roundingPrecision]
+    );
+    // Posted/cancelled invoices keep their saved figure (never recompute), so the
+    // displayed net always matches what was posted to the ledger.
+    const effectiveRoundOff = (roundOffManual || isReadOnlyInvoice) ? Number(roundOff) || 0 : autoRoundOff;
+
+    // Keep the underlying roundOff state in sync with the auto value so the saved
+    // payload and print always carry the figure actually shown on screen.
+    useEffect(() => {
+        if (!roundOffManual && !isReadOnlyInvoice && Number(roundOff) !== autoRoundOff) {
+            setRoundOff(autoRoundOff);
+        }
+    }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const invoiceSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: effectiveRoundOff }),
+        [items, billDiscount, deliveryCharge, effectiveRoundOff]
+    );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
     const totalDiscount = invoiceSummary.itemDiscountTotal;
@@ -1013,8 +1134,11 @@ const SalesInvoice = () => {
             setInvoiceNo('');
         }
         setStatus('Draft');
-        setSalesType(type);
-        setInvoiceTypeUI(resolveInvoiceTypeUI({ salesType: type }));
+        // Derive salesType from the resolved dropdown type so a blank (no-link)
+        // invoice is a Direct Sale in both the UI and state.
+        const newTypeUI = resolveInvoiceTypeUI({ salesType: type });
+        setInvoiceTypeUI(newTypeUI);
+        setSalesType(newTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setDeliveryDate('');
         // BB-027: Default to Walk-In Customer for new invoices
@@ -1028,12 +1152,15 @@ const SalesInvoice = () => {
         setLinkedQuotation('');
         setVatMode('EXCLUSIVE');
         setIsGeneratedFromDN(false);
-        setPaymentMode('Cash');
+        setPaymentMode('');
         setPaymentTerms('Immediate');
         setSalesperson('John Doe');
         setBranch(defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
+        setDeliveryCharge(0);
+        setRoundOff(0);
+        setRoundOffManual(false);
         setAmountCollected(0);
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
@@ -1708,6 +1835,32 @@ const SalesInvoice = () => {
     };
 
 
+    // Open the review-before-commit preview. Runs only the cheap front-end
+    // guards here; the heavy stock/credit checks stay in handleSave and fire
+    // when the preview's primary button is pressed.
+    const openPreview = (mode = 'Draft') => {
+        if (isReadOnlyInvoice) {
+            alert("This invoice is view-only because it has already been completed.");
+            return;
+        }
+        if (!selectedCustomer) { alert("Please select a customer"); return; }
+        if (!invoiceAutoNumbering && !invoiceNo.trim()) {
+            alert("Please enter an invoice number.");
+            return;
+        }
+        const hasItems = items.some(i => i && (i.code || i.name) && Number(i.qty) > 0);
+        if (!hasItems) { alert("Add at least one item before saving."); return; }
+        setPreviewMode(mode);
+    };
+
+    // Fired from the preview modal's primary button — closes the preview and
+    // runs the real save with the previewed status.
+    const handlePreviewConfirm = async () => {
+        const mode = previewMode || 'Draft';
+        setPreviewMode(null);
+        await handleSave(mode);
+    };
+
     const handleSave = async (newStatus = 'Draft') => {
         if (isReadOnlyInvoice) {
             alert("This invoice is view-only because it has already been completed.");
@@ -1717,6 +1870,23 @@ const SalesInvoice = () => {
         if (!invoiceAutoNumbering && !invoiceNo.trim()) {
             alert("Please enter an invoice number.");
             return;
+        }
+
+        // Zero-price policy check
+        const zeroPricePolicy = salesSettings?.zeroPricePolicy ?? 'BLOCK';
+        if (zeroPricePolicy !== 'ALLOW') {
+            const zeroPriceItems = items.filter(i => (i.code || i.name) && Number(i.qty) > 0 && !(Number(i.price) > 0));
+            if (zeroPriceItems.length > 0) {
+                const names = zeroPriceItems.map(i => i.name || i.code).join(', ');
+                if (zeroPricePolicy === 'BLOCK') {
+                    alert(`Zero-price items are not allowed.\n\nThe following item(s) have a unit price of zero:\n${names}\n\nPlease set a price before saving.`);
+                    return;
+                }
+                if (zeroPricePolicy === 'WARN') {
+                    const proceed = window.confirm(`Some items have a zero price:\n${names}\n\nDo you want to continue saving?`);
+                    if (!proceed) return;
+                }
+            }
         }
 
         // Build payload for backend
@@ -1748,6 +1918,8 @@ const SalesInvoice = () => {
             amountPaid: Number(amountCollected),
             billDiscount: 0,
             billDiscountAmount: 0,
+            deliveryCharge: Number(deliveryCharge) || 0,
+            roundOff: Number(effectiveRoundOff) || 0,
             totalDiscount: 0,
             subTotal: Number(taxableSubTotal),
             taxableSubTotal: Number(taxableSubTotal),
@@ -1840,14 +2012,7 @@ const SalesInvoice = () => {
                 setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
             }
 
-            // 🔵 AUTO-POST: If invoice is fully paid, update status to POSTED
-            // This triggers the backend journal generation (JournalEntryGeneratorService)
-            if (Number(amountCollected) >= netTotal && netTotal > 0) {
-                await updateInvoiceStatus(savedInvoice.id, 'POSTED');
-                setStatus('POSTED');
-            }
-
-            await verifyPickingNoteAfterSave(savedInvoice);
+            if (newStatus !== 'Draft') await verifyPickingNoteAfterSave(savedInvoice);
 
             await fetchInvoices();
             const hasBatchLines = Array.isArray(savedInvoice.items)
@@ -1855,6 +2020,9 @@ const SalesInvoice = () => {
             if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
                 setActiveTab('create');
                 alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the invoice.');
+            } else if (newStatus === 'Confirmed') {
+                // Invoice confirmed — offer AR settlement before returning to the list.
+                setSettlementInvoice(savedInvoice);
             } else {
                 setActiveTab('list');
             }
@@ -1880,6 +2048,7 @@ const SalesInvoice = () => {
         setInvoiceNo(invoice.invoiceNumber);
         setInvoiceDate(invoice.invoiceDate);
         setDeliveryDate(invoice.dueDate || '');
+        setSalesChannel(invoice.salesChannel || 'Retail');
 
         // Resolve from master so reopening a saved invoice rehydrates the customer
         // panel (phone, balance, TRN, savedAddresses) — invoice persists only code+name.
@@ -1910,23 +2079,30 @@ const SalesInvoice = () => {
         setLinkedQuotation(invoice.linkedQuotation || '');
         setVatMode(invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
-        setPaymentMode(invoice.paymentMode || 'Cash');
+        setPaymentMode(invoice.paymentMode || '');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
         setSalesperson(invoice.salesperson || 'John Doe');
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
         setBillDiscount(Number(invoice.billDiscount) || 0);
+        setDeliveryCharge(Number(invoice.deliveryCharge) || 0);
+        setRoundOff(Number(invoice.roundOff) || 0);
+        setRoundOffManual(false);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
-        const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
-        setSalesType(resolvedSalesType);
-        setInvoiceTypeUI(resolveInvoiceTypeUI({
+        // Keep salesType in sync with the resolved dropdown type: a no-link
+        // invoice has no "Standard" UI option, so it is always a Direct Sale.
+        // Deriving from the UI type avoids the stored-STANDARD_FLOW/shows-Direct-Sale
+        // mismatch that left the batch button disabled.
+        const resolvedTypeUI = resolveInvoiceTypeUI({
             linkedSalesOrder: invoice.linkedSalesOrder || '',
             linkedDeliveryNote: invoice.linkedDeliveryNote || '',
             linkedProforma: invoice.linkedProforma || '',
-            salesType: resolvedSalesType
-        }));
+            salesType: invoice.salesType || 'STANDARD_FLOW'
+        });
+        setInvoiceTypeUI(resolvedTypeUI);
+        setSalesType(resolvedTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
         // Map items back
@@ -2005,8 +2181,110 @@ const SalesInvoice = () => {
         }
     };
 
+    // ── Post-confirm AR settlement handlers ──────────────────────────────
+    // Record each split entry against the just-confirmed invoice via the
+    // existing payment API, then return to the list.
+    const handleSettlementConfirm = async (entries) => {
+        const inv = settlementInvoice;
+        if (!inv?.id || !Array.isArray(entries) || entries.length === 0) {
+            return null;
+        }
+        setIsSettlementSaving(true);
+        const todayStr = new Date().toISOString().split('T')[0];
+        try {
+            // Record each entry through the same /payment-detailed path the Pay
+            // button uses — the backend mints a real ReceiptVoucher per entry.
+            for (const e of entries) {
+                await recordInvoicePayment(inv.id, {
+                    amount: Number(e.amount),
+                    paymentMode: e.mode,
+                    paymentReference: e.reference || '',
+                    paymentDate: todayStr,
+                    ...(e.bankAccount ? { bankAccount: e.bankAccount } : {}),
+                    ...(e.mode === 'Cheque' && e.chequeDate ? { chequeDate: e.chequeDate } : {}),
+                });
+            }
+            await fetchInvoices();
+
+            // Surface the real voucher number(s) the backend just created for
+            // this invoice (mirrors the Receipts-history mapping).
+            let receipts = [];
+            try {
+                const sps = await getSalesPaymentsByInvoice(inv.invoiceNumber);
+                receipts = (Array.isArray(sps) ? sps : [])
+                    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
+                    .slice(0, entries.length)
+                    .map(sp => ({
+                        id: sp.id,
+                        receiptNumber: sp.paymentNumber || `SP-${sp.id}`,
+                        date: sp.paymentDate,
+                        customerName: sp.customerName || inv.customerName,
+                        amount: Number(sp.amount || 0),
+                        mode: sp.paymentMode || 'Cash',
+                        reference: sp.referenceNumber || '',
+                        status: sp.status || 'Completed',
+                    }))
+                    .reverse(); // back to chronological order
+            } catch { /* number lookup is best-effort */ }
+
+            return { receipts };
+        } catch (err) {
+            const message = err?.response?.data?.message
+                || (typeof err?.response?.data === 'string' ? err.response.data : null)
+                || err?.message
+                || 'Failed to record settlement. Please try again.';
+            alert(message);
+            return null;
+        } finally {
+            setIsSettlementSaving(false);
+        }
+    };
+
+    // Skip from the input phase (leave on credit) and Done from the success
+    // phase both close the modal and return to the list.
+    const handleSettlementSkip = () => {
+        setSettlementInvoice(null);
+        setActiveTab('list');
+    };
+    const handleSettlementDone = () => {
+        setSettlementInvoice(null);
+        setActiveTab('list');
+    };
+
+    // Voucher actions operate on the real ReceiptVoucher records returned after
+    // recording, reusing the existing receipt-voucher print engine.
+    const handleSettlementVoucherPrint = (receipt) => {
+        if (!settlementInvoice || !receipt) return;
+        handlePrintReceipt(receipt, settlementInvoice);
+    };
+
+    const handleSettlementVoucherEmail = () => {
+        if (!(settlementInvoice?.id || invoiceId)) {
+            alert('Save the invoice before emailing a voucher.');
+            return;
+        }
+        setIsEmailModalOpen(true);
+    };
+
+    const handleSettlementVoucherWhatsApp = (receipts = []) => {
+        const phone = (customersList.find(c => c.code === selectedCustomer?.code)?.mobile)
+            || selectedCustomer?.mobile || selectedCustomer?.phone || '';
+        const digits = String(phone).replace(/[^0-9]/g, '');
+        const nums = receipts.map(r => r.receiptNumber).filter(Boolean).join(', ');
+        const total = receipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+        const msg = `AR Payment Voucher ${nums} for Invoice ${settlementInvoice?.invoiceNumber || ''}: ${formatCurrencyDisplay(total, invoiceCurrency)} received. Thank you.`;
+        const url = digits
+            ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`
+            : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+        window.open(url, '_blank');
+    };
+
     // ✅ PRINT FUNCTIONALITY
     const [isPrinting, setIsPrinting] = useState(false);
+    // Sales Invoice print templates (standard + letterhead + pre-printed) for the
+    // split Print button's dropdown, and which invoice is queued for the menu.
+    const [invoiceTemplates, setInvoiceTemplates] = useState([]);
+    const [printMenuFor, setPrintMenuFor] = useState(null);
 
     // ------------------------------------------------------------------
     // QA-038: Receipts history modal — opened from the invoice list row
@@ -2045,8 +2323,14 @@ const SalesInvoice = () => {
                 raw: p
             }));
 
+            // Exclude receipt vouchers that were auto-created by a sales payment
+            // (PaymentService.upsertReceiptVoucher stores the RV id in receiptVoucherRecordId)
+            const autoCreatedRvIds = new Set(
+                (salesPayments || []).map(p => p.receiptVoucherRecordId).filter(Boolean)
+            );
+
             const rvRows = (allReceiptVouchers || [])
-                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id))
+                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id) && !autoCreatedRvIds.has(rv.id))
                 .map((rv) => ({
                     key: `rv-${rv.id}`,
                     dbId: rv.id,
@@ -2057,8 +2341,9 @@ const SalesInvoice = () => {
                     customerName: rv.memberName || invoice.customerName,
                     amount: Number(rv.amount || 0),
                     mode: rv.paymentMode || 'Cash',
-                    reference: rv.reference || '',
-                    bankName: '',
+                    reference: rv.reference || rv.chequeRef || '',
+                    bankName: rv.depositAccount || rv.bankName || '',
+                    branchId: rv.branchId || invoice.branchId,
                     status: rv.status || 'Completed',
                     notes: rv.notes || '',
                     purpose: rv.purpose,
@@ -2079,70 +2364,71 @@ const SalesInvoice = () => {
     };
 
     const buildReceiptVoucherPrintData = (receipt, invoice) => {
-        // Map a normalized receipt row → print data shape understood by
-        // generatePrintHtml. We reuse the Sales Invoice template renderer
-        // (there is no dedicated "Receipt Voucher" template category yet)
-        // but override the title and item-row content so the printed output
-        // reads as a Receipt Voucher.
         const amount = Number(receipt.amount) || 0;
         const currencyCode = company?.currencySymbol || company?.currency || 'AED';
+        const invoiceTotal = Number(invoice?.invoiceTotal || invoice?.netTotal || 0);
+        const previousPaid = Math.max(0, Number(invoice?.amountPaid || 0) - amount);
+        const outstandingBefore = Math.max(0, invoiceTotal - previousPaid);
+        const balanceAfter = Math.max(0, outstandingBefore - amount);
         return {
-            title: 'RECEIPT VOUCHER',
+            // Rich receipt layout data (used by renderCustomerPaymentReceiptHtml)
+            receiptData: {
+                receiptNumber: receipt.receiptNumber || '',
+                date: receipt.date || '',
+                status: receipt.status || 'Completed',
+                session: null,
+                invoiceCount: '1 invoice',
+                account: null,
+                bankAccount: receipt.bankName || null,
+            },
+            customerData: {
+                name: receipt.customerName || invoice?.customerName || '',
+                code: invoice?.customerCode || '',
+                address: invoice?.customerAddress || '',
+                phone: invoice?.customerPhone || '',
+                email: invoice?.customerEmail || '',
+                trn: invoice?.customerTrn || '',
+                crn: invoice?.customerCrn || '',
+            },
+            invoices: [{
+                ref: invoice?.invoiceNumber || receipt.linkedInvoice || '—',
+                soRef: invoice?.linkedSalesOrder || '',
+                date: invoice?.invoiceDate || '',
+                total: invoiceTotal,
+                outstanding: outstandingBefore,
+                received: amount,
+                balance: balanceAfter,
+                status: balanceAfter <= 0 ? 'Fully paid' : 'Partial',
+            }],
+            summary: {
+                totalOutstanding: outstandingBefore,
+                discount: 0,
+                remaining: balanceAfter,
+                totalReceived: amount,
+            },
+            payment: {
+                method: receipt.mode || '',
+                depositedTo: receipt.bankName || '',
+                chequeRef: receipt.reference || '',
+                chequeDate: receipt.chequeDate || '',
+            },
+            note: '',
+            // Fallback fields for generic renderer
+            title: 'PAYMENT RECEIPT',
             docNo: receipt.receiptNumber,
             date: receipt.date,
-            customer: {
-                name: receipt.customerName || invoice?.customerName || '',
-                address: invoice?.customerAddress || '',
-                trn: invoice?.customerTrn || '',
-                phone: invoice?.customerPhone || ''
-            },
-            items: [{
-                name: 'Receipt Against Invoice',
-                description: {
-                    title: 'Receipt Against Invoice',
-                    details: [
-                        `Invoice: ${invoice?.invoiceNumber || '—'}`,
-                        `Mode: ${receipt.mode || 'Cash'}`,
-                        receipt.reference ? `Ref: ${receipt.reference}` : null,
-                        receipt.bankName ? `Bank: ${receipt.bankName}` : null,
-                        receipt.purpose ? `Purpose: ${receipt.purpose}` : null
-                    ].filter(Boolean)
-                },
-                unit: '',
-                qty: 1,
-                price: amount,
-                taxableAmount: amount,
-                taxAmt: 0,
-                taxPercent: 0,
-                total: amount
-            }],
-            totals: {
-                subTotal: amount,
-                tax: 0,
-                grandTotal: amount,
-                currency: currencyCode,
-                billDiscount: 0,
-                billDiscountAmount: 0
-            },
-            summaryAmount: {
-                label: 'Amount Received',
-                value: amount,
-                currency: currencyCode
-            },
-            meta: {
-                status: receipt.status || 'Completed',
-                paymentMode: receipt.mode || '',
-                reference: receipt.reference || '',
-                notes: receipt.notes || ''
-            }
+            customer: { name: receipt.customerName || invoice?.customerName || '' },
+            totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: currencyCode },
+            summaryAmount: { label: 'Amount Received', value: amount, currency: currencyCode },
+            meta: { status: receipt.status || 'Completed', paymentMode: receipt.mode || '' },
         };
     };
 
-    const handlePrintReceipt = async (receipt) => {
+    const handlePrintReceipt = async (receipt, invoiceContext = receiptsInvoiceContext) => {
         try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
+            const templates = await getTemplatesByCategory('Receipt Voucher');
             const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
-                category: 'Sales Invoice',
+                category: 'Receipt Voucher',
                 paperSize: 'A4',
                 orientation: 'Portrait',
                 headerContent: '',
@@ -2152,13 +2438,21 @@ const SalesInvoice = () => {
                 columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true }
             };
 
-            const printData = buildReceiptVoucherPrintData(receipt, receiptsInvoiceContext);
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            const printData = buildReceiptVoucherPrintData(receipt, invoiceContext);
+            // Use the originating invoice's branch so reprints carry the right
+            // header even when an admin is viewing under a different branch.
+            const receiptBranchId = receipt?.branchId ?? invoiceContext?.branchId ?? activeBranch?.id;
+            const branchProfile = buildDocumentHeaderProfile({
+                company,
+                branches: availableBranches || [],
+                branchId: receiptBranchId,
+            });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
 
             const title = generateDocFilename(
                 'Receipt Voucher',
                 receipt.receiptNumber,
-                receipt.customerName || receiptsInvoiceContext?.customerName || '',
+                receipt.customerName || invoiceContext?.customerName || '',
                 receipt.date,
                 company?.currencySymbol || company?.currency || ''
             );
@@ -2169,54 +2463,168 @@ const SalesInvoice = () => {
         }
     };
 
-    const handlePrintClick = async (invoice = null) => {
-        const isListView = invoice && invoice.invoiceNumber;
-        const dataToPrint = isListView ? invoice : {
-            invoiceNumber: invoiceNo,
-            invoiceDate,
-            customerCode: selectedCustomer?.code,
-            customerName: selectedCustomer?.name,
-            linkedSalesOrder: linkedSO,
-            linkedDeliveryNote: linkedDN,
-            linkedProforma: linkedPI,
-            branch,
-            paymentMode,
-            items,
-            subTotal: taxableSubTotal,
-            totalTax,
-            invoiceTotal: netTotal,
-            amountPaid: amountCollected,
-            billDiscount,
-            billDiscountAmount,
-            status,
-            paymentTerms,
-            salesperson
+    // QA-040: build the print payload for the currently-open invoice (form
+    // state). Reused by the Send-Email modal so the emailed Sales Invoice
+    // mirrors what Print produces. Print's own handler keeps its richer
+    // dual-mode (list-row vs form) logic; this covers the form path only.
+    const buildCurrentInvoicePrintData = () => {
+        const custCode = selectedCustomer?.code;
+        const fullCustomer = customersList.find(c => c.code === custCode);
+        const invoiceBranchId = activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
+        const resolvedBillDiscount = Number(billDiscount) || 0;
+        const resolvedDeliveryCharge = Number(deliveryCharge) || 0;
+        const resolvedRoundOff = Number(effectiveRoundOff) || 0;
+        const resolvedSummary = summarizeSalesItems(items || [], resolvedBillDiscount, {
+            deliveryCharge: resolvedDeliveryCharge,
+            roundOff: resolvedRoundOff
+        });
+
+        return {
+            title: 'SALES INVOICE',
+            docNo: invoiceNo,
+            date: invoiceDate,
+            customer: {
+                name: selectedCustomer?.name || '',
+                address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                shippingAddress: shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
+                phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                email: fullCustomer?.email || '',
+                trn: fullCustomer?.trn
+            },
+            items: (items || []).map(i => ({
+                code: i.itemCode || i.code,
+                name: i.itemName || i.name || '',
+                desc: i.description || i.shortDescription || i.desc || '',
+                sku: i.sku || i.productSku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || '',
+                detailedDesc: i.detailedDesc || '',
+                localName: i.localName || i.productLocalName || '',
+                barcode: i.barcode || i.itemBarcode || '',
+                salesPerson: salesperson || '',
+                location: branch || '',
+                unit: i.unit,
+                qty: Number(i.quantity || i.qty),
+                price: Number(i.price),
+                disc: Number(i.discount || i.disc),
+                tax: Number(i.taxRate || i.tax),
+                taxAmt: Number(i.taxAmount || i.taxAmt || 0),
+                total: Number(i.netAmount || i.net),
+                image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                batchNumber: Array.isArray(i.batchSelections)
+                    ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                    : (i.batchNumber || ''),
+                batchNumbers: Array.isArray(i.batchSelections)
+                    ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                    : '',
+                expiry: i.expiry || i.expiryDate || ''
+            })),
+            totals: {
+                subTotal: resolvedSummary.subTotal,
+                tax: resolvedSummary.tax,
+                grandTotal: resolvedSummary.grandTotal,
+                currency: company?.currencySymbol || company?.currency || 'AED',
+                billDiscount: resolvedBillDiscount,
+                billDiscountAmount: resolvedSummary.billDiscountAmount,
+                deliveryCharge: resolvedDeliveryCharge,
+                roundOff: resolvedRoundOff
+            },
+            meta: {
+                status,
+                paymentTerm: paymentTerms,
+                dueDate: '',
+                linkedSalesOrder: linkedSO || '',
+                linkedDeliveryNote: linkedDN || '',
+                linkedProforma: linkedPI || '',
+                location: branch || printBranch.name || '',
+                locationStore: branch || printBranch.name || printBranch.code || '',
+                warehouse: printBranch.defaultWarehouseName || '',
+                deliveryTerms: '',
+                salesPerson: salesperson || '',
+                notes: ''
+            }
         };
+    };
 
-        if (!dataToPrint.items || dataToPrint.items.length === 0) {
-            alert("Nothing to print. Add items first.");
-            return;
+    // Snapshot of the current editor form as a print-source object (same shape
+    // handlePrintClick uses for an unsaved invoice). Shared by Print and the
+    // review preview so both render from identical data.
+    const buildCurrentFormPrintSource = () => ({
+        invoiceNumber: invoiceNo,
+        invoiceDate,
+        customerCode: selectedCustomer?.code,
+        customerName: selectedCustomer?.name,
+        linkedSalesOrder: linkedSO,
+        linkedDeliveryNote: linkedDN,
+        linkedProforma: linkedPI,
+        branch,
+        paymentMode,
+        items,
+        subTotal: taxableSubTotal,
+        totalTax,
+        invoiceTotal: netTotal,
+        amountPaid: amountCollected,
+        billDiscount,
+        billDiscountAmount,
+        deliveryCharge,
+        roundOff: effectiveRoundOff,
+        status,
+        paymentTerms,
+        salesperson,
+        shippingAddress,
+    });
+
+    // Build the print HTML for an invoice (saved row or current-form source)
+    // using the default Sales Invoice print template. Returns the HTML string,
+    // or null if no template could be resolved. `titleOverride` lets callers
+    // stamp the document title (e.g. DRAFT INVOICE / TAX INVOICE) for previews.
+    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride } = {}) => {
+        // Resolve which template to print with: an explicit choice from the
+        // dropdown, else the last-used one, else the category default, else first.
+        let selectedTemplate = chosenTemplate;
+        if (!selectedTemplate) {
+            const family = await getTemplateFamily('Sales Invoice');
+            const list = Array.isArray(family) ? family : [];
+            if (list.length) setInvoiceTemplates(list);
+            const lastId = sessionStorage.getItem('salesInvoiceTemplateId');
+            selectedTemplate = (lastId && list.find(t => String(t.id) === lastId))
+                || list.find(t => t.isDefault)
+                || list[0];
         }
+        if (selectedTemplate?.id != null) {
+            sessionStorage.setItem('salesInvoiceTemplateId', String(selectedTemplate.id));
+        }
+        const defaultTemplate = selectedTemplate;
+        if (!defaultTemplate) return null;
 
-        setIsPrinting(true);
-        try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
-            const defaultTemplate = templates.find(t => t.isDefault);
+        {
             const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount);
+            const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
+            const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount, {
+                deliveryCharge: resolvedDeliveryCharge,
+                roundOff: resolvedRoundOff
+            });
 
-            if (defaultTemplate) {
+            {
                 // Find Customer details
                 const custCode = dataToPrint.customerCode || (selectedCustomer?.code);
                 const fullCustomer = customersList.find(c => c.code === custCode);
+                const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
+                const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
 
                 const printData = {
-                    title: 'SALES INVOICE',
+                    title: titleOverride || 'SALES INVOICE',
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
                     customer: {
                         name: dataToPrint.customerName || '',
-                        address: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        shippingAddress: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
+                        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                        email: fullCustomer?.email || '',
                         trn: fullCustomer?.trn
                     },
                     items: (dataToPrint.items || []).map(i => ({
@@ -2257,24 +2665,83 @@ const SalesInvoice = () => {
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount: resolvedBillDiscount,
-                        billDiscountAmount: resolvedSummary.billDiscountAmount
+                        billDiscountAmount: resolvedSummary.billDiscountAmount,
+                        deliveryCharge: resolvedDeliveryCharge,
+                        roundOff: resolvedRoundOff
                     },
                     meta: {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
+                        dueDate: dataToPrint.dueDate || '',
                         // QA-031: explicit source-doc cross-references — each
                         // renders as its own labeled row when the template
                         // toggle is on.
                         linkedQuotation: dataToPrint.linkedQuotation || '',
                         linkedSalesOrder: dataToPrint.linkedSalesOrder || '',
                         linkedDeliveryNote: dataToPrint.linkedDeliveryNote || '',
-                        location: dataToPrint.branch || '',
+                        location: dataToPrint.branch || printBranch.name || '',
+                        locationStore: dataToPrint.branch || printBranch.name || printBranch.code || '',
+                        warehouse: printBranch.defaultWarehouseName || '',
+                        deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
                         notes: dataToPrint.notes || ''
                     }
                 };
 
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const branchProfile = buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: invoiceBranchId,
+                });
+                const html = isOverlayInvoiceTemplate(defaultTemplate)
+                    ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
+                    : await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                return html;
+            }
+        }
+    };
+
+    // Async source for the review preview modal — renders the current editor
+    // form through the default print template, stamped DRAFT / TAX INVOICE.
+    const getPreviewHtml = async () => {
+        const titleOverride = 'TAX INVOICE';
+        return buildInvoiceHtml(buildCurrentFormPrintSource(), { titleOverride });
+    };
+
+    const handleDownloadClick = async (invoice = null) => {
+        const isListView = invoice && invoice.invoiceNumber;
+        const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
+        if (!dataToPrint.items || dataToPrint.items.length === 0) return;
+        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
+        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
+        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+        setIsPrinting(true);
+        try {
+            const html = await buildInvoiceHtml(dataToPrint, { titleOverride });
+            if (html) await downloadPdf(html, dataToPrint.invoiceNumber || 'Sales-Invoice');
+        } catch (e) { console.error('Download error:', e); }
+        finally { setIsPrinting(false); }
+    };
+
+    const handlePrintClick = async (invoice = null, chosenTemplate = null) => {
+        const isListView = invoice && invoice.invoiceNumber;
+        const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
+
+        if (!dataToPrint.items || dataToPrint.items.length === 0) {
+            alert("Nothing to print. Add items first.");
+            return;
+        }
+
+        // Determine the document title: confirmed/posted/paid invoices are
+        // Tax Invoices (VAT-compliant); drafts remain Sales Invoices.
+        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
+        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
+        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+
+        setIsPrinting(true);
+        try {
+            const html = await buildInvoiceHtml(dataToPrint, { chosenTemplate, titleOverride });
+            if (html) {
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
@@ -2303,15 +2770,95 @@ const SalesInvoice = () => {
     };
 
     // Helper for Status Badges
-    const renderListStatus = (statusVal) => {
+    const renderListStatus = (statusVal, inv = null) => {
         const s = statusVal?.toUpperCase();
+        // Compute overdue: confirmed/partially-paid with outstanding balance past due date
+        if (inv && (s === 'CONFIRMED' || s === 'PARTIALLY_PAID') && inv.dueDate && (inv.balance ?? 0) > 0) {
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            if (new Date(inv.dueDate) < today) {
+                return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
+            }
+        }
         if (s === 'PAID') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Paid</span>;
         if (s === 'OVERDUE') return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
         if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
+        if (s === 'POSTED') return <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Posted</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
     };
+
+    // Lazily load the invoice template family the first time a print menu opens.
+    const openPrintMenu = async (key) => {
+        setPrintMenuFor((prev) => (prev === key ? null : key));
+        if (invoiceTemplates.length === 0) {
+            try {
+                const family = await getTemplateFamily('Sales Invoice');
+                if (Array.isArray(family)) setInvoiceTemplates(family);
+            } catch {
+                /* fall back to one-click default print */
+            }
+        }
+    };
+
+    // Caret + dropdown that lets the user pick a specific print template
+    // (standard / letterhead / pre-printed) next to a one-click Print button.
+    const renderPrintCaret = (menuKey, invoice = null) => (
+        <div className="relative inline-block">
+            <button
+                type="button"
+                disabled={isPrinting}
+                onClick={() => openPrintMenu(menuKey)}
+                title="Choose print template"
+                className="h-8 px-1.5 border border-l-0 border-slate-300 rounded-r-md bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center disabled:opacity-50"
+            >
+                <ChevronDown className="h-4 w-4" />
+            </button>
+            {printMenuFor === menuKey && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPrintMenuFor(null)} />
+                    <div className="absolute right-0 mt-1 w-72 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1">
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Print template</div>
+                        {invoiceTemplates.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-slate-400">Loading templates…</div>
+                        ) : (
+                            [['FULL', 'Standard'], ['LETTERHEAD', 'Letterhead'], ['PREPRINTED', 'Pre-printed']].map(([groupKey, groupLabel]) => {
+                                const groupTemplates = invoiceTemplates
+                                    .filter((t) => {
+                                        const ty = String(t.templateType || '').toUpperCase();
+                                        const resolved = ['FULL', 'LETTERHEAD', 'PREPRINTED'].includes(ty)
+                                            ? ty
+                                            : (isOverlayInvoiceTemplate(t) ? 'LETTERHEAD' : 'FULL');
+                                        return resolved === groupKey;
+                                    })
+                                    .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
+                                if (groupTemplates.length === 0) return null;
+                                return (
+                                    <div key={groupKey} className="py-0.5">
+                                        <div className="px-3 pt-1.5 pb-1 text-[9px] font-bold text-[#D99A00] uppercase tracking-wide">{groupLabel}</div>
+                                        {groupTemplates.map((t) => (
+                                            <button
+                                                key={t.id}
+                                                type="button"
+                                                title={t.name}
+                                                onClick={() => { setPrintMenuFor(null); handlePrintClick(invoice, t); }}
+                                                className="w-full text-left px-3 py-2 text-xs hover:bg-[#FFF8E7] flex items-center gap-2"
+                                            >
+                                                {t.isDefault
+                                                    ? <span className="text-[#F5C742] shrink-0">★</span>
+                                                    : <span className="w-2.5 shrink-0" />}
+                                                <span className="truncate text-slate-700">{t.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </>
+            )}
+        </div>
+    );
 
     const resolveSourceType = (inv) => {
         if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
@@ -2320,8 +2867,8 @@ const SalesInvoice = () => {
         return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
     };
 
-    const renderTypeBadge = (type) => {
-        if (type === 'DIRECT_SALE') return <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold ml-2 border border-purple-200 shadow-sm flex items-center gap-1"><ShoppingCart size={10} /> Direct Sale</span>;
+    const renderTypeBadge = (inv) => {
+        if (inv?.fastSale) return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold border border-red-200 shadow-sm flex items-center gap-1 w-fit"><ShoppingCart size={10} /> Fast Sale</span>;
         return null;
     };
 
@@ -2332,13 +2879,13 @@ const SalesInvoice = () => {
         >
             <div className="flex justify-between items-start mb-2">
                 <div>
-                    <h4 className="font-bold text-slate-800 text-sm flex items-center">
-                        {inv.invoiceNumber}
-                        {renderTypeBadge(inv.salesType)}
+                    <h4 className="font-bold text-slate-800 text-sm flex flex-col items-start gap-1">
+                        <span>{inv.invoiceNumber}</span>
+                        {renderTypeBadge(inv)}
                     </h4>
                     <div className="text-xs text-slate-500">{formatDisplayDate(inv.invoiceDate)}</div>
                 </div>
-                {renderListStatus(inv.status)}
+                {renderListStatus(inv.status, inv)}
             </div>
 
             <div className="flex items-center gap-2 mb-3 text-xs text-slate-600">
@@ -2483,7 +3030,7 @@ const SalesInvoice = () => {
                                 {activeTab === 'create' && (
                                     <div className="flex flex-wrap items-center gap-2 pt-2">
                                         {renderListStatus(status)}
-                                        {renderTypeBadge(salesType)}
+                                        {renderTypeBadge({ fastSale: salesSettings?.salesMode === 'FAST_SALE' })}
                                         <span className="text-xs text-slate-500 font-medium">
                                             Invoice No: <span className="text-slate-800 font-bold">{invoiceNo || '-'}</span>
                                         </span>
@@ -2504,31 +3051,33 @@ const SalesInvoice = () => {
                                 {activeTab === 'create' && (
                                     <>
                                         <button
-                                            onClick={() => handleSave('Draft')}
+                                            onClick={() => openPreview('Draft')}
                                             className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
                                         >
                                             <Save className="h-4 w-4" /> Save Draft
                                         </button>
                                         <button
-                                            onClick={() => handleSave('Confirmed')}
+                                            onClick={() => openPreview('Confirmed')}
                                             className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
                                         >
                                             <CheckCircle2 className="h-4 w-4" /> Confirm
                                         </button>
+                                        <div className="flex-1 sm:flex-none flex items-stretch">
+                                            <button
+                                                onClick={() => handlePrintClick()}
+                                                disabled={isPrinting}
+                                                className="flex-1 h-8 px-3 border border-slate-300 rounded-l-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+                                            >
+                                                <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+                                            </button>
+                                            {renderPrintCaret('editor-header')}
+                                        </div>
                                         <button
-                                            onClick={() => handleOpenPaymentModal()}
-                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
-                                        >
-                                            <DollarSign className="h-4 w-4" /> Pay
-                                        </button>
-                                        <button
-                                            onClick={() => handlePrintClick()}
-                                            disabled={isPrinting}
-                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
-                                        >
-                                            <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
-                                        </button>
-                                        <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                            onClick={() => {
+                                                if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
+                                                setIsEmailModalOpen(true);
+                                            }}
+                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                             <Mail className="h-4 w-4" /> Email
                                         </button>
                                     </>
@@ -2538,12 +3087,22 @@ const SalesInvoice = () => {
                                     <>
                                         <ExportDropdown
                                             onExportExcel={() => exportToExcel(
-                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredInvoices, {
+                                                    documentNumberSelector: (inv) => inv.invoiceNumber,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales_Invoices'
                                             )}
                                             onExportPdf={() => exportToPDF(
-                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredInvoices, {
+                                                    documentNumberSelector: (inv) => inv.invoiceNumber,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales Invoices',
                                                 'Sales_Invoices'
@@ -2582,6 +3141,7 @@ const SalesInvoice = () => {
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
                                 <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input type="text" placeholder="Search invoices..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 border border-slate-200 rounded-md text-xs w-full md:w-64 focus:outline-none focus:border-[#F5C742]" />
@@ -2613,99 +3173,129 @@ const SalesInvoice = () => {
                             </div>
 
                             <div className="overflow-x-auto hidden md:block">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full min-w-[1540px] text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
-                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceNumber')}>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none whitespace-nowrap">S.No.</th>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceNumber')}>
                                                 <div className="flex items-center gap-1">Invoice No {sortConfig.key === 'invoiceNumber' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceDate')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceDate')}>
                                                 <div className="flex items-center gap-1">Date {sortConfig.key === 'invoiceDate' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">Source Type</th>
-                                            <th className="px-4 py-3">Pay Mode</th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceTotal')}>
+                                            <th className="px-4 py-3 whitespace-nowrap">Branch</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Source Type</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Pay Mode</th>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceTotal')}>
                                                 <div className="flex items-center gap-1">Net Amount {sortConfig.key === 'invoiceTotal' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('amountPaid')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('amountPaid')}>
                                                 <div className="flex items-center gap-1">Paid {sortConfig.key === 'amountPaid' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('balance')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('balance')}>
                                                 <div className="flex items-center gap-1">Balance/Status {sortConfig.key === 'balance' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">Print Template</th>
-                                            <th className="px-4 py-3 text-right">Actions</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Sales Mode</th>
+                                            <th className="px-4 py-3 text-right whitespace-nowrap">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isListLoading && invoicesList.length === 0 && Array.from({ length: 10 }).map((_, i) => (
+                                            <tr key={`sk-${i}`} className="animate-pulse">
+                                                <td className="px-4 py-3"><div className="h-3 w-6 bg-slate-200 rounded mx-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-28 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-20 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3">
+                                                    <div className="h-3 w-32 bg-slate-200 rounded mb-1" />
+                                                    <div className="h-2 w-16 bg-slate-100 rounded" />
+                                                </td>
+                                                <td className="px-4 py-3"><div className="h-3 w-20 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-5 w-20 bg-slate-200 rounded-full" /></td>
+                                                <td className="px-4 py-3"><div className="h-5 w-14 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-16 bg-slate-200 rounded ml-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-14 bg-slate-200 rounded ml-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-14 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-12 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="flex justify-end gap-2">{Array.from({length:4}).map((_,j)=><div key={j} className="h-6 w-6 bg-slate-200 rounded" />)}</div></td>
+                                            </tr>
+                                        ))}
                                         {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
-                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                                                    {index + 1}
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: inv.invoiceNumber,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-700">
-                                                    <div className="flex items-center">
-                                                        {inv.invoiceNumber}
-                                                        {renderTypeBadge(inv.salesType)}
+                                                <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">
+                                                    <div className="flex flex-col items-start gap-1 whitespace-nowrap">
+                                                        <span>{inv.invoiceNumber}</span>
+                                                        {renderTypeBadge(inv)}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
+                                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDisplayDate(inv.invoiceDate)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
-                                                    <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
+                                                    {inv.customerCode && <div className="text-[10px] text-slate-400">{inv.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {inv.branchCode ? inv.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     {(() => {
                                                         const src = resolveSourceType(inv);
                                                         return (
-                                                            <div className="flex flex-col gap-0.5">
+                                                            <div>
                                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${src.color}`}>
                                                                     {src.label}
                                                                 </span>
-                                                                {src.ref && <span className="text-[10px] text-slate-400">{src.ref}</span>}
+                                                                {src.ref && <div className="text-[10px] text-slate-400 mt-0.5">{src.ref}</div>}
                                                             </div>
                                                         );
                                                     })()}
                                                 </td>
-                                                <td className="px-4 py-3">
-                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600 whitespace-nowrap">{inv.paymentMode || '—'}</span>
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-800"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
-                                                <td className="px-4 py-3 text-emerald-600"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
-                                                <td className="px-4 py-3">
+                                                <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 text-emerald-600 whitespace-nowrap"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
                                                     <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
-                                                    {renderListStatus(inv.status)}
+                                                    {renderListStatus(inv.status, inv)}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">Classic</td>
-                                                <td className="px-4 py-3 text-right">
-                                                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                                                        <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
-                                                        <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
+                                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.salesChannel || 'Retail'}</td>
+                                                <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                    <div className="flex justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                                        <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>
+                                                        <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Print"><Printer size={14} /></button>
+                                                        <button onClick={() => handleDownloadClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Download PDF"><Download size={14} /></button>
                                                         <button
                                                             onClick={() => handleViewReceipts(inv)}
                                                             className="p-1 hover:bg-indigo-100 rounded text-indigo-600"
                                                             title="Receipts"
                                                         ><Receipt size={14} /></button>
+                                                        {!['PAID', 'CANCELLED'].includes(inv.status?.toUpperCase()) && (
                                                         <button
-                                                            onClick={() => {
-                                                                handleLoadInvoice(inv);
-                                                                const bal = inv.balance != null ? inv.balance : Math.max((inv.netTotal || 0) - (inv.amountPaid || 0), 0);
-                                                                setModalPaymentAmount(bal > 0 ? bal.toFixed(2) : 0);
-                                                                setModalBankAccount('');
-                                                                setIsPaymentModalOpen(true);
-                                                            }}
+                                                            onClick={() => setSettlementInvoice(inv)}
                                                             className="p-1 hover:bg-green-100 rounded text-green-600"
                                                             title="Record Payment"
                                                         ><DollarSign size={14} /></button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => { handleLoadInvoice(inv); setIsEmailModalOpen(true); }}
+                                                            className="p-1 hover:bg-sky-100 rounded text-sky-500"
+                                                            title="Send Email"
+                                                        ><Mail size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
                                         ))}
-                                        {filteredInvoices.length === 0 && (
+                                        {!isListLoading && filteredInvoices.length === 0 && (
                                             <tr>
                                                 <td colSpan="11" className="text-center py-8 text-slate-400">No Invoices found.</td>
                                             </tr>
@@ -2783,22 +3373,16 @@ const SalesInvoice = () => {
                                         </div>
                                         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
                                             <button
-                                                onClick={() => handleSave('Draft')}
+                                                onClick={() => openPreview('Draft')}
                                                 className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
                                             >
                                                 <Save size={14} /> Save Draft
                                             </button>
                                             <button
-                                                onClick={() => handleSave('Confirmed')}
+                                                onClick={() => openPreview('Confirmed')}
                                                 className="flex items-center justify-center gap-1 px-4 py-1.5 bg-[#F5C742] rounded text-xs font-bold text-slate-900 hover:bg-yellow-400 flex-1 md:flex-none"
                                             >
                                                 <CheckCircle2 size={14} /> Confirm
-                                            </button>
-                                            <button
-                                                onClick={() => handleOpenPaymentModal()}
-                                                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
-                                            >
-                                                <DollarSign size={14} /> Pay
                                             </button>
                                             <button onClick={() => handlePrintClick()} disabled={isPrinting} className="p-2 hover:bg-slate-50 rounded border border-slate-200 text-slate-600 hidden md:block disabled:opacity-50"><Printer size={16} /></button>
                                             <button className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"><Mail size={14} /></button>
@@ -2849,12 +3433,28 @@ const SalesInvoice = () => {
                                                 <div className="relative">
                                                     <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option>Immediate</option>
+                                                        <option>Net 15</option>
                                                         <option>Net 30</option>
+                                                        <option>Net 45</option>
                                                         <option>Net 60</option>
                                                     </select>
-                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                                 </div>
                                             </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Sales Mode</label>
+                                                <div className="relative">
+                                                    <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                        <option value="Retail">Retail</option>
+                                                        <option value="Wholesale">Wholesale</option>
+                                                        <option value="POS">POS</option>
+                                                        <option value="Online">Online</option>
+                                                    </select>
+                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                                                </div>
+                                            </div>
+
 
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Type</label>
@@ -2951,6 +3551,8 @@ const SalesInvoice = () => {
                                         onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
+                                        expectedDispatch={deliveryDate}
+                                        onExpectedDispatchChange={setDeliveryDate}
                                         isReadOnly={isReadOnlyInvoice}
                                         currency={invoiceCurrency}
                                     />
@@ -3038,7 +3640,7 @@ const SalesInvoice = () => {
                                         <div className="border border-slate-100 rounded-lg overflow-hidden">
                                             {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
                                             <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
-                                                <table className="w-full text-[11px] text-left min-w-[860px]">
+                                                <table className="bb-nowrap-table w-full text-[11px] text-left min-w-[860px]">
                                                     <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
                                                         <tr>
                                                             <th className="px-3 py-2 w-8 text-center text-slate-400">#</th>
@@ -3380,6 +3982,51 @@ const SalesInvoice = () => {
                                                     <span>Total Tax (VAT)</span>
                                                     <CurrencyAmount value={totalTax} currency={invoiceCurrency} />
                                                 </div>
+                                                <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                    <span>Delivery Charge</span>
+                                                    <span className="flex items-center gap-1">
+                                                        <CurrencySymbol currency={invoiceCurrency} />
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            disabled={isReadOnlyInvoice}
+                                                            value={deliveryCharge}
+                                                            onChange={(e) => setDeliveryCharge(Number(e.target.value))}
+                                                            className="w-20 text-right border-b border-slate-300 focus:border-yellow-400 outline-none bg-transparent disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                        />
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                    <span className="flex items-center gap-2">
+                                                        Round Off
+                                                        {!isReadOnlyInvoice && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setRoundOffManual(v => !v)}
+                                                                className="text-[10px] text-slate-400 hover:text-yellow-600 underline decoration-dotted"
+                                                                title={roundOffManual ? 'Switch back to automatic rounding' : 'Enter a manual round-off'}
+                                                            >
+                                                                {roundOffManual ? 'Auto' : 'Edit'}
+                                                            </button>
+                                                        )}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <CurrencySymbol currency={invoiceCurrency} />
+                                                        {roundOffManual ? (
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                disabled={isReadOnlyInvoice}
+                                                                value={roundOff}
+                                                                onChange={(e) => setRoundOff(Number(e.target.value))}
+                                                                className="w-20 text-right border-b border-slate-300 focus:border-yellow-400 outline-none bg-transparent disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                            />
+                                                        ) : (
+                                                            <span className="w-20 text-right tabular-nums">{effectiveRoundOff.toFixed(2)}</span>
+                                                        )}
+                                                    </span>
+                                                </div>
                                                 <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
                                                     <span>Net Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
@@ -3423,11 +4070,13 @@ const SalesInvoice = () => {
                                                     <span>New Total Outstanding</span>
                                                     <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                {paymentMode && (
                                                 <div>
                                                     <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
                                                         {paymentMode} Invoice
                                                     </span>
                                                 </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -3497,22 +4146,27 @@ const SalesInvoice = () => {
 
                                 <div className="flex gap-2">
                                     {!isReadOnlyInvoice && (
-                                        <button onClick={() => handleSave('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                        <button onClick={() => openPreview('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                             <Save size={14} /> Save Draft
                                         </button>
                                     )}
                                     {!isReadOnlyInvoice && (
-                                        <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
+                                        <button onClick={() => openPreview('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
                                             <CheckCircle2 size={14} /> Confirm
                                         </button>
                                     )}
-                                    <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                        <DollarSign size={14} /> Pay
-                                    </button>
-                                    <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50">
-                                        <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
-                                    </button>
-                                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                    <div className="flex items-stretch">
+                                        <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-l text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 text-slate-700">
+                                            <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+                                        </button>
+                                        {renderPrintCaret('editor-footer')}
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
+                                            setIsEmailModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                         <Mail size={14} /> Email
                                     </button>
                                 </div>
@@ -3574,7 +4228,7 @@ const SalesInvoice = () => {
                         </div>
 
                         <div className="flex-1 overflow-y-auto">
-                            <table className="w-full text-left text-xs">
+                            <table className="bb-nowrap-table w-full text-left text-xs">
                                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
                                     <tr>
                                         <th className="px-4 py-3">Receipt No</th>
@@ -3827,7 +4481,7 @@ const SalesInvoice = () => {
                         {/* Body - Scrollable */}
                         <div className="p-6 overflow-y-auto flex-1 bg-white">
                             <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-4 py-3 w-10 text-center">
@@ -3901,6 +4555,63 @@ const SalesInvoice = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* QA-040: Send Sales Invoice Email */}
+            <SendDocumentEmailModal
+                isOpen={isEmailModalOpen}
+                onClose={() => setIsEmailModalOpen(false)}
+                category="Sales Invoice"
+                docId={invoiceId}
+                docNumber={invoiceNo}
+                customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+                docLabel="Sales Invoice"
+                companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: activeBranch?.id })}
+                apiFn={sendSalesInvoiceEmail}
+                buildPayload={buildCurrentInvoicePrintData}
+            />
+
+            {/* Review-before-commit preview (Save Draft / Confirm) */}
+            {previewMode && (
+                <InvoicePreviewModal
+                    mode={previewMode}
+                    invoiceNo={invoiceNo}
+                    getHtml={getPreviewHtml}
+                    onClose={() => setPreviewMode(null)}
+                    onConfirm={handlePreviewConfirm}
+                    onPrint={() => handlePrintClick()}
+                    onDownload={() => handlePrintClick()}
+                    onEmail={() => {
+                        if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
+                        setIsEmailModalOpen(true);
+                    }}
+                    onWhatsApp={() => {
+                        const full = customersList.find(c => c.code === selectedCustomer?.code);
+                        const digits = String(full?.mobile || full?.phone || selectedCustomer?.mobile || '').replace(/[^0-9]/g, '');
+                        const msg = `Invoice ${invoiceNo} — ${formatCurrencyDisplay(netTotal, invoiceCurrency)}`;
+                        window.open(digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                    }}
+                />
+            )}
+
+            {/* Post-confirm AR Payment settlement */}
+            {settlementInvoice && (
+                <InvoiceSettlementModal
+                    invoice={settlementInvoice}
+                    customer={selectedCustomer || {}}
+                    netTotal={settlementInvoice.balance != null ? settlementInvoice.balance : netTotal}
+                    currency={invoiceCurrency}
+                    bankAccountOptions={bankAccountOptions}
+                    isSaving={isSettlementSaving}
+                    hideCredit={!!(selectedCustomer?.code === 'WALKIN' || selectedCustomer?.name?.toLowerCase().includes('walk-in') || selectedCustomer?.name?.toLowerCase().includes('walkin'))}
+                    onSkip={handleSettlementSkip}
+                    onConfirm={handleSettlementConfirm}
+                    onDone={handleSettlementDone}
+                    onPrintVoucher={handleSettlementVoucherPrint}
+                    onDownloadVoucher={handleSettlementVoucherPrint}
+                    onEmailVoucher={handleSettlementVoucherEmail}
+                    onWhatsAppVoucher={handleSettlementVoucherWhatsApp}
+                />
             )}
 
         </div >

@@ -227,7 +227,7 @@ const StockOnHandReport = () => {
                     ) : viewMode === 'table' ? (
                         <>
                             <div className="overflow-x-auto">
-                                <table className="w-full text-xs border-collapse min-w-[720px]">
+                                <table className="bb-nowrap-table w-full text-xs border-collapse min-w-[720px]">
                                     <thead className="bg-gray-50">
                                         <tr>
                                             {['SKU', 'Item', 'Warehouse', 'Batch No', 'Expiry', 'Qty', 'UOM', 'Unit Cost', 'Value'].map(h => (

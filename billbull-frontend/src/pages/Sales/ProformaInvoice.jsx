@@ -44,7 +44,10 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
 import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendProformaEmail } from '../../api/proformaApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
@@ -55,6 +58,8 @@ import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
@@ -71,6 +76,7 @@ import { receiptVoucherApi } from "../../api/receiptVoucherApi";
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from "../../context/BranchContext";
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // ==========================================
@@ -109,12 +115,15 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
-  const { defaultBranch, defaultBranchName } = useBranch();
+  const { defaultBranch, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
+  const [loadedPiBranchId, setLoadedPiBranchId] = useState(null);
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
   const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
 
   // --- DATA LIST STATES (Fetched from APIs) ---
@@ -271,6 +280,8 @@ const ProformaInvoice = () => {
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
+  const _todayPI = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ fromDate: _todayPI, toDate: _todayPI });
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
   // List View State
@@ -339,11 +350,10 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData, bankAccData, settingsData] = await Promise.all([
+        const [custData, qtnData, soData, bankAccData, settingsData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
-          getAllProformas(),
           api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
           getSalesSettings().catch(() => null)
         ]);
@@ -377,7 +387,6 @@ const ProformaInvoice = () => {
 
         setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
         setSalesOrdersList(Array.isArray(soData) ? soData : []);
-        setProformaList(Array.isArray(piData) ? piData : []); // Set list
       } catch (error) {
         console.error("Error fetching data:", error);
       }
@@ -394,6 +403,8 @@ const ProformaInvoice = () => {
         size: 30,
         search: searchTerm || '',
         status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+        fromDate: dateRange?.fromDate,
+        toDate: dateRange?.toDate,
       });
       const rows = Array.isArray(data?.content) ? data.content : [];
       setProformaList(rows);
@@ -410,12 +421,20 @@ const ProformaInvoice = () => {
     }
   };
 
-  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
   useEffect(() => {
     if (activeTab !== 'list') return;
     fetchProformasPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, listPage, searchTerm, filterStatus]);
+  }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchProformasPage();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredProformas = useMemo(() => {
     let data = [...proformaList];
@@ -445,6 +464,10 @@ const ProformaInvoice = () => {
           bValue = Number(b.total || 0);
         }
 
+        if (sortConfig.key === 'piNumber') {
+          return compareDocumentValues(aValue, bValue, sortConfig.direction);
+        }
+
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -467,6 +490,70 @@ const ProformaInvoice = () => {
   // âœ… PRINT FUNCTIONALITY
   // isPrinting already declared above
 
+  // QA-040: shared payload builder reused by both Print and the Send-Email
+  // modal so the emailed Proforma Invoice mirrors exactly what Print produces.
+  const buildPiPrintData = () => {
+    const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+    const piBranchId = loadedPiBranchId ?? activeBranch?.id;
+    const printBranch = availableBranches?.find(b => b.id === piBranchId) || defaultBranch || {};
+
+    return {
+      title: 'PROFORMA INVOICE',
+      docNo: `${piNumber} (Rev ${version})`,
+      date: piDate,
+      customer: {
+        name: selectedCustomer?.name || '',
+        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        shippingAddress: shippingAddress || '',
+        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+        email: fullCustomer?.email || '',
+        trn: selectedCustomer?.trn || fullCustomer?.trn
+      },
+      items: items.filter(i => i.code || i.desc).map(i => ({
+        code: i.code,
+        name: i.name || '',
+        desc: i.desc || '',
+        sku: i.sku || i.productSku || '',
+        brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
+        detailedDesc: i.detailedDesc || '',
+        localName: i.localName || '',
+        barcode: i.barcode || '',
+        batchNumber: i.batchNumber || '',
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        location: defaultBranchName || '',
+        unit: i.unit,
+        qty: Number(i.qty),
+        price: Number(i.price),
+        disc: Number(i.disc),
+        tax: Number(i.tax),
+        taxAmt: Number(i.taxAmt || 0),
+        total: Number(i.total),
+        image: i.image ? getImageUrl(i.image) : ''
+      })),
+      totals: {
+        subTotal,
+        tax: totalTax,
+        grandTotal,
+        currency: company?.currencySymbol || company?.currency || 'AED',
+        billDiscount: 0,
+        billDiscountAmount: 0
+      },
+      meta: {
+        validTill: validUntil,
+        paymentTerm: paymentMethod,
+        status,
+        notes: paymentNotes,
+        reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
+        location: printBranch.name || defaultBranchName || '',
+        locationStore: printBranch.name || printBranch.code || '',
+        warehouse: printBranch.defaultWarehouseName || '',
+        deliveryTerms: '',
+        salesPerson: ''
+      }
+    };
+  };
+
   const handlePrintClick = async () => {
     if (items.length === 0) {
       alert("Nothing to print. Add items first.");
@@ -479,55 +566,16 @@ const ProformaInvoice = () => {
       const defaultTemplate = templates.find(t => t.isDefault);
 
       if (defaultTemplate) {
-        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+        const printData = buildPiPrintData();
 
-        const printData = {
-          title: 'PROFORMA INVOICE',
-          docNo: `${piNumber} (Rev ${version})`,
-          date: piDate,
-          customer: {
-            name: selectedCustomer?.name || '',
-            address: fullCustomer?.address || fullCustomer?.billingAddress || '',
-            trn: selectedCustomer?.trn || fullCustomer?.trn
-          },
-          items: items.filter(i => i.code || i.desc).map(i => ({
-            code: i.code,
-            name: i.name || '',
-            desc: i.desc || '',
-            sku: i.sku || '',
-            shortDesc: i.shortDesc || '',
-            detailedDesc: i.detailedDesc || '',
-            localName: i.localName || '',
-            barcode: i.barcode || '',
-            location: defaultBranchName || '',
-            unit: i.unit,
-            qty: Number(i.qty),
-            price: Number(i.price),
-            disc: Number(i.disc),
-            tax: Number(i.tax),
-            taxAmt: Number(i.taxAmt || 0),
-            total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : ''
-          })),
-          totals: {
-            subTotal,
-            tax: totalTax,
-            grandTotal,
-            currency: company?.currencySymbol || company?.currency || 'AED',
-            billDiscount: 0,
-            billDiscountAmount: 0
-          },
-          meta: {
-            validTill: validUntil,
-            paymentTerm: paymentMethod,
-            status,
-            notes: paymentNotes,
-            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
-            location: defaultBranchName || ''
-          }
-        };
-
-        const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: loadedPiBranchId ?? activeBranch?.id,
+          }),
+          billBullLogo
+        });
         printHtml(html);
       } else {
         alert("No default template selected for Proforma Invoice. Please configure one in Settings.");
@@ -644,6 +692,9 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      sku: product.sku || product.skuCode || product.productSku || '',
+      brand: product.brandName || product.brand || '',
+      localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
@@ -695,6 +746,9 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      sku: product.sku || product.skuCode || product.productSku || '',
+      brand: product.brandName || product.brand || '',
+      localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
@@ -777,6 +831,7 @@ const ProformaInvoice = () => {
       const latest = await getProformaById(pi.id).catch(() => null);
       const full = latest && latest.id ? latest : pi;
       setPiId(full.id);
+      setLoadedPiBranchId(full.branch?.id ?? null);
 
       setPiNumber(full.piNumber);
       setPiDate(full.piDate);
@@ -1263,6 +1318,16 @@ const ProformaInvoice = () => {
               >
                 <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
               </button>
+              <button
+                onClick={() => {
+                  if (!piId) { alert('Please save the Proforma Invoice before sending an email.'); return; }
+                  setIsEmailModalOpen(true);
+                }}
+                disabled={activeTab === 'list'}
+                className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                <Mail className="h-4 w-4" /> Email
+              </button>
               {activeTab === 'list' && (
                 <button
                   onClick={handleCreateNew}
@@ -1306,6 +1371,7 @@ const ProformaInvoice = () => {
               <h2 className="font-bold text-slate-700 text-lg">Proforma Invoices</h2>
 
               <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                 {/* Search */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -1334,12 +1400,22 @@ const ProformaInvoice = () => {
                 </div>
                 <ExportDropdown
                   onExportExcel={() => exportToExcel(
-                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    withListSerialNumbers(filteredProformas, {
+                      documentNumberSelector: (pi) => pi.piNumber,
+                      page: listPageMeta.page,
+                      size: listPageMeta.size,
+                      totalElements: listPageMeta.totalElements,
+                    }),
                     PROFORMA_COLUMNS,
                     'Proforma_Invoices'
                   )}
                   onExportPdf={() => exportToPDF(
-                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    withListSerialNumbers(filteredProformas, {
+                      documentNumberSelector: (pi) => pi.piNumber,
+                      page: listPageMeta.page,
+                      size: listPageMeta.size,
+                      totalElements: listPageMeta.totalElements,
+                    }),
                     PROFORMA_COLUMNS,
                     'Proforma Invoices',
                     'Proforma_Invoices'
@@ -1353,7 +1429,7 @@ const ProformaInvoice = () => {
 
             {/* Desktop Table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left hidden md:table">
+              <table className="bb-nowrap-table w-full text-sm text-left hidden md:table">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                   <tr>
                     <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
@@ -1368,6 +1444,7 @@ const ProformaInvoice = () => {
                     <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none" onClick={() => handleSort('customerName')}>
                       <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
+                    <th className="px-4 py-3">Branch</th>
                     <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none" onClick={() => handleSort('total')}>
                       <div className="flex items-center justify-end gap-1">Total {sortConfig.key === 'total' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
@@ -1375,6 +1452,7 @@ const ProformaInvoice = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/30">
+                  {isListLoading && <TableSkeleton cols={7} rows={8} />}
                   {filteredProformas.map((pi, index) => (
                     <tr
                       key={pi.id}
@@ -1382,18 +1460,29 @@ const ProformaInvoice = () => {
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
                       <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                        {index + 1}
+                        {getListSerialNumber(index, {
+                          documentNumber: pi.piNumber,
+                          page: listPageMeta.page,
+                          size: listPageMeta.size,
+                          totalElements: listPageMeta.totalElements,
+                        })}
                       </td>
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>
-                      <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-700">{pi.customerName}</div>
+                        {pi.customerCode && <div className="text-[10px] text-slate-400">{pi.customerCode}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-[11px] text-slate-600">
+                        {pi.branch?.code ? pi.branch.code : <span className="text-slate-300">—</span>}
+                      </td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
                     </tr>
                   ))}
                   {filteredProformas.length === 0 && (
                     <tr>
-                      <td colSpan="6" className="text-center py-12 text-slate-400">
+                      <td colSpan="7" className="text-center py-12 text-slate-400">
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                             <Search size={20} className="text-slate-400" />
@@ -1656,7 +1745,7 @@ const ProformaInvoice = () => {
                     className="overflow-auto"
                     style={items.length > 5 ? { maxHeight: '380px', overflowY: 'auto' } : {}}
                   >
-                    <table className="w-full text-xs text-left min-w-[800px]">
+                    <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                       <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                         <tr>
                           <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -2204,6 +2293,20 @@ const ProformaInvoice = () => {
           </div>
         </div>
       )}
+
+      {/* QA-040: Send Proforma Invoice Email */}
+      <SendDocumentEmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        category="Proforma Invoice (PI)"
+        docId={piId}
+        docNumber={piNumber}
+        customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+        docLabel="Proforma Invoice"
+        companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedPiBranchId ?? activeBranch?.id })}
+        apiFn={sendProformaEmail}
+        buildPayload={buildPiPrintData}
+      />
 
     </div >
   );

@@ -65,6 +65,7 @@ public class ProformaService {
                 SalesDocumentType.PROFORMA_INVOICE,
                 req.piNumber);
         ProformaInvoice pi = buildEntity(req, new ProformaInvoice());
+        pi.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         return toResponse(repo.save(pi));
     }
 
@@ -75,6 +76,10 @@ public class ProformaService {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
 
+        Long existingBranchId = pi.getBranch() != null ? pi.getBranch().getId() : null;
+        branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Proforma Invoice");
+        com.billbull.backend.settings.branch.Branch lockedBranch = pi.getBranch();
+
         if (pi.getStatus() == ProformaStatus.ISSUED) {
             throw new IllegalStateException("Issued Proforma cannot be edited");
         }
@@ -83,6 +88,7 @@ public class ProformaService {
         pi.getItems().clear(); // orphanRemoval handles delete
 
         buildEntity(req, pi);
+        pi.setBranch(lockedBranch);   // branch immutable on update
         pi.setPiNumber(numberingService.resolveNumberForUpdate(
                 SalesDocumentType.PROFORMA_INVOICE,
                 existingPiNumber,
@@ -94,8 +100,9 @@ public class ProformaService {
 
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
-        List<ProformaInvoice> proformas = new ArrayList<>(repo.findAll());
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        List<ProformaInvoice> proformas = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 proformas,
                 ProformaInvoice::getPiDate,
                 ProformaInvoice::getPiNumber,
@@ -103,6 +110,18 @@ public class ProformaService {
         return proformas.stream()
                 .map(this::toResponse) // mapping happens INSIDE TX
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProformaResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<ProformaInvoice> proformas = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repo.findByPiDateBetween(from, to), ProformaInvoice::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                proformas,
+                ProformaInvoice::getPiDate,
+                ProformaInvoice::getPiNumber,
+                ProformaInvoice::getId);
+        return proformas.stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)

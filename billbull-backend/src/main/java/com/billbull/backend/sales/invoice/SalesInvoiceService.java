@@ -25,6 +25,11 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.sales.payment.Payment;
+import com.billbull.backend.sales.payment.PaymentService;
+import com.billbull.backend.sales.payment.PaymentStatus;
+import com.billbull.backend.sales.payment.PaymentType;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
@@ -79,6 +84,7 @@ public class SalesInvoiceService {
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
+    private final PaymentService paymentService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -101,7 +107,8 @@ public class SalesInvoiceService {
             BranchAccessService branchAccessService,
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
-            BatchSelectionService batchSelectionService) {
+            BatchSelectionService batchSelectionService,
+            PaymentService paymentService) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -124,6 +131,7 @@ public class SalesInvoiceService {
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
+        this.paymentService = paymentService;
     }
 
     // ----------------------------
@@ -200,11 +208,14 @@ public class SalesInvoiceService {
             invoice.setInvoiceNumber(numberingService.resolveNumberForCreate(
                     SalesDocumentType.SALES_INVOICE,
                     invoice.getInvoiceNumber()));
+            SalesSettings settings = settingsService.getSettings();
+            invoice.setFastSale(settings.getSalesMode() == SalesMode.FAST_SALE);
         } else if (existing != null) {
             invoice.setInvoiceNumber(numberingService.resolveNumberForUpdate(
                     SalesDocumentType.SALES_INVOICE,
                     existing.getInvoiceNumber(),
                     invoice.getInvoiceNumber()));
+            invoice.setFastSale(existing.isFastSale());
         }
 
         // Calculate totals from items
@@ -247,7 +258,11 @@ public class SalesInvoiceService {
         double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
         double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
+        double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal + deliveryCharge + roundOff)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {
@@ -269,15 +284,6 @@ public class SalesInvoiceService {
         // Status logic
         if (invoice.getStatus() == null) {
             invoice.setStatus(SalesInvoiceStatus.DRAFT);
-        }
-
-        // FAST_SALE enforcement: new invoices must never stay in DRAFT — the mode
-        // requires immediate posting so that the auto-delivery chain is always triggered.
-        if (invoice.getId() == null
-                && settings.getSalesMode() == SalesMode.FAST_SALE
-                && (invoice.getStatus() == null || invoice.getStatus() == SalesInvoiceStatus.DRAFT)) {
-            System.out.println("[FAST_SALE] Forcing invoice status from DRAFT → POSTED (salesMode=FAST_SALE)");
-            invoice.setStatus(SalesInvoiceStatus.POSTED);
         }
 
         SalesInvoiceStatus intendedStatus = invoice.getStatus();
@@ -378,7 +384,7 @@ public class SalesInvoiceService {
             }
 
             if (remainingPaidToReceipt > 0.01) {
-                createReceiptForInvoicePayment(
+                createSalesPaymentForInvoice(
                         refreshed,
                         remainingPaidToReceipt,
                         refreshed.getPaymentMode(),
@@ -562,7 +568,7 @@ public class SalesInvoiceService {
     public List<SalesInvoice> getAll() {
         List<SalesInvoice> invoices = new ArrayList<>(
                 branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 SalesInvoice::getInvoiceDate,
                 SalesInvoice::getInvoiceNumber,
@@ -574,6 +580,23 @@ public class SalesInvoiceService {
             applyBatchSelectionSummary(inv);
         });
 
+        return invoices;
+    }
+
+    @Transactional(readOnly = true)
+    public List<SalesInvoice> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(invoiceRepo.findByInvoiceDateBetween(from, to), SalesInvoice::getBranchId));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                SalesInvoice::getInvoiceDate,
+                SalesInvoice::getInvoiceNumber,
+                SalesInvoice::getId);
+        invoices.forEach(inv -> {
+            Hibernate.initialize(inv.getItems());
+            enrichItems(inv.getItems());
+            applyBatchSelectionSummary(inv);
+        });
         return invoices;
     }
 
@@ -745,7 +768,7 @@ public class SalesInvoiceService {
 
                 // 2. CREDIT LIMIT CHECK
                 enforceCreditLimit(invoice, settings);
-                ensureDirectInvoiceBatchSelections(invoice);
+                ensureDirectInvoiceBatchSelections(invoice, settings);
                 // -------------------------------------------------------
 
                 boolean isLinkedToDn = invoice.getLinkedDeliveryNote() != null
@@ -816,7 +839,7 @@ public class SalesInvoiceService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
 
         // Sync invoice's paymentMode to the actual mode used for payment
         if (paymentMode != null && !paymentMode.isBlank()) {
@@ -828,27 +851,34 @@ public class SalesInvoiceService {
         return getById(id);
     }
 
-    private void createReceiptForInvoicePayment(SalesInvoice invoice, double paymentAmount, String paymentMode,
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
-        ReceiptVoucher rv = new ReceiptVoucher();
-        rv.setDate(paymentDate != null ? paymentDate : LocalDate.now());
-        rv.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
-        rv.setReference((paymentReference != null && !paymentReference.isBlank())
-                ? paymentReference
-                : "Auto-RV for INV: " + invoice.getInvoiceNumber());
-        rv.setAmount(BigDecimal.valueOf(paymentAmount));
-        rv.setMemberName(invoice.getCustomerName() != null ? invoice.getCustomerName() : "Walk-in Customer");
-        rv.setStatus("Completed");
-        rv.setPurpose(ReceiptPurpose.AGAINST_INVOICE);
-        rv.setSalesInvoiceId(invoice.getId());
-        if (bankAccount != null && !bankAccount.isBlank()) {
-            rv.setBankAccount(bankAccount);
+        Payment p = new Payment();
+        p.setPaymentType(PaymentType.RECEIVED);
+        p.setCustomerCode(invoice.getCustomerCode());
+        p.setCustomerName(invoice.getCustomerName());
+        p.setLinkedInvoice(invoice.getInvoiceNumber());
+        p.setInvoiceAmount(invoice.getInvoiceTotal());
+        p.setInvoiceBalance(invoice.getBalance());
+        p.setAmount(paymentAmount);
+        p.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
+        p.setReferenceNumber(paymentReference);
+        p.setBankName(bankAccount);
+        p.setChequeDate(chequeDate);
+        p.setPaymentDate(paymentDate != null ? paymentDate : LocalDate.now());
+        
+        // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
+        if (paymentAmount >= (invoice.getBalance() != null ? invoice.getBalance() : invoice.getInvoiceTotal())) {
+            p.setStatus(PaymentStatus.COMPLETED);
+        } else {
+            p.setStatus(PaymentStatus.PARTIAL);
         }
-        if (chequeDate != null) {
-            rv.setChequeDate(chequeDate);
-        }
+        
+        // Numbering is handled either by frontend passing it, or backend if left null
+        // Currently PaymentController expects the client to pass the paymentNumber if manual,
+        // or uses NumberingService if null. We will let PaymentService generate the number if null.
 
-        receiptVoucherService.createReceipt(rv, null);
+        paymentService.savePayment(p);
     }
 
     // ----------------------------
@@ -1022,8 +1052,11 @@ public class SalesInvoiceService {
                         "Sales Invoice item not found: " + itemId));
     }
 
-    private void ensureDirectInvoiceBatchSelections(SalesInvoice invoice) {
-        if (invoice.getSalesType() != SalesType.DIRECT_SALE || invoice.getItems() == null) {
+    private void ensureDirectInvoiceBatchSelections(SalesInvoice invoice, SalesSettings settings) {
+        // Invoice-level batch selection is only required when the invoice itself
+        // deducts stock at post time — i.e. Fast Sale mode. In Workflow Driven mode
+        // the DRAFT Delivery Note owns batch picking, so the invoice must not demand it.
+        if (settings.getSalesMode() != SalesMode.FAST_SALE || invoice.getItems() == null) {
             return;
         }
         Map<Long, List<DeliveryBatchSelectionResponse>> selectionsByLine =
@@ -1038,15 +1071,20 @@ public class SalesInvoiceService {
             }
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
                     + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
+            if (requiredQty <= 0) {
+                continue;
+            }
             int selectedQty = selectionsByLine.getOrDefault(item.getId(), List.of()).stream()
                     .filter(selection -> selection.status == BatchAllocationStatus.RESERVED)
                     .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
                     .sum();
-            if (selectedQty != requiredQty) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Batch selection must exactly match Direct Invoice quantity for " + item.getItemCode()
-                                + ". Selected: " + selectedQty + " | Required: " + requiredQty);
+            if (selectedQty == requiredQty) {
+                continue;
             }
+            // Fast Sale posts in one step with no opportunity for manual picking,
+            // so auto-reserve FEFO batches for the line. A genuine stock shortfall
+            // surfaces as an "Insufficient Batch Stock" error from the reservation.
+            batchSelectionService.autoReserveFefoForSalesInvoiceLine(invoice.getId(), item, requiredQty);
         }
     }
 
@@ -1209,10 +1247,12 @@ public class SalesInvoiceService {
      *         remains in DRAFT/PENDING or was skipped.
      */
     private boolean autoGenerateDeliveryNote(SalesInvoice invoice, SalesSettings settings) {
-        // Determine whether auto-delivery is required:
-        // either the per-invoice type is DIRECT_SALE, or the global mode is FAST_SALE.
-        boolean isAutoDelivery = invoice.getSalesType() == SalesType.DIRECT_SALE
-                || settings.getSalesMode() == SalesMode.FAST_SALE;
+        // Auto-delivery is governed solely by the Sales Execution Mode, per the
+        // settings page contract: FAST_SALE finalizes picking/dispatch/delivery/
+        // stock on post; WORKFLOW_DRIVEN creates a DRAFT DN that must be picked
+        // and delivered manually. The per-invoice DIRECT_SALE type (standalone,
+        // no source document) does NOT by itself force auto-delivery.
+        boolean isAutoDelivery = settings.getSalesMode() == SalesMode.FAST_SALE;
 
         // Prevent generating duplicate delivery notes for the same invoice
         if (deliveryNoteService.hasActiveDeliveryNoteForSource("SALES_INVOICE", invoice.getId())) {
@@ -1372,13 +1412,14 @@ public class SalesInvoiceService {
     // PRICE HISTORY
     // ----------------------------
     @Transactional(readOnly = true)
-    public List<PriceHistoryDTO> getPriceHistory(String itemCode) {
+    public List<PriceHistoryDTO> getPriceHistory(String itemCode, String customerCode) {
         Long currentBranchId = branchAccessService.getCurrentUserBranchId();
         if (currentBranchId == null) {
             return List.of();
         }
         return invoiceRepo.findPriceHistoryByItemCodeAndBranchScope(
                 itemCode,
+                customerCode,
                 currentBranchId,
                 org.springframework.data.domain.PageRequest.of(0, 10));
     }
@@ -1463,21 +1504,33 @@ public class SalesInvoiceService {
     }
 
     private Branch resolveBranchForSave(SalesInvoice existing) {
-        if (existing != null && existing.getBranchId() == null) {
-            return null;
+        // Updates: branch is locked to the original. Even an admin who switched the
+        // active branch can't move a saved invoice to a different branch.
+        // Return a lightweight Branch carrying just the existing ID — applyBranchSnapshot
+        // ignores the rich fields for updates, but validateInvoiceWarehouses needs the ID.
+        if (existing != null) {
+            if (existing.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(existing.getBranchId());
+            return stub;
         }
         return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void applyBranchSnapshot(SalesInvoice invoice, SalesInvoice existing, Branch resolvedBranch) {
-        if (existing != null && existing.getBranchId() == null) {
-            invoice.setBranchId(null);
-            invoice.setBranchName(null);
-            invoice.setBranchCode(null);
+        // UPDATE path — branch is immutable. Always carry forward the existing snapshot,
+        // regardless of what the client sent or which branch the user is now active on.
+        if (existing != null) {
+            invoice.setBranchId(existing.getBranchId());
+            invoice.setBranchName(existing.getBranchName());
+            invoice.setBranchCode(existing.getBranchCode());
             invoice.setBranch(existing.getBranch());
             return;
         }
 
+        // CREATE path — stamp from the session's active branch.
         if (resolvedBranch == null) {
             invoice.setBranchId(null);
             invoice.setBranchName(null);
@@ -1499,6 +1552,15 @@ public class SalesInvoiceService {
         for (SalesInvoiceItem item : invoice.getItems()) {
             if (item.getWarehouseId() == null) {
                 continue;
+            }
+
+            // Service products have no real inventory — the warehouseId carried on
+            // the line is a frontend default, not a stock location to validate.
+            if (item.getItemCode() != null) {
+                Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+                if (product != null && product.isService()) {
+                    continue;
+                }
             }
 
             Warehouse warehouse = warehouseRepository.findById(item.getWarehouseId())

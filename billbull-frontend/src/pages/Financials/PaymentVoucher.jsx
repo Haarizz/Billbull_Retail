@@ -45,7 +45,7 @@ import {
     findVendorRecord,
     normalizePurchaseTemplate
 } from '../../utils/purchasePrintUtils';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
@@ -53,6 +53,7 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import { generateDocFilename } from '../../utils/filenameUtils';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ------------------------------------------------------------------
 // Display helpers (kept local — page-specific formatting only)
@@ -367,7 +368,7 @@ const PaymentVoucher = () => {
                 html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
             } else {
                 const template = normalizePurchaseTemplate(rawTemplate, 'Payment Voucher');
-                html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+                html = await generatePrintHtmlAsync(template, printData, { companyProfile: company, billBullLogo });
                 html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
             }
             printHtml(html);
@@ -538,7 +539,7 @@ const PaymentVoucher = () => {
                 </div>
 
                 <div className="overflow-x-auto min-h-[300px]">
-                    <table className="w-full text-left text-xs">
+                    <table className="bb-nowrap-table w-full text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                             <tr>
                                 <th className="px-4 py-3">Voucher No</th>
@@ -552,13 +553,8 @@ const PaymentVoucher = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                            {loading ? (
-                                <tr>
-                                    <td colSpan="8" className="px-4 py-12 text-center text-slate-400 italic">
-                                        Loading payment vouchers…
-                                    </td>
-                                </tr>
-                            ) : filtered.length === 0 ? (
+                            {loading && <TableSkeleton cols={8} rows={8} />}
+                            {!loading && filtered.length === 0 ? (
                                 <tr>
                                     <td colSpan="8" className="px-4 py-12 text-center text-slate-400 italic">
                                         No payment vouchers found.

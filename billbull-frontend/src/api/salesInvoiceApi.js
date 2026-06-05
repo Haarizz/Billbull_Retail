@@ -26,8 +26,8 @@ export const getAllSalesInvoices = async () => {
     return res.data;
 };
 
-export const getSalesInvoicesPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
-    const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status } });
+export const getSalesInvoicesPage = async ({ page = 0, size = 30, search = "", status = "", fromDate, toDate } = {}) => {
+    const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status, fromDate, toDate } });
     return res.data;
 };
 
@@ -99,8 +99,8 @@ export const recordInvoicePayment = async (id, amount) => {
 // --------------------
 // GET ITEM PRICE HISTORY
 // --------------------
-export const getItemPriceHistory = async (itemCode) => {
-    const res = await api.get(`${BASE_URL}/price-history/${itemCode}`);
+export const getItemPriceHistory = async (itemCode, customerCode = '') => {
+    const res = await api.get(`${BASE_URL}/price-history/${itemCode}`, { params: { customerCode } });
     return res.data;
 };
 

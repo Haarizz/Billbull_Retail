@@ -55,22 +55,26 @@ import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
 import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
 import MyProfile from "./MyProfile/MyProfile";
+import MySales from "./MyProfile/MySales";
+import TasksActivities from "./MyProfile/TasksActivities";
 import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
-import FinancialReports from "./pages/Financials/FinancialReports";
+import FinancialReports from "./pages/Financials/FinancialReports.tsx";
 import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
-import InventoryReports from "./pages/Inventory/Reports/InventoryReports";
+import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
 import CompanySettings from "./pages/Settings/CompanySettings";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
+import BranchOutlets from "./pages/Enterprise/BranchOutlets";
+import DataManagement from "./pages/Enterprise/DataManagement";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
-import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
+import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
 // import Products from "./pages/Inventory/Product/Products";
 // import Warehouse from "./pages/Inventory/Warehouse/Warehouse";
 // import Quotations from "./pages/Sales/Quotations";
@@ -97,12 +101,27 @@ class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null };
+    this._domErrorRetries = 0;
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
     console.error('App ErrorBoundary caught:', error, info);
+    // Browser extensions (e.g. Adobe Acrobat) occasionally inject DOM nodes that
+    // desync React's virtual DOM, producing transient removeChild / insertBefore
+    // NotFoundErrors. These are recoverable — reset the boundary silently so the
+    // user doesn't see the crash page.
+    const isDomError =
+      error?.name === 'NotFoundError' &&
+      (error?.message?.includes('removeChild') || error?.message?.includes('insertBefore'));
+    if (isDomError && this._domErrorRetries < 10) {
+      this._domErrorRetries += 1;
+      // Exponential back-off (50ms, 100ms, 200ms …) lets React fully finish its
+      // current commit before we request a remount.
+      const delay = Math.min(50 * Math.pow(2, this._domErrorRetries - 1), 1000);
+      setTimeout(() => this.setState({ hasError: false, error: null }), delay);
+    }
   }
   render() {
     if (this.state.hasError) {
@@ -111,7 +130,7 @@ class ErrorBoundary extends React.Component {
           <h2 style={{ color: '#e53e3e' }}>Something went wrong</h2>
           <p style={{ color: '#718096', marginBottom: '16px' }}>{this.state.error?.message}</p>
           <button
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+            onClick={() => { this._domErrorRetries = 0; this.setState({ hasError: false, error: null }); window.location.reload(); }}
             style={{ padding: '8px 20px', background: '#F5C742', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
           >
             Reload Page
@@ -508,10 +527,10 @@ function App() {
                       }
                     />
 
-                    <Route
-                      path="/myprofile"
-                      element={<MyProfile />}
-                    />
+                    <Route path="/myprofile" element={<Navigate to="/myprofile/overview" replace />} />
+                    <Route path="/myprofile/overview" element={<MyProfile />} />
+                    <Route path="/myprofile/sales" element={<MySales />} />
+                    <Route path="/myprofile/tasks" element={<TasksActivities />} />
 
                     <Route
                       path="/sales/templates"
@@ -571,7 +590,7 @@ function App() {
                       path="/purchases/reports/summary"
                       element={
                         <ResourceGuard module="purchases.invoice">
-                          <PurchaseSummaryReport />
+                          <VendorsPurchasesReports />
                         </ResourceGuard>
                       }
                     />
@@ -585,8 +604,28 @@ function App() {
                       }
                     />
 
+                    {/* Legacy redirects: Branches and User & Role Config moved into Enterprise Console */}
+                    <Route
+                      path="/settings/branches"
+                      element={<Navigate to="/enterprise/branches" replace />}
+                    />
+
                     <Route
                       path="/settings/roles"
+                      element={<Navigate to="/enterprise/administration" replace />}
+                    />
+
+                    <Route
+                      path="/enterprise/branches"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <BranchOutlets />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/enterprise/administration"
                       element={
                         <ResourceGuard module="userManagement.role">
                           <UserRoleConfig />
@@ -595,10 +634,10 @@ function App() {
                     />
 
                     <Route
-                      path="/settings/branches"
+                      path="/enterprise/data-management"
                       element={
                         <ResourceGuard module="userManagement.setup">
-                          <BranchSetup />
+                          <DataManagement />
                         </ResourceGuard>
                       }
                     />

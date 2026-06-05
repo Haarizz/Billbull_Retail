@@ -35,7 +35,8 @@ import {
     SlidersHorizontal,
     MoreVertical,
     AlertCircle,
-    Zap
+    Zap,
+    Download
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -56,6 +57,8 @@ import {
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
@@ -92,7 +95,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -105,9 +109,11 @@ import {
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -377,7 +383,7 @@ const MobileFloatingActions = ({ status, onSaveDraft, onConfirm, onApprove, onRe
 
 const Quotations = () => {
     const { company } = useCompany();
-    const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading } = useBranch();
+    const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading, branches: availableBranches, activeBranch } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
     const [editorMode, setEditorMode] = useState('edit');
@@ -385,6 +391,8 @@ const Quotations = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
     const [filterStatus, setFilterStatus] = useState('All');
+    const _todayQTN = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayQTN, toDate: _todayQTN });
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState('success');
@@ -974,6 +982,8 @@ const Quotations = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const rows = Array.isArray(data?.content) ? data.content : [];
             setQuotationsList(rows.map(mapBackendToFrontend));
@@ -991,14 +1001,24 @@ const Quotations = () => {
     };
 
     // Reset to first page whenever filter inputs change.
-    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
 
     // Refetch whenever the user opens the list tab, changes filters, or pages.
     useEffect(() => {
         if (activeTab !== 'list') return;
         fetchQuotationsList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') fetchQuotationsList();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     const selectedCustomerData = useMemo(() => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
@@ -1159,6 +1179,7 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
@@ -1253,6 +1274,7 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
@@ -1681,7 +1703,7 @@ const Quotations = () => {
                 const html = generateEmailHtml(
                     defaultTemplate,
                     buildQuotationDocPayload(),
-                    { companyProfile: company, billBullLogo }
+                    { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo }
                 );
                 setEmailPreviewHtml(html);
             }
@@ -1716,7 +1738,7 @@ const Quotations = () => {
                         html = generateEmailHtml(
                             defaultTemplate,
                             buildQuotationDocPayload(),
-                            { companyProfile: company, billBullLogo }
+                            { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo }
                         );
                     }
                 }
@@ -2140,11 +2162,19 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
             const resolvedBillDiscount = Number(qtn.billDiscount || 0);
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
-                customer: { name: qtn.customer, address: qtn.shippingAddress || '', trn: '' },
+                customer: {
+                    name: qtn.customer,
+                    address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                    shippingAddress: qtn.shippingAddress || '',
+                    phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '',
+                    email: qtn.customerEmail || fullCustomer?.email || '',
+                    trn: fullCustomer?.trn || ''
+                },
                 items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({
                     code: i.code,
                     name: i.name || i.productName || '',
@@ -2156,6 +2186,8 @@ const Quotations = () => {
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
+                    batchNumber: i.batchNumber || '',
+                    batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                     unit: i.unit,
                     qty: Number(i.qty),
                     price: Number(i.price),
@@ -2173,10 +2205,21 @@ const Quotations = () => {
                     billDiscount: resolvedBillDiscount,
                     billDiscountAmount: resolvedSummary.billDiscountAmount
                 },
-                meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: '' }
+                meta: {
+                    validTill: qtn.validTill,
+                    paymentTerm: qtn.paymentTerms || qtn.paymentTerm,
+                    status: qtn.status,
+                    notes: qtn.notesToCustomer,
+                    reference: qtn.branchCode || '',
+                    location: qtn.branchLocation || qtn.branchName || '',
+                    locationStore: qtn.branchName || qtn.branchCode || '',
+                    warehouse: qtn.branchLocation || '',
+                    deliveryTerms: qtn.deliveryType || '',
+                    salesPerson: ''
+                }
             };
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2185,6 +2228,23 @@ const Quotations = () => {
             setIsPrintModalOpen(true);
         }
     };
+
+    const handleListingDownload = async (qtn, e) => {
+        e.stopPropagation();
+        closeActionMenu();
+        try {
+            const templates = await getTemplatesByCategory('Quotation');
+            const defaultTemplate = templates.find(t => t.isDefault);
+            if (!defaultTemplate) return;
+            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.subTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: resolvedSummary.billDiscountAmount }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
+            await downloadPdf(html, qtn.qtnNo || 'Quotation');
+        } catch { /* silent */ }
+    };
+
 
     const handleActionMenuToggle = (quotationId, e) => {
         e.stopPropagation();
@@ -2350,7 +2410,10 @@ const Quotations = () => {
         date: qtnDate,
         customer: {
             name: customer,
-            address: selectedCustomerData?.address || '',
+            address: selectedCustomerData?.address || selectedCustomerData?.billingAddress || '',
+            shippingAddress: shippingAddress || '',
+            phone: selectedCustomerData?.mobile || selectedCustomerData?.phone || '',
+            email: selectedCustomerData?.email || '',
             trn: selectedCustomerData?.trn
         },
         items: items.filter(i => i.code || i.desc).map(i => ({
@@ -2364,6 +2427,8 @@ const Quotations = () => {
             detailedDesc: i.detailedDesc || '',
             localName: i.localName || i.productLocalName || '',
             barcode: i.barcode || '',
+            batchNumber: i.batchNumber || '',
+            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
             salesPerson: '',
             location: quotationBranch?.location || '',
             unit: i.unit,
@@ -2389,7 +2454,11 @@ const Quotations = () => {
             status,
             notes: notesToCustomer,
             reference: quotationBranch?.code || '',
-            location: branchLocationDisplay || quotationBranch?.location || ''
+            location: branchLocationDisplay || quotationBranch?.location || '',
+            locationStore: quotationBranch?.name || quotationBranch?.code || '',
+            warehouse: quotationBranch?.location || '',
+            deliveryTerms: deliveryType || '',
+            salesPerson: ''
         }
     });
 
@@ -2400,7 +2469,7 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
 
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: company, billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, buildQuotationDocPayload(), { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2633,6 +2702,10 @@ const Quotations = () => {
                     bValue = Number(b.total || 0);
                 }
 
+                if (sortConfig.key === 'qtnNo') {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
+                }
+
                 if (aValue < bValue) {
                     return sortConfig.direction === 'asc' ? -1 : 1;
                 }
@@ -2742,6 +2815,7 @@ const Quotations = () => {
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                 {/* Search */}
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -2776,12 +2850,22 @@ const Quotations = () => {
 
                                 <ExportDropdown
                                     onExportExcel={() => exportToExcel(
-                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredQuotations, {
+                                            documentNumberSelector: (qtn) => qtn.qtnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         QUOTATION_COLUMNS,
                                         'Quotations'
                                     )}
                                     onExportPdf={() => exportToPDF(
-                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredQuotations, {
+                                            documentNumberSelector: (qtn) => qtn.qtnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         QUOTATION_COLUMNS,
                                         'Quotations List',
                                         'Quotations'
@@ -2795,7 +2879,7 @@ const Quotations = () => {
 
                         {/* Desktop Table */}
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left hidden md:table">
+                            <table className="bb-nowrap-table w-full text-sm text-left hidden md:table">
                                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                                     <tr>
                                         <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
@@ -2828,6 +2912,7 @@ const Quotations = () => {
                                                 {sortConfig.key === 'customer' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
                                             </div>
                                         </th>
+                                        <th className="px-4 py-3">Branch</th>
                                         <th
                                             className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
                                             onClick={() => handleSort('total')}
@@ -2842,6 +2927,7 @@ const Quotations = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100/30">
+                                    {isListLoading && <TableSkeleton cols={9} rows={8} />}
                                     {filteredQuotations.map((qtn, index) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr
@@ -2849,7 +2935,12 @@ const Quotations = () => {
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                                                    {index + 1}
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: qtn.qtnNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium flex items-center gap-2">
                                                     {qtn.revisions && qtn.revisions.length > 0 && (
@@ -2863,7 +2954,13 @@ const Quotations = () => {
                                                     {qtn.qtnNo}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
-                                                <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-700">{qtn.customer}</div>
+                                                    {qtn.customerCode && <div className="text-[10px] text-slate-400">{qtn.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {qtn.branchCode ? qtn.branchCode : <span className="text-slate-300">—</span>}
+                                                </td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800">
                                                     <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
                                                 </td>
@@ -2952,6 +3049,9 @@ const Quotations = () => {
                                                                 <div className="border-t border-slate-100 my-1" />
                                                                 <button onClick={(e) => handleListingPrint(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                     <Printer size={13} /> Print
+                                                                </button>
+                                                                <button onClick={(e) => handleListingDownload(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
+                                                                    <Download size={13} /> Download PDF
                                                                 </button>
                                                             </div>
                                                         )}
@@ -3303,7 +3403,7 @@ const Quotations = () => {
                                     </div>
 
                                     <div className="overflow-auto max-h-[380px]">
-                                        <table className="w-full text-xs text-left min-w-[800px]">
+                                        <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                                             <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                 <tr>
                                                     <th className="p-2 w-8 text-center text-slate-400">#</th>

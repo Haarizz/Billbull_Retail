@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.returns;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
@@ -8,13 +9,21 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Entity
-@Table(name = "sales_returns")
+@Table(name = "sales_returns", indexes = {
+    @Index(name = "idx_sales_return_branch", columnList = "branch_id"),
+    // Speeds the date-bounded sales-report loader.
+    @Index(name = "idx_sales_return_date", columnList = "return_date")
+})
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SalesReturn {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(unique = true)
     private String returnNumber;
@@ -50,6 +59,9 @@ public class SalesReturn {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
 
     public String getReturnNumber() {
         return returnNumber;

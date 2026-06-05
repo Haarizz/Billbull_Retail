@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
+import com.billbull.backend.financials.generalledger.voucher.VoucherSequenceService;
+import com.billbull.backend.financials.period.AccountingPeriodService;
 import com.billbull.backend.financials.expense.Expense;
 import com.billbull.backend.financials.generalledger.JournalEntry;
 import com.billbull.backend.financials.generalledger.EntryType;
@@ -69,8 +71,13 @@ public class PostingEngineService {
         public static final String ACC_DEFERRED_REVENUE    = "2107";
         public static final String ACC_SALES_REVENUE       = "4101";
         public static final String ACC_SALES_RETURNS       = "4102";
+        public static final String ACC_DELIVERY_INCOME     = "4103";
         public static final String ACC_COGS                = "5101";
         public static final String ACC_EXPENSE_GENERAL     = "5403";
+        public static final String ACC_ROUNDING            = "5999";
+
+        /** Max |Σdebit − Σcredit| absorbed into the rounding account instead of rejected. */
+        private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
 
         public static final List<String> CONTROL_ACCOUNTS = java.util.Arrays.asList(
                         ACC_ACCOUNTS_RECEIVABLE,
@@ -79,18 +86,40 @@ public class PostingEngineService {
                         ACC_VAT_OUTPUT,
                         ACC_VAT_INPUT);
 
-        private final JournalEntryRepository journalEntryRepository;
-        private final JournalEntryService    journalEntryService;
-        private final AccountRepository      accountRepository;
+        private final JournalEntryRepository  journalEntryRepository;
+        private final JournalEntryService     journalEntryService;
+        private final AccountRepository       accountRepository;
+        private final AccountingPeriodService accountingPeriodService;
+        private final DimensionMatrixService  dimensionMatrixService;
+        private final VoucherSequenceService  voucherSequenceService;
 
         public PostingEngineService(
-                        JournalEntryRepository journalEntryRepository,
-                        JournalEntryService    journalEntryService,
-                        AccountRepository      accountRepository) {
-                this.journalEntryRepository = journalEntryRepository;
-                this.journalEntryService    = journalEntryService;
-                this.accountRepository      = accountRepository;
+                        JournalEntryRepository  journalEntryRepository,
+                        JournalEntryService     journalEntryService,
+                        AccountRepository       accountRepository,
+                        AccountingPeriodService accountingPeriodService,
+                        DimensionMatrixService  dimensionMatrixService,
+                        VoucherSequenceService  voucherSequenceService) {
+                this.journalEntryRepository  = journalEntryRepository;
+                this.journalEntryService     = journalEntryService;
+                this.accountRepository       = accountRepository;
+                this.accountingPeriodService = accountingPeriodService;
+                this.dimensionMatrixService  = dimensionMatrixService;
+                this.voucherSequenceService  = voucherSequenceService;
         }
+
+        // Transaction-type prefixes for voucher numbering (PDF §1).
+        private static final String TX_PURCHASE_INVOICE = "PI";
+        private static final String TX_SALES_INVOICE    = "SI";
+        private static final String TX_DELIVERY_NOTE    = "DN";
+        private static final String TX_GRN              = "GRN";
+        private static final String TX_STOCK_TRANSFER   = "ST";
+        private static final String TX_EXPENSE          = "EXP";
+        private static final String TX_PAYMENT_VOUCHER  = "PV";
+        private static final String TX_RECEIPT_VOUCHER  = "RV";
+        private static final String TX_CREDIT_NOTE      = "CN";
+        private static final String TX_CARD_SETTLEMENT  = "CARD";
+        private static final String TX_MANUAL_JOURNAL   = "JV";
 
         // =========================================================
         // PURCHASE INVOICE
@@ -115,7 +144,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
-                                "Purchase Invoice " + ref);
+                                "Purchase Invoice " + ref, TX_PURCHASE_INVOICE);
 
                 BigDecimal taxTotal   = nvl(invoice.getTaxTotal());
                 BigDecimal landedCost = nvl(invoice.getLandedCost());
@@ -175,7 +204,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
-                                "Sales Invoice " + ref);
+                                "Sales Invoice " + ref, TX_SALES_INVOICE);
 
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Sales - " + ref,
@@ -187,6 +216,18 @@ public class PostingEngineService {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + ref,
                                         BigDecimal.ZERO, BigDecimal.valueOf(invoice.getTaxTotal()));
                 }
+
+                // Delivery charge is recognized as income immediately (not deferred like
+                // product revenue, which the Delivery Note recognizes from item amounts).
+                BigDecimal delivery = nz(invoice.getDeliveryCharge());
+                if (delivery.signum() != 0) {
+                        addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME, "Delivery - " + ref,
+                                        BigDecimal.ZERO, delivery);
+                }
+
+                // Manual/auto round-off lands in the Rounding Adjustment account so the
+                // invoice total stays a clean figure without distorting revenue.
+                addRoundOffLine(entry, nz(invoice.getRoundOff()), "Round off - " + ref, false);
 
                 return post(entry);
         }
@@ -225,7 +266,7 @@ public class PostingEngineService {
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry revenueEntry = createBaseEntry(date, referenceKey,
-                                        "Revenue recognition - " + narration);
+                                        "Revenue recognition - " + narration, TX_DELIVERY_NOTE);
                         addLine(revenueEntry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
                                         "Recognize deferred - " + narration,
                                         recognizedRevenue, BigDecimal.ZERO);
@@ -237,7 +278,7 @@ public class PostingEngineService {
 
                 if (cogs != null && cogs.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry cogsEntry = createBaseEntry(date, referenceKey + "-COGS",
-                                        "COGS - " + narration);
+                                        "COGS - " + narration, TX_DELIVERY_NOTE);
                         addLine(cogsEntry, "COGS", ACC_COGS, "COGS - " + narration,
                                         cogs, BigDecimal.ZERO);
                         addLine(cogsEntry, "Inventory", ACC_INVENTORY, "Inventory reduction - " + narration,
@@ -267,7 +308,7 @@ public class PostingEngineService {
                 if (isDuplicate(refKey)) return;
 
                 JournalEntry entry = createBaseEntry(LocalDate.now(), refKey,
-                                "Cancellation reversal - " + invoice.getInvoiceNumber());
+                                "Cancellation reversal - " + invoice.getInvoiceNumber(), TX_MANUAL_JOURNAL);
 
                 BigDecimal subTotal    = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
                 BigDecimal taxTotal    = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
@@ -283,6 +324,14 @@ public class PostingEngineService {
                                         "Cancel VAT - " + invoice.getInvoiceNumber(),
                                         taxTotal, BigDecimal.ZERO);
                 }
+                BigDecimal delivery = nz(invoice.getDeliveryCharge());
+                if (delivery.signum() != 0) {
+                        addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME,
+                                        "Cancel delivery - " + invoice.getInvoiceNumber(),
+                                        delivery, BigDecimal.ZERO);
+                }
+                addRoundOffLine(entry, nz(invoice.getRoundOff()),
+                                "Cancel round off - " + invoice.getInvoiceNumber(), true);
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Cancel AR - " + invoice.getInvoiceNumber(),
                                 BigDecimal.ZERO, invoiceTotal);
@@ -314,7 +363,7 @@ public class PostingEngineService {
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry revenueRev = createBaseEntry(date, refKey,
-                                        "Revenue reversal - DN " + dnNumber);
+                                        "Revenue reversal - DN " + dnNumber, TX_MANUAL_JOURNAL);
                         addLine(revenueRev, "Sales Revenue", ACC_SALES_REVENUE,
                                         "Revenue reversal - " + dnNumber,
                                         recognizedRevenue, BigDecimal.ZERO);
@@ -326,7 +375,7 @@ public class PostingEngineService {
 
                 if (cogs != null && cogs.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry cogsRev = createBaseEntry(date, refKey + "-COGS",
-                                        "COGS reversal - DN " + dnNumber);
+                                        "COGS reversal - DN " + dnNumber, TX_MANUAL_JOURNAL);
                         addLine(cogsRev, "Inventory", ACC_INVENTORY,
                                         "Inventory restore - " + dnNumber,
                                         cogs, BigDecimal.ZERO);
@@ -359,7 +408,7 @@ public class PostingEngineService {
                         return null;
                 }
 
-                JournalEntry entry = createBaseEntry(grn.getGrnDate(), ref, "GRN Receipt " + ref);
+                JournalEntry entry = createBaseEntry(grn.getGrnDate(), ref, "GRN Receipt " + ref, TX_GRN);
                 addLine(entry, "Inventory",    ACC_INVENTORY,    "GRN Receipt - "  + ref, amount,        BigDecimal.ZERO);
                 addLine(entry, "GRN Clearing", ACC_GRN_CLEARING, "GRN Clearing - " + ref, BigDecimal.ZERO, amount);
 
@@ -393,7 +442,7 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(
                                 transfer.getDispatchDate() != null ? transfer.getDispatchDate() : LocalDate.now(),
                                 ref,
-                                "Stock Transfer Sent " + transfer.getTransferNo());
+                                "Stock Transfer Sent " + transfer.getTransferNo(), TX_STOCK_TRANSFER);
                 entry.setReferenceType("STOCK_TRANSFER_SEND");
                 entry.setReferenceId(transfer.getId());
 
@@ -433,7 +482,7 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(
                                 transfer.getArrivalDate() != null ? transfer.getArrivalDate() : LocalDate.now(),
                                 ref,
-                                "Stock Transfer Received " + transfer.getTransferNo());
+                                "Stock Transfer Received " + transfer.getTransferNo(), TX_STOCK_TRANSFER);
                 entry.setReferenceType("STOCK_TRANSFER_RECEIVE");
                 entry.setReferenceId(transfer.getId());
 
@@ -485,7 +534,7 @@ public class PostingEngineService {
                 }
 
                 JournalEntry entry = createBaseEntry(expense.getDate(), ref,
-                                "Expense - " + expense.getCategory());
+                                "Expense - " + expense.getCategory(), TX_EXPENSE);
                 addLine(entry, expenseAccountName, expenseAccountCode,
                                 expense.getNotes() != null ? expense.getNotes() : "",
                                 BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
@@ -550,7 +599,7 @@ public class PostingEngineService {
                 AccountSelection settlementAccount = resolveOutgoingPaymentAccount(
                                 voucher.getPaymentMode() != null ? voucher.getPaymentMode().name() : null);
                 JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
-                                "Payment to " + vendorName);
+                                "Payment to " + vendorName, TX_PAYMENT_VOUCHER);
                 addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE,
                                 "Payment - " + ref, voucher.getAmount(), BigDecimal.ZERO);
                 addLine(entry, settlementAccount.name, settlementAccount.code,
@@ -573,7 +622,7 @@ public class PostingEngineService {
 
                 AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
-                                "Receipt from " + receipt.getMemberName());
+                                "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER);
                 addLine(entry, settlementAccount.name, settlementAccount.code,
                                 "Receipt - " + ref, receipt.getAmount(), BigDecimal.ZERO);
 
@@ -627,7 +676,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
-                                "Sales Return " + ref);
+                                "Sales Return " + ref, TX_CREDIT_NOTE);
 
                 BigDecimal subTotal   = salesReturn.getSubTotal()   != null ? BigDecimal.valueOf(salesReturn.getSubTotal())   : BigDecimal.ZERO;
                 BigDecimal taxAmount  = salesReturn.getTaxAmount()  != null ? BigDecimal.valueOf(salesReturn.getTaxAmount())  : BigDecimal.ZERO;
@@ -648,7 +697,7 @@ public class PostingEngineService {
                 if (costOfGoodsReturned != null && costOfGoodsReturned.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry invEntry = createBaseEntry(salesReturn.getReturnDate(),
                                         ref + "-INV",
-                                        "Stock return - " + ref);
+                                        "Stock return - " + ref, TX_CREDIT_NOTE);
                         addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
                         addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
                         post(invEntry);
@@ -675,7 +724,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(settlement.getSettlementDate(), ref,
-                                "Card Settlement");
+                                "Card Settlement", TX_CARD_SETTLEMENT);
                 addLine(entry, "Bank",              ACC_BANK,               "Settled funds",          settlement.getNetAmount(),   BigDecimal.ZERO);
                 addLine(entry, "Merchant Clearing", ACC_MERCHANT_CLEARING,  "Clear merchant suspense", BigDecimal.ZERO,            settlement.getGrossAmount());
                 if (settlement.getFeeAmount() != null && settlement.getFeeAmount().compareTo(BigDecimal.ZERO) > 0) {
@@ -752,14 +801,19 @@ public class PostingEngineService {
                 return CONTROL_ACCOUNTS.contains(accountCode);
         }
 
-        private JournalEntry createBaseEntry(LocalDate date, String reference, String narration) {
+        private JournalEntry createBaseEntry(LocalDate date, String reference, String narration, String txType) {
                 JournalEntry entry = new JournalEntry();
-                entry.setDate(date != null ? date : LocalDate.now());
+                LocalDate effectiveDate = date != null ? date : LocalDate.now();
+                entry.setDate(effectiveDate);
                 entry.setReference(reference);
                 entry.setNarration(narration);
                 entry.setStatus("Draft");
                 entry.setPreparedBy("System");
-                entry.setEntryNumber(journalEntryService.generateEntryNumber());
+                // Per-branch / per-type / per-fiscal-year voucher number (PDF §1).
+                // Branch is not known at this point for most system flows, so the
+                // default branch code is used; voucher format remains stable.
+                entry.setEntryNumber(voucherSequenceService.nextVoucherNumber(
+                                txType, VoucherSequenceService.DEFAULT_BRANCH_CODE, effectiveDate));
                 return entry;
         }
 
@@ -780,10 +834,127 @@ public class PostingEngineService {
                 entry.addLine(line);
         }
 
+        /** Null-safe BigDecimal from a possibly-null Double amount. */
+        private BigDecimal nz(Double value) {
+                return value != null ? BigDecimal.valueOf(value) : BigDecimal.ZERO;
+        }
+
+        /**
+         * Posts a round-off adjustment to {@link #ACC_ROUNDING}. A positive roundOff
+         * (total rounded up) is a rounding gain → credit; negative (rounded down) is a
+         * rounding loss → debit. Pass {@code reverse=true} to swap sides (cancellation).
+         * No-ops when roundOff is zero.
+         */
+        private void addRoundOffLine(JournalEntry entry, BigDecimal roundOff, String description, boolean reverse) {
+                if (roundOff == null || roundOff.signum() == 0) return;
+                BigDecimal magnitude = roundOff.abs();
+                boolean credit = roundOff.signum() > 0;
+                if (reverse) credit = !credit;
+                addLine(entry, "Rounding Adjustment", ACC_ROUNDING, description,
+                                credit ? BigDecimal.ZERO : magnitude,
+                                credit ? magnitude : BigDecimal.ZERO);
+        }
+
+        /**
+         * Single posting gateway (PDF §1). Runs the full pre-validation pipeline,
+         * persists header + lines + ledger, then notifies. Any guard failure raises
+         * a {@link PostingException} with a stable code and rolls back the enclosing
+         * transaction (callers are {@code @Transactional}).
+         */
         private JournalEntry post(JournalEntry entry) {
+                validate(entry);
+                JournalEntry saved = persist(entry);
+                notifyPosted(saved);
+                return saved;
+        }
+
+        /**
+         * Pre-validation pipeline. Order matters: period lock first (cheapest, most
+         * common rejection), then balance (may inject a rounding line), then account
+         * status, then dimensions (warn-only in Phase 1).
+         *
+         * Package-private so {@code PostingEngineServiceTest} can exercise each guard
+         * directly without a full posting round-trip.
+         */
+        void validate(JournalEntry entry) {
+                accountingPeriodService.assertOpen(entry.getDate());   // PERIOD_LOCKED
+                balanceGuard(entry);                                   // UNBALANCED_ENTRY (+ rounding absorption)
+                accountActiveGuard(entry);                             // ACCOUNT_INACTIVE
+                dimensionMatrixService.validate(entry);                // MISSING_DIMENSION (warn-only)
+        }
+
+        /**
+         * Hard double-entry guard. Rejects any imbalance beyond
+         * {@link #ROUNDING_TOLERANCE}; absorbs a sub-tolerance residual (FX/tax
+         * rounding) into the Rounding Adjustment account (5999) so the entry posts
+         * balanced.
+         */
+        private void balanceGuard(JournalEntry entry) {
+                BigDecimal totalDebit  = BigDecimal.ZERO;
+                BigDecimal totalCredit = BigDecimal.ZERO;
+                for (JournalLine line : entry.getLines()) {
+                        totalDebit  = totalDebit.add(nvl(line.getDebit()));
+                        totalCredit = totalCredit.add(nvl(line.getCredit()));
+                }
+
+                BigDecimal diff = totalDebit.subtract(totalCredit);
+                BigDecimal absDiff = diff.abs();
+
+                if (absDiff.compareTo(ROUNDING_TOLERANCE) > 0) {
+                        throw new PostingException(PostingErrorCode.UNBALANCED_ENTRY,
+                                        "Journal not balanced (ref=" + entry.getReference() + "). Debit="
+                                                        + totalDebit + ", Credit=" + totalCredit);
+                }
+
+                if (absDiff.compareTo(BigDecimal.ZERO) > 0) {
+                        if (diff.compareTo(BigDecimal.ZERO) > 0) {
+                                // Debit heavy → credit the residual to rounding.
+                                addLine(entry, "Rounding Adjustment", ACC_ROUNDING,
+                                                "Rounding absorption - " + entry.getReference(),
+                                                BigDecimal.ZERO, absDiff);
+                        } else {
+                                addLine(entry, "Rounding Adjustment", ACC_ROUNDING,
+                                                "Rounding absorption - " + entry.getReference(),
+                                                absDiff, BigDecimal.ZERO);
+                        }
+                        log.info("[PostingEngine] Absorbed rounding residual {} into {} for ref '{}'.",
+                                        absDiff, ACC_ROUNDING, entry.getReference());
+                }
+        }
+
+        /**
+         * Rejects postings that reference an inactive GL account. Unknown codes are
+         * warned (not blocked) — some flows post to dynamically resolved accounts
+         * that may not be in the seeded COA.
+         */
+        private void accountActiveGuard(JournalEntry entry) {
+                for (JournalLine line : entry.getLines()) {
+                        String code = line.getAccountCode();
+                        if (code == null || code.isBlank()) continue;
+                        Account account = accountRepository.findByCode(code);
+                        if (account == null) {
+                                log.warn("[PostingEngine] Unknown account code '{}' on ref '{}' — skipping active check.",
+                                                code, entry.getReference());
+                                continue;
+                        }
+                        String status = account.getStatus();
+                        if (status != null && !"active".equalsIgnoreCase(status)) {
+                                throw new PostingException(PostingErrorCode.ACCOUNT_INACTIVE,
+                                                "Account " + code + " ('" + account.getName() + "') is not active (status="
+                                                                + status + ").");
+                        }
+                }
+        }
+
+        private JournalEntry persist(JournalEntry entry) {
                 JournalEntry saved = journalEntryRepository.save(entry);
                 journalEntryService.postEntry(saved.getId(), "System");
                 return saved;
+        }
+
+        private void notifyPosted(JournalEntry entry) {
+                log.info("[PostingEngine] Posted {} (ref='{}', {} lines).",
+                                entry.getEntryNumber(), entry.getReference(), entry.getLines().size());
         }
 
         /** Null-safe BigDecimal — returns ZERO when source is null. */

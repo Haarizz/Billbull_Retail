@@ -83,6 +83,26 @@ public class UserController {
         return ResponseEntity.ok(userService.assignRoles(id, request.getRoleIds(), request.getPrimaryRoleId()));
     }
 
+    public static class BranchAssignmentRequest {
+        private java.util.List<Long> branchIds;
+        public java.util.List<Long> getBranchIds() { return branchIds; }
+        public void setBranchIds(java.util.List<Long> branchIds) { this.branchIds = branchIds; }
+    }
+
+    /**
+     * Assign the additional branches this user may access (PDF §2.3).
+     * Pass the full desired set every call — the service replaces the existing set.
+     */
+    @PutMapping("/{id}/branches")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserSafeDto> assignBranches(
+            @PathVariable Long id,
+            @RequestBody BranchAssignmentRequest request,
+            HttpServletRequest httpRequest) {
+        auditLogService.logAllowedAccess("/api/users/" + id + "/branches", "PUT", httpRequest);
+        return ResponseEntity.ok(userService.assignAdditionalBranches(id, request.getBranchIds()));
+    }
+
     /**
      * Freeze user (set isActive=false). Blocked if last active ADMIN.
      */

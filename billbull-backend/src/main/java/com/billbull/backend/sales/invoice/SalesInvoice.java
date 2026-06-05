@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.invoice;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
@@ -8,7 +9,11 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Entity
-@Table(name = "sales_invoices")
+@Table(name = "sales_invoices", indexes = {
+    @Index(name = "idx_sales_invoice_branch", columnList = "branch_id"),
+    // Speeds the date-bounded sales-report loader.
+    @Index(name = "idx_sales_invoice_date", columnList = "invoice_date")
+})
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SalesInvoice {
 
@@ -21,6 +26,12 @@ public class SalesInvoice {
 
     private LocalDate invoiceDate;
 
+    @Column(name = "sales_channel", length = 50)
+    private String salesChannel;
+
+    @Column(name = "is_fast_sale", columnDefinition = "boolean default false")
+    private boolean isFastSale = false;
+
     @Column(name = "delivery_date")
     private LocalDate dueDate;
 
@@ -32,13 +43,23 @@ public class SalesInvoice {
     private String linkedProforma;
     private String linkedQuotation;
 
+    @Column(length = 1000)
+    private String shippingAddress;
+
     private String paymentMode;
     private String paymentTerms;
     private String salesperson;
     private String branch;
+    @Column(name = "branch_id")
     private Long branchId;
     private String branchName;
     private String branchCode;
+
+    /** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
 
     private Double subTotal;
     private Double taxTotal;
@@ -47,6 +68,12 @@ public class SalesInvoice {
     private Double amountPaid;
     private Double balance;
     private Double billDiscount;
+
+    /** Flat delivery/shipping charge added to the invoice total (no VAT applied). */
+    private Double deliveryCharge;
+
+    /** Manual rounding adjustment (+/-) applied to the invoice total. */
+    private Double roundOff;
 
     /**
      * Customer's credit limit (copied from Customer record at invoice creation, or
@@ -117,6 +144,22 @@ public class SalesInvoice {
         this.invoiceDate = invoiceDate;
     }
 
+    public String getSalesChannel() {
+        return salesChannel;
+    }
+
+    public void setSalesChannel(String salesChannel) {
+        this.salesChannel = salesChannel;
+    }
+
+    public boolean isFastSale() {
+        return isFastSale;
+    }
+
+    public void setFastSale(boolean fastSale) {
+        isFastSale = fastSale;
+    }
+
     public LocalDate getDueDate() {
         return dueDate;
     }
@@ -181,6 +224,14 @@ public class SalesInvoice {
         this.vatMode = vatMode;
     }
 
+    public String getShippingAddress() {
+        return shippingAddress;
+    }
+
+    public void setShippingAddress(String shippingAddress) {
+        this.shippingAddress = shippingAddress;
+    }
+
     public String getPaymentMode() {
         return paymentMode;
     }
@@ -237,6 +288,8 @@ public class SalesInvoice {
         this.branchCode = branchCode;
     }
 
+    public Branch getBranchEntity() { return branchEntity; }
+
     public Double getSubTotal() {
         return subTotal;
     }
@@ -283,6 +336,22 @@ public class SalesInvoice {
 
     public void setBillDiscount(Double billDiscount) {
         this.billDiscount = billDiscount;
+    }
+
+    public Double getDeliveryCharge() {
+        return deliveryCharge;
+    }
+
+    public void setDeliveryCharge(Double deliveryCharge) {
+        this.deliveryCharge = deliveryCharge;
+    }
+
+    public Double getRoundOff() {
+        return roundOff;
+    }
+
+    public void setRoundOff(Double roundOff) {
+        this.roundOff = roundOff;
     }
 
     public Double getCreditLimit() {

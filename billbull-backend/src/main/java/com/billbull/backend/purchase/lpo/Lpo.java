@@ -11,12 +11,25 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.Zone;
 import com.billbull.backend.inventory.warehouse.Locator;
 import com.billbull.backend.inventory.warehouse.Bin;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "lpos")
+@Table(name = "lpos", indexes = {
+	@Index(name = "idx_lpo_branch", columnList = "branch_id"),
+	// Supports the paginated list query: branch scope + status filter, ordered by date.
+	@Index(name = "idx_lpo_branch_status_date", columnList = "branch_id, status, lpo_date"),
+	@Index(name = "idx_lpo_status", columnList = "status"),
+	@Index(name = "idx_lpo_date", columnList = "lpo_date")
+})
 public class Lpo extends BaseEntity {
+
+	/** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "branch_id", insertable = false, updatable = false)
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Branch branch;
 
 	@Column(unique = true, nullable = false)
 	private String lpoNumber;
@@ -37,6 +50,7 @@ public class Lpo extends BaseEntity {
 	private String purchaseType;
 	private String buyerAssigned;
 	private String referenceDocument;
+	@Column(name = "branch_id")
 	private Long branchId;
 	private String branchName;
 	private String branchCode;
@@ -314,4 +328,7 @@ public class Lpo extends BaseEntity {
 	public void setApprovedAt(LocalDateTime approvedAt) {
 		this.approvedAt = approvedAt;
 	}
+
+	public Branch getBranch() { return branch; }
+	public void setBranch(Branch branch) { this.branch = branch; }
 }

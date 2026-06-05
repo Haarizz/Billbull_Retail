@@ -22,6 +22,7 @@ public class CorsConfig {
 				"https://client1.billbull.app",
 				"https://client2.billbull.app",
 				"https://client3.billbull.app",
+                                "https://hilite.billbull.app",
                                 "https://client4.billbull.app",
                                 "https://client5.billbull.app",
                                 "https://client6.billbull.app",

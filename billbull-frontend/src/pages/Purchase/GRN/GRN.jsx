@@ -80,7 +80,8 @@ import useShortcuts from '../../../hooks/useShortcuts';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -92,6 +93,8 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { getListSerialNumber } from '../../../utils/serialNumbering';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -145,7 +148,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -192,13 +195,14 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
+          <table className="bb-nowrap-table w-full text-xs text-left">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
                 <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
                 <th className="px-6 py-3 whitespace-nowrap">GRN No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
+                <th className="px-6 py-3 whitespace-nowrap">Branch</th>
                 <th className="px-6 py-3 whitespace-nowrap">Linked LPO / DP</th>
                 <th className="px-6 py-3 whitespace-nowrap">Warehouse</th>
                 <th className="px-6 py-3 text-center whitespace-nowrap">Packages</th>
@@ -210,9 +214,17 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {isLoading && <TableSkeleton cols={8} rows={8} />}
               {filteredData.map((row, index) => (
                 <tr key={row.id} className="hover:bg-slate-50 group transition-colors">
-                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
+                    {getListSerialNumber(index, {
+                      documentNumber: row.idDisplay,
+                      page: currentPage,
+                      size: pageSize,
+                      totalElements,
+                    })}
+                  </td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">
                     {row.idDisplay}
                   </td>
@@ -224,6 +236,16 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                   <td className="px-6 py-4 font-medium text-slate-900">
                     {row.vendor}
                     <div className="text-[9px] text-slate-400">V001</div>
+                  </td>
+                  <td className="px-6 py-4 text-slate-600 text-[11px]">
+                    {row.branchName ? (
+                      <>
+                        <div className="font-medium">{row.branchName}</div>
+                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                      </>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span
@@ -287,6 +309,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                       )}
 
                       <button onClick={(e) => { e.stopPropagation(); onPrint && onPrint(row); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800" title="Print"><Printer className="h-3.5 w-3.5" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); onDownload && onDownload(row); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800" title="Download PDF"><Download className="h-3.5 w-3.5" /></button>
                     </div>
                   </td>
                 </tr>
@@ -312,7 +335,7 @@ const QCQueueView = ({ queue, onApprove }) => (
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-xs text-left">
+        <table className="bb-nowrap-table w-full text-xs text-left">
           <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
             <tr>
               <th className="p-3 font-medium">GRN No</th>
@@ -431,7 +454,7 @@ const BatchModal = ({ isOpen, onClose, item, disabled }) => {
         {/* Content */}
         <div className="p-6 bg-slate-50/50">
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-xs text-left">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-medium">
                 <tr>
                   <th className="p-3">Batch No</th>
@@ -520,7 +543,7 @@ const CompareLPOModal = ({ isOpen, onClose, items }) => {
         {/* Content */}
         <div className="p-6 bg-slate-50/50">
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-xs text-left">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-medium">
                 <tr>
                   <th className="p-3">Item</th>
@@ -1894,7 +1917,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             {/* Table */}
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[900px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[900px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
@@ -2397,11 +2420,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
 const GRN = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   // Client-side pagination over filtered list (status filter is rich on this page).
   const [listPage, setListPage] = useState(0);
   const LIST_PAGE_SIZE = 30;
@@ -2413,6 +2438,7 @@ const GRN = () => {
   const [grnType, setGrnType] = useState("Against LPO");
 
   const fetchGrns = async () => {
+    setIsLoading(true);
     try {
       const data = await getGrns();
       if (Array.isArray(data)) {
@@ -2423,11 +2449,20 @@ const GRN = () => {
       }
     } catch (error) {
       console.error("Failed to fetch GRNs", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchGrns();
+  }, []);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchGrns();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
 
   useEffect(() => {
@@ -2668,7 +2703,10 @@ const GRN = () => {
   const handlePrint = async (grn) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const templates = await getTemplatesByCategory('Goods Receipt Note').catch(() => []);
+      const [templates, vendorData] = await Promise.all([
+        getTemplatesByCategory('Goods Receipt Note').catch(() => []),
+        getVendors().catch(() => [])
+      ]);
       const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
 
       // Fetch full GRN details if needed
@@ -2681,11 +2719,16 @@ const GRN = () => {
           console.warn('Falling back to GRN data already loaded in the UI for printing.', detailError);
         }
       }
-      const fullVendor = findVendorRecord([], fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const fullVendor = findVendorRecord(vendorData, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
-      const html = generatePrintHtml(defaultTemplate, printData, {
-        companyProfile: company,
+      const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: grnBranchId,
+        }),
         billBullLogo: billBullLogo
       });
 
@@ -2694,6 +2737,29 @@ const GRN = () => {
       console.error("Error printing GRN:", error);
       const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
       toast.error(message);
+    } finally {
+      toast.dismiss(loadingToast);
+    }
+  };
+
+  const handleDownload = async (grn) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      const [templates, vendorData] = await Promise.all([getTemplatesByCategory('Goods Receipt Note').catch(() => []), getVendors().catch(() => [])]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
+      let fullGrn = grn;
+      const grnId = grn?.dbId ?? grn?.id;
+      if ((!grn?.items || grn.items.length === 0) && grnId != null) {
+        try { fullGrn = await getGrnById(grnId); } catch { /* use what we have */ }
+      }
+      const fullVendor = findVendorRecord(vendorData, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const printData = buildGrnPrintData(fullGrn, fullVendor, company);
+      const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: grnBranchId }), billBullLogo });
+      await downloadPdf(html, fullGrn?.grnNumber || grn?.grnNumber || 'GRN');
+    } catch (error) {
+      console.error("Error downloading GRN:", error);
+      toast.error('Failed to generate download');
     } finally {
       toast.dismiss(loadingToast);
     }
@@ -2715,11 +2781,15 @@ const GRN = () => {
             onDelete={handleDelete}
             onPost={handlePost}
             onPrint={handlePrint}
+            onDownload={handleDownload}
             onProceedToInvoice={handleProceedToInvoice}
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
             currencyLabel={currencyLabel}
-            currentPage={0}
+            currentPage={listPage}
+            pageSize={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
+            isLoading={isLoading}
           />
           <PaginationFooter
             page={listPage}
@@ -2736,6 +2806,7 @@ const GRN = () => {
           onSubmitQC={handleSubmitQC}
           onPost={handlePost}
           onPrint={handlePrint}
+            onDownload={handleDownload}
           grnType={grnType}
           setGrnType={setGrnType}
         />;
@@ -2754,11 +2825,13 @@ const GRN = () => {
         onDelete={handleDelete}
         onPost={handlePost}
         onPrint={handlePrint}
+            onDownload={handleDownload}
         onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
         currencyLabel={currencyLabel}
         currentPage={0}
+        isLoading={isLoading}
       />;
     }
   };

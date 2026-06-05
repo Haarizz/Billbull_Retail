@@ -279,6 +279,18 @@ public class DeliveryNoteService {
     public List<DeliveryNoteResponse> list() {
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
                 branchAccessService.filterBranchScoped(repo.findAll(), DeliveryNote::getBranchId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                deliveryNotes,
+                DeliveryNote::getDnDate,
+                DeliveryNote::getDnNumber,
+                DeliveryNote::getId);
+        return deliveryNotes.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<DeliveryNoteResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<DeliveryNote> deliveryNotes = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repo.findByDnDateBetween(from, to), DeliveryNote::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
@@ -298,7 +310,7 @@ public class DeliveryNoteService {
         // modal
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
                 repo.findUninvoicedByCustomer(customerCode, DeliveryNoteStatus.CANCELLED));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
                 DeliveryNote::getDnNumber,
@@ -786,12 +798,11 @@ public class DeliveryNoteService {
             BigDecimal productCost = stockMovementService.getCostForOutbound(
                     product.getId(), dn.getWarehouse().getId(), fallbackCost);
 
-            if (productCost == null || productCost.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No cost available for '" + dnItem.getItemCode() + "'. "
-                                + "Set cost in Product Pricing or ensure inbound stock movements have unit cost.");
-            }
-            BigDecimal itemCogs = productCost.multiply(BigDecimal.valueOf(deliveredQty));
+            // Zero-cost and no-cost products are valid (service items, complimentary goods).
+            // Treat null or zero cost as ZERO COGS — no journal entry contribution.
+            BigDecimal effectiveCost = (productCost != null && productCost.compareTo(BigDecimal.ZERO) > 0)
+                    ? productCost : BigDecimal.ZERO;
+            BigDecimal itemCogs = effectiveCost.multiply(BigDecimal.valueOf(deliveredQty));
             totalCogs = totalCogs.add(itemCogs);
 
             // Match DN item to invoice item by itemCode for proportional revenue
@@ -1326,14 +1337,29 @@ public class DeliveryNoteService {
             return branch;
         }
 
-        if (dn.getId() != null && dn.getBranchId() == null) {
-            return null;
+        // UPDATE — branch is locked to the existing value (PDF §3.4 transaction
+        // branch immutability). Return a stub so warehouse validation has an ID
+        // to match against; applyBranchSnapshot ignores it for the update path.
+        if (dn.getId() != null) {
+            if (dn.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(dn.getBranchId());
+            return stub;
         }
 
         return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void applyBranchSnapshot(DeliveryNote dn, Branch branch) {
+        // UPDATE — if the DN already has a persisted branch, preserve it
+        // (immutability). The existing snapshot on the loaded entity stays intact.
+        if (dn.getId() != null && dn.getBranchId() != null) {
+            return;
+        }
+
+        // CREATE (or legacy update with no branch).
         if (branch == null) {
             dn.setBranchId(null);
             dn.setBranchName(null);

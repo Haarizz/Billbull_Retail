@@ -30,6 +30,7 @@ public class SalesReportController {
             @RequestParam(required = false) Long branchId,
             @RequestParam(required = false) String salesChannel,
             @RequestParam(required = false) String salesperson,
+            @RequestParam(required = false) String valuationMethod,
             @RequestParam(required = false) String search) {
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
@@ -38,6 +39,7 @@ public class SalesReportController {
                 branchId,
                 salesChannel,
                 salesperson,
+                valuationMethod,
                 search));
     }
 }

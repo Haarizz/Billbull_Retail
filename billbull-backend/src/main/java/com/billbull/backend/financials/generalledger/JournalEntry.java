@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.generalledger;
 
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -10,12 +11,18 @@ import java.util.List;
 @Inheritance(strategy = InheritanceType.SINGLE_TABLE)
 @DiscriminatorColumn(name = "entry_type", discriminatorType = DiscriminatorType.STRING)
 @DiscriminatorValue("SYSTEM")
-@Table(name = "journal_entries")
+@Table(name = "journal_entries", indexes = {
+    @Index(name = "idx_journal_entry_branch", columnList = "branch_id")
+})
 public class JournalEntry {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(unique = true, nullable = false)
     private String entryNumber; // Previously jvNumber
@@ -97,6 +104,9 @@ public class JournalEntry {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
 
     public String getEntryNumber() {
         return entryNumber;

@@ -16,6 +16,8 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     Optional<SalesReturn> findTopByOrderByReturnNumberDesc();
 
+    List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);
+
     boolean existsByReturnNumber(String returnNumber);
 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")
@@ -29,4 +31,11 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.status = 'APPROVED'")
     Double getTotalApprovedReturns();
+
+    /** Sales-report loader: date-bounded returns with line items fetched in one query. */
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items "
+            + "WHERE (:dateFrom IS NULL OR r.returnDate >= :dateFrom) "
+            + "AND (:dateTo IS NULL OR r.returnDate <= :dateTo)")
+    List<SalesReturn> findForReports(@Param("dateFrom") LocalDate dateFrom,
+            @Param("dateTo") LocalDate dateTo);
 }

@@ -46,9 +46,11 @@ public class SalesInvoiceController {
 
             SalesInvoice invoice = service.getById(id);
             if (subject == null || subject.isBlank()) {
-                subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from " + emailSender.getFromName();
+                subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from "
+                        + emailSender.getFromNameForBranch(invoice.getBranchId());
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // PDF §7.4 — branch-aware From + reply-to.
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, invoice.getBranchId());
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -70,9 +72,16 @@ public class SalesInvoiceController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) String status) {
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String fromDate,
+            @RequestParam(required = false) String toDate) {
         modulePermissionService.requireCanView("sales");
-        return com.billbull.backend.util.PaginationUtil.paginate(service.getAll(), page, size, search, status);
+        java.util.List<SalesInvoice> all = (fromDate != null || toDate != null)
+                ? service.getAllByDateRange(
+                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
+                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
+                : service.getAll();
+        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
     }
 
     @GetMapping("/{id}")
@@ -176,8 +185,10 @@ public class SalesInvoiceController {
 
     @GetMapping("/price-history/{itemCode}")
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
-    public List<PriceHistoryDTO> getPriceHistory(@PathVariable String itemCode) {
-        return service.getPriceHistory(itemCode);
+    public List<PriceHistoryDTO> getPriceHistory(
+            @PathVariable String itemCode,
+            @RequestParam(required = false) String customerCode) {
+        return service.getPriceHistory(itemCode, customerCode);
     }
 
     /**
