@@ -16,6 +16,10 @@ public class AccountingPeriod {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /** FK to the parent fiscal year. Null for legacy periods not yet backfilled. */
+    @Column(name = "fiscal_year_id")
+    private Long fiscalYearId;
+
     @Column(nullable = false)
     private String periodName; // e.g., "March 2026"
 
@@ -66,4 +70,7 @@ public class AccountingPeriod {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public Long getFiscalYearId() { return fiscalYearId; }
+    public void setFiscalYearId(Long fiscalYearId) { this.fiscalYearId = fiscalYearId; }
 }

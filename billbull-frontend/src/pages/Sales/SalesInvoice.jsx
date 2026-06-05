@@ -88,6 +88,7 @@ import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+import toast from 'react-hot-toast';
 
 // Round-off adjustment for an exact total, per the Sales Settings rounding rule.
 // Returns (rounded − exact) so net = exact + roundOff lands on a clean figure.
@@ -1999,7 +2000,7 @@ const SalesInvoice = () => {
         if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomer.creditLimitAmount > 0 &&
             (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount) {
-            alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(customerOutstanding + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+            toast.error(`Credit Limit Blocked: The projected outstanding balance (${formatCurrencyDisplay(customerOutstanding + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}. Please collect payment first or adjust the credit limit in the customer profile.`, { duration: 6000 });
             return;
         }
 
@@ -3555,34 +3556,36 @@ const SalesInvoice = () => {
                                         onExpectedDispatchChange={setDeliveryDate}
                                         isReadOnly={isReadOnlyInvoice}
                                         currency={invoiceCurrency}
+                                        creditAlert={
+                                            selectedCustomer && selectedCustomer.creditLimitAmount > 0 &&
+                                            (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount
+                                                ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                                                    ? (
+                                                        <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                                            <p>
+                                                                <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                                (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                                credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
+                                                                Saving is blocked until the balance is within limit.
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                    : salesSettings?.creditLimitPolicy === 'WARNING'
+                                                        ? (
+                                                            <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                                <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                                                <p>
+                                                                    <strong>Credit Warning:</strong> The projected outstanding balance
+                                                                    (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
+                                                                </p>
+                                                            </div>
+                                                        )
+                                                        : null
+                                                : null
+                                        }
                                     />
-
-                                    {/* Credit warning (kept outside panel so it's always visible) */}
-                                    {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
-                                        selectedCustomer.creditLimitAmount > 0 &&
-                                        (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount && (
-                                            <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                                <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                                <p>
-                                                    <strong>Credit Warning:</strong> The projected outstanding balance
-                                                    (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
-                                                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
-                                                </p>
-                                            </div>
-                                        )}
-                                    {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-                                        selectedCustomer.creditLimitAmount > 0 &&
-                                        (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount && (
-                                            <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                                <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                                                <p>
-                                                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                                    (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
-                                                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
-                                                    Saving this invoice is blocked until the balance is within limit.
-                                                </p>
-                                            </div>
-                                        )}
 
                                     {/* CUSTOMER SELECTOR MODAL */}
                                     <CustomerSelector

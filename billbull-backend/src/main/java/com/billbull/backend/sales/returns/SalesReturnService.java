@@ -84,6 +84,9 @@ public class SalesReturnService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumptionRepository consumptionRepo;
+
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
         List<SalesReturn> returns = new ArrayList<>(
@@ -558,67 +561,96 @@ public class SalesReturnService {
     }
 
     /**
-     * Looks up the actual cost price for each returned item from the product
-     * master and calculates total COGS to reverse.
+     * Resolves the COGS to reverse for an approved sales return.
      *
-     * If a product's cost cannot be determined (product not found or no
-     * pricing record), its contribution to COGS is zero and a warning is
-     * logged.  A manual journal entry will be required for that item.
+     * Priority order (PDF §8 / Phase 3.3):
+     *   1. Original DN delivery cost snapshot (DeliveryNoteBatchConsumption rows) — exact
+     *      batch/WAC cost at the time of the original sale; prevents WAC distortion.
+     *   2. Product master cost (ProductPricing.cost) — fallback when no DN history
+     *      exists (legacy rows or before Phase 3.3 was deployed).
+     *
+     * Damaged returns are excluded — no stock is restored, so COGS stays on the books.
      */
     private BigDecimal resolveActualCogs(SalesReturn salesReturn) {
         if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) {
             return BigDecimal.ZERO;
         }
 
+        // Resolve source DN id once (may be null for non-DN-linked returns)
+        Long sourceDnId = resolveSourceDnId(salesReturn);
+
         BigDecimal totalCogs = BigDecimal.ZERO;
 
         for (SalesReturnItem item : salesReturn.getItems()) {
-            String itemCode = item.getItemCode();
+            String itemCode  = item.getItemCode();
             int    returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
 
             if (itemCode == null || returnQty <= 0) continue;
 
-            // Damaged returns are scrapped — no stock movement, no inventory restoration.
-            // Excluding them from COGS keeps the GL Inventory account in sync with the
-            // physical stock-movement ledger. The damage loss is absorbed by COGS that
-            // remains on the books from the original sale.
             if (!"Good".equalsIgnoreCase(item.getItemStatus())) {
-                log.info("[SalesReturn] {} — item '{}' itemStatus='{}' (scrap); excluded from COGS reversal.",
+                log.info("[SalesReturn] {} — item '{}' status='{}' (scrap); excluded from COGS reversal.",
                         salesReturn.getReturnNumber(), itemCode, item.getItemStatus());
                 continue;
             }
 
-            Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(itemCode);
-            if (productOpt.isEmpty()) {
-                log.warn("[SalesReturn] {} — item code '{}' not found in product master. COGS for this item = 0. Post manual journal.",
-                        salesReturn.getReturnNumber(), itemCode);
-                continue;
+            BigDecimal itemCogs = BigDecimal.ZERO;
+
+            // 1. Try original DN cost snapshot
+            if (sourceDnId != null) {
+                BigDecimal dnCost = consumptionRepo.sumTotalCostByDnAndItem(sourceDnId, itemCode);
+                if (dnCost != null && dnCost.compareTo(BigDecimal.ZERO) > 0) {
+                    // Scale by (returnQty / originalDeliveredQty) for partial returns
+                    List<com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumption> rows =
+                            consumptionRepo.findByDeliveryNoteId(sourceDnId).stream()
+                                    .filter(r -> itemCode.equals(r.getItemCode()))
+                                    .toList();
+                    int deliveredQty = rows.stream().mapToInt(r -> r.getQuantity() != null ? r.getQuantity() : 0).sum();
+                    if (deliveredQty > 0) {
+                        BigDecimal unitCost = dnCost.divide(BigDecimal.valueOf(deliveredQty), 4, java.math.RoundingMode.HALF_UP);
+                        itemCogs = unitCost.multiply(BigDecimal.valueOf(Math.min(returnQty, deliveredQty)));
+                        log.info("[SalesReturn] {} — item '{}' using original DN cost: qty={} unitCost={} itemCogs={}",
+                                salesReturn.getReturnNumber(), itemCode, returnQty, unitCost, itemCogs);
+                    }
+                }
             }
 
-            Product product = productOpt.get();
-            Optional<com.billbull.backend.inventory.product.ProductPricing> pricingOpt =
-                    productPricingRepository.findByProductId(product.getId());
-
-            if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null) {
-                log.warn("[SalesReturn] {} — no cost record for product '{}' ({}). COGS for this item = 0. Post manual journal.",
-                        salesReturn.getReturnNumber(), itemCode, product.getId());
-                continue;
+            // 2. Fall back to product-master cost
+            if (itemCogs.compareTo(BigDecimal.ZERO) == 0) {
+                Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(itemCode);
+                if (productOpt.isEmpty()) {
+                    log.warn("[SalesReturn] {} — item '{}' not in product master; COGS=0, post manual journal.",
+                            salesReturn.getReturnNumber(), itemCode);
+                    continue;
+                }
+                Optional<com.billbull.backend.inventory.product.ProductPricing> pricingOpt =
+                        productPricingRepository.findByProductId(productOpt.get().getId());
+                if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null) {
+                    log.warn("[SalesReturn] {} — no cost for product '{}'; COGS=0, post manual journal.",
+                            salesReturn.getReturnNumber(), itemCode);
+                    continue;
+                }
+                BigDecimal unitCost = pricingOpt.get().getCost();
+                itemCogs = unitCost.multiply(BigDecimal.valueOf(returnQty));
+                log.warn("[SalesReturn] {} — item '{}' using product-master cost (no DN history): unitCost={} itemCogs={}",
+                        salesReturn.getReturnNumber(), itemCode, unitCost, itemCogs);
             }
 
-            BigDecimal unitCost   = pricingOpt.get().getCost();
-            BigDecimal itemCogs   = unitCost.multiply(BigDecimal.valueOf(returnQty));
-            totalCogs             = totalCogs.add(itemCogs);
-
-            log.info("[SalesReturn] {} — item '{}' qty={} unitCost={} itemCogs={}",
-                    salesReturn.getReturnNumber(), itemCode, returnQty, unitCost, itemCogs);
+            totalCogs = totalCogs.add(itemCogs);
         }
 
         if (totalCogs.compareTo(BigDecimal.ZERO) == 0) {
-            log.warn("[SalesReturn] {} — COGS resolved to ZERO for all items. " +
-                             "Inventory and COGS accounts will NOT be adjusted. Review product cost records.",
+            log.warn("[SalesReturn] {} — COGS resolved to ZERO. Review cost records.",
                     salesReturn.getReturnNumber());
         }
-
         return totalCogs;
+    }
+
+    /** Returns the delivery note id linked to the return's source invoice, or null. */
+    private Long resolveSourceDnId(SalesReturn salesReturn) {
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice == null || linkedInvoice.isBlank()) return null;
+        List<com.billbull.backend.sales.delivery.DeliveryNote> dns =
+                deliveryNoteRepository.findByLinkedInvoiceNumber(linkedInvoice);
+        return dns.isEmpty() ? null : dns.get(0).getId();
     }
 }

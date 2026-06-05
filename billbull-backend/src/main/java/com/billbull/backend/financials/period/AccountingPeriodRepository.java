@@ -24,4 +24,8 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
      */
     @Query("SELECT p FROM AccountingPeriod p WHERE :date BETWEEN p.startDate AND p.endDate ORDER BY p.startDate DESC")
     List<AccountingPeriod> findCoveringPeriods(@Param("date") LocalDate date);
+
+    List<AccountingPeriod> findByFiscalYearIdAndStatus(Long fiscalYearId, String status);
+
+    List<AccountingPeriod> findByFiscalYearIdIsNull();
 }

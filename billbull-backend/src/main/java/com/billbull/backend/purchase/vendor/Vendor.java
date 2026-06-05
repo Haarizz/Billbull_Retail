@@ -51,6 +51,11 @@ public class Vendor extends BaseEntity {
     // =========================
     private String currency;
     private String payTerms;
+
+    /** FK to PaymentTerms master. Drives due-date calculation and discount suggestion on vendor payments. */
+    @Column(name = "payment_terms_id")
+    private Long paymentTermsId;
+
     private String balType;
     private String payPref;
     private java.time.LocalDate openingBalanceDate;
@@ -208,6 +213,9 @@ public class Vendor extends BaseEntity {
 	public void setPayTerms(String payTerms) {
 		this.payTerms = payTerms;
 	}
+
+	public Long getPaymentTermsId() { return paymentTermsId; }
+	public void setPaymentTermsId(Long paymentTermsId) { this.paymentTermsId = paymentTermsId; }
 	public String getBalType() {
 		return balType;
 	}

@@ -60,6 +60,7 @@ public class StockTakeService {
     private final StockTakeExpectedUnitRepository expectedUnitRepo;
     private final StockTakeUnitScanRepository unitScanRepo;
     private final BatchMasterRepository batchMasterRepo;
+    private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -74,7 +75,8 @@ public class StockTakeService {
             BinStockService binStockService,
             StockTakeExpectedUnitRepository expectedUnitRepo,
             StockTakeUnitScanRepository unitScanRepo,
-            BatchMasterRepository batchMasterRepo) {
+            BatchMasterRepository batchMasterRepo,
+            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.batchRepo = batchRepo;
@@ -88,6 +90,7 @@ public class StockTakeService {
         this.expectedUnitRepo = expectedUnitRepo;
         this.unitScanRepo = unitScanRepo;
         this.batchMasterRepo = batchMasterRepo;
+        this.postingEngineService = postingEngineService;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -1506,6 +1509,20 @@ public class StockTakeService {
             }
 
             stockMovementRepo.save(movement);
+
+            // Expiry write-off journal: when a negative adjustment removes stock for an
+            // expired batch (expiryDate in the past), post Dr Write-off (5104) / Cr Inventory (1120)
+            // at the batch's WAC cost. Positive adjustments (restoring stock) never trigger write-off.
+            if (delta < 0 && identity.expiryDate != null && identity.expiryDate.isBefore(LocalDate.now())) {
+                BigDecimal unitCost = adjustmentUnitCost != null ? adjustmentUnitCost : BigDecimal.ZERO;
+                BigDecimal totalCost = unitCost.multiply(java.math.BigDecimal.valueOf(Math.abs(delta)));
+                if (totalCost.compareTo(BigDecimal.ZERO) > 0) {
+                    String desc = item.getSku() + " batch " + identity.batchNumber
+                            + " exp " + identity.expiryDate;
+                    postingEngineService.createJournalFromInventoryWriteoff(
+                            session.getSessionId(), item.getId(), desc, totalCost, LocalDate.now());
+                }
+            }
 
             syncBatchMasterForIdentity(session, item, binId, zoneId, locatorId, identity, delta);
         }

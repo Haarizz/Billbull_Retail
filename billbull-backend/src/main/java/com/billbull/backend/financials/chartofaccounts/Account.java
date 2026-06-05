@@ -40,6 +40,14 @@ public class Account {
     private Boolean allowManualJV = true;
     private String reportGroup; // "CURRENT_ASSETS", "REVENUE", "COGS", etc.
 
+    /**
+     * Cash flow statement classification per IAS 7 (PDF §15 / Phase 7.4).
+     * Values: OPERATING | INVESTING | FINANCING | NONE
+     * Single source of truth; replaces per-line cfBucket derivation.
+     */
+    @Column(name = "cash_flow_section", length = 20)
+    private String cashFlowSection;
+
     @Column(columnDefinition = "TEXT")
     private String description;
 
@@ -242,4 +250,7 @@ public class Account {
     public void setReportGroup(String reportGroup) {
         this.reportGroup = reportGroup;
     }
+
+    public String getCashFlowSection() { return cashFlowSection; }
+    public void setCashFlowSection(String cashFlowSection) { this.cashFlowSection = cashFlowSection; }
 }

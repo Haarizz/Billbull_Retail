@@ -425,4 +425,8 @@ public interface StockMovementRepository
                         @Param("zoneId") Long zoneId,
                         @Param("locatorId") Long locatorId,
                         @Param("binId") Long binId);
+
+        /** Global inventory valuation: SUM(qty × unitCost) across all inbound movements with cost. Used by reconciliation. */
+        @Query("SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0) FROM StockMovement sm WHERE sm.quantity > 0 AND sm.unitCost IS NOT NULL AND sm.unitCost > 0")
+        BigDecimal sumGlobalInventoryValue();
 }
