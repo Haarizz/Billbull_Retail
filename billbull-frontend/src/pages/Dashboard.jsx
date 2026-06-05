@@ -12,6 +12,7 @@ import {
 import { getUsernameFromToken } from "../api/auth";
 import { getDashboardData } from "../api/dashboardApi";
 import CurrencyAmount from "../components/CurrencyAmount";
+import NotificationBell from "../components/common/NotificationBell";
 import { formatDisplayDate } from "../utils/dateUtils";
 import { formatUserDisplayName } from "../utils/displayName";
 
@@ -417,10 +418,7 @@ const Dashboard = () => {
                                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh
                             </button>
 
-                            <div className="relative cursor-pointer hover:bg-slate-50 p-2 rounded-lg border border-transparent hover:border-slate-200">
-                                <Bell className="w-5 h-5 text-slate-600" />
-                                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
-                            </div>
+                            <NotificationBell />
                         </div>
                     </div>
                 </div>

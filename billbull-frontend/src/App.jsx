@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 // Route Guards
 import PrivateRoute from "./auth/PrivateRoute";
 import { PermissionProvider } from "./context/PermissionContext";
+import { NotificationProvider } from "./context/NotificationContext";
 import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
@@ -76,6 +77,7 @@ import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
+import Notifications from "./pages/Notifications/Notifications";
 // import Products from "./pages/Inventory/Product/Products";
 // import Warehouse from "./pages/Inventory/Warehouse/Warehouse";
 // import Quotations from "./pages/Sales/Quotations";
@@ -176,6 +178,7 @@ function App() {
                     token and permissions load correctly on every login */}
                 <PermissionProvider>
                 <ErrorBoundary>
+                <NotificationProvider>
                 <Sidebar>
                   <Routes>
                     {/* Default redirect */}
@@ -539,6 +542,8 @@ function App() {
                       }
                     />
 
+                    <Route path="/notifications" element={<Notifications />} />
+
                     <Route path="/myprofile" element={<Navigate to="/myprofile/overview" replace />} />
                     <Route path="/myprofile/overview" element={<MyProfile />} />
                     <Route path="/myprofile/sales" element={<MySales />} />
@@ -665,6 +670,7 @@ function App() {
 
                   </Routes>
                 </Sidebar>
+                </NotificationProvider>
                 </ErrorBoundary>
                 </PermissionProvider>
               </PrivateRoute>

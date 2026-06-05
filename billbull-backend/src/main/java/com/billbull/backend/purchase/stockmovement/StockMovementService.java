@@ -10,9 +10,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class StockMovementService {
 
     private final StockMovementRepository repository;
+    private final com.billbull.backend.inventory.product.ProductRepository productRepository;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
-    public StockMovementService(StockMovementRepository repository) {
+    public StockMovementService(
+            StockMovementRepository repository,
+            com.billbull.backend.inventory.product.ProductRepository productRepository,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.repository = repository;
+        this.productRepository = productRepository;
+        this.notifPublisher = notifPublisher;
     }
 
     public java.math.BigDecimal getAvailableStock(Long warehouseId, Long productId) {
@@ -247,6 +254,26 @@ public class StockMovementService {
         sm.setExpiryDate(expiryDate);
 
         repository.save(sm);
+
+        // Low stock check
+        try {
+            productRepository.findById(productId).ifPresent(p -> {
+                int reorderLevel = p.getInventory() != null && p.getInventory().getReorderLevel() != null ? p.getInventory().getReorderLevel() : 0;
+                if (reorderLevel > 0) {
+                    java.math.BigDecimal available = repository.getAvailableStock(warehouseId, productId);
+                    if (available != null && available.compareTo(java.math.BigDecimal.valueOf(reorderLevel)) <= 0) {
+                        notifPublisher.lowStockAlert(
+                                p.getName(),
+                                p.getCode() != null ? p.getCode() : "P-" + productId,
+                                available.intValue(),
+                                reorderLevel
+                        );
+                    }
+                }
+            });
+        } catch (Exception e) {
+            // Ignore notification errors to not block transaction
+        }
     }
 
     // =========================================================
