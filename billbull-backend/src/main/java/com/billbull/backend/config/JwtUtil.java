@@ -89,6 +89,7 @@ public class JwtUtil {
 
         return Jwts.builder()
                 .setSubject(user.getUsername())
+                .claim("userId", user.getId())
                 .claim("roles", roles)
                 .claim("branchId", resolvedActiveId)
                 .claim("branchName", branchName)
@@ -123,6 +124,14 @@ public class JwtUtil {
     public Long extractBranchId(String token) {
         Object branchId = extractClaims(token).get("branchId");
         if (branchId instanceof Number number) {
+            return number.longValue();
+        }
+        return null;
+    }
+
+    public Long extractUserId(String token) {
+        Object userId = extractClaims(token).get("userId");
+        if (userId instanceof Number number) {
             return number.longValue();
         }
         return null;

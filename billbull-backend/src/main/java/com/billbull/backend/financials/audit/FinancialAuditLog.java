@@ -36,6 +36,12 @@ public class FinancialAuditLog {
     @Column(columnDefinition = "TEXT")
     private String previousState; // Snapshot of previous state (for reversals)
 
+    private String requestId;
+
+    private Long branchId;
+
+    private String clientHost;
+
     @PrePersist
     protected void onCreate() {
         if (timestamp == null) {
@@ -117,5 +123,29 @@ public class FinancialAuditLog {
 
     public void setPreviousState(String previousState) {
         this.previousState = previousState;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getClientHost() {
+        return clientHost;
+    }
+
+    public void setClientHost(String clientHost) {
+        this.clientHost = clientHost;
     }
 }

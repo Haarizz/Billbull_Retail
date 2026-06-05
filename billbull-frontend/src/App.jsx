@@ -17,6 +17,7 @@ import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
 import AedSymbolRenderer from "./components/AedSymbolRenderer";
 import AppAlertBridge from "./components/AppAlertBridge";
+import { logClientError, logClientEvent } from "./utils/clientLogger";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -115,6 +116,17 @@ class ErrorBoundary extends React.Component {
     const isDomError =
       error?.name === 'NotFoundError' &&
       (error?.message?.includes('removeChild') || error?.message?.includes('insertBefore'));
+    if (isDomError) {
+      logClientEvent('warn', 'Recoverable browser DOM mutation error', {
+        componentStack: info?.componentStack,
+        errorName: error?.name,
+        errorMessage: error?.message,
+      });
+    } else {
+      logClientError('React ErrorBoundary caught', error, {
+        componentStack: info?.componentStack,
+      });
+    }
     if (isDomError && this._domErrorRetries < 10) {
       this._domErrorRetries += 1;
       // Exponential back-off (50ms, 100ms, 200ms …) lets React fully finish its
