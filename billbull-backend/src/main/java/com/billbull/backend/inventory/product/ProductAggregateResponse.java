@@ -1,11 +1,16 @@
 package com.billbull.backend.inventory.product;
 
+import java.util.List;
+
 public class ProductAggregateResponse {
 
     private Product product;
     private ProductPricing pricing;
+    private ProductPricing effectivePricing;
     private ProductTax tax;
     private ProductInventoryPolicy inventory;
+    private List<ProductBranchPricing> branchPrices;
+    private ProductBranchPricing activeBranchPrice;
     private String primaryImage; // Added field
 
     public Product getProduct() {
@@ -24,6 +29,14 @@ public class ProductAggregateResponse {
         this.pricing = pricing;
     }
 
+    public ProductPricing getEffectivePricing() {
+        return effectivePricing;
+    }
+
+    public void setEffectivePricing(ProductPricing effectivePricing) {
+        this.effectivePricing = effectivePricing;
+    }
+
     public ProductTax getTax() {
         return tax;
     }
@@ -38,6 +51,22 @@ public class ProductAggregateResponse {
 
     public void setInventory(ProductInventoryPolicy inventory) {
         this.inventory = inventory;
+    }
+
+    public List<ProductBranchPricing> getBranchPrices() {
+        return branchPrices;
+    }
+
+    public void setBranchPrices(List<ProductBranchPricing> branchPrices) {
+        this.branchPrices = branchPrices;
+    }
+
+    public ProductBranchPricing getActiveBranchPrice() {
+        return activeBranchPrice;
+    }
+
+    public void setActiveBranchPrice(ProductBranchPricing activeBranchPrice) {
+        this.activeBranchPrice = activeBranchPrice;
     }
 
     public String getPrimaryImage() {
