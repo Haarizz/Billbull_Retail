@@ -156,6 +156,79 @@ const sanitizeCssColor = (value, fallback) => {
     return fallback;
 };
 
+const clampColorByte = (value) => Math.max(0, Math.min(255, Math.round(value)));
+
+const parseCssColor = (value) => {
+    const text = asText(value).trim();
+    if (!text) return null;
+
+    const hexMatch = text.match(/^#([0-9a-fA-F]{3,8})$/);
+    if (hexMatch) {
+        const hex = hexMatch[1];
+        if (hex.length === 3 || hex.length === 4) {
+            const [r, g, b, a = 'f'] = hex.split('');
+            return {
+                r: parseInt(r + r, 16),
+                g: parseInt(g + g, 16),
+                b: parseInt(b + b, 16),
+                a: parseInt(a + a, 16) / 255
+            };
+        }
+        if (hex.length === 6 || hex.length === 8) {
+            return {
+                r: parseInt(hex.slice(0, 2), 16),
+                g: parseInt(hex.slice(2, 4), 16),
+                b: parseInt(hex.slice(4, 6), 16),
+                a: hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1
+            };
+        }
+    }
+
+    const rgbMatch = text.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i);
+    if (rgbMatch) {
+        return {
+            r: clampColorByte(Number(rgbMatch[1])),
+            g: clampColorByte(Number(rgbMatch[2])),
+            b: clampColorByte(Number(rgbMatch[3])),
+            a: rgbMatch[4] === undefined ? 1 : Math.max(0, Math.min(1, Number(rgbMatch[4])))
+        };
+    }
+
+    return null;
+};
+
+const toRgbaCss = ({ r, g, b, a = 1 }) =>
+    `rgba(${clampColorByte(r)}, ${clampColorByte(g)}, ${clampColorByte(b)}, ${Math.max(0, Math.min(1, Number(a))).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')})`;
+
+const boostPrintFill = (value, fallback, { minAlpha = 1, darken = 0.06 } = {}) => {
+    const parsed = parseCssColor(value) || parseCssColor(fallback);
+    if (!parsed) {
+        return fallback;
+    }
+
+    const brightness = (parsed.r + parsed.g + parsed.b) / 3;
+    const darkenRatio = brightness >= 245 ? darken : brightness >= 225 ? darken * 0.65 : 0;
+    const alpha = Math.max(parsed.a ?? 1, minAlpha);
+
+    return toRgbaCss({
+        r: parsed.r * (1 - darkenRatio),
+        g: parsed.g * (1 - darkenRatio),
+        b: parsed.b * (1 - darkenRatio),
+        a: alpha
+    });
+};
+
+const scaleCssSize = (value, multiplier = 1) => {
+    const text = asText(value).trim();
+    const match = text.match(/^(-?\d*\.?\d+)([a-z%]+)$/i);
+    if (!match) {
+        return `calc(${text} * ${multiplier})`;
+    }
+
+    const scaled = Number(match[1]) * multiplier;
+    return `${Number(scaled.toFixed(3))}${match[2]}`;
+};
+
 const sanitizeCssFontFamily = (value, fallback = "'Inter', sans-serif") => {
     const text = asText(value).trim();
     if (!text) return fallback;
@@ -200,9 +273,13 @@ const renderCurrencySymbol = (value) => {
     return escapeHtml(currencyConfig.label);
 };
 
-const renderCurrencySymbolHtml = (value, imgHeight = '0.85em') => {
+const renderCurrencySymbolHtml = (value, imgHeight = '0.85em', options = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(value);
     if (currencyConfig.hasImage) {
+        if (options.inheritColor) {
+            const width = scaleCssSize(imgHeight, 1.28);
+            return `<span role="img" aria-label="${escapeHtml(currencyConfig.ariaLabel)}" style="display:inline-block;height:${imgHeight};width:${width};vertical-align:-0.08em;background-color:currentColor;-webkit-mask-image:url('${UAE_DIRHAM_SYMBOL_IMAGE}');mask-image:url('${UAE_DIRHAM_SYMBOL_IMAGE}');-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;"></span>`;
+        }
         return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:${imgHeight};width:auto;display:inline-block;vertical-align:-0.07em;" />`;
     }
     return escapeHtml(currencyConfig.label);
@@ -626,27 +703,45 @@ const createColumnModel = (rawColumns = {}) => {
     // only when their "(separate column)" checkbox is toggled. The Taxable
     // Amount cell shows an inline Discount sub-line when "Discount % (in
     // Taxable Amount col)" is on.
-    return [
-        { key: 'index', label: '#', align: 'center', width: '4%', enabled: c.showIndex !== false },
-        { key: 'image', label: 'Image', align: 'center', width: '7%', enabled: Boolean(c.image) },
-        { key: 'description', label: 'Product / Services', align: 'left', width: c.batchBarcode ? '16%' : '22%', enabled: c.showItemIdentity !== false },
-        { key: 'details', label: 'Description of Product / Services', align: 'left', width: c.batchBarcode ? '14%' : '24%', enabled: c.description !== false },
-        { key: 'uom', label: 'UOM', align: 'center', width: '6%', enabled: Boolean(c.uom) },
-        { key: 'batchBarcode', label: 'Batch Barcode', align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
-        { key: 'expiry', label: 'Expiry', align: 'center', width: '8%', enabled: Boolean(c.expiry) },
-        { key: 'qty', label: 'Qty', align: 'right', width: '6%', enabled: c.qty !== false },
-        { key: 'unitPrice', label: 'Unit Price', align: 'right', width: '9%', enabled: c.unitPrice !== false },
-        { key: 'taxableAmount', label: 'Taxable Amount', align: 'right', width: '12%', enabled: Boolean(c.taxableAmount) },
-        { key: 'discountPercent', label: 'Discount %', align: 'center', width: '7%', enabled: Boolean(c.discountPercent) },
-        { key: 'taxPercent', label: 'VAT %', align: 'center', width: '6%', enabled: Boolean(c.taxPercent) },
-        { key: 'tax', label: 'VAT Amount', align: 'right', width: '9%', enabled: c.tax !== false },
-        { key: 'total', label: 'Line Total', align: 'right', width: '9%', enabled: c.total !== false },
-        { key: 'lpoQty', label: 'LPO Qty', align: 'right', width: '6%', enabled: Boolean(c.lpoQty) },
-        { key: 'received', label: 'Received', align: 'right', width: '6%', enabled: Boolean(c.received) },
-        { key: 'accepted', label: 'Accepted', align: 'right', width: '6%', enabled: Boolean(c.accepted) },
-        { key: 'receivedBy', label: 'Received By', align: 'left', width: '10%', enabled: Boolean(c.receivedBy) },
-        { key: 'checkedBy', label: 'Checked By', align: 'left', width: '10%', enabled: Boolean(c.checkedBy) },
+    const columns = [
+        { key: 'index', label: '#', compactLabel: '#', align: 'center', weight: 0.45, enabled: c.showIndex !== false },
+        { key: 'image', label: 'Image', compactLabel: 'Image', align: 'center', weight: 0.78, enabled: Boolean(c.image) },
+        { key: 'description', label: 'Product / Services', compactLabel: 'Product / Services', align: 'left', weight: c.batchBarcode ? 1.95 : 2.45, enabled: c.showItemIdentity !== false },
+        { key: 'details', label: 'Description of Product / Services', compactLabel: 'Description of Product / Services', align: 'left', weight: c.batchBarcode ? 2.35 : 3.15, enabled: c.description !== false },
+        { key: 'uom', label: 'UOM', compactLabel: 'UOM', align: 'center', weight: 0.52, enabled: Boolean(c.uom) },
+        { key: 'batchBarcode', label: 'Batch Barcode', compactLabel: 'Batch Barcode', align: 'center', weight: 2.15, enabled: Boolean(c.batchBarcode) },
+        { key: 'expiry', label: 'Expiry', compactLabel: 'Expiry', align: 'center', weight: 0.82, enabled: Boolean(c.expiry) },
+        { key: 'qty', label: 'Qty', compactLabel: 'Qty', align: 'right', weight: 0.5, enabled: c.qty !== false },
+        { key: 'unitPrice', label: 'Unit Price', compactLabel: 'Unit Price', align: 'right', weight: 0.86, enabled: c.unitPrice !== false },
+        { key: 'taxableAmount', label: 'Taxable Amount', compactLabel: 'Taxable Amount', align: 'right', weight: 1.05, enabled: Boolean(c.taxableAmount) },
+        { key: 'discountPercent', label: 'Discount %', compactLabel: 'Discount %', align: 'center', weight: 0.78, enabled: Boolean(c.discountPercent) },
+        { key: 'taxPercent', label: 'VAT %', compactLabel: 'VAT %', align: 'center', weight: 0.55, enabled: Boolean(c.taxPercent) },
+        { key: 'tax', label: 'VAT Amount', compactLabel: 'VAT Amount', align: 'right', weight: 0.92, enabled: c.tax !== false },
+        { key: 'total', label: 'Line Total', compactLabel: 'Line Total', align: 'right', weight: 0.92, enabled: c.total !== false },
+        { key: 'lpoQty', label: 'LPO Qty', compactLabel: 'LPO Qty', align: 'right', weight: 0.72, enabled: Boolean(c.lpoQty) },
+        { key: 'received', label: 'Received', compactLabel: 'Received', align: 'right', weight: 0.82, enabled: Boolean(c.received) },
+        { key: 'accepted', label: 'Accepted', compactLabel: 'Accepted', align: 'right', weight: 0.82, enabled: Boolean(c.accepted) },
+        { key: 'receivedBy', label: 'Received By', compactLabel: 'Received By', align: 'left', weight: 1.08, enabled: Boolean(c.receivedBy) },
+        { key: 'checkedBy', label: 'Checked By', compactLabel: 'Checked By', align: 'left', weight: 1.08, enabled: Boolean(c.checkedBy) },
     ].filter((col) => col.enabled);
+
+    const compactHeaders = columns.length >= 10;
+    const headerDensity = columns.length >= 12
+        ? 'dense-3'
+        : columns.length >= 10
+            ? 'dense-2'
+            : columns.length >= 8
+                ? 'dense-1'
+                : 'normal';
+    const totalWeight = columns.reduce((sum, col) => sum + (col.weight || 1), 0) || 1;
+
+    return columns.map((col) => ({
+        ...col,
+        label: col.label,
+        width: `${(((col.weight || 1) / totalWeight) * 100).toFixed(2)}%`,
+        compactHeaders,
+        headerDensity
+    }));
 };
 
 const buildItemDetailLines = (item) =>
@@ -869,6 +964,8 @@ const buildItemsTable = (layout) => {
 
     const colSpan = layout.columnModel.length;
     const isPickList = layout.category === 'Pick List';
+    const compactHeaders = layout.columnModel.some((column) => column.compactHeaders);
+    const headerDensity = layout.columnModel[0]?.headerDensity || 'normal';
 
     let rows;
     if (isPickList) {
@@ -903,7 +1000,7 @@ const buildItemsTable = (layout) => {
 
     return `
         <section class="table-section">
-            <table class="document-table">
+            <table class="document-table${compactHeaders ? ' document-table-compact' : ''}${headerDensity !== 'normal' ? ` document-table-${headerDensity}` : ''}">
                 <thead>
                     <tr>
                         ${layout.columnModel.map((column) => `
@@ -1179,14 +1276,16 @@ const buildFooterAddon = (layout) =>
         ? `<div class="layout-addon layout-addon-footer">${layout.footerAddon}</div>`
         : '';
 
-const buildGrandTotal = (layout) => {
+const buildGrandTotal = (layout, renderTarget = 'print') => {
     if (!layout.showHighlight) return '';
     // Cap-height of Inter/Arial digits ≈ 73% of em-square.
     // Use absolute px so the image size is never affected by em inheritance
     // issues in print iframe contexts (where em always resolves to body 9px).
     const gtFontPx = (layout.theme?.fontSize || 9) + 22;
     const imgPx = Math.round(gtFontPx * 0.73);
-    const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`);
+    const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`, {
+        inheritColor: renderTarget === 'print'
+    });
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
@@ -1486,6 +1585,13 @@ const buildCoreStyles = () => `
         letter-spacing: -0.5px;
         line-height: 1.35;
     }
+    .document-header-sales .company-name {
+        white-space: nowrap;
+        word-break: keep-all;
+        overflow-wrap: normal;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
     .document-header-sales .doc-meta-item {
         justify-items: start;
         text-align: left;
@@ -1508,6 +1614,7 @@ const buildCoreStyles = () => `
     }
     .document-header-sales .bill-to-name {
         margin: 0 0 2px;
+        font-weight: 700;
     }
     .document-header-sales .bill-to-line {
         color: #444444;
@@ -1620,6 +1727,7 @@ const buildCoreStyles = () => `
     }
     .bill-to-name {
         margin-top: 8px;
+        font-weight: 700;
     }
     .document-header-designer .bill-to-block {
         margin-bottom: 12px;
@@ -1794,6 +1902,44 @@ const buildCoreStyles = () => `
         text-align: center;
         border-bottom: 0;
     }
+    .document-table.document-table-compact thead th {
+        white-space: nowrap;
+        word-break: normal;
+        overflow-wrap: normal;
+        line-height: 1.05;
+        letter-spacing: 0;
+        font-size: 0.84em;
+        padding: 6px 4px;
+    }
+    .document-shell-designer .document-table.document-table-compact thead th {
+        font-size: 0.78em;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-1 thead th {
+        font-size: 0.8em;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-2 thead th {
+        font-size: 0.72em;
+        padding-left: 3px;
+        padding-right: 3px;
+    }
+    .document-table.document-table-dense-3 thead th {
+        font-size: 0.64em;
+        font-weight: 600;
+        padding: 5px 2px;
+    }
+    .document-shell-designer .document-table.document-table-dense-1 thead th {
+        font-size: 0.74em;
+    }
+    .document-shell-designer .document-table.document-table-dense-2 thead th {
+        font-size: 0.66em;
+    }
+    .document-shell-designer .document-table.document-table-dense-3 thead th {
+        font-size: 0.58em;
+    }
     .document-table thead th.cell-right {
         text-align: right;
     }
@@ -1813,6 +1959,15 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .table-cell {
         padding: 5px 8px;
+    }
+    .document-table.document-table-compact .table-cell {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-2 .table-cell,
+    .document-table.document-table-dense-3 .table-cell {
+        padding-left: 3px;
+        padding-right: 3px;
     }
     .table-empty {
         padding: 16px 8px;
@@ -2255,6 +2410,14 @@ const buildTemplateThemeStyles = (layout) => {
     const mutedBorder = theme.borderColor;
     const mutedBorderSoft = theme.borderColor.startsWith('#') ? `${theme.borderColor}18` : theme.borderColor;
     const accentSoft = theme.accentColor.startsWith('#') ? `${theme.accentColor}22` : theme.accentColor;
+    const zebraRowBg = (layout.isPurchaseDesigner || layout.isSalesDesigner) ? '#fafafa' : 'transparent';
+    const printTableHeaderBg = boostPrintFill(theme.tableHeaderBg, '#f1f5f9', { minAlpha: 1, darken: 0.07 });
+    const printTotalRowBg = boostPrintFill(theme.totalRowBg, '#f1f5f9', { minAlpha: 1, darken: 0.07 });
+    const printAccentSoft = boostPrintFill(accentSoft, theme.accentColor, { minAlpha: 0.18, darken: 0.05 });
+    const printZebraRowBg = zebraRowBg;
+    const printBankBg = '#f0f9ff';
+    const printTermsBg = '#fffbeb';
+    const printSalesThumbSize = layout.isSalesDesigner ? 32 : 42;
 
     return `
         .document-shell,
@@ -2333,7 +2496,7 @@ const buildTemplateThemeStyles = (layout) => {
             color: ${theme.tableHeaderText};
         }
         .document-table tbody tr:nth-child(even) {
-            background: ${layout.isPurchaseDesigner ? '#fafafa' : 'transparent'};
+            background: ${zebraRowBg};
         }
         .document-shell-designer .table-cell {
             border-bottom-color: ${mutedBorderSoft};
@@ -2363,6 +2526,42 @@ const buildTemplateThemeStyles = (layout) => {
         .document-table thead th { border-bottom: 0; }
         .table-cell, .table-empty { border-bottom: 0; }
         ` : ''}
+        @media print {
+            .document-table thead th {
+                background: ${printTableHeaderBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTableHeaderBg} !important;
+            }
+            ${printZebraRowBg === 'transparent' ? '' : `
+            .document-table tbody tr:nth-child(even) > td {
+                background: ${printZebraRowBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printZebraRowBg} !important;
+            }
+            `}
+            .totals-table .grand-total-row td,
+            .totals-table .balance-due-row td {
+                background: ${printTotalRowBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTotalRowBg} !important;
+            }
+            .bank-box {
+                background: ${printBankBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printBankBg} !important;
+            }
+            .terms-box {
+                background: ${printTermsBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTermsBg} !important;
+            }
+            .item-thumb-small {
+                width: ${printSalesThumbSize}px !important;
+                height: ${printSalesThumbSize}px !important;
+                max-width: ${printSalesThumbSize}px !important;
+                max-height: ${printSalesThumbSize}px !important;
+                flex-basis: ${printSalesThumbSize}px !important;
+            }
+            .item-thumb-placeholder {
+                background: ${printAccentSoft} !important;
+                box-shadow: inset 0 0 0 9999px ${printAccentSoft} !important;
+            }
+        }
     `;
 };
 
@@ -4312,7 +4511,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
             <div class="${shellClasses}">
                 ${buildHeader(layout, renderTarget)}
                 ${buildHeaderAddon(layout)}
-                ${buildGrandTotal(layout)}
+                ${buildGrandTotal(layout, renderTarget)}
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}

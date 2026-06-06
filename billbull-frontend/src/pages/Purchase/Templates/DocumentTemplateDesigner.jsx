@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useContext, useState } from "react";
 import {
   ArrowLeft,
   Save,
@@ -18,6 +18,11 @@ import {
 } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
+import CompanyContext from "../../../context/CompanyContext";
+import {
+  resolveCurrencyDisplayConfig,
+  UAE_DIRHAM_SYMBOL_IMAGE
+} from "../../../utils/countryCurrencyOptions";
 function docTypeLabel(t) {
   return {
     quotation: "Quotation",
@@ -48,8 +53,53 @@ function docTypeCode(t) {
     "debit-note": "DN"
   }[t];
 }
-function amountInWords(n) {
-  return `${Math.floor(n).toLocaleString("en-AE")} AED and ${Math.round(n % 1 * 100)} Fils Only`;
+const CURRENCY_UNITS = {
+  AED: { main: "Dirhams", sub: "Fils" },
+  USD: { main: "Dollars", sub: "Cents" },
+  EUR: { main: "Euros", sub: "Cents" },
+  GBP: { main: "Pounds", sub: "Pence" },
+  INR: { main: "Rupees", sub: "Paise" }
+};
+
+function amountInWords(n, currencyCode = "AED") {
+  const units = CURRENCY_UNITS[String(currencyCode || "").toUpperCase()] || {
+    main: String(currencyCode || "Units"),
+    sub: "Cents"
+  };
+  return `${Math.floor(n).toLocaleString("en-AE")} ${units.main} and ${Math.round(n % 1 * 100)} ${units.sub} Only`;
+}
+
+function CurrencyPreviewToken({ currencyConfig, currencyDisplay = "symbol" }) {
+  if (!currencyConfig) return null;
+
+  if (currencyDisplay === "code") {
+    return <span>{currencyConfig.currency || currencyConfig.label}</span>;
+  }
+
+  if (currencyConfig.hasImage) {
+    return <span
+      role="img"
+      aria-label={currencyConfig.ariaLabel}
+      style={{
+        display: "inline-block",
+        verticalAlign: "-0.08em",
+        margin: "0 0.06em",
+        width: "1.05em",
+        height: "0.82em",
+        backgroundColor: "currentColor",
+        WebkitMaskImage: `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`,
+        maskImage: `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`,
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        WebkitMaskSize: "contain",
+        maskSize: "contain"
+      }}
+    />;
+  }
+
+  return <span>{currencyConfig.label}</span>;
 }
 function defaultSettings(docType) {
   const isInv = docType === "sales-invoice" || docType === "proforma-invoice" || docType === "purchase-invoice";
@@ -150,12 +200,13 @@ const MOCK = {
     { no: 2, code: "POZONE-001", name: "POZONE PP610 Thermal Printer", desc: 'i5-10th (10351GT) / 8 GB RAM / 256\nGB SSD / LCD 10"\nTouch Panel\nCapacitive touch screen\nBuilt-in Wifi\nColour: Black\n+ Cash Drawer\n+ Thermal Receipt Printer', uom: "PCS", qty: 5, price: 7325, disc: 10, vat: 5, barcode: "6291041500220", sku: "PZN-PP610-WHT", batch: "BTH-2025-0512", brand: "POZONE", binLocation: "B-02 / R-01 / B-12" }
   ]
 };
-function ClassicPreview({ s }) {
+function ClassicPreview({ s, currencyConfig }) {
   const items = MOCK.items;
   const subtotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100), 0);
   const discTotal = items.reduce((sum, i) => sum + i.qty * i.price * (i.disc / 100), 0);
   const vatTotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100) * (i.vat / 100), 0);
   const grandTotal = subtotal + vatTotal;
+  const currencyMode = s.currencyDisplay === "code" ? "code" : "symbol";
   const f = s.fontSize;
   const b = s.borderColor;
   const thS = {
@@ -221,7 +272,7 @@ function ClassicPreview({ s }) {
       s.showWarehouseStore && ["Warehouse / Store", MOCK.doc.warehouse],
       s.showSalesperson && ["Account Executive", MOCK.doc.salesperson],
       s.showPaymentTerms && ["Payment Terms", MOCK.doc.paymentTerms],
-      s.showCurrency && ["Currency", MOCK.doc.currency],
+      s.showCurrency && ["Currency", <CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} />],
       s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms]
     ].filter(Boolean);
     if (!metaItems.length) return null;
@@ -259,7 +310,8 @@ function ClassicPreview({ s }) {
           <div style={{ textAlign: "right" }}>
             <p style={{ fontSize: `${f}px`, color: "#888", margin: "0 0 2px", fontWeight: 600, letterSpacing: 1 }}>Grand Total</p>
             <p style={{ fontSize: `${f + 22}px`, fontWeight: 800, color: s.grandTotalColor, margin: 0, letterSpacing: "-1px", lineHeight: 1 }}>
-              {MOCK.doc.currency} &nbsp;{grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+              <CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} />{" "}
+              {grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
             </p>
           </div>
         </div>}
@@ -356,35 +408,35 @@ function ClassicPreview({ s }) {
           <tbody>
             {s.showSubtotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Sub Total</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
                   {subtotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showDiscountTotal && discTotal > 0 && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#e11d48", textAlign: "right" }}>Discount</td>
-                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48", fontWeight: 700, width: 110 }}>
                   - {discTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showTaxableTotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Taxable Amount</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
                   {(subtotal - discTotal).toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showVATTotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Total VAT</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
                   {vatTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showGrandTotal && <tr style={{ background: s.totalRowBg }}>
                 <td style={{ padding: "6px 16px 6px 0", fontWeight: 700, textAlign: "right", fontSize: `${f + 1}px` }}>Total</td>
-                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, width: 100, fontSize: `${f + 1}px` }}>AED</td>
+                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, width: 100, fontSize: `${f + 1}px` }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "6px 0 6px 12px", textAlign: "right", fontWeight: 800, fontSize: `${f + 2}px`, width: 110 }}>
                   {grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
@@ -397,7 +449,7 @@ function ClassicPreview({ s }) {
     /* ── AMOUNT IN WORDS (immediately after grand total) ── */
   }
       {s.showAmountInWords && <p style={{ fontSize: `${f}px`, color: "#374151", marginBottom: 14, textAlign: "right" }}>
-          In Words: {amountInWords(grandTotal)}
+          In Words: {amountInWords(grandTotal, currencyConfig?.currency)}
         </p>}
 
       {
@@ -549,6 +601,11 @@ function Sel({ value, onChange, options }) {
     </select>;
 }
 function DocumentTemplateDesigner({ docType, templateName, initialSettings, onClose, onSave }) {
+  const companyContext = useContext(CompanyContext);
+  const previewCurrencyConfig = resolveCurrencyDisplayConfig(
+    companyContext?.company || {},
+    { currency: MOCK.doc.currency }
+  );
   const [s, setS] = useState({
     ...defaultSettings(docType),
     templateName: templateName ?? `Default ${docTypeLabel(docType)}`,
@@ -866,7 +923,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
   }
           <div style={{ transformOrigin: "top center", transform: `scale(${zoom})`, width: 794, marginLeft: "auto", marginRight: "auto", marginBottom: `${-(794 * (1 - zoom) * 1.414)}px` }}>
             <div style={{ width: 794, minHeight: 1123, background: "#fff", boxShadow: "0 4px 32px rgba(0,0,0,0.18)" }}>
-              <ClassicPreview s={s} />
+              <ClassicPreview s={s} currencyConfig={previewCurrencyConfig} />
             </div>
           </div>
 
