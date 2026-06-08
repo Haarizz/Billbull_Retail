@@ -24,8 +24,24 @@ const getFocDeduction = (item = {}, unitPrice = 0, sellingUnit = 'PCS') => {
     return unitPrice * focInSellingUnit;
 };
 
-export const summarizeSalesItems = (items = [], billDiscountPercent = 0, extras = {}) => {
-    const summary = items.reduce((acc, rawItem) => {
+// Compute per-item taxable amount (net after item-level discount, before footer discount).
+// billDiscount can be:
+//   - a number (treated as percentage, legacy)
+//   - { type: 'percent', value: number }
+//   - { type: 'amount', value: number }
+export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}) => {
+    // Normalise the footer-discount descriptor.
+    let footerDiscType = 'percent';
+    let footerDiscValue = 0;
+    if (billDiscount !== null && typeof billDiscount === 'object') {
+        footerDiscType = billDiscount.type === 'amount' ? 'amount' : 'percent';
+        footerDiscValue = toNumber(billDiscount.value);
+    } else {
+        footerDiscValue = toNumber(billDiscount);
+    }
+
+    // Pass 1: compute per-item net-before-footer (taxable after item discount).
+    const perItem = items.map((rawItem) => {
         const item = rawItem || {};
         const qty = toNumber(item.qty ?? item.quantity);
         const price = toNumber(item.price);
@@ -52,30 +68,48 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0, extras 
         let taxableAmount = explicitTaxableAmount;
 
         // Only trust stored lineTotal when it is genuinely non-zero.
-        // A stored value of 0 means the item was either blank or saved before
-        // calculation ran; fall through to recompute from qty/price in that case.
         if (!hasValue(taxableAmount) && explicitLineTotal > 0) {
             taxableAmount = Math.max(0, explicitLineTotal - (explicitTaxAmount || 0));
         }
-
         if (!hasValue(taxableAmount)) {
             taxableAmount = preDiscountAmount - discountAmount;
         }
-
         if (!hasValue(item.discountAmount) && preDiscountAmount > 0) {
             discountAmount = Math.max(0, preDiscountAmount - taxableAmount);
         }
 
-        const taxAmount = (explicitLineTotal > 0 && explicitTaxAmount != null)
-            ? explicitTaxAmount
-            : (explicitLineTotal > 0 ? Math.max(0, explicitLineTotal - taxableAmount) : taxableAmount * (taxPercent / 100));
-        const lineTotal = explicitLineTotal > 0
-            ? explicitLineTotal
-            : taxableAmount + taxAmount;
+        return { grossAmount, discountAmount, taxableAmount, taxPercent, explicitTaxAmount, explicitLineTotal };
+    });
 
-        acc.grossTotal += grossAmount;
-        acc.itemDiscountTotal += discountAmount;
-        acc.subTotal += taxableAmount;
+    // Pass 2: determine total net-before-footer (= sum of taxableAmounts) to use as
+    // the denominator for proportional footer-discount allocation.
+    const totalNetBeforeFooter = perItem.reduce((s, r) => s + r.taxableAmount, 0);
+
+    // Resolve total footer-discount amount.
+    let billDiscountAmount = 0;
+    if (footerDiscValue > 0 && totalNetBeforeFooter > 0) {
+        billDiscountAmount = footerDiscType === 'amount'
+            ? Math.min(footerDiscValue, totalNetBeforeFooter)
+            : totalNetBeforeFooter * (footerDiscValue / 100);
+    }
+    const footerDiscountRatio = totalNetBeforeFooter > 0 ? billDiscountAmount / totalNetBeforeFooter : 0;
+
+    // Pass 3: accumulate totals using footer-allocated per-item values.
+    const summary = perItem.reduce((acc, r) => {
+        const itemFooterDisc = r.taxableAmount * footerDiscountRatio;
+        const netAfterFooter = Math.max(0, r.taxableAmount - itemFooterDisc);
+
+        // Tax is always computed on net after ALL discounts (item + footer).
+        // Since explicitTaxAmount from the backend already has footer discount applied, we use it directly.
+        const taxAmount = (r.explicitLineTotal > 0 && r.explicitTaxAmount != null)
+            ? r.explicitTaxAmount
+            : netAfterFooter * (r.taxPercent / 100);
+        const lineTotal = netAfterFooter + taxAmount;
+
+        acc.grossTotal += r.grossAmount;
+        acc.itemDiscountTotal += r.discountAmount;
+        acc.subTotal += r.taxableAmount;
+        acc.footerDiscountTotal += itemFooterDisc;
         acc.tax += taxAmount;
         acc.grandTotal += lineTotal;
         return acc;
@@ -83,16 +117,10 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0, extras 
         grossTotal: 0,
         itemDiscountTotal: 0,
         subTotal: 0,
+        footerDiscountTotal: 0,
         tax: 0,
         grandTotal: 0,
     });
-
-    const billDiscountPercentValue = toNumber(billDiscountPercent);
-    const billDiscountAmount = summary.subTotal * (billDiscountPercentValue / 100);
-
-    // ✅ ERP FIX: Apply tax AFTER bill discount
-    // We can proportionally reduce the total tax by the same percentage as the bill discount
-    const finalTax = summary.tax * (1 - billDiscountPercentValue / 100);
 
     // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
     const deliveryCharge = toNumber(extras.deliveryCharge);
@@ -100,12 +128,51 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0, extras 
 
     return {
         ...summary,
-        billDiscountAmount,
-        tax: finalTax, // Overwrite with discounted tax
+        billDiscountAmount: summary.footerDiscountTotal,
         deliveryCharge,
         roundOff,
-        grandTotal: summary.subTotal - billDiscountAmount + finalTax + deliveryCharge + roundOff,
+        grandTotal: summary.subTotal - summary.footerDiscountTotal + summary.tax + deliveryCharge + roundOff,
+        // Expose the descriptor so callers can round-trip it.
+        footerDiscType,
+        footerDiscValue,
     };
+};
+
+// Build the footer-discount descriptor expected by summarizeSalesItems.
+export const makeFooterDiscount = (type, value) => ({ type: type === 'amount' ? 'amount' : 'percent', value: toNumber(value) });
+
+// Allocate footer discount proportionally across items and return enriched item array.
+// Each returned item gains an `allocatedFooterDiscount` field (absolute amount).
+export const allocateFooterDiscount = (items = [], billDiscount = 0) => {
+    let footerDiscType = 'percent';
+    let footerDiscValue = 0;
+    if (billDiscount !== null && typeof billDiscount === 'object') {
+        footerDiscType = billDiscount.type === 'amount' ? 'amount' : 'percent';
+        footerDiscValue = toNumber(billDiscount.value);
+    } else {
+        footerDiscValue = toNumber(billDiscount);
+    }
+
+    const nets = items.map((item) => {
+        // Always prefer taxableAmount (pre-footer, pre-tax) to avoid cascading discount calculation bugs.
+        if (hasValue(item.taxableAmount) && toNumber(item.taxableAmount) > 0) return toNumber(item.taxableAmount);
+        if (hasValue(item.net) && toNumber(item.net) > 0) return toNumber(item.net);
+        const qty = toNumber(item.qty ?? item.quantity);
+        const price = toNumber(item.price);
+        const discPct = toNumber(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent);
+        const gross = qty * price;
+        return Math.max(0, gross - gross * (discPct / 100));
+    });
+
+    const totalNet = nets.reduce((s, n) => s + n, 0);
+    const footerDiscAmt = footerDiscValue > 0 && totalNet > 0
+        ? (footerDiscType === 'amount' ? Math.min(footerDiscValue, totalNet) : totalNet * (footerDiscValue / 100))
+        : 0;
+
+    return items.map((item, idx) => ({
+        ...item,
+        allocatedFooterDiscount: totalNet > 0 ? (nets[idx] / totalNet) * footerDiscAmt : 0,
+    }));
 };
 
 export const summarizePurchaseItems = (items = []) => items.reduce((acc, rawItem) => {

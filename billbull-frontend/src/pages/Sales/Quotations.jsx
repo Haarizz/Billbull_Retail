@@ -102,7 +102,7 @@ import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
@@ -544,6 +544,7 @@ const Quotations = () => {
 
     // ✅ BILL DISCOUNT STATE (New)
     const [billDiscount, setBillDiscount] = useState(0);
+    const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
 
     // ✅ PRICE HISTORY STATE
     const [priceHistory, setPriceHistory] = useState([]);
@@ -782,6 +783,7 @@ const Quotations = () => {
                 tax: i.taxRate,
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
+                taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
                 remarks: i.remarks,
                 isProductSelected: !!i.itemCode,
                 // QA-001: preserve the product-master hints the backend enriches
@@ -1439,8 +1441,8 @@ const Quotations = () => {
 
     // ✅ UPDATED CALCULATIONS
     const quotationSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount),
-        [items, billDiscount]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount)),
+        [items, billDiscount, billDiscountType]
     );
     const grossTotal = quotationSummary.grossTotal;
     const totalItemDiscount = quotationSummary.itemDiscountTotal;
@@ -1480,32 +1482,43 @@ const Quotations = () => {
             totalAmount: grandTotal,
             taxAmount: totalTax,
             subTotal: subTotal,
-            billDiscount: billDiscount,
+            billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+            billDiscountAmount: billDiscountAmount,
+            billDiscountType: billDiscountType,
+            billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
             vatMode: vatMode,
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
-            items: activeItems.map(i => ({
-                // Only forward persisted DB ids. New rows get client-side keys
-                // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
-                // non-integer — those must go to the backend as null so Hibernate
-                // inserts them instead of trying to merge a phantom row.
-                id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
-                itemCode: i.code,
-                barcode: i.barcode, // Pass barcode to backend
-                image: i.image, // Pass image to backend if schema supports it
-                description: i.desc,
-                unit: i.unit,
-                quantity: i.qty,
-                price: i.price,
-                discount: i.disc,
-                taxRate: i.tax,
-                foc: i.foc,
-                focUnit: i.focUnit || 'PCS',
-                taxAmount: i.taxAmt,
-                lineTotal: i.total,
-                remarks: i.remarks
-            }))
+            items: allocateFooterDiscount(activeItems, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+                const itemNetBeforeFooter = Number(i.total || 0) - Number(i.taxAmt || 0);
+                const itemNet = Math.max(0, itemNetBeforeFooter - footerDisc);
+                const taxPercent = Number(i.tax) || 0;
+                const itemTax = itemNet * (taxPercent / 100);
+                return {
+                    // Only forward persisted DB ids. New rows get client-side keys
+                    // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
+                    // non-integer — those must go to the backend as null so Hibernate
+                    // inserts them instead of trying to merge a phantom row.
+                    id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
+                    itemCode: i.code,
+                    barcode: i.barcode,
+                    image: i.image,
+                    description: i.desc,
+                    unit: i.unit,
+                    quantity: i.qty,
+                    price: i.price,
+                    discount: i.disc,
+                    footerDiscount: footerDisc,
+                    taxRate: i.tax,
+                    foc: i.foc,
+                    focUnit: i.focUnit || 'PCS',
+                    taxAmount: itemTax,
+                    lineTotal: itemNet + itemTax,
+                    remarks: i.remarks
+                };
+            })
         };
     };
 
@@ -1977,7 +1990,10 @@ const Quotations = () => {
         setInternalNotes(qtn.internalNotes || '');
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
-        setBillDiscount(qtn.billDiscount || 0);
+        setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
+        setBillDiscount(qtn.billDiscountType === 'amount'
+            ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
+            : Number(qtn.billDiscount) || 0);
         setVatMode(qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
         setSourceInquiry(qtn.sourceInquiryId ? {
             id: qtn.sourceInquiryId,
@@ -2398,6 +2414,7 @@ const Quotations = () => {
         setNotesToCustomer('');
         setInternalNotes('');
         setBillDiscount(0);
+        setBillDiscountType('percent');
         setSourceInquiry(null);
         setActiveTab('create');
 
@@ -2680,7 +2697,7 @@ const Quotations = () => {
     <div style="padding:20px 32px; display:flex; justify-content:flex-end;">
         <table style="border-spacing:0; min-width:280px;">
             <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${subTotal.toFixed(2)}</td></tr>
-            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
+            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Footer Discount${billDiscountType === 'percent' ? ` (${billDiscount}%)` : ''}</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
             <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${totalTax.toFixed(2)}</td></tr>
             <tr style="border-top:2px solid ${t.accentColor};">
                 <td style="padding:12px 20px 6px 0; font-size:16px; font-weight:800; color:#1e293b;">Grand Total</td>
@@ -3802,17 +3819,25 @@ const Quotations = () => {
                                             <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
-                                            <span className="flex items-center gap-2">
-                                                Bill Discount
+                                            <span className="flex items-center gap-1.5">
+                                                Footer Discount
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                                                    className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                                                    title="Toggle between percentage and fixed amount"
+                                                >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                                                 <input
                                                     type="number"
                                                     min="0"
-                                                    max="100"
+                                                    max={billDiscountType === 'percent' ? 100 : undefined}
+                                                    step={billDiscountType === 'percent' ? 1 : 0.01}
                                                     disabled={isViewMode}
-                                                    className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                    className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                                                     value={billDiscount}
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
-                                                /> %
+                                                />
                                             </span>
                                             <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} {...displayCurrencyProps} /></span>
                                         </div>

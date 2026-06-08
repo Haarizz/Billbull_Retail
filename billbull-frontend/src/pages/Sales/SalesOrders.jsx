@@ -63,7 +63,7 @@ import { useBranch } from '../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendSalesOrderEmail } from '../../api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -313,6 +313,7 @@ const SalesOrders = () => {
   }, [items]);
 
   const [billDiscount, setBillDiscount] = useState(0);
+  const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
   // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
   const [vatMode, setVatMode] = useState('EXCLUSIVE');
 
@@ -569,7 +570,7 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, billDiscount);
+    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount));
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -857,6 +858,7 @@ const SalesOrders = () => {
     setLinkedQtn('');
     setLinkedPi('');
     setBillDiscount(0);
+    setBillDiscountType('percent');
     setIsLinkedSourceOpen(false);
   };
 
@@ -968,6 +970,7 @@ const SalesOrders = () => {
           linkedQuotation: linkedQtn || '',
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
+          billDiscountType: billDiscountType,
           shippingAddress: shippingAddress || '',
           // QA-032: carry the SO advance so the destination invoice can
           // pre-fill amountCollected and surface the advance to the user.
@@ -1158,7 +1161,10 @@ const SalesOrders = () => {
       customerName: selectedCustomer?.name || '',
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
-      billDiscount: Number(billDiscount) || 0,
+      billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+      billDiscountAmount: billDiscountAmount,
+      billDiscountType: billDiscountType,
+      billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
       vatMode,
 
       // Payment & Delivery
@@ -1176,25 +1182,32 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
-      items: items.map(i => ({
-        id: (orderId && i.soItemId) ? i.soItemId : null,
-        itemCode: i.code,
-        barcode: i.barcode || '',
-        image: i.image || '',
-        description: i.desc,
-        remarks: i.remarks || '',
-        unit: i.unit,
-        quantity: Number(i.qty),
-        price: Number(i.price),
-        cost: Number(i.cost),
-        discount: Number(i.disc),
-        taxRate: Number(i.tax),
-        taxAmount: Number(i.taxAmt),
-        lineTotal: Number(i.total),
-        foc: Number(i.foc) || 0,
-        focUnit: i.focUnit || i.unit || 'PCS',
-        binId: i.binId || null
-      }))
+      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+        const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+        const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
+        const taxPercent = Number(i.tax) || 0;
+        const itemTax = (itemNet) * (taxPercent / 100);
+        return {
+          id: (orderId && i.soItemId) ? i.soItemId : null,
+          itemCode: i.code,
+          barcode: i.barcode || '',
+          image: i.image || '',
+          description: i.desc,
+          remarks: i.remarks || '',
+          unit: i.unit,
+          quantity: Number(i.qty),
+          price: Number(i.price),
+          cost: Number(i.cost),
+          discount: Number(i.disc),
+          footerDiscount: footerDisc,
+          taxRate: Number(i.tax),
+          taxAmount: itemTax,
+          lineTotal: itemNet + itemTax,
+          foc: Number(i.foc) || 0,
+          focUnit: i.focUnit || i.unit || 'PCS',
+          binId: i.binId || null
+        };
+      })
     };
 
     // Stock check enforcement
@@ -1414,7 +1427,10 @@ const SalesOrders = () => {
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
-    setBillDiscount(Number(order.billDiscount) || 0);
+    setBillDiscountType(order.billDiscountType === 'amount' ? 'amount' : 'percent');
+    setBillDiscount(order.billDiscountType === 'amount'
+        ? Number(order.billDiscountFixed || order.billDiscountAmount) || 0
+        : Number(order.billDiscount) || 0);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -1450,6 +1466,7 @@ const SalesOrders = () => {
     setLinkedPi('');
     setItems([createBlankOrderItem()]);
     setBillDiscount(0);
+    setBillDiscountType('percent');
     setAdvanceAmount(0);
     setPaymentMethod('Cash');
     setPaymentRef('');
@@ -2457,17 +2474,25 @@ const SalesOrders = () => {
                   <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600 items-center">
-                  <span className="flex items-center gap-2">
-                    Bill Discount
+                  <span className="flex items-center gap-1.5">
+                    Footer Discount
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                      title="Toggle between percentage and fixed amount"
+                    >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                     <input
                       type="number"
                       min="0"
-                      max="100"
+                      max={billDiscountType === 'percent' ? 100 : undefined}
+                      step={billDiscountType === 'percent' ? 1 : 0.01}
                       disabled={isLocked}
-                      className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                       value={billDiscount}
                       onChange={(e) => setBillDiscount(Number(e.target.value))}
-                    /> %
+                    />
                   </span>
                   <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
                 </div>

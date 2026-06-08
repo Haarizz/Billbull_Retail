@@ -195,16 +195,22 @@ public class SalesOrderService {
 
                 double lineTotal = item.getLineTotal() != null ? item.getLineTotal() : 0;
                 double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
 
-                subTotal += (lineTotal - taxAmount);
+                subTotal += (lineTotal - taxAmount + footerDisc);
                 tax += taxAmount;
             }
         }
 
-        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
+        double billDiscAmt = order.getBillDiscountAmount() != null ? order.getBillDiscountAmount() : 0;
+        if (billDiscAmt == 0 && billDiscPct > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        }
+
         double tax2 = BigDecimal.valueOf(tax).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double total = BigDecimal.valueOf(subTotal - billDiscAmt + tax2).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : 0;

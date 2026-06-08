@@ -75,7 +75,7 @@ import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -158,7 +158,7 @@ const calculateLineAmounts = ({ qty, price, disc, tax }) => {
     const taxAmt = taxable * (taxPercent / 100);
     const net = taxable + taxAmt;
 
-    return { gross, taxAmt, net };
+    return { gross, taxAmt, net, taxableAmount: taxable };
 };
 
 import ProductSelector from '../../components/ProductSelector';
@@ -388,6 +388,7 @@ const SalesInvoice = () => {
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
+        taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
         cost: i.cost || 0,
         gp: 0,
         foc: i.foc || 0,
@@ -410,6 +411,7 @@ const SalesInvoice = () => {
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
+    const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
     const [deliveryCharge, setDeliveryCharge] = useState(0);
     // Round Off is auto-computed (nearest ฿1.00) by default; the user can flip
     // `roundOffManual` on to override the figure by hand for edge cases.
@@ -906,6 +908,7 @@ const SalesInvoice = () => {
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
+        setBillDiscountType(fromSO.billDiscountType === 'amount' ? 'amount' : 'percent');
         setBillDiscount(Number(fromSO.billDiscount) || 0);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -1109,8 +1112,8 @@ const SalesInvoice = () => {
     // ==========================================
     // Total before round-off, used to derive the automatic rounding adjustment.
     const preRoundSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: 0 }),
-        [items, billDiscount, deliveryCharge]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }),
+        [items, billDiscount, billDiscountType, deliveryCharge]
     );
     // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
     const autoRoundOff = useMemo(
@@ -1130,8 +1133,8 @@ const SalesInvoice = () => {
     }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const invoiceSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: effectiveRoundOff }),
-        [items, billDiscount, deliveryCharge, effectiveRoundOff]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }),
+        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff]
     );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
@@ -1468,7 +1471,7 @@ const SalesInvoice = () => {
                         const disc = firstPresentNumber(dnItem.disc, dnItem.discount, soItem?.discount);
                         const tax = firstPresentNumber(dnItem.tax, dnItem.taxRate, soItem?.taxRate, 5);
                         const cost = firstPresentNumber(dnItem.cost, soItem?.cost);
-                        const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                        const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
 
                         return {
                             id: Date.now() + Math.random(),
@@ -1484,6 +1487,7 @@ const SalesInvoice = () => {
                             disc: disc,
                             tax: tax,
                             taxAmt: taxAmt,
+                            taxableAmount: taxableAmount,
                             gross,
                             net: net,
                             gp: 0,
@@ -1510,7 +1514,7 @@ const SalesInvoice = () => {
                             const disc = Number(si.discount) || 0;
                             const tax = Number(si.taxRate) || 5;
                             const cost = Number(si.cost) || 0;
-                            const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                            const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
                             return {
                                 id: Date.now() + Math.random(),
                                 salesOrderItemId: si.id || null,
@@ -1519,7 +1523,7 @@ const SalesInvoice = () => {
                                 name: si.itemName || si.description || '',
                                 desc: si.description || si.itemName || '',
                                 unit: si.unit || 'PCS',
-                                qty, price, cost, disc, tax, taxAmt, gross, net,
+                                qty, price, cost, disc, tax, taxAmt, gross, net, taxableAmount,
                                 gp: 0,
                                 binId: null,
                                 productType: 'SERVICE',
@@ -1547,7 +1551,7 @@ const SalesInvoice = () => {
                     const disc = firstPresentNumber(i.disc, i.discount);
                     const tax = firstPresentNumber(i.tax, i.taxRate, 5);
                     const cost = firstPresentNumber(i.cost);
-                    const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                    const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
 
                     return {
                         id: Date.now() + Math.random(),
@@ -1900,6 +1904,10 @@ const SalesInvoice = () => {
         }
         const hasItems = items.some(i => i && (i.code || i.name) && Number(i.qty) > 0);
         if (!hasItems) { alert("Add at least one item before saving."); return; }
+        if (mode === 'Confirmed' && !paymentMode) {
+            alert("Please select a payment mode before confirming the invoice.");
+            return;
+        }
         setPreviewMode(mode);
     };
 
@@ -1966,11 +1974,13 @@ const SalesInvoice = () => {
             branch: branch,
             shippingAddress: shippingAddress,
             amountPaid: Number(amountCollected),
-            billDiscount: 0,
-            billDiscountAmount: 0,
+            billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+            billDiscountAmount: Number(billDiscountAmount),
+            billDiscountType: billDiscountType,
+            billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
             deliveryCharge: Number(deliveryCharge) || 0,
             roundOff: Number(effectiveRoundOff) || 0,
-            totalDiscount: 0,
+            totalDiscount: Number(totalDiscount) + Number(billDiscountAmount),
             subTotal: Number(taxableSubTotal),
             taxableSubTotal: Number(taxableSubTotal),
             totalTax: Number(totalTax),
@@ -1981,10 +1991,13 @@ const SalesInvoice = () => {
             requestedFulfillmentType: 'Picking',
             customerNotes: invoiceNotes || '',
 
-            items: items.map(i => {
-                const discountFactor = 1 - (Number(billDiscount) / 100);
-                const finalNet = Number(i.net) * discountFactor;
-                const finalTax = Number(i.taxAmt) * discountFactor;
+            items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+                const preFooterTaxable = Number(i.taxableAmount) || Math.max(0, (Number(i.gross) || 0) * (1 - (Number(i.disc) || 0) / 100));
+                const postFooterTaxable = Math.max(0, preFooterTaxable - footerDisc);
+                const taxPercent = Number(i.tax) || 0;
+                const itemTax = postFooterTaxable * (taxPercent / 100);
+                const itemNet = postFooterTaxable + itemTax;
                 const qty = Number(i.qty) || 1;
 
                 return {
@@ -2005,10 +2018,11 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: Number(i.cost),
                     discount: Number(i.disc) || 0,
+                    footerDiscount: footerDisc,
                     taxRate: Number(i.tax),
-                    taxAmount: finalTax,
+                    taxAmount: itemTax,
                     grossAmount: Number(i.gross) || 0,
-                    netAmount: finalNet,
+                    netAmount: itemNet,
                     foc: Number(i.foc) || 0,
                     binId: i.binId || null,
                     warehouseId: (i.warehouseId && i.warehouseId !== '')
@@ -2136,7 +2150,10 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
-        setBillDiscount(Number(invoice.billDiscount) || 0);
+        setBillDiscountType(invoice.billDiscountType === 'amount' ? 'amount' : 'percent');
+        setBillDiscount(invoice.billDiscountType === 'amount'
+            ? Number(invoice.billDiscountFixed || invoice.billDiscountAmount) || 0
+            : Number(invoice.billDiscount) || 0);
         setDeliveryCharge(Number(invoice.deliveryCharge) || 0);
         setRoundOff(Number(invoice.roundOff) || 0);
         setRoundOffManual(false);
@@ -2605,7 +2622,7 @@ const SalesInvoice = () => {
         const resolvedBillDiscount = Number(billDiscount) || 0;
         const resolvedDeliveryCharge = Number(deliveryCharge) || 0;
         const resolvedRoundOff = Number(effectiveRoundOff) || 0;
-        const resolvedSummary = summarizeSalesItems(items || [], resolvedBillDiscount, {
+        const resolvedSummary = summarizeSalesItems(items || [], makeFooterDiscount(billDiscountType, resolvedBillDiscount), {
             deliveryCharge: resolvedDeliveryCharge,
             roundOff: resolvedRoundOff
         });
@@ -2734,9 +2751,10 @@ const SalesInvoice = () => {
 
         {
             const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
+            const resolvedBillDiscountType = dataToPrint.billDiscountType || 'percent';
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount, {
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
             });
@@ -4156,17 +4174,25 @@ const SalesInvoice = () => {
                                                     <span>- <CurrencyAmount value={totalDiscount} currency={invoiceCurrency} /></span>
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600 items-center">
-                                                    <span className="flex items-center gap-2">
-                                                        Bill Discount
+                                                    <span className="flex items-center gap-1.5">
+                                                        Footer Discount
+                                                        <button
+                                                            type="button"
+                                                            disabled={isReadOnlyInvoice}
+                                                            onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                                                            className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                                                            title="Toggle between percentage and fixed amount"
+                                                        >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                                                         <input
                                                             type="number"
                                                             min="0"
-                                                            max="100"
+                                                            max={billDiscountType === 'percent' ? 100 : undefined}
+                                                            step={billDiscountType === 'percent' ? 1 : 0.01}
                                                             disabled={isReadOnlyInvoice}
                                                             value={billDiscount}
                                                             onChange={(e) => setBillDiscount(Number(e.target.value))}
-                                                            className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
-                                                        /> %
+                                                            className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                        />
                                                     </span>
                                                     <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
                                                 </div>

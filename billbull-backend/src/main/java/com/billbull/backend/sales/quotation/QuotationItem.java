@@ -31,6 +31,8 @@ public class QuotationItem {
     private BigDecimal quantity;
     private BigDecimal price;
     private BigDecimal discount;
+    @Column(name = "footer_discount")
+    private BigDecimal footerDiscount;
     private BigDecimal taxRate;
     private BigDecimal taxAmount;
     private BigDecimal lineTotal;
@@ -179,6 +181,14 @@ public class QuotationItem {
 
     public void setDiscount(BigDecimal discount) {
         this.discount = discount;
+    }
+
+    public BigDecimal getFooterDiscount() {
+        return footerDiscount;
+    }
+
+    public void setFooterDiscount(BigDecimal footerDiscount) {
+        this.footerDiscount = footerDiscount;
     }
 
     public BigDecimal getTaxRate() {

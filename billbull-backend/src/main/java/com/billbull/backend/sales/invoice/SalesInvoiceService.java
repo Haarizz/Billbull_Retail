@@ -253,8 +253,9 @@ public class SalesInvoiceService {
 
                 double netAmount = item.getNetAmount() != null ? item.getNetAmount() : 0;
                 double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
 
-                subTotal += (netAmount - taxAmount);
+                subTotal += (netAmount - taxAmount + footerDisc);
                 taxTotal += taxAmount;
             }
         }
@@ -262,9 +263,13 @@ public class SalesInvoiceService {
         // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscAmt = invoice.getBillDiscountAmount() != null ? invoice.getBillDiscountAmount() : 0;
+        if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        }
+
         // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
         double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
         double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
@@ -552,7 +557,8 @@ public class SalesInvoiceService {
 
         double gross = qty * price;
         double discountAmount = gross * (discountPercent / 100);
-        double taxableAmount = Math.max(0, gross - discountAmount);
+        double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
+        double taxableAmount = Math.max(0, gross - discountAmount - footerDisc);
         double taxAmount = taxableAmount * (taxPercent / 100);
         double netAmount = taxableAmount + taxAmount;
 

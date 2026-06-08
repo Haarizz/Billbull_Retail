@@ -77,6 +77,12 @@ public class Quotation {
     private BigDecimal totalAmount;
     private BigDecimal billDiscount;
 
+    @Column(name = "bill_discount_amount")
+    private BigDecimal billDiscountAmount;
+
+    @Column(name = "bill_discount_type", length = 20)
+    private String billDiscountType;
+
     // ---------------- RELATIONSHIPS ----------------
 
     @JsonManagedReference
@@ -177,6 +183,12 @@ public class Quotation {
 
     public BigDecimal getBillDiscount() { return billDiscount; }
     public void setBillDiscount(BigDecimal billDiscount) { this.billDiscount = billDiscount; }
+
+    public BigDecimal getBillDiscountAmount() { return billDiscountAmount; }
+    public void setBillDiscountAmount(BigDecimal billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
+
+    public String getBillDiscountType() { return billDiscountType; }
+    public void setBillDiscountType(String billDiscountType) { this.billDiscountType = billDiscountType; }
 
     public List<QuotationItem> getItems() { return items; }
     public void setItems(List<QuotationItem> items) { this.items = items; }
