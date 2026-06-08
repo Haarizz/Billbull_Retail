@@ -113,16 +113,14 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         @Query("SELECT si.invoiceDate, SUM(si.invoiceTotal), COUNT(si) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
-               "AND (:endDate IS NULL OR si.invoiceDate <= :endDate) " +
+               "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
                "GROUP BY si.invoiceDate ORDER BY si.invoiceDate")
         List<Object[]> findSalesTrend(@Param("startDate") LocalDate startDate,
                                       @Param("endDate") LocalDate endDate);
 
         @Query("SELECT COALESCE(si.paymentMode, 'Cash'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
-               "AND (:endDate IS NULL OR si.invoiceDate <= :endDate) " +
+               "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
                "GROUP BY si.paymentMode")
         List<Object[]> findPaymentBreakdown(@Param("startDate") LocalDate startDate,
                                             @Param("endDate") LocalDate endDate);
@@ -150,8 +148,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "LEFT JOIN products p ON p.code = sii.item_code AND p.is_active = true " +
                        "LEFT JOIN departments d ON d.id = p.department_id " +
                        "WHERE si.status <> 'CANCELLED' " +
-                       "AND (:startDate IS NULL OR si.invoice_date >= :startDate) " +
-                       "AND (:endDate IS NULL OR si.invoice_date < :endDate) " +
+                       "AND si.invoice_date >= :startDate " +
+                       "AND si.invoice_date < :endDate " +
                        "GROUP BY d.name ORDER BY revenue DESC LIMIT 4",
                nativeQuery = true)
         List<Object[]> findTopDepartments(@Param("startDate") LocalDate startDate,
@@ -159,6 +157,27 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(Pageable pageable);
+
+        @Query("SELECT COUNT(DISTINCT si.customerName) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND si.invoiceDate BETWEEN :from AND :to")
+        long countDistinctCustomersBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+        @Query(value = "SELECT sii.item_code, " +
+                       "MIN(COALESCE(p.name, sii.item_name)) AS product_name, " +
+                       "COALESCE(MIN(d.name), 'Uncategorized') AS dept_name, " +
+                       "SUM(sii.quantity) AS qty_sold, " +
+                       "SUM(sii.net_amount) AS revenue " +
+                       "FROM sales_invoice_items sii " +
+                       "JOIN sales_invoices si ON si.id = sii.sales_invoice_id " +
+                       "LEFT JOIN products p ON p.code = sii.item_code AND p.is_active = true " +
+                       "LEFT JOIN departments d ON d.id = p.department_id " +
+                       "WHERE si.status <> 'CANCELLED' " +
+                       "AND si.invoice_date BETWEEN :startDate AND :endDate " +
+                       "GROUP BY sii.item_code ORDER BY revenue DESC LIMIT 5",
+               nativeQuery = true)
+        List<Object[]> findTopProductsBetween(@Param("startDate") LocalDate startDate,
+                                              @Param("endDate") LocalDate endDate);
 
         // --- RECONCILIATION QUERIES ---
 

@@ -50,6 +50,12 @@ public class CustomerService {
         return customers;
     }
 
+    @Transactional(readOnly = true)
+    public List<Customer> search(String q) {
+        if (q == null || q.isBlank()) return List.of();
+        return repository.findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(q, q);
+    }
+
     // =========================
     // GET CUSTOMER BY ID
     // =========================

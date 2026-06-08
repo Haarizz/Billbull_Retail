@@ -2475,6 +2475,20 @@ const GRN = () => {
     }
   }, []);
 
+  // Open a specific GRN by ID (from dashboard search navigation)
+  useEffect(() => {
+    const grnId = location.state?.grnId;
+    if (!grnId) return;
+    navigate(location.pathname, { replace: true, state: {} });
+    getGrnById(Number(grnId))
+      .then(fullData => {
+        setCurrentGrnData(fullData);
+        setGrnType(fullData.lpoNumber ? "Against LPO" : "Direct GRN");
+        setActiveNavTab('editor');
+      })
+      .catch(err => console.error('Failed to open GRN', err));
+  }, []);
+
   // FIX 3: Shared payload logic to prevent duplication
   const persistGrn = async (formData, items, status) => {
     const payload = {

@@ -47,6 +47,7 @@ import {
     getAllQuotations,
     getQuotationsPage,
     getQuotationStats,
+    getQuotationById,
     saveQuotation,
     updateQuotationStatus,
     createRevision,
@@ -902,6 +903,16 @@ const Quotations = () => {
     // ✅ FETCH REAL DATA ON MOUNT
     useEffect(() => {
         refreshData();
+    }, []);
+
+    // Open a specific quotation by ID (from dashboard search navigation)
+    useEffect(() => {
+        const quotationId = location.state?.quotationId;
+        if (!quotationId) return;
+        window.history.replaceState({}, document.title);
+        getQuotationById(quotationId)
+            .then(qtn => { if (qtn) handleEditQuotation(qtn, 'view'); })
+            .catch(err => console.error('Failed to open quotation', err));
     }, []);
 
     useEffect(() => {

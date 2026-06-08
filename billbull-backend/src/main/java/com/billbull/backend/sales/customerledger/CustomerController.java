@@ -40,6 +40,14 @@ public class CustomerController {
         return ResponseEntity.ok(customers);
     }
 
+    @GetMapping("/search")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    public ResponseEntity<List<Customer>> search(
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "5") int size) {
+        return ResponseEntity.ok(service.search(q).stream().limit(size).toList());
+    }
+
     @GetMapping("/next-code")
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {

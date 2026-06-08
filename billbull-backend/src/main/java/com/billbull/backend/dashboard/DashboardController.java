@@ -20,4 +20,13 @@ public class DashboardController {
             @RequestParam(defaultValue = "All Time") String timeRange) {
         return ResponseEntity.ok(dashboardService.getSummary(timeRange));
     }
+
+    /** Force-clears the server-side cache and returns fresh data immediately. */
+    @PostMapping("/summary/refresh")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<DashboardSummaryResponse> refresh(
+            @RequestParam(defaultValue = "All Time") String timeRange) {
+        dashboardService.invalidateCache();
+        return ResponseEntity.ok(dashboardService.getSummary(timeRange));
+    }
 }

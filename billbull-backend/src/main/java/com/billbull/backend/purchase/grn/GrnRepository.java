@@ -64,4 +64,11 @@ public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
                                 dpId,
                                 List.of(GrnSourceType.DIRECT_PURCHASE));
         }
+
+        @Query("SELECT COALESCE(SUM(g.grandTotal), 0) FROM GrnEntity g WHERE g.grnDate BETWEEN :from AND :to")
+        java.math.BigDecimal sumGrandTotalBetween(@Param("from") java.time.LocalDate from,
+                                                  @Param("to") java.time.LocalDate to);
+
+        @Query("SELECT COUNT(g) FROM GrnEntity g WHERE g.grnDate BETWEEN :from AND :to")
+        long countBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
 }

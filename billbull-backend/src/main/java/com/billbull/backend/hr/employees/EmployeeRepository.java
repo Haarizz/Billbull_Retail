@@ -7,5 +7,7 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
 
     List<Employee> findByStatus(String status);
 
+    long countByStatus(String status);
+
     List<Employee> findByStatusIn(List<String> statuses);
 }
