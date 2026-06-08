@@ -381,6 +381,18 @@ const SalesOrders = () => {
 
   // Attachments
   const [attachmentName, setAttachmentName] = useState('No file chosen');
+
+  const [pendingPrintOrderId, setPendingPrintOrderId] = useState(null);
+
+  // Trigger print after state settles from list view
+  useEffect(() => {
+    if (pendingPrintOrderId && orderId === pendingPrintOrderId) {
+      setPendingPrintOrderId(null);
+      // Slight delay to ensure child components (if any) have finished their internal effect chains
+      setTimeout(() => handlePrintClick(), 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, pendingPrintOrderId]);
   const [attachmentFile, setAttachmentFile] = useState(null);
 
   // Locking Logic 
@@ -1666,7 +1678,7 @@ const SalesOrders = () => {
           <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
         </div>
         {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
-        {canExport('sales.order') && (
+        {activeTab === 'create' && canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
             {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
               <button key={label} onClick={
@@ -1862,7 +1874,11 @@ const SalesOrders = () => {
                           <Eye size={14} />
                         </button>
                         <button
-                          onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }}
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            handleLoadOrder(order); 
+                            setPendingPrintOrderId(order.id); 
+                          }}
                           className="p-1.5 hover:bg-slate-100 rounded text-slate-500 transition-colors"
                           title="Print"
                         >

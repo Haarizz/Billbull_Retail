@@ -2310,6 +2310,84 @@ const SalesInvoice = () => {
         handlePrintReceipt(receipt, settlementInvoice);
     };
 
+    // For split payments, merge all receipts into one print instead of opening
+    // separate print dialogs per receipt (only the last one would survive).
+    const handlePrintAllSettlementVouchers = async (receipts = []) => {
+        if (!settlementInvoice || receipts.length === 0) return;
+        if (receipts.length === 1) {
+            handleSettlementVoucherPrint(receipts[0]);
+            return;
+        }
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
+                category: 'Receipt Voucher', paperSize: 'A4', orientation: 'Portrait',
+                headerContent: '', footerContent: '', termsContent: '',
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true }
+            };
+            const totalAmount = receipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+            const invoiceTotal = Number(settlementInvoice?.invoiceTotal || settlementInvoice?.netTotal || 0);
+            const balanceAfter = Math.max(0, invoiceTotal - totalAmount);
+            const methodLabel = receipts.map(r => `${r.mode} ${Number(r.amount).toFixed(2)}`).join(' + ');
+            const receiptNums = receipts.map(r => r.receiptNumber).filter(Boolean).join(', ');
+            const mergedReceipt = {
+                receiptNumber: receiptNums,
+                date: receipts[0]?.date || '',
+                status: 'Completed',
+                session: null,
+                invoiceCount: '1 invoice',
+                account: null,
+                bankAccount: null,
+            };
+            const printData = {
+                receiptData: mergedReceipt,
+                customerData: {
+                    name: settlementInvoice?.customerName || '',
+                    code: settlementInvoice?.customerCode || '',
+                    address: settlementInvoice?.customerAddress || '',
+                    phone: settlementInvoice?.customerPhone || '',
+                    email: settlementInvoice?.customerEmail || '',
+                    trn: settlementInvoice?.customerTrn || '',
+                    crn: settlementInvoice?.customerCrn || '',
+                },
+                invoices: [{
+                    ref: settlementInvoice?.invoiceNumber || '—',
+                    soRef: settlementInvoice?.linkedSalesOrder || '',
+                    date: settlementInvoice?.invoiceDate || '',
+                    total: invoiceTotal,
+                    outstanding: invoiceTotal,
+                    received: totalAmount,
+                    balance: balanceAfter,
+                    status: balanceAfter <= 0 ? 'Fully paid' : 'Partial',
+                }],
+                summary: {
+                    totalOutstanding: invoiceTotal,
+                    discount: 0,
+                    remaining: balanceAfter,
+                    totalReceived: totalAmount,
+                },
+                payment: { method: methodLabel, depositedTo: '', chequeRef: '', chequeDate: '' },
+                note: '',
+                title: 'PAYMENT RECEIPT',
+                docNo: receiptNums,
+                date: receipts[0]?.date || '',
+                customer: { name: settlementInvoice?.customerName || '' },
+                totals: { subTotal: totalAmount, tax: 0, grandTotal: totalAmount, currency: company?.currencySymbol || 'AED' },
+            };
+            const receiptBranchId = settlementInvoice?.branchId ?? activeBranch?.id;
+            const branchProfile = buildDocumentHeaderProfile({
+                company, branches: availableBranches || [], branchId: receiptBranchId,
+            });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+            const title = `Payment Receipt - ${receiptNums}`;
+            const titledHtml = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            printHtml(titledHtml);
+        } catch (err) {
+            console.error('Failed to print merged receipt voucher', err);
+        }
+    };
+
     const handleSettlementVoucherEmail = () => {
         if (!(settlementInvoice?.id || invoiceId)) {
             alert('Save the invoice before emailing a voucher.');
@@ -4721,8 +4799,8 @@ const SalesInvoice = () => {
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}
-                    onPrintVoucher={handleSettlementVoucherPrint}
-                    onDownloadVoucher={handleSettlementVoucherPrint}
+                    onPrintVoucher={handlePrintAllSettlementVouchers}
+                    onDownloadVoucher={handlePrintAllSettlementVouchers}
                     onEmailVoucher={handleSettlementVoucherEmail}
                     onWhatsAppVoucher={handleSettlementVoucherWhatsApp}
                 />

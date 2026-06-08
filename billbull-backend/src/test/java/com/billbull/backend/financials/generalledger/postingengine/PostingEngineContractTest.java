@@ -47,15 +47,21 @@ class PostingEngineContractTest {
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private GlAccountBalanceRepository glBalanceRepository;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
 
     private PostingEngineService service;
 
     @BeforeEach
     void setUp() {
+        com.billbull.backend.sales.settings.SalesSettings blockSettings =
+                new com.billbull.backend.sales.settings.SalesSettings();
+        blockSettings.setCreditLimitPolicy(com.billbull.backend.sales.settings.CreditLimitPolicy.BLOCK);
+        when(salesSettingsService.getSettings()).thenReturn(blockSettings);
+
         service = new PostingEngineService(
                 journalEntryRepository, journalEntryService, accountRepository,
                 accountingPeriodService, dimensionMatrixService, voucherSequenceService,
-                customerCreditService, grnRepository, glBalanceRepository);
+                customerCreditService, grnRepository, glBalanceRepository, salesSettingsService);
 
         // Default: all accounts active, no duplicate references, no period lock
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());

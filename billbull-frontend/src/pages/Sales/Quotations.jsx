@@ -1039,14 +1039,20 @@ const Quotations = () => {
     };
 
     // Reset to first page whenever filter inputs change.
-    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
+
+    const isInitialMount = useRef(true);
 
     // Refetch whenever the user opens the list tab, changes filters, or pages.
     useEffect(() => {
+        if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+        }
         if (activeTab !== 'list') return;
         fetchQuotationsList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -2899,7 +2905,10 @@ const Quotations = () => {
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                <DateFilter onChange={(range) => { 
+                                    setDateRange(prev => (prev?.fromDate === range?.fromDate && prev?.toDate === range?.toDate) ? prev : range); 
+                                    setListPage(0); 
+                                }} />
                                 {/* Search */}
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />

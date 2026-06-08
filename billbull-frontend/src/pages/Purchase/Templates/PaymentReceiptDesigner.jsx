@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ArrowLeft, Save, Printer, Info } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
+import { UAE_DIRHAM_SYMBOL_IMAGE } from "../../../utils/countryCurrencyOptions";
 const MOCK = {
   company: {
     name: "GEEBU Enterprise Platforms LLC",
@@ -33,8 +34,13 @@ const MOCK = {
   note: "Note: SI-2025-006190 partially received \u2014 remaining AED 17,350.00 outstanding on customer account.",
   footer: { generated: "23 May 2025 3:40 PM", user: "sales@company.ae" }
 };
-function aed(n) {
-  return `AED ${n.toLocaleString("en-AE", { minimumFractionDigits: 2 })}`;
+function fmt(n) {
+  return n.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+// Dirham symbol as an inline img for the React preview (mirrors the print renderer)
+// red=true applies a CSS filter to tint the image red (can't use color on <img>)
+function CurrSym({ size = "0.9em", red }) {
+  return <img src={UAE_DIRHAM_SYMBOL_IMAGE} alt="AED" style={{ height: size, width: "auto", display: "inline-block", verticalAlign: "-0.07em", ...(red ? { filter: "invert(18%) sepia(96%) saturate(4967%) hue-rotate(338deg) brightness(88%) contrast(105%)" } : {}) }} />;
 }
 function defaultSettings() {
   return {
@@ -75,6 +81,7 @@ function defaultSettings() {
     showDiscountAllowed: true,
     showRemainingBalance: true,
     showTotalReceivedBold: true,
+    showAmountInWords: true,
     showPaymentMethod: true,
     showDepositedTo: true,
     showChequeRef: true,
@@ -108,7 +115,8 @@ function ReceiptPreview({ s }) {
     color: "#374151",
     borderBottom: `1px solid ${gold}18`,
     textAlign: right ? "right" : "left",
-    verticalAlign: "top"
+    verticalAlign: right ? "middle" : "top",
+    whiteSpace: right ? "nowrap" : "normal"
   });
   const metaItems = [
     s.showReceiptNumber && ["Receipt No.", MOCK.receipt.number],
@@ -227,20 +235,11 @@ function ReceiptPreview({ s }) {
                 {s.showLinkedSO && <div style={{ color: "#94a3b8", fontSize: `${f - 1.5}px`, marginTop: 1 }}>SO: {inv.soRef}</div>}
               </td>
               {s.showInvoiceDate && <td style={{ ...tdStyle(true), color: "#64748b" }}>{inv.date}</td>}
-              {s.showInvoiceTotal && <td style={tdStyle(true)}>
-                  <div style={{ color: "#94a3b8", fontSize: `${f - 1}px` }}>AED</div>
-                  <div>{inv.total.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</div>
-                </td>}
-              {s.showOutstanding && <td style={tdStyle(true)}>
-                  <div style={{ color: "#94a3b8", fontSize: `${f - 1}px` }}>AED</div>
-                  <div>{inv.outstanding.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</div>
-                </td>}
-              {s.showReceivedNow && <td style={tdStyle(true)}>
-                  <div style={{ color: gold, fontSize: `${f - 1}px`, fontWeight: 600 }}>AED</div>
-                  <div style={{ fontWeight: 700, color: "#1a1a2e" }}>{inv.received.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</div>
-                </td>}
+              {s.showInvoiceTotal && <td style={tdStyle(true)}><CurrSym /> {fmt(inv.total)}</td>}
+              {s.showOutstanding && <td style={tdStyle(true)}><CurrSym /> {fmt(inv.outstanding)}</td>}
+              {s.showReceivedNow && <td style={{ ...tdStyle(true), fontWeight: 700, color: "#1a1a2e" }}><CurrSym /> {fmt(inv.received)}</td>}
               {s.showBalanceAfter && <td style={tdStyle(true)}>
-                  {inv.balance > 0 ? <div style={{ fontWeight: 600 }}>{aed(inv.balance)}</div> : <div style={{ color: "#94a3b8" }}>AED 0.00</div>}
+                  {inv.balance > 0 ? <span style={{ fontWeight: 600 }}><CurrSym /> {fmt(inv.balance)}</span> : <span style={{ color: "#94a3b8" }}><CurrSym /> 0.00</span>}
                 </td>}
             </tr>)}
         </tbody>
@@ -255,29 +254,38 @@ function ReceiptPreview({ s }) {
     /* ── SUMMARY (right-aligned) ── */
   }
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <table style={{ minWidth: 300, borderCollapse: "collapse", fontSize: `${f}px` }}>
+        <table style={{ width: "auto", borderCollapse: "collapse", fontSize: `${f}px` }}>
           <tbody>
             {s.showTotalOutstanding && <tr>
-                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right" }}>Total outstanding</td>
-                <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 600 }}>{aed(MOCK.summary.totalOutstanding)}</td>
+                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right", whiteSpace: "nowrap" }}>Total outstanding</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap", minWidth: 100 }}><CurrSym /> <span style={{ display: "inline-block", minWidth: 70, textAlign: "right" }}>{fmt(MOCK.summary.totalOutstanding)}</span></td>
               </tr>}
             {s.showDiscountAllowed && <tr>
-                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right" }}>Discount allowed</td>
-                <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48" }}>AED —{MOCK.summary.discount.toFixed(2)}</td>
+                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right", whiteSpace: "nowrap" }}>Discount allowed</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", whiteSpace: "nowrap", minWidth: 100 }}><CurrSym red /> <span style={{ display: "inline-block", minWidth: 70, textAlign: "right" }}>—{MOCK.summary.discount.toFixed(2)}</span></td>
               </tr>}
             {s.showRemainingBalance && <tr>
-                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right" }}>Remaining balance</td>
-                <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 600 }}>{aed(MOCK.summary.remaining)}</td>
+                <td style={{ padding: "3px 16px 3px 0", color: "#64748b", textAlign: "right", whiteSpace: "nowrap" }}>Remaining balance</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap", minWidth: 100 }}><CurrSym /> <span style={{ display: "inline-block", minWidth: 70, textAlign: "right" }}>{fmt(MOCK.summary.remaining)}</span></td>
               </tr>}
             {s.showTotalReceivedBold && <tr style={{ background: `${gold}18` }}>
-                <td style={{ padding: "6px 16px 6px 0", fontWeight: 700, textAlign: "right", fontSize: `${f + 1}px` }}>Total received now</td>
-                <td style={{ padding: "6px 0 6px 12px", textAlign: "right", fontWeight: 800, fontSize: `${f + 2}px`, color: "#1a1a2e" }}>
-                  {aed(MOCK.summary.totalReceived)}
+                <td style={{ padding: "6px 16px 6px 0", fontWeight: 700, textAlign: "right", fontSize: `${f + 1}px`, whiteSpace: "nowrap" }}>Total received now</td>
+                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 800, fontSize: `${f + 2}px`, color: "#1a1a2e", whiteSpace: "nowrap", minWidth: 100 }}>
+                  <CurrSym size="1em" /> <span style={{ display: "inline-block", minWidth: 70, textAlign: "right" }}>{fmt(MOCK.summary.totalReceived)}</span>
                 </td>
               </tr>}
           </tbody>
         </table>
       </div>
+
+      {
+    /* ── AMOUNT IN WORDS ── */
+  }
+      {s.showAmountInWords && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <div style={{ fontSize: `${f}px`, fontWeight: 600, color: "#1a1a2e", textAlign: "right", background: "#f8fafc", padding: "6px 12px", borderRadius: 4, border: "1px solid #e2e8f0" }}>
+            <span style={{ color: "#64748b", marginRight: 4 }}>Amount in words:</span> <span style={{ fontWeight: 700, color: "#1a1a2e" }}>Sixty Thousand Dirhams Only</span>
+          </div>
+        </div>}
 
       {
     /* ── PAYMENT DETAILS ── */
@@ -577,6 +585,7 @@ function PaymentReceiptDesigner({ templateName, initialSettings, onClose, onSave
               <Row label="Discount Allowed"><Toggle value={s.showDiscountAllowed} onChange={(v) => upd("showDiscountAllowed", v)} /></Row>
               <Row label="Remaining Balance"><Toggle value={s.showRemainingBalance} onChange={(v) => upd("showRemainingBalance", v)} /></Row>
               <Row label="Total Received (bold)"><Toggle value={s.showTotalReceivedBold} onChange={(v) => upd("showTotalReceivedBold", v)} /></Row>
+              <Row label="Amount in Words"><Toggle value={s.showAmountInWords} onChange={(v) => upd("showAmountInWords", v)} /></Row>
             </>}
 
             {

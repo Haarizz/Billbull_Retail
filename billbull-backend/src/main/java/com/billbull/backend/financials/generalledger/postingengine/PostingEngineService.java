@@ -105,6 +105,7 @@ public class PostingEngineService {
         private final com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
         private final com.billbull.backend.purchase.grn.GrnRepository grnRepository;
         private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
+        private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
 
         public PostingEngineService(
                         JournalEntryRepository  journalEntryRepository,
@@ -115,7 +116,8 @@ public class PostingEngineService {
                         VoucherSequenceService  voucherSequenceService,
                         com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService,
                         com.billbull.backend.purchase.grn.GrnRepository grnRepository,
-                        com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository) {
+                        com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository,
+                        com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService) {
                 this.journalEntryRepository  = journalEntryRepository;
                 this.journalEntryService     = journalEntryService;
                 this.accountRepository       = accountRepository;
@@ -125,6 +127,7 @@ public class PostingEngineService {
                 this.customerCreditService   = customerCreditService;
                 this.grnRepository           = grnRepository;
                 this.glBalanceRepository     = glBalanceRepository;
+                this.salesSettingsService    = salesSettingsService;
         }
 
         // Transaction-type prefixes for voucher numbering (PDF §1).
@@ -255,13 +258,17 @@ public class PostingEngineService {
                 String ref = invoice.getInvoiceNumber();
                 if (isDuplicate(ref)) return null;
 
-                // Credit-limit guard (PDF §6 / Phase 3.4): reject before posting if this
-                // invoice would push the customer's open AR over their configured limit.
-                customerCreditService.assertWithinLimit(
-                                invoice.getCustomerCode(),
-                                invoice.getInvoiceTotal() != null
-                                        ? java.math.BigDecimal.valueOf(invoice.getInvoiceTotal())
-                                        : java.math.BigDecimal.ZERO);
+                // Credit-limit guard: only enforce when the policy is BLOCK; NO_IMPACT and
+                // WARNING both allow posting (WARNING UX is handled in SalesInvoiceService).
+                com.billbull.backend.sales.settings.CreditLimitPolicy creditPolicy =
+                                salesSettingsService.getSettings().getCreditLimitPolicy();
+                if (creditPolicy == com.billbull.backend.sales.settings.CreditLimitPolicy.BLOCK) {
+                        customerCreditService.assertWithinLimit(
+                                        invoice.getCustomerCode(),
+                                        invoice.getInvoiceTotal() != null
+                                                ? java.math.BigDecimal.valueOf(invoice.getInvoiceTotal())
+                                                : java.math.BigDecimal.ZERO);
+                }
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
                                 "Sales Invoice " + ref, TX_SALES_INVOICE);
