@@ -947,7 +947,6 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `
                 <td class="table-cell cell-right">
                     <div>${formatNumber(item.taxAmount)}</div>
-                    ${item.taxPercent > 0 ? `<div class="cell-sub">@ VAT ${formatNumber(item.taxPercent, 0)}%</div>` : ''}
                 </td>
             `;
         case 'taxPercent':
@@ -1061,8 +1060,9 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
         ...(layout.totalVisibility || {})
     };
 
+    // Order matches ClassicPreview exactly:
+    // SubTotal → Discount → Taxable → VAT → Delivery → RoundOff → Total → AmountPaid → BalanceDue
     const rows = [
-        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal) : '',
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
         visibility.discount && discountAmount > 0 ? `
                 <tr class="amount-negative">
@@ -1071,6 +1071,7 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
                     <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
                 </tr>
             ` : '',
+        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal - discountAmount) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
         visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
@@ -1547,46 +1548,73 @@ const buildCoreStyles = () => `
         margin-bottom: 16px;
     }
     .document-header-designer {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
+        display: grid;
+        grid-template-columns: 27fr 33fr 40fr;
+        grid-template-rows: auto;
+        align-items: start;
+        gap: 0 16px;
         margin-bottom: 18px;
     }
     .document-header-designer .header-left {
-        flex: 1 1 0;
+        grid-column: 1;
         min-width: 0;
+        overflow: hidden;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-designer .header-center {
-        flex: 0 0 292px;
-        align-self: flex-end;
+        grid-column: 2;
+        min-width: 0;
+        padding-top: 64px;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-designer .header-right {
-        flex: 0 0 170px;
+        grid-column: 3;
+        min-width: 0;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
-    /* Sales designer header — matches ClassicPreview flex layout */
+    /* Sales designer header — fixed 27/33/40 grid so long names never
+       collapse or expand adjacent columns. Mirrors ClassicPreview proportions. */
     .document-header-sales {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
+        display: grid;
+        grid-template-columns: 27fr 33fr 40fr;
+        grid-template-rows: auto;
+        align-items: start;
+        gap: 0 16px;
         margin-bottom: 18px;
     }
     .document-header-sales .header-left {
-        flex: 1 1 0;
+        grid-column: 1;
         min-width: 0;
+        overflow: hidden;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-sales .header-center {
-        display: block;
-        flex: 0 0 auto;
-        align-self: flex-end;
-        padding-top: 0;
+        grid-column: 2;
+        min-width: 0;
+        /* Padding-top clears the document title (≈20px text + 14px margin)
+           and the bill-to eyebrow + customer name line (≈30px) so the meta
+           grid always starts below the primary identity lines in col 1 & col 3.
+           No align-self:end — we want a fixed offset from the top, not bottom-anchoring,
+           so the block stays stable regardless of content length in adjacent columns. */
+        padding-top: 64px;
         padding-bottom: 2px;
         text-align: left;
-        justify-items: stretch;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-sales .header-right {
-        flex: 0 0 170px;
+        grid-column: 3;
+        min-width: 0;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-sales .document-title {
         margin: 0 0 14px;
@@ -1597,14 +1625,16 @@ const buildCoreStyles = () => `
     }
     .document-header-sales .company-name {
         white-space: nowrap;
-        word-break: keep-all;
-        overflow-wrap: normal;
         overflow: hidden;
         text-overflow: ellipsis;
+        font-size: 8.5px;
+        letter-spacing: -0.3px;
     }
     .document-header-sales .doc-meta-item {
         justify-items: start;
         text-align: left;
+        min-width: 0;
+        overflow: hidden;
     }
     .document-header-sales .doc-meta-label {
         font-size: 8px;
@@ -1616,6 +1646,9 @@ const buildCoreStyles = () => `
         font-size: 9px;
         line-height: 1.2;
         font-weight: 700;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
     }
     .document-header-sales .bill-to-eyebrow {
         margin-bottom: 4px;
@@ -1636,11 +1669,15 @@ const buildCoreStyles = () => `
         white-space: nowrap;
         font-weight: 700;
         transform-origin: left center;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-sales .bill-to-line {
         color: #444444;
         line-height: 1.65;
         white-space: pre-line;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-title {
         font-size: 20px;
@@ -1674,7 +1711,7 @@ const buildCoreStyles = () => `
     }
     .designer-meta-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(118px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px 20px;
         align-items: start;
     }
@@ -1720,8 +1757,9 @@ const buildCoreStyles = () => `
         display: grid;
         gap: 0;
         justify-items: end;
-        max-width: 260px;
         text-align: right;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-designer .company-panel {
         line-height: 1.55;
@@ -1729,6 +1767,9 @@ const buildCoreStyles = () => `
     .company-name,
     .company-local-name {
         font-weight: 700;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
     }
     .bill-to-block {
         margin-bottom: 16px;
@@ -1791,8 +1832,8 @@ const buildCoreStyles = () => `
         font-size: 9px;
         line-height: 1.2;
         font-weight: 700;
-        word-break: normal;
-        overflow-wrap: normal;
+        word-break: break-word;
+        overflow-wrap: break-word;
         white-space: normal;
     }
     .grand-total-display {
@@ -2693,22 +2734,33 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 gap: 20px !important;
             }
             .document-header-designer {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: flex-start !important;
-                gap: 16px !important;
+                display: grid !important;
+                grid-template-columns: 27fr 33fr 40fr !important;
+                gap: 0 16px !important;
+                align-items: start !important;
                 margin-bottom: 18px !important;
             }
             .document-header-designer .header-left {
-                flex: 1 1 0 !important;
+                grid-column: 1 !important;
                 min-width: 0 !important;
+                overflow: hidden !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
             }
             .document-header-designer .header-center {
-                flex: 0 0 292px !important;
-                align-self: flex-end !important;
+                grid-column: 2 !important;
+                min-width: 0 !important;
+                align-self: end !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-designer .header-right {
-                flex: 0 0 170px !important;
+                grid-column: 3 !important;
+                min-width: 0 !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .signature-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -2732,47 +2784,55 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-header-designer .header-center {
                 display: block !important;
-                padding-top: 0 !important;
+                padding-top: 64px !important;
                 padding-bottom: 2px !important;
                 text-align: left !important;
                 justify-items: stretch !important;
             }
             .document-header-designer .designer-meta-grid {
                 display: grid !important;
-                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
                 gap: 10px 20px !important;
             }
             .document-header-designer .doc-meta-item {
                 text-align: left !important;
                 justify-items: start !important;
             }
-            /* Sales designer print overrides — keep header matching ClassicPreview */
+            /* Sales designer print overrides — fixed 27/33/40 grid, mirrors ClassicPreview */
             .document-header-sales {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: flex-start !important;
-                gap: 16px !important;
+                display: grid !important;
+                grid-template-columns: 27fr 33fr 40fr !important;
+                gap: 0 16px !important;
+                align-items: start !important;
                 margin-bottom: 18px !important;
             }
             .document-header-sales .header-left {
-                flex: 1 1 0 !important;
+                grid-column: 1 !important;
                 min-width: 0 !important;
+                overflow: hidden !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
             }
             .document-header-sales .header-center {
-                display: block !important;
-                flex: 0 0 auto !important;
-                align-self: flex-end !important;
-                padding-top: 0 !important;
+                grid-column: 2 !important;
+                min-width: 0 !important;
+                padding-top: 64px !important;
                 padding-bottom: 2px !important;
                 text-align: left !important;
-                justify-items: start !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-sales .header-right {
-                flex: 0 0 170px !important;
+                grid-column: 3 !important;
+                min-width: 0 !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-sales .designer-meta-grid {
                 display: grid !important;
-                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
                 gap: 10px 20px !important;
             }
             .document-header-sales .doc-meta-item {
@@ -2866,6 +2926,37 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .footer-center,
             .footer-right {
                 text-align: right !important;
+            }
+            /* Fix 4: watermark on every page — switch from absolute (page 1 only)
+               to fixed so the browser repeats it across all printed pages */
+            .document-watermark {
+                position: fixed !important;
+                inset: 0 !important;
+            }
+            /* Fix 3: prevent long company/customer/branch names from overflowing
+               or clipping — let them wrap gracefully in print */
+            .company-name,
+            .company-copy {
+                white-space: normal !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+            }
+            .document-header-sales .company-name {
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+            }
+            .bill-to-name {
+                white-space: normal !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+            }
+            .bill-to-line {
+                white-space: pre-line !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
             }
         }
     `;
@@ -3097,7 +3188,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         columnOptions,
         columnModel,
         totals,
-        notes: asText(data.notes || ''),
+        notes: asText(data.notes || data.meta?.notes || ''),
         terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
         displayOptions,
         totalVisibility,
@@ -4476,42 +4567,90 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
             var spacer   = document.getElementById('footer-push-spacer');
             var footer   = document.querySelector('.document-footer-group');
             var shell    = document.querySelector('.document-shell');
+            var spacer  = document.getElementById('footer-push-spacer');
+            var footer  = document.querySelector('.document-footer-group');
+            var shell   = document.querySelector('.document-shell');
             if (!spacer || !footer || !shell) return;
 
-            // Remove any previously injected height so measurements are fresh
+            // Reset spacer so all measurements reflect natural layout
             spacer.style.height = '0px';
 
-            // @page margins: 26 mm first page top / 12 mm bottom / continuation 26 mm top
-            // Use 12 mm top + 12 mm bottom = 24 mm as a conservative usable-height deduction.
-            var pageMarginsPx = Math.round(24 * (96 / 25.4));
-            var shellPadPx    = ${shellPaddingPx};
-            var rawPageH      = ${pageHeightPx};
-            var usableH       = rawPageH - pageMarginsPx - shellPadPx * 2;
-            if (usableH < 100) usableH = rawPageH * 0.80;
+            // Force a synchronous reflow after resetting spacer
+            // (getBoundingClientRect already forces reflow, but make intent explicit)
+            var _ = spacer.getBoundingClientRect();
 
-            var shellTop     = shell.getBoundingClientRect().top;
-            var spacerTop    = spacer.getBoundingClientRect().top;
-            var footerH      = footer.getBoundingClientRect().height;
+            var rawPageH = ${pageHeightPx};
 
-            // How far into the document (in px) does the spacer start?
-            var offsetFromShellTop = spacerTop - shellTop;
+            // @page margins (mm → px at 96 dpi):
+            //   first page : top 12mm + bottom 12mm  = 24mm
+            //   continuation: top 26mm + bottom 12mm = 38mm
+            // offsetFromShellTop is measured from the shell's own top edge, which
+            // is already below the @page top margin.  So usableH must represent how
+            // many CSS-px of *shell content* fit per page — i.e. rawPageH minus only
+            // the @page top+bottom margins.  Do NOT subtract shell left/right padding
+            // here; that is already baked into the rendered positions we measure.
+            //
+            // We use the first-page margins (24 mm) for page 0 and continuation
+            // margins (38 mm) for every subsequent page.  For the spacer-fit test we
+            // care about the page the spacer is currently on, so we pick the right
+            // margin set after determining pageIndex.
+            var MM   = 96 / 25.4;
+            var page0MarginsPx = Math.round(24 * MM);   // first page  12+12 mm
+            var pageNMarginsPx = Math.round(38 * MM);   // continuation 26+12 mm
 
-            // Which page number is that on (0-indexed)?
-            var pageIndex    = Math.floor(offsetFromShellTop / usableH);
+            // Usable shell-content height per page
+            var usableH0 = rawPageH - page0MarginsPx;   // page 0
+            var usableHN = rawPageH - pageNMarginsPx;   // pages 1+
+            if (usableH0 < 200) { usableH0 = rawPageH * 0.82; }
+            if (usableHN < 200) { usableHN = rawPageH * 0.82; }
 
-            // How many px have been used on that page so far (above the spacer)?
-            var usedOnPage   = offsetFromShellTop - (pageIndex * usableH);
+            var shellRect  = shell.getBoundingClientRect();
+            var spacerRect = spacer.getBoundingClientRect();
+            var footerH    = footer.getBoundingClientRect().height;
 
-            // How many px are left on that page after the spacer?
-            var remaining    = usableH - usedOnPage;
+            // The shell has padding:12mm on screen but padding-bottom:0 in @media print.
+            // The spacer height we set is consumed in screen layout, but the browser
+            // renders the final print using print CSS where that bottom padding is gone.
+            // Subtract the screen shell bottom-padding so the spacer doesn't overshoot.
+            var shellBottomPadPx = parseFloat(getComputedStyle(shell).paddingBottom) || 0;
 
-            if (remaining >= footerH + 4) {
-                // Footer fits on this page — push it to the very bottom
-                spacer.style.height = (remaining - footerH) + 'px';
+            // Distance from shell top to the spacer (natural layout, no added height)
+            var offsetFromShellTop = spacerRect.top - shellRect.top;
+
+            // Determine which page the spacer falls on by accumulating page heights
+            var pageIndex   = 0;
+            var accumulated = usableH0;
+            while (offsetFromShellTop >= accumulated) {
+                pageIndex++;
+                accumulated += usableHN;
+            }
+
+            // usableH for the page the spacer is on
+            var usableH    = pageIndex === 0 ? usableH0 : usableHN;
+
+            // Start of the current page (in shell-content coordinates)
+            var pageStart  = pageIndex === 0
+                ? 0
+                : usableH0 + (pageIndex - 1) * usableHN;
+
+            // How much of that page is already consumed above the spacer
+            var usedOnPage = offsetFromShellTop - pageStart;
+
+            // How much room is left on this page after the spacer.
+            // Subtract shell screen bottom-padding because it disappears in @media print,
+            // so it must not count as available space for content.
+            var remaining  = usableH - usedOnPage - shellBottomPadPx;
+            if (remaining < 0) remaining = 0;
+
+            if (remaining >= footerH) {
+                // Footer fits — just fill the gap so footer sits at the page bottom
+                var gap = remaining - footerH;
+                spacer.style.height = (gap > 0 ? gap : 0) + 'px';
             } else {
-                // Footer doesn't fit — let it flow to the next page naturally,
-                // no spacer needed (break-inside:avoid keeps it whole)
-                spacer.style.height = '0px';
+                // Footer does not fit; push it to the next page and bottom-align it
+                var spaceOnNextPage = usableHN - footerH;
+                if (spaceOnNextPage < 0) spaceOnNextPage = 0;
+                spacer.style.height = (remaining + spaceOnNextPage) + 'px';
             }
         } catch (e) {
             // silently fall back — footer flows naturally after the table

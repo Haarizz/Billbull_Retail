@@ -46,6 +46,7 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import {
     getAllQuotations,
     getQuotationsPage,
+    getQuotationStats,
     saveQuotation,
     updateQuotationStatus,
     createRevision,
@@ -114,6 +115,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import KpiCards from '../../components/common/KpiCards';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -451,6 +453,8 @@ const Quotations = () => {
     const [listPage, setListPage] = useState(0);
     const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [isListLoading, setIsListLoading] = useState(false);
+    const [qtnStats, setQtnStats] = useState(null);
+    const [isStatsLoading, setIsStatsLoading] = useState(false);
 
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
@@ -952,6 +956,7 @@ const Quotations = () => {
 
             // List uses paginated endpoint; see fetchQuotationsList + effect below.
             await fetchQuotationsList();
+            fetchQtnStats();
 
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
@@ -997,6 +1002,18 @@ const Quotations = () => {
             console.error('Error fetching quotations page:', err);
         } finally {
             setIsListLoading(false);
+        }
+    };
+
+    const fetchQtnStats = async () => {
+        setIsStatsLoading(true);
+        try {
+            const data = await getQuotationStats();
+            setQtnStats(data);
+        } catch (err) {
+            console.error('Failed to load quotation stats', err);
+        } finally {
+            setIsStatsLoading(false);
         }
     };
 
@@ -2810,6 +2827,50 @@ const Quotations = () => {
 
                 {/* ======================= VIEW: LIST ======================= */}
                 {activeTab === 'list' && (
+                    <div>
+                    <KpiCards
+                        loading={isStatsLoading}
+                        cards={[
+                            {
+                                label: 'This Month Quotations',
+                                value: qtnStats?.thisMonthCount ?? '—',
+                                sub: `${qtnStats?.openQuotations ?? 0} still open`,
+                                icon: <FileText size={18} />,
+                                iconBg: 'bg-yellow-100',
+                                iconColor: 'text-yellow-600',
+                                accent: 'border-l-yellow-400',
+                            },
+                            {
+                                label: 'This Month Value',
+                                value: qtnStats?.thisMonthValue != null
+                                    ? `${companyCurrencySymbol} ${Number(qtnStats.thisMonthValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    : '—',
+                                sub: 'Total quoted amount',
+                                icon: <ShoppingCart size={18} />,
+                                iconBg: 'bg-emerald-100',
+                                iconColor: 'text-emerald-600',
+                                accent: 'border-l-emerald-400',
+                            },
+                            {
+                                label: 'Converted',
+                                value: qtnStats?.convertedCount ?? '—',
+                                sub: `${qtnStats?.conversionRate ?? 0}% conversion rate`,
+                                icon: <CheckCircle2 size={18} />,
+                                iconBg: 'bg-blue-100',
+                                iconColor: 'text-blue-600',
+                                accent: 'border-l-blue-400',
+                            },
+                            {
+                                label: 'Open Quotations',
+                                value: qtnStats?.openQuotations ?? '—',
+                                sub: 'Draft + approved',
+                                icon: <AlertCircle size={18} />,
+                                iconBg: 'bg-orange-100',
+                                iconColor: 'text-orange-500',
+                                accent: 'border-l-orange-400',
+                            },
+                        ]}
+                    />
                     <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm p-4">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
@@ -3134,6 +3195,7 @@ const Quotations = () => {
                             loading={isListLoading}
                             onPageChange={setListPage}
                         />
+                    </div>
                     </div>
                 )}
 

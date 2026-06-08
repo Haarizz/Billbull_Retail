@@ -71,7 +71,7 @@ const BranchSelector = () => {
                 title="Switch active branch"
             >
                 <Building2 size={14} />
-                <span style={{ fontWeight: 600, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span title={triggerLabel} style={{ fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {triggerLabel}
                 </span>
                 <ChevronDown size={14} style={{ opacity: 0.7 }} />
@@ -102,9 +102,9 @@ const BranchSelector = () => {
                                 onClick={() => handleSelect(branch.id)}
                                 style={itemStyle(selected)}
                             >
-                                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                    <Building2 size={14} />
-                                    <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                    <Building2 size={14} style={{ flexShrink: 0 }} />
+                                    <span title={branch.name} style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                                         {branch.name}
                                     </span>
                                     {branch.code && <span style={{ opacity: 0.6, fontSize: 11 }}>· {branch.code}</span>}
@@ -136,6 +136,8 @@ const triggerStyle = (isAll) => ({
     color: '#1E1E1E',
     cursor: 'pointer',
     transition: 'all 0.15s',
+    minWidth: 0,
+    maxWidth: 220,
 });
 
 const staticChip = (isHq) => ({
@@ -153,14 +155,14 @@ const staticChip = (isHq) => ({
 const dropdownStyle = {
     position: 'absolute',
     top: 'calc(100% + 6px)',
-    right: 0,
-    minWidth: 240,
+    left: 0,
+    width: 260,
     background: '#FFFFFF',
     border: '1px solid #E2E8F0',
     borderRadius: 10,
-    boxShadow: '0 10px 25px rgba(0,0,0,0.08)',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.12)',
     padding: 4,
-    zIndex: 100,
+    zIndex: 1000,
     maxHeight: 320,
     overflowY: 'auto',
 };
@@ -170,6 +172,7 @@ const itemStyle = (selected) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
+    minWidth: 0,
     padding: '8px 10px',
     border: 'none',
     background: selected ? '#FFF8E7' : 'transparent',
@@ -178,6 +181,8 @@ const itemStyle = (selected) => ({
     cursor: 'pointer',
     borderRadius: 6,
     textAlign: 'left',
+    overflow: 'hidden',
+    boxSizing: 'border-box',
 });
 
 const hqBadge = {

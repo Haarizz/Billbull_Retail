@@ -321,6 +321,25 @@ public class SalesOrderService {
     }
 
     // ----------------------------
+    // STATS
+    // ----------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        java.time.LocalDate monthStart = month.atDay(1);
+        java.time.LocalDate monthEnd = month.atEndOfMonth();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("todayOrders", orderRepo.countBetween(today, today));
+        stats.put("thisMonthOrders", orderRepo.countBetween(monthStart, monthEnd));
+        stats.put("thisMonthValue", orderRepo.sumOrderTotalBetween(monthStart, monthEnd));
+        stats.put("confirmedOrders", orderRepo.countConfirmedBetween(monthStart, monthEnd));
+        stats.put("outstandingBalance", orderRepo.sumOutstandingBalance());
+        return stats;
+    }
+
+    // ----------------------------
     // GET ALL (🔥 FIXED)
     // ----------------------------
     @Transactional(readOnly = true)

@@ -148,6 +148,29 @@ public class QuotationService {
     }
 
     // -------------------------------------------------
+    // -------------------------------------------------
+    // STATS
+    // -------------------------------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        LocalDate today = LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        LocalDate monthStart = month.atDay(1);
+        LocalDate monthEnd = month.atEndOfMonth();
+
+        long totalThisMonth = quotationRepo.countBetween(monthStart, monthEnd);
+        long convertedThisMonth = quotationRepo.countConvertedBetween(monthStart, monthEnd);
+        double conversionRate = totalThisMonth > 0 ? (convertedThisMonth * 100.0 / totalThisMonth) : 0.0;
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("thisMonthCount", totalThisMonth);
+        stats.put("thisMonthValue", quotationRepo.sumTotalBetween(monthStart, monthEnd));
+        stats.put("convertedCount", convertedThisMonth);
+        stats.put("conversionRate", Math.round(conversionRate * 10.0) / 10.0);
+        stats.put("openQuotations", quotationRepo.countOpen());
+        return stats;
+    }
+
     // GET ALL
     // -------------------------------------------------
     @Transactional(readOnly = true)

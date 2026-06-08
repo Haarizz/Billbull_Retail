@@ -48,6 +48,7 @@ import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
     getSalesInvoicesPage,
+    getSalesInvoiceStats,
     saveSalesInvoice,
     getNextInvoiceNumber,
     recordInvoicePayment,
@@ -82,6 +83,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
+import KpiCards from '../../components/common/KpiCards';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
@@ -206,6 +208,8 @@ const SalesInvoice = () => {
     const [listPage, setListPage] = useState(0);
     const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [isListLoading, setIsListLoading] = useState(false);
+    const [invoiceStats, setInvoiceStats] = useState(null);
+    const [isStatsLoading, setIsStatsLoading] = useState(false);
     const [salesSettings, setSalesSettings] = useState(null);
     const invoiceAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_INVOICE');
 
@@ -453,6 +457,7 @@ const SalesInvoice = () => {
     const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalNotes, setModalNotes] = useState('');
     const [bankAccountOptions, setBankAccountOptions] = useState([]);
+    const [invoiceNotes, setInvoiceNotes] = useState('');
 
     // Stock Check Modal
     const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -981,6 +986,18 @@ const SalesInvoice = () => {
         }
     };
 
+    const fetchInvoiceStats = async () => {
+        setIsStatsLoading(true);
+        try {
+            const data = await getSalesInvoiceStats();
+            setInvoiceStats(data);
+        } catch (err) {
+            console.error("Failed to load invoice stats", err);
+        } finally {
+            setIsStatsLoading(false);
+        }
+    };
+
     // Reset to page 0 when filters change.
     useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterPayMode]);
 
@@ -990,6 +1007,12 @@ const SalesInvoice = () => {
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+
+    // Stats are month-level aggregates — fetch once on mount, not on every filter.
+    useEffect(() => {
+        fetchInvoiceStats();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Lazy-load editor data (SOs, Proformas, DNs) only when the create tab is first opened.
     useEffect(() => {
@@ -1165,6 +1188,7 @@ const SalesInvoice = () => {
         setAmountCollected(0);
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
+        setInvoiceNotes('');
         setActiveTab('create');
     };
 
@@ -1930,6 +1954,7 @@ const SalesInvoice = () => {
             salesType: salesType,
             requirePickingNote: true,
             requestedFulfillmentType: 'Picking',
+            customerNotes: invoiceNotes || '',
 
             items: items.map(i => {
                 const discountFactor = 1 - (Number(billDiscount) / 100);
@@ -2113,6 +2138,7 @@ const SalesInvoice = () => {
             setItems([createBlankInvoiceItem()]);
         }
 
+        setInvoiceNotes(invoice.customerNotes || invoice.notes || '');
         setActiveTab('create');
     };
 
@@ -2528,7 +2554,8 @@ const SalesInvoice = () => {
                 grandTotal: resolvedSummary.grandTotal,
                 currency: company?.currencySymbol || company?.currency || 'AED',
                 billDiscount: resolvedBillDiscount,
-                billDiscountAmount: resolvedSummary.billDiscountAmount,
+                billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
             },
@@ -2544,7 +2571,7 @@ const SalesInvoice = () => {
                 warehouse: printBranch.defaultWarehouseName || '',
                 deliveryTerms: '',
                 salesPerson: salesperson || '',
-                notes: ''
+                notes: invoiceNotes || ''
             }
         };
     };
@@ -2575,6 +2602,8 @@ const SalesInvoice = () => {
         paymentTerms,
         salesperson,
         shippingAddress,
+        customerNotes: invoiceNotes || '',
+        notes: invoiceNotes || '',
     });
 
     // Build the print HTML for an invoice (saved row or current-form source)
@@ -2666,7 +2695,9 @@ const SalesInvoice = () => {
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount: resolvedBillDiscount,
-                        billDiscountAmount: resolvedSummary.billDiscountAmount,
+                        // Total discount = item-level discounts + bill-level discount — matches ClassicPreview
+                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                         deliveryCharge: resolvedDeliveryCharge,
                         roundOff: resolvedRoundOff
                     },
@@ -2685,7 +2716,7 @@ const SalesInvoice = () => {
                         warehouse: printBranch.defaultWarehouseName || '',
                         deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
-                        notes: dataToPrint.notes || ''
+                        notes: dataToPrint.customerNotes || dataToPrint.notes || ''
                     }
                 };
 
@@ -3138,6 +3169,48 @@ const SalesInvoice = () => {
 
                     {/* ================= VIEW: LIST ================= */}
                     {activeTab === 'list' && (
+                        <div>
+                        <KpiCards
+                            loading={isStatsLoading}
+                            cards={[
+                                {
+                                    label: "Today's Revenue",
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.todayRevenue, company) : '—',
+                                    sub: `${invoiceStats?.todayCount ?? 0} invoices today`,
+                                    icon: <TrendingUp size={18} />,
+                                    iconBg: 'bg-yellow-100',
+                                    iconColor: 'text-yellow-600',
+                                    accent: 'border-l-yellow-400',
+                                },
+                                {
+                                    label: 'This Month Revenue',
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.thisMonthRevenue, company) : '—',
+                                    sub: `${invoiceStats?.thisMonthCount ?? 0} invoices`,
+                                    icon: <DollarSign size={18} />,
+                                    iconBg: 'bg-emerald-100',
+                                    iconColor: 'text-emerald-600',
+                                    accent: 'border-l-emerald-400',
+                                },
+                                {
+                                    label: 'Outstanding AR',
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.outstandingBalance, company) : '—',
+                                    sub: 'Unpaid balances',
+                                    icon: <CreditCard size={18} />,
+                                    iconBg: 'bg-red-100',
+                                    iconColor: 'text-red-500',
+                                    accent: 'border-l-red-400',
+                                },
+                                {
+                                    label: 'Invoices This Month',
+                                    value: invoiceStats?.thisMonthCount ?? '—',
+                                    sub: 'Total issued',
+                                    icon: <Receipt size={18} />,
+                                    iconBg: 'bg-blue-100',
+                                    iconColor: 'text-blue-500',
+                                    accent: 'border-l-blue-400',
+                                },
+                            ]}
+                        />
                         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
@@ -3322,6 +3395,7 @@ const SalesInvoice = () => {
                                 loading={isListLoading}
                                 onPageChange={setListPage}
                             />
+                        </div>
                         </div>
                     )}
 
@@ -3943,7 +4017,17 @@ const SalesInvoice = () => {
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                            <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="Thank you for your business!"></textarea>
+                                            <div>
+                                                <label className="block text-xs text-slate-500 mb-1">Customer Notes (prints on invoice)</label>
+                                                <textarea
+                                                    rows="2"
+                                                    readOnly={isReadOnlyInvoice}
+                                                    value={invoiceNotes}
+                                                    onChange={(e) => setInvoiceNotes(e.target.value)}
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500"
+                                                    placeholder="Thank you for your business!"
+                                                />
+                                            </div>
                                             <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
                                         </div>
                                     </div>

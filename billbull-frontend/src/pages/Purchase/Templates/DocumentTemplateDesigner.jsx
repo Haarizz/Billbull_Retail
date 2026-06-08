@@ -276,7 +276,7 @@ function ClassicPreview({ s, currencyConfig }) {
       s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms]
     ].filter(Boolean);
     if (!metaItems.length) return null;
-    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", alignSelf: "flex-end", paddingBottom: 2 }}>
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", paddingTop: 64, paddingBottom: 2 }}>
               {metaItems.map(([label, val], i) => <div key={i}>
                   <p style={{ margin: 0, fontSize: `${f - 1}px`, color: "#999", fontWeight: 500 }}>{label}</p>
                   <p style={{ margin: "1px 0 0", fontSize: `${f}px`, fontWeight: 700, color: "#1a1a2e" }}>{val}</p>
