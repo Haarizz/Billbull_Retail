@@ -1,11 +1,13 @@
 package com.billbull.backend.purchase.vendor;
 
 import java.math.BigDecimal;
-
+import java.util.List;
 
 public class VendorRequest {
 
     private String name;
+    private String branch;
+    private List<String> allocatedBranches;
     private String status;
     private String vendorGroup;
     private String vendorType;
@@ -223,4 +225,8 @@ public class VendorRequest {
     public void setSwiftCode(String swiftCode) { this.swiftCode = swiftCode; }
     public String getBeneficiaryName() { return beneficiaryName; }
     public void setBeneficiaryName(String beneficiaryName) { this.beneficiaryName = beneficiaryName; }
+    public String getBranch() { return branch; }
+    public void setBranch(String branch) { this.branch = branch; }
+    public List<String> getAllocatedBranches() { return allocatedBranches; }
+    public void setAllocatedBranches(List<String> allocatedBranches) { this.allocatedBranches = allocatedBranches; }
 }

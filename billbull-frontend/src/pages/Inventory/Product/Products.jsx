@@ -38,25 +38,29 @@ import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
-import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
 import { useBranch } from '../../../context/BranchContext';
+import { getCompanyProfile } from '../../../api/companyProfileApi';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
+// pdfWidth values are in jsPDF points and are tuned to fit all columns
+// on a single A4 landscape page (available width ≈ 798pt after margins).
 const PRODUCT_COLUMNS = [
-  { header: 'S.No.', key: 'sNo', width: 8 },
-  { header: 'Photo', key: 'image', width: 12, type: 'image', imageWidth: 48, imageHeight: 48 },
-  { header: 'Product', key: 'name', width: 30 },
-  { header: 'Item Description', key: 'description', width: 35 },
-  { header: 'Code', key: 'code', width: 15 },
-  { header: 'SKU', key: 'sku', width: 15 },
-  { header: 'Brand', key: 'brandName', width: 15 },
-  { header: 'Department', key: 'departmentName', width: 20 },
-  { header: 'Cost', key: 'cost', width: 12 },
-  { header: 'Retail Price', key: 'retailPrice', width: 15 },
-  { header: 'Status', key: 'status', width: 12 }
+  { header: 'S.No.',           key: 'sNo',            width: 8,  pdfWidth: 42  },
+  { header: 'Photo',           key: 'image',          width: 12, type: 'image', imageWidth: 32, imageHeight: 32 },
+  { header: 'Product',         key: 'name',           width: 30, pdfWidth: 95  },
+  { header: 'Item Description',key: 'description',    width: 35, pdfWidth: 115 },
+  { header: 'Code',            key: 'code',           width: 15, pdfWidth: 55  },
+  { header: 'SKU',             key: 'sku',            width: 15, pdfWidth: 55  },
+  { header: 'Item Barcode',    key: 'barcode',        width: 22, pdfWidth: 72  },
+  { header: 'Brand',           key: 'brandName',      width: 15, pdfWidth: 58  },
+  { header: 'Department',      key: 'departmentName', width: 20, pdfWidth: 70  },
+  { header: 'Cost',            key: 'cost',           width: 12, pdfWidth: 44  },
+  { header: 'Retail Price',    key: 'retailPrice',    width: 15, pdfWidth: 55  },
+  { header: 'Status',          key: 'status',         width: 12, pdfWidth: 48  },
 ];
 
 const mapProductListItem = (d) => ({
@@ -75,6 +79,7 @@ const mapProductListItem = (d) => ({
   retailPrice: d.retailPrice ?? 0,
   image: d.image ? getImageUrl(d.image) : null,
   packings: d.packings || [],
+  barcode: d.packings?.find(p => p.barcode)?.barcode || '',
 });
 
 const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
@@ -2156,9 +2161,10 @@ const Products = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasAnyRole } = usePermissions();
-  const { activeBranchId } = useBranch();
+  const { activeBranchId, activeBranch } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
   const [currentView, setCurrentView] = useState('list');
+  const [companyProfile, setCompanyProfile] = useState(null);
   const [products, setProducts] = useState([]);
   const [brands, setBrands] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -2226,6 +2232,10 @@ const Products = () => {
     setCurrentPage(0);
     fetchProducts(0, debouncedSearch);
   }, [filterDepartment, filterBrand, activeBranchId]);
+
+  useEffect(() => {
+    getCompanyProfile().then(res => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   const fetchMasters = async () => {
     try {
@@ -2311,8 +2321,9 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = withListSerialNumbers(exportRows);
-      await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products');
+      const exportRowsWithSNo = withExportSerialNumbers(exportRows);
+      const meta = { companyProfile, branch: activeBranch?.name || '' };
+      await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products', meta);
     } catch (err) {
       console.error("Failed to export products to Excel", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");
@@ -2325,8 +2336,9 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = withListSerialNumbers(exportRows);
-      await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products');
+      const exportRowsWithSNo = withExportSerialNumbers(exportRows);
+      const meta = { companyProfile, branch: activeBranch?.name || '' };
+      await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products', meta);
     } catch (err) {
       console.error("Failed to export products to PDF", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");

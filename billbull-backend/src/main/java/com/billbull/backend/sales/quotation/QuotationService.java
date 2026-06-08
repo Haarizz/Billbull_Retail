@@ -529,6 +529,9 @@ public class QuotationService {
                     "Add at least one item before saving or approving the quotation.");
         }
 
+        com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
+        boolean allowZeroPrice = settings != null && settings.getZeroPricePolicy() == com.billbull.backend.sales.settings.ZeroPricePolicy.ALLOW;
+
         List<String> issues = new ArrayList<>();
         for (int i = 0; i < quotation.getItems().size(); i++) {
             QuotationItem item = quotation.getItems().get(i);
@@ -540,7 +543,7 @@ public class QuotationService {
             if (!isPositive(item.getQuantity())) {
                 issues.add("Line " + lineNo + ": quantity must be greater than 0.00.");
             }
-            if (!isPositive(item.getPrice())) {
+            if (!isPositive(item.getPrice()) && !allowZeroPrice) {
                 issues.add("Line " + lineNo + ": price must be greater than 0.00.");
             }
         }

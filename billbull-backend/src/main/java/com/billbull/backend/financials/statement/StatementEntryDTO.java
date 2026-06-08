@@ -17,6 +17,8 @@ public class StatementEntryDTO {
     // QA-018: narration + cross-ref shown in Customer/Vendor SoA.
     private String description;
     private String reference;
+    // Display-order priority (0 = first, 99 = last). Set during enrichment before sorting.
+    private int sortPriority = 4;
 
     public StatementEntryDTO() {
     }
@@ -134,5 +136,13 @@ public class StatementEntryDTO {
 
     public void setReference(String reference) {
         this.reference = reference;
+    }
+
+    public int getSortPriority() {
+        return sortPriority;
+    }
+
+    public void setSortPriority(int sortPriority) {
+        this.sortPriority = sortPriority;
     }
 }

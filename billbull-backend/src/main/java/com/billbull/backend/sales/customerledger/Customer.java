@@ -153,6 +153,15 @@ public class Customer {
     @JsonIgnore
     private List<CustomerDocument> documents = new ArrayList<>();
 
+    @OneToMany(
+            mappedBy = "customer",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
+    @JsonIgnore
+    private List<CustomerBranchAllocation> branchAllocations = new ArrayList<>();
+
     // =========================
     // GETTERS & SETTERS
     // =========================
@@ -279,4 +288,7 @@ public class Customer {
 
     public List<CustomerDocument> getDocuments() { return documents; }
     public void setDocuments(List<CustomerDocument> documents) { this.documents = documents; }
+
+    public List<CustomerBranchAllocation> getBranchAllocations() { return branchAllocations; }
+    public void setBranchAllocations(List<CustomerBranchAllocation> branchAllocations) { this.branchAllocations = branchAllocations; }
 }

@@ -46,6 +46,7 @@ public class CustomerDTO {
     private List<OpeningInvoice> openingInvoices;
     private List<ContactPerson> contactPersons;
     private List<CustomerDocument> documents;
+    private List<String> allocatedBranches;
 
     // Getters and Setters
     public Long getId() { return id; }
@@ -124,4 +125,6 @@ public class CustomerDTO {
     public void setContactPersons(List<ContactPerson> contactPersons) { this.contactPersons = contactPersons; }
     public List<CustomerDocument> getDocuments() { return documents; }
     public void setDocuments(List<CustomerDocument> documents) { this.documents = documents; }
+    public List<String> getAllocatedBranches() { return allocatedBranches; }
+    public void setAllocatedBranches(List<String> allocatedBranches) { this.allocatedBranches = allocatedBranches; }
 }

@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.billbull.backend.sales.invoice.SalesInvoice;
@@ -30,6 +31,18 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 public class StatementService {
 
     private static final String OPENING_BALANCE_TYPE = "OPENING_BALANCE";
+
+    // ── Display-order priorities (QA spec rows 1-9) ───────────────────────────
+    // Lower number = appears earlier in the SoA.
+    private static final int PRI_OPENING_BALANCE      = 0;  // Row 1
+    private static final int PRI_SO_ADVANCE_RECEIPT   = 1;  // Row 2 — advance received against SO
+    private static final int PRI_INVOICE              = 2;  // Row 3 — sales / purchase invoices
+    private static final int PRI_SO_ADVANCE_ADJ       = 3;  // Row 4 — SO advance applied to invoice
+    private static final int PRI_PAYMENT_RECEIPT      = 4;  // Row 5 — payment received against invoice
+    private static final int PRI_GENERAL_ADVANCE      = 5;  // Row 6 — advance not linked to SO/invoice
+    private static final int PRI_RETURN_CREDIT        = 6;  // Row 7 — sales return / credit note
+    private static final int PRI_REFUND               = 7;  // Row 8 — refund paid/received
+    private static final int PRI_DEFAULT              = 4;  // Fallback (same slot as payment receipts)
 
     @Autowired
     private SalesInvoiceRepository salesInvoiceRepository;
@@ -98,13 +111,21 @@ public class StatementService {
         combined.addAll(invoices);
         combined.addAll(payments);
 
-        // 3. Sort Chronologically
-        combined.sort(Comparator
-                .comparing(StatementEntryDTO::getTransactionDate)
-                .thenComparing(StatementEntryDTO::getTransactionDateTime)
-                .thenComparing(e -> e.getDocumentNo() == null ? "" : e.getDocumentNo()));
+        // 3. Enrich FIRST so sortPriority is set before we sort.
+        enrichCustomerEntries(combined);
 
-        // 4. Calculate Running Balances
+        // 4. Sort: date → type-display-priority → intra-day time → document sequence.
+        //    Opening balance always leads (priority 0, time = startOfDay−1ns).
+        combined.sort(Comparator
+                .comparing(StatementEntryDTO::getTransactionDate,
+                        Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparingInt(StatementEntryDTO::getSortPriority)
+                .thenComparing(e -> e.getTransactionDateTime() != null
+                        ? e.getTransactionDateTime()
+                        : (e.getTransactionDate() != null ? e.getTransactionDate().atStartOfDay() : LocalDateTime.MIN))
+                .thenComparing(e -> e.getDocumentNo() != null ? e.getDocumentNo() : ""));
+
+        // 5. Calculate Running Balances in display order.
         BigDecimal runningBalance = openingBalance;
         BigDecimal totalDebit = BigDecimal.ZERO;
         BigDecimal totalCredit = BigDecimal.ZERO;
@@ -125,8 +146,6 @@ public class StatementService {
             runningBalance = runningBalance.add(debit).subtract(credit);
             entry.setRunningBalance(runningBalance);
         }
-
-        enrichCustomerEntries(combined);
 
         resp.setEntries(combined);
         resp.setTotalDebit(totalDebit);
@@ -164,12 +183,25 @@ public class StatementService {
                 : receiptVoucherRepository.findByVoucherIdIn(receiptIds).stream()
                         .collect(Collectors.toMap(ReceiptVoucher::getVoucherId, rv -> rv, (a, b) -> a));
 
+        // Batch-fetch the sales invoices that receipts were raised against,
+        // so we can show the settled invoice number in the Reference column.
+        Set<Long> settledInvIds = receiptMap.values().stream()
+                .map(ReceiptVoucher::getSalesInvoiceId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        Map<Long, String> invNumberById = settledInvIds.isEmpty()
+                ? new HashMap<>()
+                : salesInvoiceRepository.findAllById(settledInvIds).stream()
+                        .collect(Collectors.toMap(SalesInvoice::getId, SalesInvoice::getInvoiceNumber, (a, b) -> a));
+
         for (StatementEntryDTO entry : entries) {
             String type = entry.getType() == null ? "" : entry.getType();
             if (OPENING_BALANCE_TYPE.equals(type)) {
+                entry.setSortPriority(PRI_OPENING_BALANCE);
                 if (entry.getDescription() == null) entry.setDescription("Opening Balance");
                 if (entry.getReference() == null) entry.setReference("Brought forward");
             } else if ("INVOICE".equals(type)) {
+                entry.setSortPriority(PRI_INVOICE);
                 SalesInvoice inv = invoiceMap.get(entry.getDocumentNo());
                 entry.setDescription("Sales Invoice"
                         + (inv != null && inv.getCustomerName() != null ? " — " + inv.getCustomerName() : ""));
@@ -184,12 +216,47 @@ public class StatementService {
                 ReceiptVoucher rv = receiptMap.get(entry.getDocumentNo());
                 entry.setDescription("Receipt"
                         + (rv != null && rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
+
+                // ── Assign display-order priority from ReceiptPurpose + linkage ──
                 if (rv != null) {
-                    entry.setReference(firstNonBlank(rv.getReference(), rv.getNotes(), rv.getPaymentMode(), "-"));
+                    com.billbull.backend.financials.receiptvoucher.ReceiptPurpose purpose = rv.getPurpose();
+                    boolean hasSO      = rv.getSalesOrderId()  != null;
+                    boolean hasInvoice = rv.getSalesInvoiceId() != null;
+
+                    if (purpose == com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.REFUND_IN) {
+                        entry.setSortPriority(PRI_REFUND);
+                        entry.setDescription("Refund Paid to Customer");
+                    } else if (purpose == com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED) {
+                        if (hasSO && hasInvoice) {
+                            // SO advance applied against a specific invoice
+                            entry.setSortPriority(PRI_SO_ADVANCE_ADJ);
+                            entry.setDescription("SO Advance Adjustment"
+                                    + (rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
+                        } else if (hasSO) {
+                            // Advance received against Sales Order, not yet applied
+                            entry.setSortPriority(PRI_SO_ADVANCE_RECEIPT);
+                            entry.setDescription("SO Advance Receipt"
+                                    + (rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
+                        } else {
+                            // General advance — no SO or invoice link
+                            entry.setSortPriority(PRI_GENERAL_ADVANCE);
+                            entry.setDescription("Advance Received"
+                                    + (rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
+                        }
+                    } else {
+                        // AGAINST_INVOICE or any other purpose → payment receipt
+                        entry.setSortPriority(PRI_PAYMENT_RECEIPT);
+                    }
+
+                    // Show settled invoice number first; fall back to user-entered reference.
+                    String settledInvNo = hasInvoice ? invNumberById.get(rv.getSalesInvoiceId()) : null;
+                    entry.setReference(firstNonBlank(settledInvNo, rv.getReference(), rv.getNotes(), rv.getPaymentMode(), "-"));
                 } else {
+                    entry.setSortPriority(PRI_DEFAULT);
                     entry.setReference("-");
                 }
             } else {
+                entry.setSortPriority(PRI_DEFAULT);
                 if (entry.getDescription() == null) entry.setDescription(prettyType(type));
                 if (entry.getReference() == null) entry.setReference("-");
             }
@@ -312,13 +379,20 @@ public class StatementService {
         combined.addAll(invoices);
         combined.addAll(payments);
 
-        // 3. Sort Chronologically
-        combined.sort(Comparator
-                .comparing(StatementEntryDTO::getTransactionDate)
-                .thenComparing(StatementEntryDTO::getTransactionDateTime)
-                .thenComparing(e -> e.getDocumentNo() == null ? "" : e.getDocumentNo()));
+        // 3. Enrich FIRST so sortPriority is set before we sort.
+        enrichVendorEntries(combined);
 
-        // 4. Calculate Running Balances
+        // 4. Sort: date → type-display-priority → intra-day time → document sequence.
+        combined.sort(Comparator
+                .comparing(StatementEntryDTO::getTransactionDate,
+                        Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparingInt(StatementEntryDTO::getSortPriority)
+                .thenComparing(e -> e.getTransactionDateTime() != null
+                        ? e.getTransactionDateTime()
+                        : (e.getTransactionDate() != null ? e.getTransactionDate().atStartOfDay() : LocalDateTime.MIN))
+                .thenComparing(e -> e.getDocumentNo() != null ? e.getDocumentNo() : ""));
+
+        // 5. Calculate Running Balances in display order.
         BigDecimal runningBalance = openingBalance;
         BigDecimal totalDebit = BigDecimal.ZERO;
         BigDecimal totalCredit = BigDecimal.ZERO;
@@ -339,8 +413,6 @@ public class StatementService {
             runningBalance = runningBalance.add(credit).subtract(debit);
             entry.setRunningBalance(runningBalance);
         }
-
-        enrichVendorEntries(combined);
 
         resp.setEntries(combined);
         resp.setTotalDebit(totalDebit);
@@ -376,12 +448,25 @@ public class StatementService {
                 : paymentVoucherRepository.findByVoucherNumberIn(voucherNumbers).stream()
                         .collect(Collectors.toMap(PaymentVoucher::getVoucherNumber, pv -> pv, (a, b) -> a));
 
+        // Batch-fetch the purchase invoices that payments were raised against,
+        // so we can show the settled invoice number in the Reference column.
+        Set<Long> settledInvIds = voucherMap.values().stream()
+                .map(PaymentVoucher::getInvoiceId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        Map<Long, String> invNumberById = settledInvIds.isEmpty()
+                ? new HashMap<>()
+                : purchaseInvoiceRepository.findAllById(settledInvIds).stream()
+                        .collect(Collectors.toMap(PurchaseInvoice::getId, PurchaseInvoice::getInvoiceNumber, (a, b) -> a));
+
         for (StatementEntryDTO entry : entries) {
             String type = entry.getType() == null ? "" : entry.getType();
             if (OPENING_BALANCE_TYPE.equals(type)) {
+                entry.setSortPriority(PRI_OPENING_BALANCE);
                 if (entry.getDescription() == null) entry.setDescription("Opening Balance");
                 if (entry.getReference() == null) entry.setReference("Brought forward");
             } else if ("INVOICE".equals(type)) {
+                entry.setSortPriority(PRI_INVOICE);
                 PurchaseInvoice inv = invoiceMap.get(entry.getDocumentNo());
                 entry.setDescription("Purchase Invoice"
                         + (inv != null && inv.getVendorName() != null ? " — " + inv.getVendorName() : ""));
@@ -395,12 +480,41 @@ public class StatementService {
                 PaymentVoucher pv = voucherMap.get(entry.getDocumentNo());
                 entry.setDescription("Payment Voucher"
                         + (pv != null && pv.getPaymentMode() != null ? " (" + pv.getPaymentMode() + ")" : ""));
+
+                // ── Assign display-order priority from PaymentVoucher linkage ──
                 if (pv != null) {
-                    entry.setReference(firstNonBlank(pv.getReferenceNumber(), pv.getNotes(), "-"));
+                    boolean hasInvoice = pv.getInvoiceId() != null;
+                    boolean hasLpo     = pv.getLpoId()     != null;
+
+                    if (hasLpo && !hasInvoice) {
+                        // Advance paid against LPO, not yet applied to a purchase invoice
+                        entry.setSortPriority(PRI_SO_ADVANCE_RECEIPT);
+                        entry.setDescription("LPO Advance Payment"
+                                + (pv.getPaymentMode() != null ? " (" + pv.getPaymentMode() + ")" : ""));
+                    } else if (hasLpo && hasInvoice) {
+                        // LPO advance applied against a specific purchase invoice
+                        entry.setSortPriority(PRI_SO_ADVANCE_ADJ);
+                        entry.setDescription("LPO Advance Adjustment"
+                                + (pv.getPaymentMode() != null ? " (" + pv.getPaymentMode() + ")" : ""));
+                    } else if (hasInvoice) {
+                        // Direct payment against a purchase invoice
+                        entry.setSortPriority(PRI_PAYMENT_RECEIPT);
+                    } else {
+                        // General / on-account payment (no invoice or LPO link)
+                        entry.setSortPriority(PRI_GENERAL_ADVANCE);
+                        entry.setDescription("General Payment"
+                                + (pv.getPaymentMode() != null ? " (" + pv.getPaymentMode() + ")" : ""));
+                    }
+
+                    // Show settled invoice number first; fall back to user reference.
+                    String settledInvNo = hasInvoice ? invNumberById.get(pv.getInvoiceId()) : null;
+                    entry.setReference(firstNonBlank(settledInvNo, pv.getReferenceNumber(), pv.getNotes(), "-"));
                 } else {
+                    entry.setSortPriority(PRI_DEFAULT);
                     entry.setReference("-");
                 }
             } else {
+                entry.setSortPriority(PRI_DEFAULT);
                 if (entry.getDescription() == null) entry.setDescription(prettyType(type));
                 if (entry.getReference() == null) entry.setReference("-");
             }

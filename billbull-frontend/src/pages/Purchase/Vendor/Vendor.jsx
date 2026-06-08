@@ -17,7 +17,7 @@ import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
-import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
 import {
@@ -1933,20 +1933,20 @@ const CreditorsSummaryView = ({ vendors = [] }) => {
 // --- MAIN WRAPPER ---
 const Vendor = () => {
   const [view, setView] = useState("list");
-  // FIX: Vendors are now empty initially and loaded via API
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState(null);
+  const { activeBranch } = useBranch();
 
-  // FIX: Load vendors from API on mount
+  // Load vendors on mount and when active branch changes (BBQA52-024)
   useEffect(() => {
     loadVendors();
-  }, []);
+  }, [activeBranch?.id]);
 
   const loadVendors = async () => {
     try {
       setLoading(true);
-      const data = await getVendors();
+      const data = await getVendors(activeBranch?.name);
       setVendors(data);
     } catch (e) {
       console.error("Failed to load vendors", e);
@@ -2123,14 +2123,14 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(withListSerialNumbers(filteredVendors).map((vendor) => ({
+    exportToExcel(withExportSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(withListSerialNumbers(filteredVendors).map((vendor) => ({
+    exportToPDF(withExportSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');

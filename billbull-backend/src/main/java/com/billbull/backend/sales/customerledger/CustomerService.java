@@ -8,11 +8,15 @@ import org.springframework.transaction.annotation.Transactional;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class CustomerService {
@@ -35,19 +39,41 @@ public class CustomerService {
     @Autowired(required = false)
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private BranchRepository branchRepository;
+
     // =========================
     // GET ALL CUSTOMERS
-    // QA-028: force-initialise savedAddresses while the JPA session is open
-    // so the transaction-page customer picker can render the multi-address
-    // dropdown without an extra detail fetch per row.
+    // QA-028: force-initialise savedAddresses while the JPA session is open.
+    // BBQA52-024: optional branchName filter — customers with no allocations
+    // are visible everywhere (backwards compat for legacy/unallocated records).
     // =========================
     @Transactional(readOnly = true)
     public List<Customer> getAllCustomers() {
+        return getAllCustomers(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Customer> getAllCustomers(String branchName) {
         List<Customer> customers = repository.findAll();
+        boolean filterByBranch = branchName != null && !branchName.isBlank();
         for (Customer customer : customers) {
             customer.getSavedAddresses().size();
+            if (filterByBranch) {
+                customer.getBranchAllocations().size();
+            }
         }
-        return customers;
+        if (!filterByBranch) {
+            return customers;
+        }
+        final String branch = branchName.trim();
+        return customers.stream()
+                .filter(c -> {
+                    if (c.getBranchAllocations().isEmpty()) return true;
+                    return c.getBranchAllocations().stream()
+                            .anyMatch(a -> branch.equalsIgnoreCase(a.getBranch().getName()));
+                })
+                .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -73,13 +99,21 @@ public class CustomerService {
         CustomerDTO dto = new CustomerDTO();
         BeanUtils.copyProperties(customer, dto);
         dto.setGroup(customer.getGroupType());
-        // Force-initialize lazy collections by copying into plain ArrayLists while
-        // the session is still open. Without this, Jackson serialization after the
-        // transaction closes would throw LazyInitializationException (open-in-view=false).
+        // Force-initialize lazy collections while session is still open.
         dto.setSavedAddresses(new ArrayList<>(customer.getSavedAddresses()));
         dto.setOpeningInvoices(new ArrayList<>(customer.getOpeningInvoices()));
         dto.setContactPersons(new ArrayList<>(customer.getContactPersons()));
         dto.setDocuments(new ArrayList<>(customer.getDocuments()));
+        // BBQA52-023: load branch allocations
+        customer.getBranchAllocations().size();
+        List<String> allocBranches = customer.getBranchAllocations().stream()
+                .map(a -> a.getBranch().getName())
+                .collect(Collectors.toList());
+        dto.setAllocatedBranches(allocBranches);
+        // Populate branch name from branchEntity FK if set; fall back to legacy string
+        if (customer.getBranchEntity() != null) {
+            dto.setBranch(customer.getBranchEntity().getName());
+        }
         return dto;
     }
 
@@ -288,6 +322,31 @@ public class CustomerService {
             for (CustomerDocument doc : dto.getDocuments()) {
                 doc.setCustomer(customer);
                 customer.getDocuments().add(doc);
+            }
+        }
+
+        // -------------------------
+        // BBQA52-023: Branch Allocations
+        // -------------------------
+        if (dto.getBranch() != null || dto.getAllocatedBranches() != null) {
+            customer.getBranchAllocations().size(); // force-init before clear
+            customer.getBranchAllocations().clear();
+            Set<String> names = new LinkedHashSet<>();
+            if (dto.getBranch() != null && !dto.getBranch().isBlank()) names.add(dto.getBranch());
+            if (dto.getAllocatedBranches() != null) names.addAll(dto.getAllocatedBranches());
+            final String defaultBranch = dto.getBranch();
+            for (String name : names) {
+                branchRepository.findByNameIgnoreCase(name).ifPresent(b -> {
+                    CustomerBranchAllocation alloc = new CustomerBranchAllocation();
+                    alloc.setCustomer(customer);
+                    alloc.setBranch(b);
+                    alloc.setDefault(name.equals(defaultBranch));
+                    customer.getBranchAllocations().add(alloc);
+                    if (name.equals(defaultBranch)) {
+                        customer.setBranchEntity(b);
+                        customer.setBranch(name);
+                    }
+                });
             }
         }
 
