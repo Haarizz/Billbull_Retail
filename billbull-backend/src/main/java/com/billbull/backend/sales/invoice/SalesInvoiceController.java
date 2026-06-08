@@ -66,6 +66,12 @@ public class SalesInvoiceController {
         return service.getAll();
     }
 
+    @GetMapping("/stats")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> getStats() {
+        return service.getStats();
+    }
+
     @GetMapping("/page")
     @PreAuthorize("isAuthenticated()")
     public com.billbull.backend.util.PageResponse<SalesInvoice> getPage(

@@ -93,6 +93,11 @@ public class SalesOrderController {
         return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
     }
 
+    @GetMapping("/stats")
+    public Map<String, Object> getStats() {
+        return service.getStats();
+    }
+
     @GetMapping("/next-number")
     public Map<String, String> getNextNumber() {
         return Map.of("soNumber", service.generateSalesOrderNumber());

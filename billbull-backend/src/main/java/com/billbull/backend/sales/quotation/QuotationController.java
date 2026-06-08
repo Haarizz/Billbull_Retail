@@ -63,6 +63,11 @@ public class QuotationController {
         return ResponseEntity.ok(service.getAllQuotations());
     }
 
+    @GetMapping("/stats")
+    public ResponseEntity<Map<String, Object>> getStats() {
+        return ResponseEntity.ok(service.getStats());
+    }
+
     @GetMapping("/page")
     public ResponseEntity<com.billbull.backend.util.PageResponse<Quotation>> getPage(
             @RequestParam(defaultValue = "0") int page,

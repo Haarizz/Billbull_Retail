@@ -585,6 +585,31 @@ public class SalesInvoiceService {
     }
 
     // ----------------------------
+    // ----------------------------
+    // STATS
+    // ----------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        LocalDate today = LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        LocalDate monthStart = month.atDay(1);
+        LocalDate monthEnd = month.atEndOfMonth();
+
+        Double todayRevenue = invoiceRepo.sumRevenueBetween(today, today);
+        Double monthRevenue = invoiceRepo.sumRevenueBetween(monthStart, monthEnd);
+        long monthCount = invoiceRepo.countBetween(monthStart, monthEnd);
+        long todayCount = invoiceRepo.countBetween(today, today);
+        Double outstanding = invoiceRepo.sumOutstandingBalance();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("todayRevenue", todayRevenue != null ? todayRevenue : 0.0);
+        stats.put("todayCount", todayCount);
+        stats.put("thisMonthRevenue", monthRevenue != null ? monthRevenue : 0.0);
+        stats.put("thisMonthCount", monthCount);
+        stats.put("outstandingBalance", outstanding != null ? outstanding : 0.0);
+        return stats;
+    }
+
     // GET ALL
     // ----------------------------
     @Transactional(readOnly = true)
