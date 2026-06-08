@@ -18,8 +18,9 @@ import {
 } from './inventoryReportsApi';
 
 const CACHE_TTL_MS = 120000;
-const LS_CACHE_KEY = (timeRange) => `bb_dash_v1_${timeRange}`;
-const LS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_VERSION = 'v3';
+const LS_CACHE_KEY = (timeRange) => `bb_dash_${CACHE_VERSION}_${timeRange}`;
+const LS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const readLocalStorageCache = (timeRange) => {
     try {
@@ -81,6 +82,17 @@ const transformBackendDashboard = (backend, timeRange) => {
         time: formatRelativeTime(parseDate(t.date))
     }));
 
+    // Top products: array of { code, name, department, qtySold, revenue }
+    const topProducts = (backend.topProducts ?? []).map((p, i) => ({
+        id: p.code ?? String(i),
+        sku: p.code ?? '',
+        name: p.name ?? p.code ?? 'Unknown',
+        department: p.department ?? 'Uncategorized',
+        sold: p.qtySold ?? 0,
+        revenue: p.revenue ?? 0,
+        trend: (p.revenue ?? 0) > 0 ? 'up' : 'stable',
+    }));
+
     const sm = backend.salesMetrics ?? {};
     const pm = backend.purchaseMetrics ?? {};
     const hm = backend.hrMetrics ?? {};
@@ -92,6 +104,12 @@ const transformBackendDashboard = (backend, timeRange) => {
             ...empty.sales,
             totalSales: sm.totalRevenue ?? 0,
             invoiceCount: sm.invoiceCount ?? 0,
+        },
+        salesMetrics: {
+            totalRevenue: sm.totalRevenue ?? 0,
+            invoiceCount: sm.invoiceCount ?? 0,
+            outstanding: sm.outstanding ?? 0,
+            customerCount: sm.customerCount ?? 0,
         },
         financial: {
             ...empty.financial,
@@ -105,13 +123,27 @@ const transformBackendDashboard = (backend, timeRange) => {
             ...empty.purchase,
             pendingLPOs: pm.pendingLpos ?? 0,
             lpoCount: pm.totalLpos ?? 0,
+            grnCount: pm.grnCount ?? 0,
+            totalPurchases: pm.totalPurchaseValue ?? 0,
         },
         inventory: {
             ...empty.inventory,
             totalProducts: im.totalProducts ?? 0,
+            activeProducts: im.activeProducts ?? im.totalProducts ?? 0,
             lowStockCount: im.lowStockCount ?? 0,
+            outOfStockCount: im.outOfStockCount ?? 0,
+            stockValueCost: im.stockValueCost ?? 0,
+            stockValueRetail: im.stockValueCost ?? 0,
+            lowStockProducts: (im.lowStockProducts ?? []).map((p) => ({
+                productId: p.productId ?? p.id,
+                sku: p.sku ?? p.code ?? '',
+                item: p.name ?? p.productName ?? '',
+                onHand: p.onHand ?? p.currentStock ?? 0,
+                lastSold: p.lastSold ?? null,
+            })),
         },
         transactions,
+        topProducts,
         paymentBreakdown: {
             ...breakdown,
             total: payTotal,
@@ -217,31 +249,60 @@ const parseDate = (...values) => {
 
 const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
-const filterByDateRange = (items, getDate, range) => {
+const endOfDayExclusive = (date) => {
+    const end = startOfDay(date);
+    end.setDate(end.getDate() + 1);
+    return end;
+};
+
+const resolveDateBounds = (range, filters = {}) => {
     const now = new Date();
     const today = startOfDay(now);
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     const weekStart = new Date(today);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+
+    switch (range) {
+        case 'Today':
+            return { start: today, end: tomorrow };
+        case 'Yesterday':
+            return { start: yesterday, end: today };
+        case 'This Week':
+            return { start: weekStart, end: tomorrow };
+        case 'This Month':
+            return { start: monthStart, end: tomorrow };
+        case 'Last Month':
+            return { start: lastMonthStart, end: monthStart };
+        case 'This Year':
+            return { start: yearStart, end: tomorrow };
+        case 'Custom': {
+            const parsedStart = filters.fromDate ? parseDate(filters.fromDate) : null;
+            const parsedEnd = filters.toDate ? parseDate(filters.toDate) : null;
+            const start = parsedStart ? startOfDay(parsedStart) : null;
+            const end = parsedEnd ? endOfDayExclusive(parsedEnd) : null;
+            return { start, end };
+        }
+        default:
+            return { start: null, end: null };
+    }
+};
+
+const filterByDateRange = (items, getDate, range, filters = {}) => {
+    const { start, end } = resolveDateBounds(range, filters);
+    if (!start && !end) return asArray(items);
 
     return asArray(items).filter((item) => {
         const itemDate = getDate(item);
-        // For date-specific ranges, exclude items without a parseable date.
-        // For "All Time" (default), include everything regardless of whether a date is set.
-        switch (range) {
-            case 'Today':
-                return itemDate ? itemDate >= today : false;
-            case 'Yesterday':
-                return itemDate ? (itemDate >= yesterday && itemDate < today) : false;
-            case 'This Week':
-                return itemDate ? itemDate >= weekStart : false;
-            case 'This Month':
-                return itemDate ? itemDate >= monthStart : false;
-            default:
-                return true;
-        }
+        if (!itemDate) return false;
+        if (start && itemDate < start) return false;
+        if (end && itemDate >= end) return false;
+        return true;
     });
 };
 
@@ -258,6 +319,8 @@ const filterPreviousPeriod = (items, getDate, range) => {
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const prevYearStart = new Date(now.getFullYear() - 1, 0, 1);
 
     return asArray(items).filter((item) => {
         const itemDate = getDate(item);
@@ -267,6 +330,7 @@ const filterPreviousPeriod = (items, getDate, range) => {
             case 'Yesterday':  return itemDate >= dayBefore && itemDate < yesterday;
             case 'This Week':  return itemDate >= prevWeekStart && itemDate < weekStart;
             case 'This Month': return itemDate >= prevMonthStart && itemDate < monthStart;
+            case 'This Year':  return itemDate >= prevYearStart && itemDate < yearStart;
             default: return false;
         }
     });
@@ -467,6 +531,100 @@ const getInvoiceBalance = (invoice) => toNumber(invoice?.balance, invoice?.balan
 const getItemRevenue = (item) => toNumber(item?.netAmount, item?.total, item?.lineTotal, item?.grossAmount, toNumber(item?.quantity) * toNumber(item?.price));
 const getItemQuantity = (item) => toNumber(item?.quantity, item?.qty);
 
+const normalizeDashboardFilters = (filters = {}) => ({
+    branchId: pickText(filters.branchId),
+    fromDate: pickText(filters.fromDate),
+    toDate: pickText(filters.toDate),
+    invoiceStatus: pickText(filters.invoiceStatus, 'all').toLowerCase(),
+    minAmount: pickText(filters.minAmount),
+    maxAmount: pickText(filters.maxAmount)
+});
+
+const hasDashboardFilters = (filters = {}) => Boolean(
+    filters.branchId ||
+    filters.fromDate ||
+    filters.toDate ||
+    (filters.invoiceStatus && filters.invoiceStatus !== 'all') ||
+    filters.minAmount ||
+    filters.maxAmount
+);
+
+const getFilterCacheKey = (timeRange, filters = {}) => {
+    const compact = Object.entries(filters)
+        .filter(([, value]) => value !== '' && value !== null && value !== undefined && value !== 'all')
+        .sort(([left], [right]) => left.localeCompare(right));
+    return `${timeRange}:${JSON.stringify(Object.fromEntries(compact))}`;
+};
+
+const getBranchCandidates = (item) => [
+    item?.branchId,
+    item?.branch?.id,
+    item?.branchCode,
+    item?.branchName,
+    item?.branch,
+    item?.warehouseBranchId,
+    item?.warehouse?.branchId,
+    item?.warehouse?.branch?.id,
+    item?.fromBranchId,
+    item?.toBranchId,
+    item?.outletId
+];
+
+const matchesBranch = (item, branchId) => {
+    if (!branchId || branchId === 'all' || branchId === 'ALL') return true;
+    const wanted = String(branchId).toLowerCase();
+    const candidates = getBranchCandidates(item)
+        .filter((value) => value !== null && value !== undefined && value !== '');
+    if (candidates.length === 0) return true;
+    return candidates.some((value) => String(value).toLowerCase() === wanted);
+};
+
+const matchesInvoiceStatusFilter = (invoice, statusFilter) => {
+    if (!statusFilter || statusFilter === 'all') return true;
+    const status = normalizeStatus(invoice?.status);
+    const wanted = normalizeStatus(statusFilter);
+    if (wanted === 'PAID') return ['PAID', 'POSTED'].includes(status);
+    if (wanted === 'PARTIALLY_PAID') return status === 'PARTIALLY_PAID';
+    return status === wanted;
+};
+
+const matchesAmountFilter = (invoice, minAmount, maxAmount) => {
+    const amount = getInvoiceAmount(invoice);
+    const min = Number.parseFloat(minAmount);
+    const max = Number.parseFloat(maxAmount);
+    if (Number.isFinite(min) && amount < min) return false;
+    if (Number.isFinite(max) && amount > max) return false;
+    return true;
+};
+
+const applyDashboardFilters = (datasets, filters = {}) => {
+    if (!hasDashboardFilters(filters)) return datasets;
+    const { branchId, invoiceStatus, minAmount, maxAmount } = filters;
+    const invoiceMatches = (invoice) =>
+        matchesBranch(invoice, branchId) &&
+        matchesInvoiceStatusFilter(invoice, invoiceStatus) &&
+        matchesAmountFilter(invoice, minAmount, maxAmount);
+    const branchMatches = (item) => matchesBranch(item, branchId);
+
+    return {
+        ...datasets,
+        invoices: datasets.invoices.filter(invoiceMatches),
+        orders: datasets.orders.filter(branchMatches),
+        quotations: datasets.quotations.filter(branchMatches),
+        returnsData: datasets.returnsData.filter(branchMatches),
+        expenses: datasets.expenses.filter(branchMatches),
+        lpos: datasets.lpos.filter(branchMatches),
+        grns: datasets.grns.filter(branchMatches),
+        inquiries: datasets.inquiries.filter(branchMatches),
+        accounts: datasets.accounts.filter(branchMatches),
+        transfers: datasets.transfers.filter(branchMatches),
+        products: datasets.products.filter(branchMatches),
+        lowStockReport: datasets.lowStockReport.filter(branchMatches),
+        outOfStockReport: datasets.outOfStockReport.filter(branchMatches),
+        stockValuation: datasets.stockValuation.filter(branchMatches)
+    };
+};
+
 const resolvePaymentBucket = (invoice) => {
     const paymentMode = pickText(invoice?.paymentMode, invoice?.paymentMethod, 'cash').toLowerCase();
     if (paymentMode.includes('wallet')) return 'wallet';
@@ -556,14 +714,15 @@ const loadDashboardDatasets = async () => {
     };
 };
 
-const buildSalesMetrics = (datasets, timeRange) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildSalesMetrics = (datasets, timeRange, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const filteredOrders = filterByDateRange(
         datasets.orders.filter((order) => !hasAnyStatus(order?.status, ['CANCELLED', 'VOID'])),
         getOrderDate,
-        timeRange
+        timeRange,
+        filters
     );
-    const filteredReturns = filterByDateRange(datasets.returnsData.filter(isReturnCountable), getReturnDate, timeRange);
+    const filteredReturns = filterByDateRange(datasets.returnsData.filter(isReturnCountable), getReturnDate, timeRange, filters);
 
     const totalSales = sumBy(filteredInvoices, getInvoiceAmount);
     const prevInvoices = filterPreviousPeriod(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
@@ -633,8 +792,8 @@ const buildInventoryMetrics = (datasets) => {
     };
 };
 
-const buildFinancialMetrics = (datasets, timeRange, salesMetrics) => {
-    const filteredExpenses = filterByDateRange(datasets.expenses, getExpenseDate, timeRange);
+const buildFinancialMetrics = (datasets, timeRange, salesMetrics, filters = {}) => {
+    const filteredExpenses = filterByDateRange(datasets.expenses, getExpenseDate, timeRange, filters);
     const invoicesWithBalance = datasets.invoices.filter((invoice) => isInvoiceCountable(invoice) && getInvoiceBalance(invoice) > 0);
     const payableAccounts = datasets.accounts.filter((account) => {
         const combined = [
@@ -670,9 +829,9 @@ const buildHRMetrics = (datasets) => ({
     activeEmployees: datasets.employees.filter((employee) => normalizeStatus(employee?.status) === 'ACTIVE').length
 });
 
-const buildPurchaseMetrics = (datasets, timeRange) => {
-    const filteredLPOs = filterByDateRange(datasets.lpos, getLpoDate, timeRange);
-    const filteredGRNs = filterByDateRange(datasets.grns, getGrnDate, timeRange);
+const buildPurchaseMetrics = (datasets, timeRange, filters = {}) => {
+    const filteredLPOs = filterByDateRange(datasets.lpos, getLpoDate, timeRange, filters);
+    const filteredGRNs = filterByDateRange(datasets.grns, getGrnDate, timeRange, filters);
 
     return {
         pendingLPOs: datasets.lpos.filter((lpo) => hasAnyStatus(lpo?.status ?? lpo?.approvalStatus, ['DRAFT', 'PENDING', 'PENDING_APPROVAL', 'SUBMITTED'])).length,
@@ -682,8 +841,8 @@ const buildPurchaseMetrics = (datasets, timeRange) => {
     };
 };
 
-const buildRecentTransactions = (datasets, limit = 10) => (
-    datasets.invoices
+const buildRecentTransactions = (datasets, limit = 10, timeRange = 'All Time', filters = {}) => (
+    filterByDateRange(datasets.invoices, getInvoiceDate, timeRange, filters)
         .filter(isInvoiceCountable)
         .sort((left, right) => (getInvoiceDate(right)?.getTime() ?? 0) - (getInvoiceDate(left)?.getTime() ?? 0))
         .slice(0, limit)
@@ -697,8 +856,8 @@ const buildRecentTransactions = (datasets, limit = 10) => (
         }))
 );
 
-const buildSalesTrend = (datasets, timeRange) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildSalesTrend = (datasets, timeRange, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const grouped = {};
 
     filteredInvoices.forEach((invoice) => {
@@ -748,8 +907,8 @@ const buildSalesTrendMeta = (trendData, timeRange) => {
     return { peakLabel, avgSales };
 };
 
-const buildPaymentBreakdown = (datasets, timeRange) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildPaymentBreakdown = (datasets, timeRange, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const breakdown = { cash: 0, card: 0, wallet: 0, credit: 0 };
 
     filteredInvoices.forEach((invoice) => {
@@ -769,8 +928,8 @@ const buildPaymentBreakdown = (datasets, timeRange) => {
     };
 };
 
-const buildTopDepartments = (datasets, timeRange, productLookup, limit = 4) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildTopDepartments = (datasets, timeRange, productLookup, limit = 4, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const departmentSales = new Map();
 
     filteredInvoices.forEach((invoice) => {
@@ -787,8 +946,8 @@ const buildTopDepartments = (datasets, timeRange, productLookup, limit = 4) => {
         .slice(0, limit);
 };
 
-const buildTopProducts = (datasets, timeRange, productLookup, stockLookup, limit = 5) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildTopProducts = (datasets, timeRange, productLookup, stockLookup, limit = 5, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const productSales = new Map();
 
     filteredInvoices.forEach((invoice) => {
@@ -833,8 +992,8 @@ const buildTopProducts = (datasets, timeRange, productLookup, stockLookup, limit
         .slice(0, limit);
 };
 
-const buildTopCustomers = (datasets, timeRange, limit = 5) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildTopCustomers = (datasets, timeRange, limit = 5, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const customerStats = new Map();
 
     filteredInvoices.forEach((invoice) => {
@@ -870,15 +1029,17 @@ const buildTopCustomers = (datasets, timeRange, limit = 5) => {
         .slice(0, limit);
 };
 
-const buildEmployeePerformance = (datasets, timeRange, limit = 4) => {
-    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange);
+const buildEmployeePerformance = (datasets, timeRange, limit = 4, filters = {}) => {
+    const filteredInvoices = filterByDateRange(datasets.invoices.filter(isInvoiceCountable), getInvoiceDate, timeRange, filters);
     const employeeDirectory = buildEmployeeDirectory(datasets.employees);
     const employeeStats = new Map();
     const targetByRange = {
         Today: 10000,
         Yesterday: 10000,
         'This Week': 50000,
-        'This Month': 200000
+        'This Month': 200000,
+        'Last Month': 200000,
+        'This Year': 2400000
     };
     const target = targetByRange[timeRange] ?? 10000;
 
@@ -997,7 +1158,7 @@ const buildRecentActivity = (datasets, limit = 5) => {
         }));
 };
 
-const buildDashboardSections = (datasets, timeRange) => {
+const buildDashboardSections = (datasets, timeRange, filters = {}) => {
     const productLookup = buildProductLookup(datasets.products);
     const inventoryRows = [
         ...datasets.stockValuation,
@@ -1005,23 +1166,23 @@ const buildDashboardSections = (datasets, timeRange) => {
         ...datasets.outOfStockReport
     ];
     const stockLookup = buildStockLookup(inventoryRows);
-    const sales = buildSalesMetrics(datasets, timeRange);
-    const salesTrend = buildSalesTrend(datasets, timeRange);
+    const sales = buildSalesMetrics(datasets, timeRange, filters);
+    const salesTrend = buildSalesTrend(datasets, timeRange, filters);
 
     return {
         sales,
         inventory: buildInventoryMetrics(datasets),
-        financial: buildFinancialMetrics(datasets, timeRange, sales),
+        financial: buildFinancialMetrics(datasets, timeRange, sales, filters),
         hr: buildHRMetrics(datasets),
-        purchase: buildPurchaseMetrics(datasets, timeRange),
-        transactions: buildRecentTransactions(datasets, 10),
-        paymentBreakdown: buildPaymentBreakdown(datasets, timeRange),
+        purchase: buildPurchaseMetrics(datasets, timeRange, filters),
+        transactions: buildRecentTransactions(datasets, 10, timeRange, filters),
+        paymentBreakdown: buildPaymentBreakdown(datasets, timeRange, filters),
         salesTrend,
         salesTrendMeta: buildSalesTrendMeta(salesTrend, timeRange),
-        topDepartments: buildTopDepartments(datasets, timeRange, productLookup, 4),
-        topProducts: buildTopProducts(datasets, timeRange, productLookup, stockLookup, 5),
-        topCustomers: buildTopCustomers(datasets, timeRange, 5),
-        employeePerformance: buildEmployeePerformance(datasets, timeRange, 4),
+        topDepartments: buildTopDepartments(datasets, timeRange, productLookup, 4, filters),
+        topProducts: buildTopProducts(datasets, timeRange, productLookup, stockLookup, 5, filters),
+        topCustomers: buildTopCustomers(datasets, timeRange, 5, filters),
+        employeePerformance: buildEmployeePerformance(datasets, timeRange, 4, filters),
         recentActivity: buildRecentActivity(datasets, 5)
     };
 };
@@ -1100,12 +1261,18 @@ export const getRecentActivity = async (limit = 5) => {
 };
 
 export const getDashboardData = async (timeRange = 'Today', options = {}) => {
-    const { force = false, onStale } = options;
-    const cacheKey = timeRange;
+    const { force = false, forceClient = false, onStale, filters: rawFilters = {} } = options;
+    const filters = normalizeDashboardFilters(rawFilters);
+    const filtersActive = hasDashboardFilters(filters);
+    const effectiveTimeRange = filters.fromDate || filters.toDate ? 'Custom' : timeRange;
+    const cacheKey = getFilterCacheKey(
+        forceClient ? `${effectiveTimeRange}:client` : effectiveTimeRange,
+        filters
+    );
 
     // Fire stale callback immediately so UI paints from cache while fresh data loads
     if (!force && onStale) {
-        const stale = readLocalStorageCache(timeRange);
+        const stale = readLocalStorageCache(cacheKey);
         if (stale) onStale(stale);
     }
 
@@ -1120,17 +1287,19 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
 
     const request = (async () => {
         // Fast path: single aggregated backend endpoint
-        try {
-            const backend = await fetchDashboardSummary(timeRange);
-            return transformBackendDashboard(backend, timeRange);
-        } catch (backendError) {
-            console.warn('Dashboard summary endpoint unavailable, falling back to full fetch:', backendError?.message);
+        if (!filtersActive && !forceClient) {
+            try {
+                const backend = await fetchDashboardSummary(effectiveTimeRange);
+                return transformBackendDashboard(backend, effectiveTimeRange);
+            } catch (backendError) {
+                console.warn('Dashboard summary endpoint unavailable, falling back to full fetch:', backendError?.message);
+            }
         }
 
         // Fallback: full 15-call client-side aggregation
         const emptyState = createEmptyDashboardData();
-        const datasets = await loadDashboardDatasets();
-        const dashboardSections = buildDashboardSections(datasets, timeRange);
+        const datasets = applyDashboardFilters(await loadDashboardDatasets(), filters);
+        const dashboardSections = buildDashboardSections(datasets, effectiveTimeRange, filters);
         return { ...emptyState, ...dashboardSections, lastUpdated: new Date().toISOString() };
     })();
 
@@ -1139,7 +1308,7 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
     try {
         const data = await request;
         dashboardCache.set(cacheKey, { timestamp: Date.now(), data });
-        writeLocalStorageCache(timeRange, data);
+        writeLocalStorageCache(cacheKey, data);
         return data;
     } catch (error) {
         console.error('Error fetching dashboard data:', error);

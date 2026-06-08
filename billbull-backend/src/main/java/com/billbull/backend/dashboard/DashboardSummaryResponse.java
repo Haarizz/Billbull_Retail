@@ -9,6 +9,7 @@ public class DashboardSummaryResponse {
     private List<ChartEntry> paymentBreakdown;
     private List<ChartEntry> topDepartments;
     private List<RecentTransaction> recentTransactions;
+    private List<TopProduct> topProducts;
     private PurchaseMetrics purchaseMetrics;
     private HrMetrics hrMetrics;
     private InventoryMetrics inventoryMetrics;
@@ -17,16 +18,19 @@ public class DashboardSummaryResponse {
         private double totalRevenue;
         private long invoiceCount;
         private double outstanding;
+        private long customerCount;
 
-        public SalesMetrics(double totalRevenue, long invoiceCount, double outstanding) {
+        public SalesMetrics(double totalRevenue, long invoiceCount, double outstanding, long customerCount) {
             this.totalRevenue = totalRevenue;
             this.invoiceCount = invoiceCount;
             this.outstanding = outstanding;
+            this.customerCount = customerCount;
         }
 
         public double getTotalRevenue() { return totalRevenue; }
         public long getInvoiceCount() { return invoiceCount; }
         public double getOutstanding() { return outstanding; }
+        public long getCustomerCount() { return customerCount; }
     }
 
     public static class TrendPoint {
@@ -84,17 +88,45 @@ public class DashboardSummaryResponse {
         public String getDate() { return date; }
     }
 
+    public static class TopProduct {
+        private String code;
+        private String name;
+        private String department;
+        private long qtySold;
+        private double revenue;
+
+        public TopProduct(String code, String name, String department, long qtySold, double revenue) {
+            this.code = code;
+            this.name = name;
+            this.department = department;
+            this.qtySold = qtySold;
+            this.revenue = revenue;
+        }
+
+        public String getCode() { return code; }
+        public String getName() { return name; }
+        public String getDepartment() { return department; }
+        public long getQtySold() { return qtySold; }
+        public double getRevenue() { return revenue; }
+    }
+
     public static class PurchaseMetrics {
         private long totalLpos;
         private long pendingLpos;
+        private long grnCount;
+        private double totalPurchaseValue;
 
-        public PurchaseMetrics(long totalLpos, long pendingLpos) {
+        public PurchaseMetrics(long totalLpos, long pendingLpos, long grnCount, double totalPurchaseValue) {
             this.totalLpos = totalLpos;
             this.pendingLpos = pendingLpos;
+            this.grnCount = grnCount;
+            this.totalPurchaseValue = totalPurchaseValue;
         }
 
         public long getTotalLpos() { return totalLpos; }
         public long getPendingLpos() { return pendingLpos; }
+        public long getGrnCount() { return grnCount; }
+        public double getTotalPurchaseValue() { return totalPurchaseValue; }
     }
 
     public static class HrMetrics {
@@ -110,17 +142,53 @@ public class DashboardSummaryResponse {
         public long getActiveEmployees() { return activeEmployees; }
     }
 
+    public static class LowStockProduct {
+        private long productId;
+        private String sku;
+        private String name;
+        private double onHand;
+        private String lastSold;
+
+        public LowStockProduct(long productId, String sku, String name, double onHand, String lastSold) {
+            this.productId = productId;
+            this.sku = sku;
+            this.name = name;
+            this.onHand = onHand;
+            this.lastSold = lastSold;
+        }
+
+        public long getProductId() { return productId; }
+        public String getSku() { return sku; }
+        public String getName() { return name; }
+        public double getOnHand() { return onHand; }
+        public String getLastSold() { return lastSold; }
+    }
+
     public static class InventoryMetrics {
         private long totalProducts;
+        private long activeProducts;
         private long lowStockCount;
+        private long outOfStockCount;
+        private double stockValueCost;
+        private List<LowStockProduct> lowStockProducts;
 
-        public InventoryMetrics(long totalProducts, long lowStockCount) {
+        public InventoryMetrics(long totalProducts, long activeProducts, long lowStockCount,
+                                long outOfStockCount, double stockValueCost,
+                                List<LowStockProduct> lowStockProducts) {
             this.totalProducts = totalProducts;
+            this.activeProducts = activeProducts;
             this.lowStockCount = lowStockCount;
+            this.outOfStockCount = outOfStockCount;
+            this.stockValueCost = stockValueCost;
+            this.lowStockProducts = lowStockProducts;
         }
 
         public long getTotalProducts() { return totalProducts; }
+        public long getActiveProducts() { return activeProducts; }
         public long getLowStockCount() { return lowStockCount; }
+        public long getOutOfStockCount() { return outOfStockCount; }
+        public double getStockValueCost() { return stockValueCost; }
+        public List<LowStockProduct> getLowStockProducts() { return lowStockProducts; }
     }
 
     /* ===== GETTERS & SETTERS ===== */
@@ -139,6 +207,9 @@ public class DashboardSummaryResponse {
 
     public List<RecentTransaction> getRecentTransactions() { return recentTransactions; }
     public void setRecentTransactions(List<RecentTransaction> recentTransactions) { this.recentTransactions = recentTransactions; }
+
+    public List<TopProduct> getTopProducts() { return topProducts; }
+    public void setTopProducts(List<TopProduct> topProducts) { this.topProducts = topProducts; }
 
     public PurchaseMetrics getPurchaseMetrics() { return purchaseMetrics; }
     public void setPurchaseMetrics(PurchaseMetrics purchaseMetrics) { this.purchaseMetrics = purchaseMetrics; }

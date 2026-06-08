@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -2369,6 +2369,7 @@ const LPOList = () => {
   const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
 
@@ -2436,6 +2437,14 @@ const LPOList = () => {
   // Initialize Data via useEffect
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Open a specific LPO by number (from dashboard search navigation)
+  useEffect(() => {
+    const lpoNumber = location.state?.lpoNumber;
+    if (!lpoNumber) return;
+    navigate(location.pathname, { replace: true, state: {} });
+    handleViewLPO({ lpoNumber });
   }, []);
 
   // Refetch when the global Branch Selector changes the active branch.

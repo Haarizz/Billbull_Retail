@@ -15,6 +15,8 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
 
     List<Lpo> findByStatus(LpoStatus status);
 
+    long countByStatus(LpoStatus status);
+
     boolean existsByIdAndStockPostedTrue(Long id);
 
     boolean existsByVendorCode(String vendorCode);

@@ -198,6 +198,8 @@ const SalesInvoice = () => {
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
     const fromDNHandled = useRef(false);
+    const directCreateHandled = useRef(false);
+    const directOpenHandled = useRef(false);
     const editorDataLoaded = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
@@ -1191,6 +1193,29 @@ const SalesInvoice = () => {
         setInvoiceNotes('');
         setActiveTab('create');
     };
+
+    useEffect(() => {
+        const shouldOpenCreate = location.state?.openCreate || location.state?.mode === 'create';
+        if (!shouldOpenCreate || directCreateHandled.current) return;
+        if (customersList.length === 0) return;
+
+        directCreateHandled.current = true;
+        handleCreateNew(location.state?.salesType || 'STANDARD_FLOW');
+        window.history.replaceState({}, document.title);
+    }, [customersList.length, location.state]);
+
+    // Open a specific invoice by ID (from dashboard search navigation)
+    useEffect(() => {
+        const targetId = location.state?.invoiceId;
+        if (!targetId || directOpenHandled.current) return;
+        if (customersList.length === 0) return;
+
+        directOpenHandled.current = true;
+        api.get(`/api/sales/invoices/${targetId}`)
+            .then(res => { handleLoadInvoice(res.data); })
+            .catch(err => console.error('Failed to open invoice', err));
+        window.history.replaceState({}, document.title);
+    }, [customersList.length, location.state]);
 
     const handleSelectCustomer = async (cust) => {
         if (isReadOnlyInvoice) return;

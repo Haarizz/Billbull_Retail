@@ -2946,9 +2946,15 @@ const PurchaseInvoices = () => {
     const fromGrn = location.state?.fromGrn;
     const fromLpo = location.state?.fromLpo;
     const draft = fromGrn || fromLpo;
+    const shouldOpenCreate = location.state?.openCreate || location.state?.mode === "create";
     if (draft) {
       // Store in ref so the tab-change effect applies it after the tab switch
       pendingDraftRef.current = mapInvoiceFromApi(draft);
+      setEditorMode("edit");
+      setActiveNavTab("editor");
+      navigate(location.pathname, { replace: true, state: {} });
+    } else if (shouldOpenCreate) {
+      setEditInvoice(null);
       setEditorMode("edit");
       setActiveNavTab("editor");
       navigate(location.pathname, { replace: true, state: {} });

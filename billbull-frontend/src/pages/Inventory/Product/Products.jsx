@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 // Import API Methods
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getImageUrl } from "../../../utils/urlUtils";
 import {
   getProductsList,
@@ -2154,6 +2154,7 @@ const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose
 
 const Products = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { hasAnyRole } = usePermissions();
   const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
@@ -2189,6 +2190,15 @@ const Products = () => {
 
   // Pagination state
   const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    const shouldOpenCreate = location.state?.openCreate || location.state?.mode === 'create';
+    if (!shouldOpenCreate) return;
+
+    setEditingProduct(null);
+    setCurrentView('add');
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.pathname, location.state, navigate]);
   const [currentPage, setCurrentPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
