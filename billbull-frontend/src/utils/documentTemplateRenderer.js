@@ -1039,6 +1039,10 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
     const currency = renderCurrencySymbolHtml(layout.currency);
+    // The dirham symbol is a raster <img>, so `color` can't tint it. Use the
+    // mask-based variant (inheritColor) for the discount row so the symbol
+    // follows the red `.amount-negative` text colour.
+    const currencyNegative = renderCurrencySymbolHtml(layout.currency, '0.85em', { inheritColor: true });
 
     const row = (label, amount, className = '') => `
             <tr class="${className}">
@@ -1067,7 +1071,7 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
         visibility.discount && discountAmount > 0 ? `
                 <tr class="amount-negative">
                     <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                    <td class="tot-currency">${currency}</td>
+                    <td class="tot-currency">${currencyNegative}</td>
                     <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
                 </tr>
             ` : '',
@@ -1855,7 +1859,7 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .grand-total-label {
         color: #888888;
-        font-weight: 600;
+        font-weight: 500;
         margin: 0 0 2px;
     }
     .grand-total-value {
@@ -1990,7 +1994,7 @@ const buildCoreStyles = () => `
     }
     .document-table.document-table-dense-3 thead th {
         font-size: 0.64em;
-        font-weight: 600;
+        font-weight: 500;
         padding: 5px 2px;
     }
     .document-shell-designer .document-table.document-table-dense-1 thead th {
@@ -2149,7 +2153,7 @@ const buildCoreStyles = () => `
         margin-top: 4px;
         color: #e11d48;
         font-size: 0.89em;
-        font-weight: 600;
+        font-weight: 500;
     }
     .summary-section {
         display: flex;
@@ -2311,6 +2315,9 @@ const buildCoreStyles = () => `
         font-weight: 700;
     }
     .amount-negative td {
+        color: #b91c1c;
+    }
+    .amount-negative .tot-currency {
         color: #b91c1c;
     }
     .signature-grid {
@@ -2710,6 +2717,9 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .content-stack > * {
                 margin-bottom: 16px;
             }
+            .content-stack > .document-footer-group {
+                margin-bottom: 0 !important;
+            }
             /* Explicitly allow page breaks inside the table and between rows */
             .table-section,
             .document-table {
@@ -2850,11 +2860,12 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             /* Footer area (totals + bank + terms + signature + stamp/QR):
                The JS spacer (injected before print) pushes it toward the
-               bottom margin of the final page.
-               break-inside:avoid keeps all footer sections together. */
+               bottom margin of the final page. break-before:page is set
+               by JS when the footer must move to the next page; the inner
+               spacer then bottom-aligns it within that page. */
             .document-footer-group {
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
+                break-inside: auto !important;
+                page-break-inside: auto !important;
             }
             /* Each atomic footer group (totals, bank/terms/notes, signature,
                stamp/QR) must never be split across pages. */
@@ -4564,60 +4575,38 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
         try {
             fitSingleLineHeaderText();
 
-            var spacer   = document.getElementById('footer-push-spacer');
-            var footer   = document.querySelector('.document-footer-group');
-            var shell    = document.querySelector('.document-shell');
-            var spacer  = document.getElementById('footer-push-spacer');
-            var footer  = document.querySelector('.document-footer-group');
-            var shell   = document.querySelector('.document-shell');
+            var spacer      = document.getElementById('footer-push-spacer');
+            var innerSpacer = document.getElementById('footer-inner-spacer');
+            var footer      = document.querySelector('.document-footer-group');
+            var shell       = document.querySelector('.document-shell');
             if (!spacer || !footer || !shell) return;
 
-            // Reset spacer so all measurements reflect natural layout
+            // Reset everything so measurements reflect natural layout
             spacer.style.height = '0px';
+            if (innerSpacer) innerSpacer.style.height = '0px';
+            footer.style.breakBefore = '';
+            footer.style.pageBreakBefore = '';
 
-            // Force a synchronous reflow after resetting spacer
-            // (getBoundingClientRect already forces reflow, but make intent explicit)
-            var _ = spacer.getBoundingClientRect();
+            var _ = spacer.getBoundingClientRect(); // force reflow
 
             var rawPageH = ${pageHeightPx};
+            var MM = 96 / 25.4;
 
-            // @page margins (mm → px at 96 dpi):
-            //   first page : top 12mm + bottom 12mm  = 24mm
-            //   continuation: top 26mm + bottom 12mm = 38mm
-            // offsetFromShellTop is measured from the shell's own top edge, which
-            // is already below the @page top margin.  So usableH must represent how
-            // many CSS-px of *shell content* fit per page — i.e. rawPageH minus only
-            // the @page top+bottom margins.  Do NOT subtract shell left/right padding
-            // here; that is already baked into the rendered positions we measure.
-            //
-            // We use the first-page margins (24 mm) for page 0 and continuation
-            // margins (38 mm) for every subsequent page.  For the spacer-fit test we
-            // care about the page the spacer is currently on, so we pick the right
-            // margin set after determining pageIndex.
-            var MM   = 96 / 25.4;
-            var page0MarginsPx = Math.round(24 * MM);   // first page  12+12 mm
-            var pageNMarginsPx = Math.round(38 * MM);   // continuation 26+12 mm
-
-            // Usable shell-content height per page
-            var usableH0 = rawPageH - page0MarginsPx;   // page 0
-            var usableHN = rawPageH - pageNMarginsPx;   // pages 1+
-            if (usableH0 < 200) { usableH0 = rawPageH * 0.82; }
-            if (usableHN < 200) { usableHN = rawPageH * 0.82; }
+            // Usable content height per print page after @page margins:
+            //   page 0  : 12mm top + 12mm bottom = 24mm margins
+            //   page 1+ : 26mm top + 12mm bottom = 38mm margins
+            var usableH0 = rawPageH - Math.round(24 * MM);
+            var usableHN = rawPageH - Math.round(38 * MM);
+            if (usableH0 < 200) usableH0 = rawPageH * 0.82;
+            if (usableHN < 200) usableHN = rawPageH * 0.82;
 
             var shellRect  = shell.getBoundingClientRect();
             var spacerRect = spacer.getBoundingClientRect();
             var footerH    = footer.getBoundingClientRect().height;
 
-            // The shell has padding:12mm on screen but padding-bottom:0 in @media print.
-            // The spacer height we set is consumed in screen layout, but the browser
-            // renders the final print using print CSS where that bottom padding is gone.
-            // Subtract the screen shell bottom-padding so the spacer doesn't overshoot.
-            var shellBottomPadPx = parseFloat(getComputedStyle(shell).paddingBottom) || 0;
-
-            // Distance from shell top to the spacer (natural layout, no added height)
             var offsetFromShellTop = spacerRect.top - shellRect.top;
 
-            // Determine which page the spacer falls on by accumulating page heights
+            // Determine which print page the spacer falls on
             var pageIndex   = 0;
             var accumulated = usableH0;
             while (offsetFromShellTop >= accumulated) {
@@ -4625,32 +4614,40 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
                 accumulated += usableHN;
             }
 
-            // usableH for the page the spacer is on
             var usableH    = pageIndex === 0 ? usableH0 : usableHN;
-
-            // Start of the current page (in shell-content coordinates)
-            var pageStart  = pageIndex === 0
-                ? 0
-                : usableH0 + (pageIndex - 1) * usableHN;
-
-            // How much of that page is already consumed above the spacer
+            var pageStart  = pageIndex === 0 ? 0 : usableH0 + (pageIndex - 1) * usableHN;
             var usedOnPage = offsetFromShellTop - pageStart;
-
-            // How much room is left on this page after the spacer.
-            // Subtract shell screen bottom-padding because it disappears in @media print,
-            // so it must not count as available space for content.
-            var remaining  = usableH - usedOnPage - shellBottomPadPx;
+            var remaining  = usableH - usedOnPage;
             if (remaining < 0) remaining = 0;
 
             if (remaining >= footerH) {
-                // Footer fits — just fill the gap so footer sits at the page bottom
+                // Footer fits on this page — bottom-align via outer spacer
                 var gap = remaining - footerH;
                 spacer.style.height = (gap > 0 ? gap : 0) + 'px';
             } else {
-                // Footer does not fit; push it to the next page and bottom-align it
-                var spaceOnNextPage = usableHN - footerH;
-                if (spaceOnNextPage < 0) spaceOnNextPage = 0;
-                spacer.style.height = (remaining + spaceOnNextPage) + 'px';
+                // Footer does not fit on this page.
+                // Use break-before:page to force it onto the next page, then
+                // use the inner spacer (inside the footer group, before the
+                // content) to bottom-align the footer on that new page.
+                // The outer spacer stays 0 — the page break handles the jump.
+                // The inner spacer only pushes content within the new page;
+                // since footer-group-atomic blocks have break-inside:avoid,
+                // they won't split even if the inner spacer height is large.
+                footer.style.breakBefore = 'page';
+                footer.style.pageBreakBefore = 'always';
+                spacer.style.height = '0px';
+                if (innerSpacer) {
+                    // The footer group is a flex column with a row-gap, so a gap
+                    // is inserted BETWEEN the inner spacer and the first footer
+                    // block. That gap is not part of footerH (which measured only
+                    // the content blocks), so innerSpacer + gap + footerH would
+                    // overshoot the page and spill a trailing blank page. Subtract
+                    // the gap (plus a small rounding buffer) so the footer bottom
+                    // still lands at the page bottom without crossing the boundary.
+                    var footerGap = parseFloat(getComputedStyle(footer).rowGap) || 0;
+                    var topGap = usableHN - footerH - footerGap - 4;
+                    innerSpacer.style.height = (topGap > 0 ? topGap : 0) + 'px';
+                }
             }
         } catch (e) {
             // silently fall back — footer flows naturally after the table
@@ -4708,6 +4705,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                     ${buildItemsTable(layout)}
                     <div class="footer-push-spacer" id="footer-push-spacer"></div>
                     <div class="document-footer-group">
+                        <div class="footer-inner-spacer" id="footer-inner-spacer"></div>
                         ${buildSummarySection(layout, renderTarget)}
                         ${buildSignatureBlock(layout)}
                         ${buildStampBlock(layout, renderTarget)}

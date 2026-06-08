@@ -104,12 +104,12 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
   .doc-title h1 { font-size: 18pt; font-weight: 800; color: #f5c742; letter-spacing: 1px; }
   .doc-title .jv-no { font-size: 10pt; font-weight: 700; color: #1e293b; margin-top: 4px; }
   .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; margin-bottom: 16px; font-size: 9pt; }
-  .meta span.label { color: #64748b; font-weight: 600; }
+  .meta span.label { color: #64748b; font-weight: 500; }
   .narration { background: #fef9ec; border: 1px solid #fde68a; border-radius: 4px; padding: 8px 12px; margin-bottom: 16px; font-size: 9.5pt; }
   .narration b { color: #92400e; }
   table { width: 100%; border-collapse: collapse; font-size: 9pt; }
   thead tr { background: #1e293b; color: #fff; }
-  thead th { padding: 7px 9px; text-align: left; font-weight: 600; white-space: nowrap; }
+  thead th { padding: 7px 9px; text-align: left; font-weight: 500; white-space: nowrap; }
   thead th.num { text-align: right; }
   tbody tr:nth-child(even) { background: #f8fafc; }
   tbody td { padding: 6px 9px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
