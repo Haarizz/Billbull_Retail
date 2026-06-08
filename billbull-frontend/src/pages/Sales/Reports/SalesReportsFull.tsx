@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -35,8 +35,8 @@ import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
 import { getSalesReportData, getSalesReportSalespersons } from "../../../api/salesReportsApi";
-import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
-import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
+import { exportToExcel } from "../../../utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { getBranches } from "../../../api/branchApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
@@ -953,6 +953,123 @@ type SalesReportPayload = {
   columns?: ReportPayloadRow[];
 };
 
+// Context that child report components subscribe to so they re-render when
+// the parent fetches fresh data (dataRevision bump).
+const DataRevisionContext = React.createContext(0);
+function useDataRevision() { return React.useContext(DataRevisionContext); }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Shared report view-model registry
+//
+// Single source of truth for "what is on screen". Every report component
+// publishes the EXACT columns / rows / totals it renders into this registry
+// via `useReportView`. Print, PDF and Excel then read the active report's
+// view-model verbatim — no recalculation, grouping or filtering happens at
+// export time, so Screen === Print === PDF === Excel by construction.
+// ──────────────────────────────────────────────────────────────────────────
+
+export type ReportColumnAlign = "left" | "right" | "center";
+
+export interface ReportColumn {
+  key: string;
+  header: string;
+  align?: ReportColumnAlign;
+  /** Excel column width hint */
+  width?: number;
+}
+
+export interface ReportSection {
+  /** Optional sub-heading printed above the section table */
+  title?: string;
+  columns: ReportColumn[];
+  /** Rows hold display-ready primitive values (already formatted strings or raw numbers) */
+  rows: ReportPayloadRow[];
+  /** Optional totals/subtotal row, keyed by column key. Printed verbatim — never recomputed. */
+  totals?: ReportPayloadRow | null;
+  /** Optional label for the first cell of the totals row when that column has no total value */
+  totalsLabel?: string;
+}
+
+export interface ReportKpi {
+  label: string;
+  value: string;
+  hint?: string;
+}
+
+export interface ReportViewModel {
+  /** Sections render in order; most reports have exactly one. */
+  sections: ReportSection[];
+  /** Headline KPI figures shown on screen, mirrored into the document header strip. */
+  kpis?: ReportKpi[];
+  /** Free-form note printed under the title (e.g. valuation method, period label). */
+  note?: string;
+}
+
+const reportViewModels = new Map<ReportId, ReportViewModel>();
+
+function setReportView(reportId: ReportId, vm: ReportViewModel | null) {
+  if (vm) reportViewModels.set(reportId, vm);
+  else reportViewModels.delete(reportId);
+}
+
+function getReportView(reportId: ReportId): ReportViewModel | null {
+  return reportViewModels.get(reportId) ?? null;
+}
+
+/**
+ * Publishes a report's on-screen view-model to the shared registry on every
+ * render. Writing during render (not in an effect) ensures the VM is current
+ * before any user-triggered export click fires.
+ */
+function useReportView(reportId: ReportId, vm: ReportViewModel) {
+  setReportView(reportId, vm);
+}
+
+/** Flattens a view-model into a single column set + row list for CSV/Excel. */
+function flattenReportView(vm: ReportViewModel | null): {
+  columns: ReportColumn[];
+  rows: ReportPayloadRow[];
+} {
+  if (!vm || !vm.sections.length) return { columns: [], rows: [] };
+  // Single-section reports export 1:1. Multi-section reports gain a leading
+  // "Section" column so every row is unambiguous in a flat sheet.
+  if (vm.sections.length === 1) {
+    const section = vm.sections[0];
+    const rows = [...section.rows];
+    if (section.totals) {
+      rows.push({
+        ...section.totals,
+        [section.columns[0].key]:
+          section.totals[section.columns[0].key] ?? section.totalsLabel ?? "TOTAL",
+      });
+    }
+    return { columns: section.columns, rows };
+  }
+  const columns: ReportColumn[] = [{ key: "__section", header: "Section", align: "left", width: 24 }];
+  const seen = new Set<string>(["__section"]);
+  vm.sections.forEach((section) =>
+    section.columns.forEach((col) => {
+      if (!seen.has(col.key)) {
+        seen.add(col.key);
+        columns.push(col);
+      }
+    })
+  );
+  const rows: ReportPayloadRow[] = [];
+  vm.sections.forEach((section) => {
+    section.rows.forEach((row) => rows.push({ __section: section.title ?? "", ...row }));
+    if (section.totals) {
+      rows.push({
+        __section: section.title ?? "",
+        ...section.totals,
+        [section.columns[0].key]:
+          section.totals[section.columns[0].key] ?? section.totalsLabel ?? "TOTAL",
+      });
+    }
+  });
+  return { columns, rows };
+}
+
 function rowsOf(data: SalesReportPayload | null): ReportPayloadRow[] {
   return Array.isArray(data?.rows) ? data.rows : [];
 }
@@ -1750,7 +1867,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [activeReport, setActiveReport] = useState<ReportId>("sales_summary");
   const [query, setQuery] = useState("");
   const [searchText, setSearchText] = useState("");
-  const [, setDataRevision] = useState(0);
+  const [dataRevision, setDataRevision] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
     summary: true,
     pos: true,
@@ -1777,6 +1895,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [salespersons, setSalespersons] = useState<string[]>([]);
   const [cashierSearch, setCashierSearch] = useState("");
   const [cashierOpen, setCashierOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
@@ -1833,10 +1952,13 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     return byGroup;
   }, [filteredReports]);
 
-  async function loadReport(signal?: AbortSignal) {
-    try {
+  async function loadReport(signal?: AbortSignal, clearFirst = false) {
+    if (clearFirst) {
       applyLiveReportData(activeReport, { rows: [], charts: [] });
       setDataRevision((value) => value + 1);
+    }
+    setIsLoading(true);
+    try {
       const data = await getSalesReportData(activeReport, {
         dateFrom,
         dateTo,
@@ -1851,47 +1973,92 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       setDataRevision((value) => value + 1);
     } catch (error) {
       console.error("Unable to load sales report data", error);
+    } finally {
+      setIsLoading(false);
     }
   }
 
   useEffect(() => {
     const controller = new AbortController();
-    loadReport(controller.signal);
+    setReportView(activeReport, null);
+    // Clear data when switching reports so stale data from the previous report doesn't appear
+    loadReport(controller.signal, true);
     return () => controller.abort();
   }, [activeReport]);
 
-  function getExportData() {
+  const branchLabel = useMemo(() => {
+    if (branch === "All" || branch === "ALL") return "All";
+    const match = branches.find((b) => String(b.id) === String(branch));
+    return match ? match.name : "All";
+  }, [branch, branches]);
+
+  // Filters actually applied — shown in report header + passed to every export.
+  function appliedFilters() {
+    return [
+      { label: "Date From", value: dateFrom },
+      { label: "Date To", value: dateTo },
+      { label: "Branch", value: branchLabel },
+      { label: "Sales Channel", value: channel },
+      { label: "Cashier / Salesperson", value: cashier },
+      { label: "Search", value: searchText },
+    ].filter((f) => f.value && f.value !== "All");
+  }
+
+  // Single source of truth for exports: the exact view-model the screen rendered.
+  // Falls back to the raw row dump only if a report has not registered a VM.
+  function getActiveViewModel(): { reportTitle: string } & ReportViewModel {
+    const vm = getReportView(activeReport);
+    if (vm) return { reportTitle: activeDef.label, ...vm };
     const rows = getCurrentExportRows(activeReport);
-    const cols = rows.length
+    const columns: ReportColumn[] = rows.length
       ? Object.keys(rows[0]).map((key) => ({
-          header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c) => c.toUpperCase()).trim(),
           key,
+          header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c) => c.toUpperCase()).trim(),
+          align: typeof rows[0][key] === "number" ? "right" : "left",
           width: 18,
         }))
       : [];
-    return { rows, cols };
+    return { reportTitle: activeDef.label, sections: [{ columns, rows }] };
   }
 
-  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+  function exportMeta() {
+    return {
+      reportTitle: activeDef.label,
+      dateFrom,
+      dateTo,
+      branch: branchLabel,
+      filters: appliedFilters(),
+      companyProfile,
+    };
+  }
 
-  function handleExportPdf() {
-    const { rows, cols } = getExportData();
-    exportToPDF(rows, cols, activeDef.label, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  function fileBase() {
+    return activeDef.label.replace(/\s+/g, "_");
+  }
+
+  async function handleExportPdf() {
+    const vm = getActiveViewModel();
+    const html = generateReportA4Html(vm, companyProfile || {}, exportMeta());
+    const company = companyProfile?.companyName || companyProfile?.name || "BillBull ERP";
+    await downloadPdf(html, fileBase(), `Generated by ${company}  |  ${new Date().toLocaleString()}  |  Confidential`);
   }
 
   function handleExportExcel() {
-    const { rows, cols } = getExportData();
-    exportToExcel(rows, cols, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+    const vm = getActiveViewModel();
+    const { columns, rows } = flattenReportView(vm);
+    exportToExcel(rows, columns, fileBase(), exportMeta());
   }
 
   function handlePrint() {
-    const { rows, cols } = getExportData();
-    const html = generateReportPrintHtml({}, activeDef.label, cols, rows, companyProfile || {}, exportMeta());
+    const vm = getActiveViewModel();
+    const html = generateReportA4Html(vm, companyProfile || {}, exportMeta());
     printHtml(html);
   }
 
   function handleDownloadCsv() {
-    downloadCsv(activeDef.label, getCurrentExportRows(activeReport));
+    const vm = getActiveViewModel();
+    const { rows } = flattenReportView(vm);
+    downloadCsv(activeDef.label, rows);
   }
 
   function handleReportAction(event: React.MouseEvent<HTMLDivElement>) {
@@ -2119,7 +2286,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 px-3 text-[11px] rounded-full border-[#F5C742]/70 bg-[#FFF6D8] flex items-center gap-1"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className={`h-7 px-3 text-[11px] rounded-full border flex items-center gap-1 transition-colors ${
+                  showAdvanced 
+                    ? "bg-[#F5C742] border-[#E5B426] text-slate-900 font-medium" 
+                    : "border-[#F5C742]/70 bg-[#FFF6D8] text-slate-800"
+                }`}
               >
                 <Filter className="h-3.5 w-3.5" />
                 Advanced
@@ -2188,57 +2360,61 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                   </select>
                 </div>
 
-                <div className="space-y-1.5 relative">
-                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
-                    <Users className="h-3.5 w-3.5" />
-                    Cashier / Salesperson
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={cashierOpen ? cashierSearch : (cashier === "All" ? "" : cashier)}
-                      placeholder={cashier === "All" ? "All" : cashier}
-                      onFocus={() => { setCashierOpen(true); setCashierSearch(""); }}
-                      onChange={(e) => { setCashierSearch(e.target.value); setCashierOpen(true); }}
-                      onBlur={() => setTimeout(() => setCashierOpen(false), 150)}
-                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
-                    />
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
-                    {cashierOpen && (
-                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                        {[{ label: "All", value: "All" }, ...salespersons.map(s => ({ label: s, value: s }))]
-                          .filter(o => !cashierSearch || o.label.toLowerCase().includes(cashierSearch.toLowerCase()))
-                          .map(o => (
-                            <button
-                              key={o.value}
-                              type="button"
-                              onMouseDown={() => { setCashier(o.value); setCashierOpen(false); setCashierSearch(""); }}
-                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${cashier === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
-                            >
-                              {o.label}
-                            </button>
-                          ))}
-                        {salespersons.filter(s => !cashierSearch || s.toLowerCase().includes(cashierSearch.toLowerCase())).length === 0 && cashierSearch && (
-                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                {showAdvanced && (
+                  <>
+                    <div className="space-y-1.5 relative">
+                      <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5" />
+                        Cashier / Salesperson
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={cashierOpen ? cashierSearch : (cashier === "All" ? "" : cashier)}
+                          placeholder={cashier === "All" ? "All" : cashier}
+                          onFocus={() => { setCashierOpen(true); setCashierSearch(""); }}
+                          onChange={(e) => { setCashierSearch(e.target.value); setCashierOpen(true); }}
+                          onBlur={() => setTimeout(() => setCashierOpen(false), 150)}
+                          className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                        />
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                        {cashierOpen && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            {[{ label: "All", value: "All" }, ...salespersons.map(s => ({ label: s, value: s }))]
+                              .filter(o => !cashierSearch || o.label.toLowerCase().includes(cashierSearch.toLowerCase()))
+                              .map(o => (
+                                <button
+                                  key={o.value}
+                                  type="button"
+                                  onMouseDown={() => { setCashier(o.value); setCashierOpen(false); setCashierSearch(""); }}
+                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${cashier === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                                >
+                                  {o.label}
+                                </button>
+                              ))}
+                            {salespersons.filter(s => !cashierSearch || s.toLowerCase().includes(cashierSearch.toLowerCase())).length === 0 && cashierSearch && (
+                              <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                </div>
+                    </div>
 
-                <div className="space-y-1.5 col-span-2">
-                  <label className="text-[11px] text-slate-600">
-                    Customer / Item Filter
-                  </label>
-                  <Input
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    placeholder="Search customer name or item..."
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                  />
-                </div>
+                    <div className="space-y-1.5 col-span-2">
+                      <label className="text-[11px] text-slate-600">
+                        Customer / Item Filter
+                      </label>
+                      <Input
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        placeholder="Search customer name or item..."
+                        className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                      />
+                    </div>
+                  </>
+                )}
 
-                <div className="flex items-end gap-2">
+                <div className={`flex items-end gap-2 ${!showAdvanced ? "xl:col-start-4" : ""}`}>
                   <Button
                     onClick={() => loadReport()}
                     className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900"
@@ -2258,8 +2434,40 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
             </CardContent>
           </Card>
 
-          {/* Results */}
-          {renderResults()}
+          {/* Applied filters — shown on screen for auditability; mirrored into print/PDF/Excel headers */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mr-1">Applied Filters</span>
+            {appliedFilters().map((f) => (
+              <span
+                key={f.label}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[#7c5e00]"
+              >
+                <b className="text-[#5b4500]">{f.label}:</b> {f.value}
+              </span>
+            ))}
+            {appliedFilters().length === 0 && (
+              <span className="text-[10px] text-slate-400">None — showing all records</span>
+            )}
+          </div>
+
+          {/* Results — wrapped in DataRevisionContext so child report components
+              re-render whenever the parent fetches fresh data */}
+          <DataRevisionContext.Provider value={dataRevision}>
+            <div className="relative">
+              {isLoading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 backdrop-blur-[1px] rounded-lg">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-white border border-[#FDE6A9] rounded-full shadow text-[11px] text-slate-600">
+                    <svg className="animate-spin h-3.5 w-3.5 text-[#F5C742]" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    Loading report data…
+                  </div>
+                </div>
+              )}
+              {renderResults()}
+            </div>
+          </DataRevisionContext.Provider>
         </motion.div>
       </div>
     </div>
@@ -2268,6 +2476,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
 
 // Sales Summary Report Component
 function SalesSummaryReport() {
+  useDataRevision(); // subscribe to data fetches so this component re-renders when mock data changes
   const [valuation, setValuation] = React.useState<ValuationMethod>("average_cost");
 
   const rows = mockSalesSummaryData.map((d) => {
@@ -2285,6 +2494,54 @@ function SalesSummaryReport() {
   const avgGP = totalNetSales > 0 ? (totalGrossProfit / totalNetSales * 100) : 0;
   const returnsPct = totalGrossSales > 0 ? ((totalReturns / totalGrossSales) * 100).toFixed(1) : "0.0";
   const detailRangeLabel = dateRangeLabel(rows);
+
+  useReportView("sales_summary", {
+    note: `Valuation: ${VALUATION_METHODS.find((m) => m.id === valuation)?.label || valuation} · Period: ${detailRangeLabel}`,
+    kpis: [
+      { label: "Net Sales", value: `AED ${totalNetSales.toLocaleString()}`, hint: "After returns & discounts" },
+      { label: "Gross Profit", value: `AED ${totalGrossProfit.toLocaleString()}`, hint: `GP: ${avgGP.toFixed(1)}%` },
+      { label: "Tax Collected", value: `AED ${totalTax.toLocaleString()}`, hint: "VAT @ 5%" },
+      { label: "Returns", value: `AED ${totalReturns.toLocaleString()}`, hint: `${returnsPct}% of gross` },
+    ],
+    sections: [
+      {
+        title: `Sales Summary Detail (${detailRangeLabel})`,
+        columns: [
+          { key: "date", header: "Date", align: "left", width: 14 },
+          { key: "grossSales", header: "Gross Sales", align: "right", width: 16 },
+          { key: "returns", header: "Returns", align: "right", width: 14 },
+          { key: "discounts", header: "Discounts", align: "right", width: 14 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 16 },
+          { key: "tax", header: "Tax", align: "right", width: 12 },
+          { key: "cogs", header: "COGS", align: "right", width: 14 },
+          { key: "grossProfit", header: "Gross Profit", align: "right", width: 16 },
+          { key: "gp", header: "GP %", align: "right", width: 10 },
+        ],
+        rows: rows.map((row) => ({
+          date: row.date,
+          grossSales: `AED ${row.grossSales.toLocaleString()}`,
+          returns: `AED ${row.returns.toLocaleString()}`,
+          discounts: `AED ${row.discounts.toLocaleString()}`,
+          netSales: `AED ${row.netSales.toLocaleString()}`,
+          tax: `AED ${row.tax.toLocaleString()}`,
+          cogs: `AED ${row.cogs.toLocaleString()}`,
+          grossProfit: `AED ${row.grossProfit.toLocaleString()}`,
+          gp: `${row.gp.toFixed(1)}%`,
+        })),
+        totals: {
+          date: "TOTAL",
+          grossSales: `AED ${totalGrossSales.toLocaleString()}`,
+          returns: `AED ${totalReturns.toLocaleString()}`,
+          discounts: `AED ${totalDiscounts.toLocaleString()}`,
+          netSales: `AED ${totalNetSales.toLocaleString()}`,
+          tax: `AED ${totalTax.toLocaleString()}`,
+          cogs: `AED ${totalCOGS.toLocaleString()}`,
+          grossProfit: `AED ${totalGrossProfit.toLocaleString()}`,
+          gp: `${avgGP.toFixed(1)}%`,
+        },
+      },
+    ],
+  });
 
   return (
     <div className="space-y-3">
@@ -2456,6 +2713,7 @@ function exportData(data: any[], cols: { header: string; key: string }[], title:
 
 // Daily Sales (Z-Style) Report Component
 function DailySalesReport() {
+  useDataRevision();
   const d = mockDailySalesData;
   const [showOpeningBalance, setShowOpeningBalance] = React.useState(true);
 
@@ -2560,24 +2818,39 @@ function DailySalesReport() {
     return rows;
   }
 
+  const dailyVm: ReportViewModel = {
+    note: "Z-Style Day-Close Summary",
+    kpis: [
+      { label: "Net Sales", value: fmt(d.netSales) },
+      { label: "Sales Returns", value: fmt(totalSalesReturns) },
+      { label: "Customer Receipts", value: fmt(totalCustReceipts) },
+      { label: "Vendor Payments", value: fmt(totalVendPayments) },
+    ],
+    sections: [
+      {
+        title: "Day-Close Summary",
+        columns: [
+          { key: "Section", header: "Section", align: "left", width: 22 },
+          { key: "Description", header: "Description", align: "left", width: 30 },
+          { key: "Amount", header: "Amount", align: "right", width: 18 },
+        ],
+        rows: buildSummaryRows(),
+      },
+    ],
+  };
+  useReportView("daily_sales", dailyVm);
+
   function handleDailyExport() {
-    const rows = buildSummaryRows();
-    const cols = [
-      { header: "Section", key: "Section", width: 22 },
-      { header: "Description", key: "Description", width: 30 },
-      { header: "Amount", key: "Amount", width: 18 },
-    ];
-    exportToExcel(rows, cols, "Daily_Sales_Report_Z_Style");
+    const { columns, rows } = flattenReportView(dailyVm);
+    exportToExcel(rows, columns, "Daily_Sales_Report_Z_Style");
   }
 
   function handleDailyPrint() {
-    const rows = buildSummaryRows();
-    const cols = [
-      { header: "Section", key: "Section" },
-      { header: "Description", key: "Description" },
-      { header: "Amount", key: "Amount" },
-    ];
-    const html = generateReportPrintHtml({}, "Daily Sales Report (Z-Style)", cols, rows, {}, {});
+    const html = generateReportA4Html(
+      { reportTitle: "Daily Sales Report (Z-Style)", ...dailyVm },
+      {},
+      { reportTitle: "Daily Sales Report (Z-Style)" }
+    );
     printHtml(html);
   }
 
@@ -2942,8 +3215,33 @@ function DailySalesReport() {
 
 // Channel-wise Sales Report
 function ChannelWiseReport() {
+  useDataRevision();
   const COLORS = ['#F5C742', '#3b82f6', '#8b5cf6'];
-  
+
+  useReportView("channel_wise", {
+    sections: [
+      {
+        title: "Channel Performance Comparison",
+        columns: [
+          { key: "channel", header: "Channel", align: "left", width: 18 },
+          { key: "transactions", header: "Transactions", align: "right", width: 14 },
+          { key: "salesValue", header: "Sales Value", align: "right", width: 16 },
+          { key: "avgBill", header: "Avg Bill", align: "right", width: 14 },
+          { key: "discountPct", header: "Discount %", align: "right", width: 12 },
+          { key: "returnPct", header: "Return %", align: "right", width: 12 },
+        ],
+        rows: mockChannelSalesData.map((row) => ({
+          channel: row.channel,
+          transactions: row.transactions,
+          salesValue: `AED ${row.salesValue.toLocaleString()}`,
+          avgBill: `AED ${row.avgBill.toFixed(2)}`,
+          discountPct: `${row.discountPct}%`,
+          returnPct: `${row.returnPct}%`,
+        })),
+      },
+    ],
+  });
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -3036,6 +3334,32 @@ function ChannelWiseReport() {
 
 // Customer Sales Summary Report
 function CustomerSalesSummaryReport() {
+  useDataRevision();
+  useReportView("customer_sales_summary", {
+    sections: [
+      {
+        title: "Top Customers by Sales",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 22 },
+          { key: "totalSales", header: "Total Sales", align: "right", width: 16 },
+          { key: "returns", header: "Returns", align: "right", width: 14 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 16 },
+          { key: "outstanding", header: "Outstanding", align: "right", width: 16 },
+          { key: "creditLimit", header: "Credit Limit", align: "right", width: 16 },
+          { key: "utilization", header: "Utilization %", align: "right", width: 14 },
+        ],
+        rows: mockCustomerSalesData.map((row) => ({
+          customer: row.customer,
+          totalSales: `AED ${row.totalSales.toLocaleString()}`,
+          returns: `AED ${row.returns.toLocaleString()}`,
+          netSales: `AED ${row.netSales.toLocaleString()}`,
+          outstanding: `AED ${row.outstanding.toLocaleString()}`,
+          creditLimit: `AED ${row.creditLimit.toLocaleString()}`,
+          utilization: `${row.utilization.toFixed(1)}%`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 bg-white">
@@ -3091,6 +3415,34 @@ function CustomerSalesSummaryReport() {
 
 // Cashier Performance Report
 function CashierPerformanceReport() {
+  useDataRevision();
+  useReportView("pos_cashier_performance", {
+    sections: [
+      {
+        title: "POS Cashier Performance",
+        columns: [
+          { key: "cashier", header: "Cashier", align: "left", width: 20 },
+          { key: "bills", header: "Bills", align: "right", width: 10 },
+          { key: "totalSales", header: "Total Sales", align: "right", width: 16 },
+          { key: "avgBill", header: "Avg Bill", align: "right", width: 14 },
+          { key: "discountPct", header: "Discount %", align: "right", width: 12 },
+          { key: "voidCount", header: "Voids", align: "right", width: 10 },
+          { key: "returnCount", header: "Returns", align: "right", width: 10 },
+          { key: "variance", header: "Variance", align: "right", width: 12 },
+        ],
+        rows: mockCashierPerformanceData.map((row) => ({
+          cashier: row.cashier,
+          bills: row.bills,
+          totalSales: `AED ${row.totalSales.toLocaleString()}`,
+          avgBill: `AED ${row.avgBill.toFixed(2)}`,
+          discountPct: `${row.discountPct}%`,
+          voidCount: row.voidCount,
+          returnCount: row.returnCount,
+          variance: `AED ${row.variance}`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 bg-white">
@@ -3152,12 +3504,50 @@ function CashierPerformanceReport() {
 
 // POS Transaction Report
 function POSTransactionReport() {
+  useDataRevision();
   const statusColor = (s: string) => {
     if (s === "Completed") return "text-emerald-600 bg-emerald-50 border-emerald-200";
     if (s === "Voided") return "text-red-600 bg-red-50 border-red-200";
     if (s === "Return") return "text-orange-600 bg-orange-50 border-orange-200";
     return "text-slate-600 bg-slate-50 border-slate-200";
   };
+  useReportView("pos_transaction", {
+    kpis: [
+      { label: "Total Bills", value: String(mockPOSTransactionData.length), hint: "all transactions" },
+      { label: "Completed", value: String(mockPOSTransactionData.filter(r => r.status === "Completed").length), hint: "successful" },
+      { label: "Voided", value: String(mockPOSTransactionData.filter(r => r.status === "Voided").length), hint: "cancelled" },
+      { label: "Returns", value: String(mockPOSTransactionData.filter(r => r.status === "Return").length), hint: "refunded" },
+    ],
+    sections: [
+      {
+        title: "POS Transaction Detail",
+        columns: [
+          { key: "billNo", header: "Bill No", align: "left", width: 14 },
+          { key: "dateTime", header: "Date / Time", align: "left", width: 18 },
+          { key: "cashier", header: "Cashier", align: "left", width: 16 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "items", header: "Items", align: "right", width: 10 },
+          { key: "grossAmt", header: "Gross", align: "right", width: 14 },
+          { key: "discount", header: "Discount", align: "right", width: 14 },
+          { key: "netAmt", header: "Net Amt", align: "right", width: 14 },
+          { key: "payMode", header: "Pay Mode", align: "left", width: 14 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockPOSTransactionData.map((row) => ({
+          billNo: row.billNo,
+          dateTime: `${row.date} ${row.time}`,
+          cashier: row.cashier,
+          customer: row.customer,
+          items: row.items,
+          grossAmt: `AED ${row.grossAmt.toFixed(2)}`,
+          discount: `AED ${row.discount.toFixed(2)}`,
+          netAmt: `AED ${row.netAmt.toFixed(2)}`,
+          payMode: row.payMode,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
@@ -3228,7 +3618,44 @@ function POSTransactionReport() {
 
 // POS Item Sales Report
 function POSItemSalesReport() {
+  useDataRevision();
   const totalNet = mockPOSItemSalesData.reduce((s, r) => s + r.netAmt, 0);
+  useReportView("pos_item_sales", {
+    sections: [
+      {
+        title: "POS Item Sales Detail",
+        columns: [
+          { key: "itemCode", header: "Code", align: "left", width: 12 },
+          { key: "itemName", header: "Item Name", align: "left", width: 22 },
+          { key: "category", header: "Category", align: "left", width: 16 },
+          { key: "qtyOrdered", header: "Ordered", align: "right", width: 10 },
+          { key: "qtySold", header: "Sold", align: "right", width: 10 },
+          { key: "returns", header: "Returns", align: "right", width: 10 },
+          { key: "grossAmt", header: "Gross Amt", align: "right", width: 14 },
+          { key: "discount", header: "Discount", align: "right", width: 14 },
+          { key: "netAmt", header: "Net Amt", align: "right", width: 14 },
+          { key: "contribution", header: "Contrib%", align: "right", width: 10 },
+        ],
+        rows: mockPOSItemSalesData.map((row) => ({
+          itemCode: row.itemCode,
+          itemName: row.itemName,
+          category: row.category,
+          qtyOrdered: row.qtyOrdered,
+          qtySold: row.qtySold,
+          returns: row.returns,
+          grossAmt: `AED ${row.grossAmt.toFixed(2)}`,
+          discount: `AED ${row.discount.toFixed(2)}`,
+          netAmt: `AED ${row.netAmt.toFixed(2)}`,
+          contribution: `${row.contribution}%`,
+        })),
+        totals: {
+          itemCode: "TOTAL",
+          netAmt: `AED ${totalNet.toFixed(2)}`,
+          contribution: "100%",
+        },
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -3322,8 +3749,37 @@ function POSItemSalesReport() {
 
 // POS Payment Mode Report
 function POSPaymentModeReport() {
+  useDataRevision();
   const COLORS = ['#F5C742', '#3b82f6', '#10b981', '#8b5cf6', '#f97316'];
   const total = mockPOSPaymentData.reduce((s, r) => s + r.netAmount, 0);
+  useReportView("pos_payment_mode", {
+    sections: [
+      {
+        title: "Payment Mode Breakdown",
+        columns: [
+          { key: "mode", header: "Mode", align: "left", width: 18 },
+          { key: "transactions", header: "Transactions", align: "right", width: 14 },
+          { key: "amount", header: "Gross Amount", align: "right", width: 16 },
+          { key: "refunds", header: "Refunds", align: "right", width: 14 },
+          { key: "netAmount", header: "Net Amount", align: "right", width: 16 },
+          { key: "pct", header: "Share %", align: "right", width: 10 },
+        ],
+        rows: mockPOSPaymentData.map((row) => ({
+          mode: row.mode,
+          transactions: row.transactions,
+          amount: `AED ${row.amount.toLocaleString()}`,
+          refunds: `AED ${row.refunds.toLocaleString()}`,
+          netAmount: `AED ${row.netAmount.toLocaleString()}`,
+          pct: `${row.pct}%`,
+        })),
+        totals: {
+          mode: "TOTAL",
+          netAmount: `AED ${total.toLocaleString()}`,
+          pct: "100%",
+        },
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -3414,7 +3870,38 @@ function POSPaymentModeReport() {
 
 // POS Void & Cancellation Report
 function POSVoidReport() {
+  useDataRevision();
   const totalValue = mockVoidData.reduce((s, r) => s + r.value, 0);
+  useReportView("pos_void_cancellation", {
+    kpis: [
+      { label: "Total Void/Cancel Value", value: `AED ${totalValue.toFixed(2)}` },
+      { label: "Void Count", value: String(mockVoidData.filter(r => r.status === "Void").length) },
+      { label: "Cancellation Count", value: String(mockVoidData.filter(r => r.status === "Cancelled").length) },
+    ],
+    sections: [
+      {
+        title: "Void & Cancellation Log",
+        columns: [
+          { key: "billNo", header: "Bill No", align: "left", width: 14 },
+          { key: "dateTime", header: "Date / Time", align: "left", width: 18 },
+          { key: "cashier", header: "Cashier", align: "left", width: 16 },
+          { key: "value", header: "Value", align: "right", width: 14 },
+          { key: "reason", header: "Reason", align: "left", width: 22 },
+          { key: "approvedBy", header: "Approved By", align: "left", width: 16 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockVoidData.map((row) => ({
+          billNo: row.billNo,
+          dateTime: `${row.date} ${row.time}`,
+          cashier: row.cashier,
+          value: `AED ${row.value.toFixed(2)}`,
+          reason: row.reason,
+          approvedBy: row.approvedBy,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -3483,8 +3970,45 @@ function POSVoidReport() {
 
 // VAN Sales Summary Report
 function VANSalesSummaryReport() {
+  useDataRevision();
   const totalNetSales = mockVANSalesSummaryData.reduce((s, r) => s + r.netSales, 0);
   const totalCollection = mockVANSalesSummaryData.reduce((s, r) => s + r.collection, 0);
+  useReportView("van_sales_summary", {
+    kpis: [
+      { label: "Total Net Sales", value: `AED ${totalNetSales.toLocaleString()}` },
+      { label: "Total Collected", value: `AED ${totalCollection.toLocaleString()}` },
+      { label: "Routes Active", value: String(mockVANSalesSummaryData.length) },
+      { label: "Total Visits", value: String(mockVANSalesSummaryData.reduce((s, r) => s + r.actualVisits, 0)) },
+    ],
+    sections: [
+      {
+        title: "VAN Route Summary",
+        columns: [
+          { key: "route", header: "Route", align: "left", width: 14 },
+          { key: "salesperson", header: "Salesperson", align: "left", width: 18 },
+          { key: "visits", header: "Planned Visits", align: "right", width: 14 },
+          { key: "actualVisits", header: "Actual Visits", align: "right", width: 14 },
+          { key: "stockIssued", header: "Stock Issued", align: "right", width: 16 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 16 },
+          { key: "collection", header: "Collection", align: "right", width: 16 },
+        ],
+        rows: mockVANSalesSummaryData.map((row) => ({
+          route: row.route,
+          salesperson: row.salesperson,
+          visits: row.visits,
+          actualVisits: row.actualVisits,
+          stockIssued: `AED ${row.stockIssued.toLocaleString()}`,
+          netSales: `AED ${row.netSales.toLocaleString()}`,
+          collection: `AED ${row.collection.toLocaleString()}`,
+        })),
+        totals: {
+          route: "TOTAL",
+          netSales: `AED ${totalNetSales.toLocaleString()}`,
+          collection: `AED ${totalCollection.toLocaleString()}`,
+        },
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
@@ -3572,6 +4096,32 @@ function VANSalesSummaryReport() {
 
 // VAN Item Sales Report
 function VANItemSalesReport() {
+  useDataRevision();
+  useReportView("van_item_sales", {
+    sections: [
+      {
+        title: "VAN Item Sales Report",
+        columns: [
+          { key: "item", header: "Item", align: "left", width: 22 },
+          { key: "route", header: "Route", align: "left", width: 14 },
+          { key: "qtySold", header: "Qty Sold", align: "right", width: 12 },
+          { key: "qtyReturned", header: "Returned", align: "right", width: 12 },
+          { key: "freeIssue", header: "Free Issue", align: "right", width: 12 },
+          { key: "netQty", header: "Net Qty", align: "right", width: 12 },
+          { key: "value", header: "Value", align: "right", width: 16 },
+        ],
+        rows: mockVANItemData.map((row) => ({
+          item: row.item,
+          route: row.route,
+          qtySold: row.qtySold,
+          qtyReturned: row.qtyReturned,
+          freeIssue: row.freeIssue,
+          netQty: row.netQty,
+          value: `AED ${row.value.toLocaleString()}`,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -3616,6 +4166,34 @@ function VANItemSalesReport() {
 
 // VAN Route Performance Report
 function VANRoutePerformanceReport() {
+  useDataRevision();
+  useReportView("van_route_performance", {
+    sections: [
+      {
+        title: "Route Performance Detail",
+        columns: [
+          { key: "route", header: "Route", align: "left", width: 14 },
+          { key: "planned", header: "Planned", align: "right", width: 12 },
+          { key: "actual", header: "Actual", align: "right", width: 12 },
+          { key: "conversion", header: "Conversion %", align: "right", width: 12 },
+          { key: "salesTarget", header: "Sales Target", align: "right", width: 16 },
+          { key: "salesActual", header: "Sales Actual", align: "right", width: 16 },
+          { key: "collection", header: "Collection", align: "right", width: 16 },
+          { key: "outstanding", header: "Outstanding", align: "right", width: 16 },
+        ],
+        rows: mockVANRouteData.map((row) => ({
+          route: row.route,
+          planned: row.planned,
+          actual: row.actual,
+          conversion: `${row.conversion}%`,
+          salesTarget: `AED ${row.salesTarget.toLocaleString()}`,
+          salesActual: `AED ${row.salesActual.toLocaleString()}`,
+          collection: `AED ${row.collection.toLocaleString()}`,
+          outstanding: `AED ${row.outstanding.toLocaleString()}`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 bg-white">
@@ -3681,6 +4259,34 @@ function VANRoutePerformanceReport() {
 
 // VAN Collection Report
 function VANCollectionReport() {
+  useDataRevision();
+  useReportView("van_collection", {
+    sections: [
+      {
+        title: "VAN Collection Report",
+        columns: [
+          { key: "salesperson", header: "Salesperson", align: "left", width: 18 },
+          { key: "route", header: "Route", align: "left", width: 14 },
+          { key: "cashCollected", header: "Cash", align: "right", width: 14 },
+          { key: "cardCollected", header: "Card", align: "right", width: 14 },
+          { key: "creditSales", header: "Credit Sales", align: "right", width: 16 },
+          { key: "totalCollected", header: "Total Collected", align: "right", width: 16 },
+          { key: "pending", header: "Pending", align: "right", width: 14 },
+          { key: "variance", header: "Variance", align: "right", width: 12 },
+        ],
+        rows: mockVANCollectionData.map((row) => ({
+          salesperson: row.salesperson,
+          route: row.route,
+          cashCollected: `AED ${row.cashCollected.toLocaleString()}`,
+          cardCollected: `AED ${row.cardCollected.toLocaleString()}`,
+          creditSales: `AED ${row.creditSales.toLocaleString()}`,
+          totalCollected: `AED ${row.totalCollected.toLocaleString()}`,
+          pending: `AED ${row.pending.toLocaleString()}`,
+          variance: `AED ${row.variance}`,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -3729,6 +4335,34 @@ function VANCollectionReport() {
 
 // VAN Stock Variance Report
 function VANStockVarianceReport() {
+  useDataRevision();
+  useReportView("van_stock_variance", {
+    sections: [
+      {
+        title: "VAN Stock Variance Report",
+        columns: [
+          { key: "salesperson", header: "Salesperson", align: "left", width: 18 },
+          { key: "route", header: "Route", align: "left", width: 14 },
+          { key: "issued", header: "Issued", align: "right", width: 14 },
+          { key: "sold", header: "Sold", align: "right", width: 14 },
+          { key: "returned", header: "Returned", align: "right", width: 14 },
+          { key: "expected", header: "Expected Balance", align: "right", width: 16 },
+          { key: "actual", header: "Actual Balance", align: "right", width: 16 },
+          { key: "variance", header: "Variance", align: "right", width: 12 },
+        ],
+        rows: mockVANStockData.map((row) => ({
+          salesperson: row.salesperson,
+          route: row.route,
+          issued: `AED ${row.issued.toLocaleString()}`,
+          sold: `AED ${row.sold.toLocaleString()}`,
+          returned: `AED ${row.returned.toLocaleString()}`,
+          expected: `AED ${row.expected.toLocaleString()}`,
+          actual: `AED ${row.actual.toLocaleString()}`,
+          variance: `AED ${row.variance}`,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -3777,6 +4411,7 @@ function VANStockVarianceReport() {
 
 // Sales Invoice Register
 function SalesInvoiceRegisterReport() {
+  useDataRevision();
   const statusColor = (s: string) => {
     if (s === "Paid") return "text-emerald-700 bg-emerald-50 border-emerald-200";
     if (s === "Overdue") return "text-red-700 bg-red-50 border-red-200";
@@ -3789,6 +4424,51 @@ function SalesInvoiceRegisterReport() {
     total: acc.total + r.total,
     outstanding: acc.outstanding + r.outstanding,
   }), { amount: 0, tax: 0, total: 0, outstanding: 0 });
+
+  useReportView("sales_invoice_register", {
+    kpis: [
+      { label: "Total Invoiced", value: `AED ${totals.total.toLocaleString()}` },
+      { label: "Outstanding", value: `AED ${totals.outstanding.toLocaleString()}` },
+      { label: "Paid Invoices", value: String(mockInvoiceRegisterData.filter(r => r.status === "Paid").length) },
+      { label: "Overdue Invoices", value: String(mockInvoiceRegisterData.filter(r => r.status === "Overdue").length) },
+    ],
+    sections: [
+      {
+        title: "Sales Invoice Register",
+        columns: [
+          { key: "invoiceNo", header: "Invoice No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "salesperson", header: "Salesperson", align: "left", width: 16 },
+          { key: "amount", header: "Amount", align: "right", width: 14 },
+          { key: "tax", header: "Tax", align: "right", width: 12 },
+          { key: "total", header: "Total", align: "right", width: 14 },
+          { key: "outstanding", header: "Outstanding", align: "right", width: 14 },
+          { key: "dueDate", header: "Due Date", align: "left", width: 12 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockInvoiceRegisterData.map((row) => ({
+          invoiceNo: row.invoiceNo,
+          date: row.date,
+          customer: row.customer,
+          salesperson: row.salesperson,
+          amount: `AED ${row.amount.toLocaleString()}`,
+          tax: `AED ${row.tax.toLocaleString()}`,
+          total: `AED ${row.total.toLocaleString()}`,
+          outstanding: `AED ${row.outstanding.toLocaleString()}`,
+          dueDate: row.dueDate,
+          status: row.status,
+        })),
+        totals: {
+          invoiceNo: "TOTAL",
+          amount: `AED ${totals.amount.toLocaleString()}`,
+          tax: `AED ${totals.tax.toLocaleString()}`,
+          total: `AED ${totals.total.toLocaleString()}`,
+          outstanding: `AED ${totals.outstanding.toLocaleString()}`,
+        },
+      },
+    ],
+  });
 
   return (
     <div className="space-y-3">
@@ -3880,11 +4560,46 @@ function SalesInvoiceRegisterReport() {
 
 // Sales Order Status Report
 function SalesOrderStatusReport() {
+  useDataRevision();
   const statusColor = (s: string) => {
     if (s === "Fully Delivered") return "text-emerald-700 bg-emerald-50 border-emerald-200";
     if (s === "Partial") return "text-amber-700 bg-amber-50 border-amber-200";
     return "text-slate-600 bg-slate-50 border-slate-200";
   };
+  useReportView("sales_order_status", {
+    kpis: [
+      { label: "Fully Delivered", value: `${mockOrderStatusData.filter(r => r.status === "Fully Delivered").length} orders` },
+      { label: "Partial", value: `${mockOrderStatusData.filter(r => r.status === "Partial").length} orders` },
+      { label: "Pending", value: `${mockOrderStatusData.filter(r => r.status === "Pending").length} orders` },
+    ],
+    sections: [
+      {
+        title: "Sales Order Status",
+        columns: [
+          { key: "orderNo", header: "Order No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "orderedQty", header: "Ordered Qty", align: "right", width: 12 },
+          { key: "deliveredQty", header: "Delivered", align: "right", width: 12 },
+          { key: "pendingQty", header: "Pending", align: "right", width: 12 },
+          { key: "orderedValue", header: "Order Value", align: "right", width: 16 },
+          { key: "deliveredValue", header: "Delivered Value", align: "right", width: 16 },
+          { key: "status", header: "Status", align: "left", width: 14 },
+        ],
+        rows: mockOrderStatusData.map((row) => ({
+          orderNo: row.orderNo,
+          date: row.date,
+          customer: row.customer,
+          orderedQty: row.orderedQty,
+          deliveredQty: row.deliveredQty,
+          pendingQty: row.pendingQty,
+          orderedValue: `AED ${row.orderedValue.toLocaleString()}`,
+          deliveredValue: `AED ${row.deliveredValue.toLocaleString()}`,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -3951,12 +4666,49 @@ function SalesOrderStatusReport() {
 
 // Delivery / Dispatch Report
 function DeliveryDispatchReport() {
+  useDataRevision();
   const statusColor = (s: string) => {
     if (s === "Delivered") return "text-emerald-700 bg-emerald-50 border-emerald-200";
     if (s === "In Transit") return "text-blue-700 bg-blue-50 border-blue-200";
     if (s === "Failed") return "text-red-700 bg-red-50 border-red-200";
     return "text-slate-600 bg-slate-50 border-slate-200";
   };
+  useReportView("delivery_dispatch", {
+    kpis: [
+      { label: "Delivered", value: String(mockDeliveryData.filter(r => r.status === "Delivered").length) },
+      { label: "In Transit", value: String(mockDeliveryData.filter(r => r.status === "In Transit").length) },
+      { label: "Failed", value: String(mockDeliveryData.filter(r => r.status === "Failed").length) },
+    ],
+    sections: [
+      {
+        title: "Delivery / Dispatch Log",
+        columns: [
+          { key: "dnNo", header: "DN No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "driver", header: "Driver", align: "left", width: 14 },
+          { key: "vehicle", header: "Vehicle", align: "left", width: 12 },
+          { key: "items", header: "Items", align: "right", width: 10 },
+          { key: "weight", header: "Weight", align: "left", width: 12 },
+          { key: "deliveredAt", header: "Delivered At", align: "left", width: 16 },
+          { key: "pod", header: "POD", align: "left", width: 12 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockDeliveryData.map((row) => ({
+          dnNo: row.dnNo,
+          date: row.date,
+          customer: row.customer,
+          driver: row.driver,
+          vehicle: row.vehicle,
+          items: row.items,
+          weight: row.weight,
+          deliveredAt: row.deliveredAt,
+          pod: row.pod,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -4025,12 +4777,47 @@ function DeliveryDispatchReport() {
 
 // Credit Note & Returns Report
 function CreditNoteReturnsReport() {
+  useDataRevision();
   const statusColor = (s: string) => {
     if (s === "Approved") return "text-emerald-700 bg-emerald-50 border-emerald-200";
     if (s === "Rejected") return "text-red-700 bg-red-50 border-red-200";
     return "text-amber-700 bg-amber-50 border-amber-200";
   };
   const totalReturn = mockCreditNoteData.reduce((s, r) => s + r.returnValue, 0);
+  useReportView("credit_note_returns", {
+    kpis: [
+      { label: "Total Return Value", value: `AED ${totalReturn.toLocaleString()}` },
+      { label: "Approved CNs", value: String(mockCreditNoteData.filter(r => r.status === "Approved").length) },
+      { label: "Pending CNs", value: String(mockCreditNoteData.filter(r => r.status === "Pending").length) },
+    ],
+    sections: [
+      {
+        title: "Credit Note & Returns Register",
+        columns: [
+          { key: "cnNo", header: "CN No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "linkedInvoice", header: "Linked Invoice", align: "left", width: 14 },
+          { key: "reason", header: "Reason", align: "left", width: 18 },
+          { key: "items", header: "Items", align: "right", width: 10 },
+          { key: "returnValue", header: "Return Value", align: "right", width: 16 },
+          { key: "total", header: "Total w/ Tax", align: "right", width: 16 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockCreditNoteData.map((row) => ({
+          cnNo: row.cnNo,
+          date: row.date,
+          customer: row.customer,
+          linkedInvoice: row.linkedInvoice,
+          reason: row.reason,
+          items: row.items,
+          returnValue: `AED ${row.returnValue.toLocaleString()}`,
+          total: `AED ${row.total.toLocaleString()}`,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -4103,6 +4890,7 @@ function CreditNoteReturnsReport() {
 
 // Customer Aging Report
 function CustomerAgingReport() {
+  useDataRevision();
   const riskColor = (r: string) => {
     if (r === "High") return "text-red-700 bg-red-50 border-red-200";
     if (r === "Medium") return "text-amber-700 bg-amber-50 border-amber-200";
@@ -4125,6 +4913,46 @@ function CustomerAgingReport() {
     { bucket: "61-90 days", value: totals.days90 },
     { bucket: "90+ days", value: totals.over90 },
   ];
+
+  useReportView("customer_aging", {
+    kpis: [{ label: "Total Outstanding", value: `AED ${totals.total.toLocaleString()}` }],
+    sections: [
+      {
+        title: "Customer Aging Detail",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 20 },
+          { key: "creditLimit", header: "Credit Limit", align: "right", width: 14 },
+          { key: "current", header: "Current", align: "right", width: 14 },
+          { key: "days30", header: "1-30 Days", align: "right", width: 14 },
+          { key: "days60", header: "31-60 Days", align: "right", width: 14 },
+          { key: "days90", header: "61-90 Days", align: "right", width: 14 },
+          { key: "over90", header: "90+ Days", align: "right", width: 14 },
+          { key: "total", header: "Total", align: "right", width: 14 },
+          { key: "riskLevel", header: "Risk", align: "left", width: 10 },
+        ],
+        rows: mockAgingData.map((row) => ({
+          customer: row.customer,
+          creditLimit: `AED ${row.creditLimit.toLocaleString()}`,
+          current: `AED ${row.current.toLocaleString()}`,
+          days30: `AED ${row.days30.toLocaleString()}`,
+          days60: `AED ${row.days60.toLocaleString()}`,
+          days90: `AED ${row.days90.toLocaleString()}`,
+          over90: `AED ${row.over90.toLocaleString()}`,
+          total: `AED ${row.total.toLocaleString()}`,
+          riskLevel: row.riskLevel,
+        })),
+        totals: {
+          customer: "TOTAL",
+          current: `AED ${totals.current.toLocaleString()}`,
+          days30: `AED ${totals.days30.toLocaleString()}`,
+          days60: `AED ${totals.days60.toLocaleString()}`,
+          days90: `AED ${totals.days90.toLocaleString()}`,
+          over90: `AED ${totals.over90.toLocaleString()}`,
+          total: `AED ${totals.total.toLocaleString()}`,
+        },
+      },
+    ],
+  });
 
   return (
     <div className="space-y-3">
@@ -4230,6 +5058,41 @@ function CustomerAgingReport() {
 
 // Top / Dormant Customers Report
 function TopDormantCustomersReport() {
+  useDataRevision();
+  useReportView("top_dormant_customers", {
+    sections: [
+      {
+        title: "Top Customers by Revenue",
+        columns: [
+          { key: "rank", header: "#", align: "left", width: 6 },
+          { key: "customer", header: "Customer", align: "left", width: 24 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 16 },
+          { key: "growth", header: "Growth", align: "right", width: 12 },
+        ],
+        rows: mockTopDormantData.top.map((row) => ({
+          rank: `#${row.rank}`,
+          customer: row.customer,
+          netSales: `AED ${row.netSales.toLocaleString()}`,
+          growth: `${row.growth > 0 ? "+" : ""}${row.growth}%`,
+        })),
+      },
+      {
+        title: "Dormant / At-Risk Customers",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 24 },
+          { key: "lastPurchase", header: "Last Purchase", align: "right", width: 16 },
+          { key: "daysSince", header: "Days Since", align: "right", width: 12 },
+          { key: "status", header: "Status", align: "left", width: 12 },
+        ],
+        rows: mockTopDormantData.dormant.map((row) => ({
+          customer: row.customer,
+          lastPurchase: row.lastPurchase,
+          daysSince: `${row.daysSince}d`,
+          status: row.status,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -4318,6 +5181,32 @@ function TopDormantCustomersReport() {
 
 // Customer Price Level Report
 function CustomerPriceLevelReport() {
+  useDataRevision();
+  useReportView("customer_price_level", {
+    sections: [
+      {
+        title: "Customer Price Level Report",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 20 },
+          { key: "priceLevel", header: "Price Level", align: "left", width: 14 },
+          { key: "discountPct", header: "Discount %", align: "right", width: 12 },
+          { key: "creditDays", header: "Credit Days", align: "right", width: 12 },
+          { key: "minOrderValue", header: "Min Order", align: "right", width: 14 },
+          { key: "specialItems", header: "Special Items", align: "right", width: 12 },
+          { key: "marginImpact", header: "Margin Impact", align: "right", width: 12 },
+        ],
+        rows: mockPriceLevelData.map((row) => ({
+          customer: row.customer,
+          priceLevel: row.priceLevel,
+          discountPct: `${row.discountPct}%`,
+          creditDays: `${row.creditDays} days`,
+          minOrderValue: `AED ${row.minOrderValue.toLocaleString()}`,
+          specialItems: row.specialItems,
+          marginImpact: `${row.marginImpact}%`,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -4364,6 +5253,7 @@ function CustomerPriceLevelReport() {
 
 // Item-wise Sales Report
 function ItemWiseSalesReport() {
+  useDataRevision();
   const [valuation, setValuation] = React.useState<ValuationMethod>("average_cost");
 
   const rows = mockItemWiseSalesData.map((r) => {
@@ -4379,6 +5269,52 @@ function ItemWiseSalesReport() {
     netRevenue: acc.netRevenue + r.netRevenue,
   }), { qtySold: 0, revenue: 0, cost: 0, grossProfit: 0, netRevenue: 0 });
   const overallGpPct = totals.revenue > 0 ? (totals.grossProfit / totals.revenue * 100).toFixed(1) : "0.0";
+
+  useReportView("item_wise_sales", {
+    note: `Valuation: ${VALUATION_METHODS.find((m) => m.id === valuation)?.label || valuation}`,
+    kpis: [
+      { label: "Total Net Revenue", value: `AED ${totals.netRevenue.toLocaleString()}` },
+      { label: "Gross Profit", value: `AED ${totals.grossProfit.toLocaleString()}` },
+      { label: "Total COGS", value: `AED ${totals.cost.toLocaleString()}` },
+      { label: "Overall GP %", value: `${overallGpPct}%` },
+    ],
+    sections: [
+      {
+        title: "Item-wise Sales Detail",
+        columns: [
+          { key: "item", header: "Item", align: "left", width: 20 },
+          { key: "category", header: "Category", align: "left", width: 16 },
+          { key: "qtySold", header: "Qty Sold", align: "right", width: 12 },
+          { key: "revenue", header: "Revenue", align: "right", width: 14 },
+          { key: "cost", header: "COGS", align: "right", width: 14 },
+          { key: "grossProfit", header: "Gross Profit", align: "right", width: 14 },
+          { key: "gp", header: "GP %", align: "right", width: 10 },
+          { key: "returnQty", header: "Returns", align: "right", width: 10 },
+          { key: "netRevenue", header: "Net Revenue", align: "right", width: 14 },
+        ],
+        rows: rows.map((row) => ({
+          item: row.item,
+          category: row.category,
+          qtySold: row.qtySold.toLocaleString(),
+          revenue: `AED ${row.revenue.toLocaleString()}`,
+          cost: `AED ${row.cost.toLocaleString()}`,
+          grossProfit: `AED ${row.grossProfit.toLocaleString()}`,
+          gp: `${row.gp}%`,
+          returnQty: row.returnQty,
+          netRevenue: `AED ${row.netRevenue.toLocaleString()}`,
+        })),
+        totals: {
+          item: "TOTAL",
+          qtySold: totals.qtySold.toLocaleString(),
+          revenue: `AED ${totals.revenue.toLocaleString()}`,
+          cost: `AED ${totals.cost.toLocaleString()}`,
+          grossProfit: `AED ${totals.grossProfit.toLocaleString()}`,
+          gp: `${overallGpPct}%`,
+          netRevenue: `AED ${totals.netRevenue.toLocaleString()}`,
+        },
+      },
+    ],
+  });
 
   return (
     <div className="space-y-3">
@@ -4488,6 +5424,7 @@ function ItemWiseSalesReport() {
 
 // Category / Brand Sales Report
 function CategoryBrandSalesReport() {
+  useDataRevision();
   const [valuation, setValuation] = React.useState<ValuationMethod>("average_cost");
   const COLORS = ['#F5C742','#3b82f6','#10b981','#f97316','#8b5cf6','#ec4899','#14b8a6','#f59e0b'];
 
@@ -4496,6 +5433,33 @@ function CategoryBrandSalesReport() {
     const impliedCost = r.netSales * (1 - r.avgGP / 100);
     const { cost, gpPct } = recompute(r.netSales, impliedCost, valuation);
     return { ...r, avgGP: gpPct };
+  });
+
+  useReportView("category_brand_sales", {
+    note: `Valuation: ${VALUATION_METHODS.find((m) => m.id === valuation)?.label || valuation}`,
+    sections: [
+      {
+        title: "Category Sales Detail",
+        columns: [
+          { key: "category", header: "Category", align: "left", width: 18 },
+          { key: "qtySold", header: "Qty Sold", align: "right", width: 12 },
+          { key: "salesValue", header: "Sales Value", align: "right", width: 16 },
+          { key: "contribution", header: "Contrib %", align: "right", width: 12 },
+          { key: "returns", header: "Returns", align: "right", width: 14 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 16 },
+          { key: "avgGP", header: "Avg GP %", align: "right", width: 12 },
+        ],
+        rows: rows.map((row) => ({
+          category: row.category,
+          qtySold: row.qtySold.toLocaleString(),
+          salesValue: `AED ${row.salesValue.toLocaleString()}`,
+          contribution: `${row.contribution}%`,
+          returns: `AED ${row.returns.toLocaleString()}`,
+          netSales: `AED ${row.netSales.toLocaleString()}`,
+          avgGP: `${row.avgGP}%`,
+        })),
+      },
+    ],
   });
 
   return (
@@ -4586,6 +5550,41 @@ function CategoryBrandSalesReport() {
 
 // Fast / Slow Moving Items Report
 function FastSlowMovingReport() {
+  useDataRevision();
+  useReportView("fast_slow_moving", {
+    sections: [
+      {
+        title: "Fast Moving Items",
+        columns: [
+          { key: "rank", header: "#", align: "left", width: 6 },
+          { key: "item", header: "Item", align: "left", width: 24 },
+          { key: "salesFrequency", header: "Sales Freq", align: "right", width: 12 },
+          { key: "turnoverDays", header: "Turnover", align: "right", width: 12 },
+        ],
+        rows: mockFastSlowData.fast.map((row) => ({
+          rank: `#${row.rank}`,
+          item: row.item,
+          salesFrequency: row.salesFrequency.toLocaleString(),
+          turnoverDays: `${row.turnoverDays}d`,
+        })),
+      },
+      {
+        title: "Slow Moving Items",
+        columns: [
+          { key: "rank", header: "#", align: "left", width: 6 },
+          { key: "item", header: "Item", align: "left", width: 24 },
+          { key: "turnoverDays", header: "Turnover", align: "right", width: 12 },
+          { key: "stockOnHand", header: "Stock", align: "right", width: 12 },
+        ],
+        rows: mockFastSlowData.slow.map((row) => ({
+          rank: `#${row.rank}`,
+          item: row.item,
+          turnoverDays: `${row.turnoverDays}d`,
+          stockOnHand: row.stockOnHand,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -4674,7 +5673,34 @@ function FastSlowMovingReport() {
 
 // Discount Analysis Report
 function DiscountAnalysisReport() {
+  useDataRevision();
   const total = mockDiscountData.reduce((s, r) => s + r.discountAmount, 0);
+  useReportView("discount_analysis", {
+    note: `Total discounts: AED ${total.toLocaleString()}`,
+    sections: [
+      {
+        title: "Discount Analysis by Cashier",
+        columns: [
+          { key: "cashier", header: "Cashier", align: "left", width: 18 },
+          { key: "bills", header: "Bills", align: "right", width: 10 },
+          { key: "discountedBills", header: "Discounted Bills", align: "right", width: 14 },
+          { key: "discountAmount", header: "Discount Amount", align: "right", width: 16 },
+          { key: "discountPct", header: "Discount %", align: "right", width: 12 },
+          { key: "maxBillDiscount", header: "Max Bill Discount", align: "right", width: 14 },
+          { key: "avgDiscount", header: "Avg Discount", align: "right", width: 14 },
+        ],
+        rows: mockDiscountData.map((row) => ({
+          cashier: row.cashier,
+          bills: row.bills,
+          discountedBills: row.discountedBills,
+          discountAmount: `AED ${row.discountAmount.toLocaleString()}`,
+          discountPct: `${row.discountPct}%`,
+          maxBillDiscount: `AED ${row.maxBillDiscount}`,
+          avgDiscount: `AED ${row.avgDiscount.toFixed(1)}`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -4760,6 +5786,34 @@ function DiscountAnalysisReport() {
 
 // Promotion Impact Report
 function PromotionImpactReport() {
+  useDataRevision();
+  useReportView("promotion_impact", {
+    sections: [
+      {
+        title: "Promotion Performance Detail",
+        columns: [
+          { key: "promotionName", header: "Promotion", align: "left", width: 18 },
+          { key: "type", header: "Type", align: "left", width: 14 },
+          { key: "period", header: "Period", align: "left", width: 16 },
+          { key: "salesBefore", header: "Before", align: "right", width: 14 },
+          { key: "salesDuring", header: "During", align: "right", width: 14 },
+          { key: "uplift", header: "Uplift %", align: "right", width: 12 },
+          { key: "discountCost", header: "Discount Cost", align: "right", width: 14 },
+          { key: "netMargin", header: "Net Margin %", align: "right", width: 12 },
+        ],
+        rows: mockPromotionData.map((row) => ({
+          promotionName: row.promotionName,
+          type: row.type,
+          period: row.period,
+          salesBefore: `AED ${row.salesBefore.toLocaleString()}`,
+          salesDuring: `AED ${row.salesDuring.toLocaleString()}`,
+          uplift: `+${row.uplift}%`,
+          discountCost: `AED ${row.discountCost.toLocaleString()}`,
+          netMargin: `${row.netMargin}%`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 bg-white">
@@ -4826,7 +5880,40 @@ function PromotionImpactReport() {
 
 // Free Issue / Scheme Report
 function FreeIssueSchemeReport() {
+  useDataRevision();
   const totalCost = mockFreeIssueData.reduce((s, r) => s + r.freeIssueCost, 0);
+  useReportView("free_issue_scheme", {
+    kpis: [
+      { label: "Total Free Issue Cost", value: `AED ${totalCost.toLocaleString()}` },
+      { label: "Active Schemes", value: String(mockFreeIssueData.length) },
+      { label: "Total Activations", value: String(mockFreeIssueData.reduce((s, r) => s + r.activatedTimes, 0)) },
+    ],
+    sections: [
+      {
+        title: "Free Issue / Scheme Detail",
+        columns: [
+          { key: "scheme", header: "Scheme", align: "left", width: 18 },
+          { key: "item", header: "Free Item", align: "left", width: 18 },
+          { key: "triggerQty", header: "Trigger Qty", align: "right", width: 12 },
+          { key: "freeQty", header: "Free Qty", align: "right", width: 10 },
+          { key: "activatedTimes", header: "Activations", align: "right", width: 12 },
+          { key: "freeQtyIssued", header: "Free Qty Issued", align: "right", width: 12 },
+          { key: "freeIssueCost", header: "Cost Impact", align: "right", width: 14 },
+          { key: "totalSales", header: "Total Sales", align: "right", width: 14 },
+        ],
+        rows: mockFreeIssueData.map((row) => ({
+          scheme: row.scheme,
+          item: row.item,
+          triggerQty: row.triggerQty,
+          freeQty: row.freeQty,
+          activatedTimes: row.activatedTimes,
+          freeQtyIssued: row.freeQtyIssued,
+          freeIssueCost: `AED ${row.freeIssueCost.toLocaleString()}`,
+          totalSales: `AED ${row.totalSales.toLocaleString()}`,
+        })),
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 bg-white">
@@ -4891,7 +5978,30 @@ function FreeIssueSchemeReport() {
 
 // Tax Summary Report
 function TaxSummaryReport() {
+  useDataRevision();
   const COLORS = ['#F5C742','#3b82f6','#10b981'];
+  useReportView("tax_summary", {
+    kpis: [
+      { label: "VAT Collected", value: `AED ${mockTaxData[0].taxAmount.toLocaleString()}` },
+      { label: "Net VAT Payable", value: `AED ${mockTaxData[0].netTaxPayable.toLocaleString()}` },
+    ],
+    sections: [
+      {
+        title: "VAT Summary",
+        columns: [
+          { key: "label", header: "Description", align: "left", width: 30 },
+          { key: "amount", header: "Amount", align: "right", width: 18 },
+        ],
+        rows: [
+          { label: "Taxable Sales (5% VAT)", amount: `AED ${mockTaxData[0].taxableSales.toLocaleString()}` },
+          { label: "VAT Collected", amount: `AED ${mockTaxData[0].taxAmount.toLocaleString()}` },
+          { label: "Zero-Rated Sales", amount: `AED ${mockTaxData[1].zeroRated.toLocaleString()}` },
+          { label: "Exempt Sales", amount: `AED ${mockTaxData[2].exemptSales.toLocaleString()}` },
+        ],
+        totals: { label: "Net VAT Payable", amount: `AED ${mockTaxData[0].netTaxPayable.toLocaleString()}` },
+      },
+    ],
+  });
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -4946,7 +6056,42 @@ function TaxSummaryReport() {
 
 // VAT Output Register
 function VATOutputRegisterReport() {
+  useDataRevision();
   const totalTax = mockVATOutputData.reduce((s, r) => s + r.vatAmt, 0);
+  const totalAmt = mockVATOutputData.reduce((s, r) => s + r.totalAmt, 0);
+  useReportView("vat_output_register", {
+    note: `Total VAT Collected: AED ${totalTax.toLocaleString()}`,
+    sections: [
+      {
+        title: "VAT Output Register",
+        columns: [
+          { key: "invoiceNo", header: "Invoice No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "customer", header: "Customer", align: "left", width: 18 },
+          { key: "trn", header: "TRN", align: "left", width: 16 },
+          { key: "taxableAmt", header: "Taxable Amt", align: "right", width: 16 },
+          { key: "vatRate", header: "VAT Rate", align: "right", width: 10 },
+          { key: "vatAmt", header: "VAT Amount", align: "right", width: 14 },
+          { key: "totalAmt", header: "Total", align: "right", width: 14 },
+        ],
+        rows: mockVATOutputData.map((row) => ({
+          invoiceNo: row.invoiceNo,
+          date: row.date,
+          customer: row.customer,
+          trn: row.trn,
+          taxableAmt: `AED ${row.taxableAmt.toLocaleString()}`,
+          vatRate: row.vatRate,
+          vatAmt: `AED ${row.vatAmt.toLocaleString()}`,
+          totalAmt: `AED ${row.totalAmt.toLocaleString()}`,
+        })),
+        totals: {
+          invoiceNo: "TOTAL",
+          vatAmt: `AED ${totalTax.toLocaleString()}`,
+          totalAmt: `AED ${totalAmt.toLocaleString()}`,
+        },
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -5003,6 +6148,37 @@ function VATOutputRegisterReport() {
 
 // Price Override Report
 function PriceOverrideReport() {
+  useDataRevision();
+  useReportView("price_override", {
+    note: `${mockPriceOverrideData.length} overrides in period`,
+    sections: [
+      {
+        title: "Price Override Report",
+        columns: [
+          { key: "dateTime", header: "Date / Time", align: "left", width: 16 },
+          { key: "item", header: "Item", align: "left", width: 18 },
+          { key: "originalPrice", header: "Original Price", align: "right", width: 14 },
+          { key: "newPrice", header: "New Price", align: "right", width: 14 },
+          { key: "change", header: "Change %", align: "right", width: 10 },
+          { key: "cashier", header: "Cashier", align: "left", width: 14 },
+          { key: "approvedBy", header: "Approved By", align: "left", width: 14 },
+          { key: "reason", header: "Reason", align: "left", width: 18 },
+          { key: "billNo", header: "Bill No", align: "left", width: 12 },
+        ],
+        rows: mockPriceOverrideData.map((row) => ({
+          dateTime: `${row.date} ${row.time}`,
+          item: row.item,
+          originalPrice: `AED ${row.originalPrice.toFixed(2)}`,
+          newPrice: `AED ${row.newPrice.toFixed(2)}`,
+          change: `${row.change}%`,
+          cashier: row.cashier,
+          approvedBy: row.approvedBy,
+          reason: row.reason,
+          billNo: row.billNo,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -5054,6 +6230,35 @@ function PriceOverrideReport() {
 
 // Manual / Back-Dated Entry Report
 function ManualEntryReport() {
+  useDataRevision();
+  useReportView("manual_entry", {
+    note: `${mockManualEntryData.length} entries in period`,
+    sections: [
+      {
+        title: "Manual / Back-Dated Entry Report",
+        columns: [
+          { key: "entryNo", header: "Entry No", align: "left", width: 14 },
+          { key: "entryDate", header: "Entry Date", align: "left", width: 14 },
+          { key: "postDate", header: "Post Date", align: "left", width: 14 },
+          { key: "user", header: "User", align: "left", width: 16 },
+          { key: "type", header: "Type", align: "left", width: 16 },
+          { key: "impact", header: "Impact", align: "right", width: 14 },
+          { key: "reason", header: "Reason", align: "left", width: 18 },
+          { key: "approvedBy", header: "Approved By", align: "left", width: 14 },
+        ],
+        rows: mockManualEntryData.map((row) => ({
+          entryNo: row.entryNo,
+          entryDate: row.entryDate,
+          postDate: row.postDate,
+          user: row.user,
+          type: row.type,
+          impact: `AED ${row.impact.toLocaleString()}`,
+          reason: row.reason,
+          approvedBy: row.approvedBy,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -5105,6 +6310,37 @@ function ManualEntryReport() {
 
 // Sales Edit Log
 function SalesEditLogReport() {
+  useDataRevision();
+  useReportView("sales_edit_log", {
+    note: `${mockEditLogData.length} edits in period`,
+    sections: [
+      {
+        title: "Sales Edit Log",
+        columns: [
+          { key: "editNo", header: "Edit No", align: "left", width: 12 },
+          { key: "dateTime", header: "Date / Time", align: "left", width: 16 },
+          { key: "invoiceNo", header: "Invoice No", align: "left", width: 14 },
+          { key: "user", header: "User", align: "left", width: 16 },
+          { key: "field", header: "Field Changed", align: "left", width: 16 },
+          { key: "before", header: "Before", align: "left", width: 14 },
+          { key: "after", header: "After", align: "left", width: 14 },
+          { key: "reason", header: "Reason", align: "left", width: 16 },
+          { key: "approvedBy", header: "Approved By", align: "left", width: 14 },
+        ],
+        rows: mockEditLogData.map((row) => ({
+          editNo: row.editNo,
+          dateTime: `${row.date} ${row.time}`,
+          invoiceNo: row.invoiceNo,
+          user: row.user,
+          field: row.field,
+          before: row.before,
+          after: row.after,
+          reason: row.reason,
+          approvedBy: row.approvedBy,
+        })),
+      },
+    ],
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
@@ -5515,6 +6751,7 @@ function gpBadge(gp: number) {
 }
 
 function CustomerProfitDrilldownReport() {
+  useDataRevision();
   const [valuation, setValuation] = React.useState<ValuationMethod>("average_cost");
   const [expandedCustomers, setExpandedCustomers] = React.useState<Set<string>>(new Set(["CUS-001"]));
   const [expandedBills, setExpandedBills] = React.useState<Set<string>>(new Set());
@@ -5566,6 +6803,82 @@ function CustomerProfitDrilldownReport() {
     grossProfit: c.grossProfit,
     netSales: c.netSales,
   }));
+
+  useReportView("customer_profit_drilldown", {
+    note: `Valuation: ${VALUATION_METHODS.find((m) => m.id === valuation)?.label || valuation}`,
+    kpis: [
+      { label: "Gross Sales", value: `AED ${grandTotals.grossSales.toLocaleString()}` },
+      { label: "Total Discounts", value: `AED ${grandTotals.totalDiscount.toLocaleString()}` },
+      { label: "Net Sales", value: `AED ${grandTotals.netSales.toLocaleString()}` },
+      { label: "Total Cost", value: `AED ${grandTotals.totalCost.toLocaleString()}` },
+      { label: "Gross Profit", value: `AED ${grandTotals.grossProfit.toLocaleString()}`, hint: `${overallGP.toFixed(1)}%` },
+    ],
+    sections: [
+      {
+        title: "Customer Profit Summary",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 24 },
+          { key: "priceLevel", header: "Price Level", align: "left", width: 14 },
+          { key: "bills", header: "Bills", align: "right", width: 8 },
+          { key: "grossSales", header: "Gross Sales", align: "right", width: 14 },
+          { key: "discount", header: "Discount", align: "right", width: 14 },
+          { key: "netSales", header: "Net Sales", align: "right", width: 14 },
+          { key: "cost", header: "Cost", align: "right", width: 14 },
+          { key: "grossProfit", header: "Gross Profit", align: "right", width: 14 },
+          { key: "gpPct", header: "GP %", align: "right", width: 10 },
+        ],
+        rows: valuatedData.map((c) => ({
+          customer: c.customerName,
+          priceLevel: c.priceLevel,
+          bills: c.totalBills,
+          grossSales: `AED ${c.grossSales.toLocaleString()}`,
+          discount: `AED ${c.totalDiscount.toLocaleString()}`,
+          netSales: `AED ${c.netSales.toLocaleString()}`,
+          cost: `AED ${c.totalCost.toLocaleString()}`,
+          grossProfit: `AED ${c.grossProfit.toLocaleString()}`,
+          gpPct: `${c.gpPct}%`,
+        })),
+        totals: {
+          customer: "GRAND TOTAL",
+          grossSales: `AED ${grandTotals.grossSales.toLocaleString()}`,
+          discount: `AED ${grandTotals.totalDiscount.toLocaleString()}`,
+          netSales: `AED ${grandTotals.netSales.toLocaleString()}`,
+          cost: `AED ${grandTotals.totalCost.toLocaleString()}`,
+          grossProfit: `AED ${grandTotals.grossProfit.toLocaleString()}`,
+          gpPct: `${overallGP.toFixed(1)}%`,
+        },
+      },
+      {
+        title: "Bill → Item Detail",
+        columns: [
+          { key: "customer", header: "Customer", align: "left", width: 20 },
+          { key: "billNo", header: "Bill No", align: "left", width: 14 },
+          { key: "date", header: "Date", align: "left", width: 12 },
+          { key: "item", header: "Item", align: "left", width: 20 },
+          { key: "qty", header: "Qty", align: "right", width: 8 },
+          { key: "lineTotal", header: "Net Sales", align: "right", width: 14 },
+          { key: "lineCost", header: "Cost", align: "right", width: 14 },
+          { key: "lineGP", header: "Gross Profit", align: "right", width: 14 },
+          { key: "gpPct", header: "GP %", align: "right", width: 10 },
+        ],
+        rows: valuatedData.flatMap((c) =>
+          c.bills.flatMap((bill) =>
+            bill.items.map((item) => ({
+              customer: c.customerName,
+              billNo: bill.billNo,
+              date: bill.date,
+              item: item.itemName,
+              qty: item.qty,
+              lineTotal: `AED ${item.lineTotal.toLocaleString()}`,
+              lineCost: `AED ${item.lineCost.toLocaleString()}`,
+              lineGP: `AED ${item.lineGP.toLocaleString()}`,
+              gpPct: `${item.gpPct}%`,
+            }))
+          )
+        ),
+      },
+    ],
+  });
 
   return (
     <div className="space-y-3">

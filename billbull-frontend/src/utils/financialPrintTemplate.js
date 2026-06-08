@@ -78,7 +78,7 @@ function pageStyles(s) {
         .co-line { font-size: ${(s.fontSize || 9) - 1}pt; color: #666; white-space: pre-line; }
         .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; min-width: 220px; align-self: flex-end; }
         .meta .lbl { font-size: ${(s.fontSize || 9) - 1}pt; color: #999; }
-        .meta .val { font-size: ${(s.fontSize || 9) - 1}pt; font-weight: 600; color: #1a1a2e; }
+        .meta .val { font-size: ${(s.fontSize || 9) - 1}pt; font-weight: 500; color: #1a1a2e; }
         .logo { width: 72px; height: 72px; border-radius: 50%; border: 2px solid ${gold}; background: ${gold}15; display: flex; align-items: center; justify-content: center; font-size: 28pt; font-weight: 700; color: ${gold}; }
         .logo img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; }
         .divider { height: 2px; background: linear-gradient(90deg, ${gold}, ${gold}44); margin-bottom: 16px; border-radius: 1px; }
@@ -90,7 +90,7 @@ function pageStyles(s) {
         tr.totals { background: ${gold}1a; font-weight: 700; }
         tr.totals td { color: #1a1a2e; }
         .narration, .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; font-size: ${s.fontSize || 9}pt; }
-        .narration b, .info-card b { font-weight: 600; color: #1a1a2e; margin-right: 6px; }
+        .narration b, .info-card b { font-weight: 500; color: #1a1a2e; margin-right: 6px; }
         .net-box { display: flex; justify-content: flex-end; margin-bottom: 16px; }
         .net-box .inner { border: 2px solid ${gold}; border-radius: 8px; padding: 10px 20px; text-align: right; min-width: 200px; }
         .net-box .lbl { font-size: ${(s.fontSize || 9) - 1}pt; color: #666; margin-bottom: 2px; }
@@ -102,8 +102,8 @@ function pageStyles(s) {
         .stamp .ring { width: 56px; height: 56px; border-radius: 50%; border: 1.5px dashed #94a3b8; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: ${(s.fontSize || 9) - 2}pt; color: #94a3b8; }
         .terms { margin-top: 12px; padding-top: 10px; border-top: 1px solid #f1f5f9; font-size: ${(s.fontSize || 9) - 1.5}pt; color: #94a3b8; text-align: center; white-space: pre-wrap; }
         .words { margin-bottom: 14px; font-size: ${(s.fontSize || 9) - 0.5}pt; color: #666; }
-        .words b { font-weight: 600; }
-        .badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: ${(s.fontSize || 9) - 1}pt; font-weight: 600; }
+        .words b { font-weight: 500; }
+        .badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: ${(s.fontSize || 9) - 1}pt; font-weight: 500; }
     `;
 }
 
