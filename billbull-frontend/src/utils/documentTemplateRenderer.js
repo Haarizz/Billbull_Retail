@@ -644,8 +644,12 @@ const normaliseItem = (item = {}) => {
     const qty = asNumber(item.qty ?? item.quantity ?? 0);
     const price = asNumber(item.price ?? item.unitPrice ?? item.unitCost ?? 0);
     const discountPercent = asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0);
+    const grossAmount = qty * price;
+    const discountAmount = asNumber(
+        item.discountAmount ?? item.discountAmt ?? item.lineDiscount ?? (grossAmount * (discountPercent || 0) / 100)
+    );
     const taxableAmount = asNumber(
-        item.taxableAmount ?? (qty * price * (1 - (discountPercent || 0) / 100))
+        item.taxableAmount ?? (grossAmount - discountAmount)
     );
     const taxAmount = asNumber(item.taxAmt ?? item.taxAmount ?? 0);
     const total = asNumber(item.total ?? item.lineAmount ?? (taxableAmount + taxAmount));
@@ -668,6 +672,7 @@ const normaliseItem = (item = {}) => {
         taxAmount,
         taxPercent: asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0),
         discountPercent,
+        discountAmount,
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
         location: item.location || item.branch || item.branchName || item.locationName || '',
         batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
@@ -924,15 +929,20 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `
                 <td class="table-cell cell-right">
                     <div>${formatNumber(item.taxableAmount)}</div>
-                    ${columnOptions.discount && item.discountPercent > 0
-                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber((item.taxableAmount * item.discountPercent) / 100)}</div>`
+                    ${columnOptions.discount && !columnOptions.discountPercent && item.discountPercent > 0
+                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>`
                     : ''}
                 </td>
             `;
         case 'discount':
             return `<td class="table-cell cell-center">${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</td>`;
         case 'discountPercent':
-            return `<td class="table-cell cell-center">${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</td>`;
+            return `
+                <td class="table-cell cell-center cell-discount">
+                    <div>${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</div>
+                    ${item.discountPercent > 0 ? `<div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>` : ''}
+                </td>
+            `;
         case 'tax':
             return `
                 <td class="table-cell cell-right">
@@ -1387,7 +1397,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
         ${layout.displayOptions.showCustomerDetails !== false && partyVisibility.address && layout.party ? `
             <div class="bill-to-block">
                 <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
-                <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
+                <div class="bill-to-name"><span class="bill-to-name-text">${escapeHtml(layout.party.name || '')}</span></div>
                 ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
@@ -1648,6 +1658,17 @@ const buildCoreStyles = () => `
     .document-header-sales .bill-to-name {
         margin: 0 0 2px;
         font-weight: 700;
+        white-space: nowrap;
+        word-break: keep-all;
+        overflow-wrap: normal;
+        overflow: visible;
+    }
+    .document-header-sales .bill-to-name-text {
+        display: inline-block;
+        max-width: 100%;
+        white-space: nowrap;
+        font-weight: 700;
+        transform-origin: left center;
         word-break: break-word;
         overflow-wrap: break-word;
     }
@@ -2818,6 +2839,15 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 text-align: left !important;
                 justify-items: start !important;
             }
+            .document-header-sales .bill-to-name {
+                white-space: nowrap !important;
+                word-break: keep-all !important;
+                overflow-wrap: normal !important;
+                overflow: visible !important;
+            }
+            .document-header-sales .bill-to-name-text {
+                font-weight: 700 !important;
+            }
             /* Footer area (totals + bank + terms + signature + stamp/QR):
                The JS spacer (injected before print) pushes it toward the
                bottom margin of the final page.
@@ -3210,6 +3240,9 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
     const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
+    if (template.category === 'Quotation') {
+        partyVisibility.code = false;
+    }
     const theme = buildTheme(template);
     const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
     const columnOptions = applyDesignerColumnVisibility(
@@ -4510,8 +4543,30 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
     return `<script>
 (function () {
     'use strict';
+    function fitSingleLineHeaderText() {
+        var nodes = document.querySelectorAll('.document-header-sales .bill-to-name-text');
+        nodes.forEach(function (node) {
+            var container = node.closest('.bill-to-name');
+            if (!container) return;
+
+            node.style.transform = '';
+            container.style.whiteSpace = 'nowrap';
+
+            var available = container.clientWidth;
+            var required = node.scrollWidth;
+            if (!available || !required || required <= available) return;
+
+            node.style.transform = 'scaleX(' + (available / required).toFixed(4) + ')';
+        });
+    }
+
     function run() {
         try {
+            fitSingleLineHeaderText();
+
+            var spacer   = document.getElementById('footer-push-spacer');
+            var footer   = document.querySelector('.document-footer-group');
+            var shell    = document.querySelector('.document-shell');
             var spacer  = document.getElementById('footer-push-spacer');
             var footer  = document.querySelector('.document-footer-group');
             var shell   = document.querySelector('.document-shell');
