@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.vendor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 public class VendorListResponse {
 
@@ -51,6 +52,8 @@ public class VendorListResponse {
     private String iban;
     private String swiftCode;
     private String beneficiaryName;
+    private String branch;
+    private List<String> allocatedBranches;
 
     public VendorListResponse() {
     }
@@ -160,4 +163,8 @@ public class VendorListResponse {
     public void setSwiftCode(String swiftCode) { this.swiftCode = swiftCode; }
     public String getBeneficiaryName() { return beneficiaryName; }
     public void setBeneficiaryName(String beneficiaryName) { this.beneficiaryName = beneficiaryName; }
+    public String getBranch() { return branch; }
+    public void setBranch(String branch) { this.branch = branch; }
+    public List<String> getAllocatedBranches() { return allocatedBranches; }
+    public void setAllocatedBranches(List<String> allocatedBranches) { this.allocatedBranches = allocatedBranches; }
 }

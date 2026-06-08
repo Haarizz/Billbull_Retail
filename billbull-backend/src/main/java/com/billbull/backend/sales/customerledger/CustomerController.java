@@ -32,12 +32,13 @@ public class CustomerController {
 
     // =========================
     // GET ALL CUSTOMERS
+    // BBQA52-024: optional branchName filters by branch allocation
     // =========================
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
-    public ResponseEntity<List<Customer>> getAllCustomers() {
-        List<Customer> customers = service.getAllCustomers();
-        return ResponseEntity.ok(customers);
+    public ResponseEntity<List<Customer>> getAllCustomers(
+            @RequestParam(required = false) String branchName) {
+        return ResponseEntity.ok(service.getAllCustomers(branchName));
     }
 
     @GetMapping("/search")

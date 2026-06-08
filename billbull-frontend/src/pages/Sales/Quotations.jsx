@@ -182,7 +182,7 @@ const isBlankQuotationItem = (item = {}) =>
 const getSubmittableQuotationItems = (items = []) =>
     items.filter(item => !isBlankQuotationItem(item));
 
-const getQuotationValidationMessage = (items = []) => {
+const getQuotationValidationMessage = (items = [], salesSettings = null) => {
     const activeItems = getSubmittableQuotationItems(items);
 
     if (activeItems.length === 0) {
@@ -198,7 +198,7 @@ const getQuotationValidationMessage = (items = []) => {
         if (asNumber(item.qty ?? item.quantity) <= 0) {
             issues.push(`Line ${lineNo}: quantity must be greater than 0.00.`);
         }
-        if (asNumber(item.price) <= 0) {
+        if (asNumber(item.price) <= 0 && salesSettings?.zeroPricePolicy !== 'ALLOW') {
             issues.push(`Line ${lineNo}: price must be greater than 0.00.`);
         }
     });
@@ -1511,7 +1511,7 @@ const Quotations = () => {
             setShowToast(true);
             return;
         }
-        const validationMessage = getQuotationValidationMessage(items);
+        const validationMessage = getQuotationValidationMessage(items, salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -1550,7 +1550,7 @@ const Quotations = () => {
             setShowToast(true);
             return;
         }
-        const validationMessage = getQuotationValidationMessage(items);
+        const validationMessage = getQuotationValidationMessage(items, salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -1632,7 +1632,7 @@ const Quotations = () => {
 
     const handleApprove = async () => {
         if (!editingId) return;
-        const validationMessage = getQuotationValidationMessage(items);
+        const validationMessage = getQuotationValidationMessage(items, salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType("info");
@@ -2010,7 +2010,7 @@ const Quotations = () => {
     const handleListingApprove = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2048,7 +2048,7 @@ const Quotations = () => {
     const handleListingConfirm = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2086,7 +2086,7 @@ const Quotations = () => {
     const handleListingProceedToInvoice = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2151,7 +2151,7 @@ const Quotations = () => {
     const handleListingConvertToOrder = (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');

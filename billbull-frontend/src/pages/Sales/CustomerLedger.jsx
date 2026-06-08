@@ -36,9 +36,9 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
-import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateReportA4Html, printHtml } from '../../utils/printGenerator';
 import {
     normalizePurchaseTemplate,
     buildReceiptVoucherPrintData,
@@ -58,7 +58,7 @@ import TableSkeleton from '../../components/common/TableSkeleton';
 
 const CUSTOMER_COLUMNS = [
     { header: 'S.No.', key: 'sNo', width: 8, pdfWidth: 35 },
-    { header: 'Code', key: 'code', width: 15, pdfWidth: 90 },
+    { header: 'Code', key: 'code', width: 15, pdfWidth: 65 },
     { header: 'Customer Name', key: 'name', width: 30, pdfWidth: 170 },
     { header: 'Group', key: 'group', width: 15, pdfWidth: 60 },
     { header: 'Contact', key: 'contact', width: 20, pdfWidth: 90 },
@@ -2281,7 +2281,17 @@ const CustomerSOAView = ({ customers = [] }) => {
             currency
         );
 
-        exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
+        exportToExcel(
+            mapStatementEntriesForExport(statementData),
+            STATEMENT_EXPORT_COLUMNS,
+            filename,
+            {
+                companyProfile: company,
+                branch: activeBranch?.name,
+                dateFrom: startDate,
+                dateTo: endDate,
+            }
+        );
     };
 
     const selectedCustomerDetails = useMemo(
@@ -2704,6 +2714,7 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 
 const CustomerLedger = () => {
     const { company } = useCompany();
+    const { activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [customerToEdit, setCustomerToEdit] = useState(null);
@@ -2721,14 +2732,14 @@ const CustomerLedger = () => {
     const customerImportInputRef = useRef(null);
     const [isImportingCustomers, setIsImportingCustomers] = useState(false);
 
-    // Fetch Customers on Mount
+    // Fetch Customers on Mount and when active branch changes (BBQA52-024)
     useEffect(() => {
         loadCustomers();
-    }, []);
+    }, [activeBranch?.id]);
 
     const loadCustomers = async () => {
         try {
-            const res = await getAllCustomers();
+            const res = await getAllCustomers(activeBranch?.name);
 
             // 🔥 SAFETY CHECK
             const data = Array.isArray(res) ? res : [];
@@ -2823,6 +2834,32 @@ const CustomerLedger = () => {
         }, 300);
     }
 
+
+    const handlePrintCustomerList = () => {
+        const rows = withExportSerialNumbers(filteredCustomers);
+        const vm = {
+            reportTitle: 'Customer List',
+            sections: [{
+                columns: [
+                    { header: 'S.No.',         key: 'sNo',     align: 'center' },
+                    { header: 'Code',           key: 'code'    },
+                    { header: 'Customer Name',  key: 'name'    },
+                    { header: 'Group',          key: 'group'   },
+                    { header: 'Contact',        key: 'contact' },
+                    { header: 'Email',          key: 'email'   },
+                    { header: 'Balance',        key: 'balance', align: 'right' },
+                    { header: 'Status',         key: 'status'  },
+                ],
+                rows,
+            }],
+        };
+        const branchLabel = activeBranch?.name || '';
+        const html = generateReportA4Html(vm, company || {}, {
+            reportTitle: 'Customer List',
+            filters: branchLabel ? [{ label: 'Branch', value: branchLabel }] : [],
+        });
+        printHtml(html);
+    };
 
     // Derived state for Filtering
     const filteredCustomers = useMemo(() => {
@@ -3095,7 +3132,7 @@ const CustomerLedger = () => {
                             />
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
-                                    withListSerialNumbers(filteredCustomers),
+                                    withExportSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customers',
                                     {
@@ -3104,7 +3141,7 @@ const CustomerLedger = () => {
                                     }
                                 )}
                                 onExportPdf={() => exportToPDF(
-                                    withListSerialNumbers(filteredCustomers),
+                                    withExportSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customer List',
                                     'Customers',
@@ -3113,6 +3150,7 @@ const CustomerLedger = () => {
                                         branch: activeBranch?.name
                                     }
                                 )}
+                                onPrint={handlePrintCustomerList}
                             />
                             <button
                                 onClick={() => customerImportInputRef.current?.click()}

@@ -2,7 +2,11 @@ package com.billbull.backend.purchase.vendor;
 
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.settings.branch.Branch;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import java.math.BigDecimal;
 
@@ -81,6 +85,15 @@ public class Vendor extends BaseEntity {
     private String swiftCode;
     private String beneficiaryName;
 
+
+    @OneToMany(
+        mappedBy = "vendor",
+        cascade = CascadeType.ALL,
+        orphanRemoval = true,
+        fetch = FetchType.LAZY
+    )
+    @JsonIgnore
+    private List<VendorBranchAllocation> branchAllocations = new ArrayList<>();
 
     // =========================
     // Opening Balance
@@ -299,4 +312,7 @@ public class Vendor extends BaseEntity {
     public void setSwiftCode(String swiftCode) { this.swiftCode = swiftCode; }
     public String getBeneficiaryName() { return beneficiaryName; }
     public void setBeneficiaryName(String beneficiaryName) { this.beneficiaryName = beneficiaryName; }
+
+    public List<VendorBranchAllocation> getBranchAllocations() { return branchAllocations; }
+    public void setBranchAllocations(List<VendorBranchAllocation> branchAllocations) { this.branchAllocations = branchAllocations; }
 }

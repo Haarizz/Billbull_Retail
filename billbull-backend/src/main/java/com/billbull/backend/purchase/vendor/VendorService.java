@@ -3,8 +3,13 @@ package com.billbull.backend.purchase.vendor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.settings.branch.BranchRepository;
+
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -14,15 +19,18 @@ public class VendorService {
     private final com.billbull.backend.purchase.lpo.LpoRepository lpoRepo;
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo;
     private final com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo;
+    private final BranchRepository branchRepo;
 
     public VendorService(VendorRepository repo,
             com.billbull.backend.purchase.lpo.LpoRepository lpoRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo,
-            com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo) {
+            com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo,
+            BranchRepository branchRepo) {
         this.repo = repo;
         this.lpoRepo = lpoRepo;
         this.invRepo = invRepo;
         this.payRepo = payRepo;
+        this.branchRepo = branchRepo;
     }
 
     // -------------------------
@@ -31,10 +39,9 @@ public class VendorService {
     public Vendor create(VendorRequest req, boolean isDraft) {
         Vendor v = new Vendor();
         map(req, v);
-
+        mapBranchAllocations(req, v);
         v.setCode(generateCode());
         v.setStatus(isDraft ? "Draft" : "Active");
-
         return repo.save(v);
     }
 
@@ -44,8 +51,8 @@ public class VendorService {
     public Vendor update(Long id, VendorRequest req) {
         Vendor v = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Vendor not found"));
-
         map(req, v);
+        mapBranchAllocations(req, v);
         return repo.save(v);
     }
 
@@ -53,6 +60,10 @@ public class VendorService {
     // LIST
     // -------------------------
     public List<VendorListResponse> list() {
+        return list(null);
+    }
+
+    public List<VendorListResponse> list(String branchName) {
         // Batch the three balance aggregates into one grouped query each (keyed by
         // vendor name) instead of running them per-vendor — turns 3×N queries into
         // 3 total, which is the difference between ~12s and instant at 300 vendors.
@@ -60,7 +71,7 @@ public class VendorService {
         java.util.Map<String, BigDecimal> paidByName = toAmountMap(payRepo.sumPaymentsGroupedByVendorName());
         java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
 
-        return repo.findByIsActiveTrue()
+        List<VendorListResponse> result = repo.findByIsActiveTrue()
                 .stream()
                 .map(v -> {
                     // Compute payable balance live:
@@ -124,9 +135,34 @@ public class VendorService {
                     r.setIban(v.getIban());
                     r.setSwiftCode(v.getSwiftCode());
                     r.setBeneficiaryName(v.getBeneficiaryName());
+                    // BBQA52-023: branch allocation fields
+                    v.getBranchAllocations().size(); // force lazy init
+                    String defaultBranchName = v.getBranchAllocations().stream()
+                            .filter(VendorBranchAllocation::isDefault)
+                            .findFirst()
+                            .map(a -> a.getBranch().getName())
+                            .orElse(v.getBranch() != null ? v.getBranch().getName() : null);
+                    List<String> allocBranches = v.getBranchAllocations().stream()
+                            .map(a -> a.getBranch().getName())
+                            .collect(Collectors.toList());
+                    r.setBranch(defaultBranchName);
+                    r.setAllocatedBranches(allocBranches);
                     return r;
                 })
-                .toList();
+                .collect(Collectors.toList());
+
+        // BBQA52-024: filter by branch if requested; unallocated vendors visible everywhere
+        if (branchName != null && !branchName.isBlank()) {
+            final String branch = branchName.trim();
+            return result.stream()
+                    .filter(r -> {
+                        List<String> alloc = r.getAllocatedBranches();
+                        if (alloc == null || alloc.isEmpty()) return true;
+                        return alloc.stream().anyMatch(b -> branch.equalsIgnoreCase(b));
+                    })
+                    .collect(Collectors.toList());
+        }
+        return result;
     }
 
     /** Collapse grouped {@code [vendorName, sum]} rows into a name→amount map. */
@@ -209,6 +245,28 @@ public class VendorService {
         v.setIban(r.getIban());
         v.setSwiftCode(r.getSwiftCode());
         v.setBeneficiaryName(r.getBeneficiaryName());
+    }
+
+    private void mapBranchAllocations(VendorRequest req, Vendor v) {
+        if (req.getBranch() == null && req.getAllocatedBranches() == null) return;
+        v.getBranchAllocations().size(); // force-init before clear
+        v.getBranchAllocations().clear();
+        Set<String> names = new LinkedHashSet<>();
+        if (req.getBranch() != null && !req.getBranch().isBlank()) names.add(req.getBranch());
+        if (req.getAllocatedBranches() != null) names.addAll(req.getAllocatedBranches());
+        final String defaultName = req.getBranch();
+        for (String name : names) {
+            branchRepo.findByNameIgnoreCase(name).ifPresent(b -> {
+                VendorBranchAllocation alloc = new VendorBranchAllocation();
+                alloc.setVendor(v);
+                alloc.setBranch(b);
+                alloc.setDefault(name.equals(defaultName));
+                v.getBranchAllocations().add(alloc);
+                if (name.equals(defaultName)) {
+                    v.setBranch(b);
+                }
+            });
+        }
     }
 
     private String generateCode() {

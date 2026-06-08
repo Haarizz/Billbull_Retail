@@ -41,8 +41,8 @@ public class VendorController {
     }
 
     @GetMapping
-    public List<VendorListResponse> list() {
-        return service.list();
+    public List<VendorListResponse> list(@RequestParam(required = false) String branchName) {
+        return service.list(branchName);
     }
 
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

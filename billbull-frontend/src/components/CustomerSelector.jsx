@@ -24,7 +24,7 @@ const CustomerSelector = ({
     selectedCode = '',
     onCustomerCreated
 }) => {
-    const { defaultBranchName } = useBranch();
+    const { defaultBranchName, activeBranch, isAllBranches } = useBranch();
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -86,6 +86,11 @@ const CustomerSelector = ({
             }, ...list];
         }
 
+        // Branch filtering: hide customers that belong to a specific branch when a different branch is active
+        if (!isAllBranches && activeBranch?.name) {
+            list = list.filter(c => c.code === 'WALKIN' || !c.branch || c.branch === activeBranch.name);
+        }
+
         if (!debouncedQuery.trim()) return list;
         const q = debouncedQuery.toLowerCase();
         return list.filter(c =>
@@ -93,7 +98,7 @@ const CustomerSelector = ({
             (c.name || '').toLowerCase().includes(q) ||
             (c.mobile || c.phone || '').toLowerCase().includes(q)
         );
-    }, [customers, debouncedQuery]);
+    }, [customers, debouncedQuery, isAllBranches, activeBranch]);
 
     // Only the first MAX_VISIBLE matches are rendered/navigable.
     const visible = useMemo(() => filtered.slice(0, MAX_VISIBLE), [filtered]);
