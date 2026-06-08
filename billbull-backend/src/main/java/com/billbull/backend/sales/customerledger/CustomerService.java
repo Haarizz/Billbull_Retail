@@ -268,12 +268,26 @@ public class CustomerService {
         // CHILD ENTITIES (OWNING SIDE)
         // -------------------------
 
+        List<SavedAddress> oldAddresses = new ArrayList<>(customer.getSavedAddresses());
+        List<OpeningInvoice> oldInvoices = new ArrayList<>(customer.getOpeningInvoices());
+        List<ContactPerson> oldContacts = new ArrayList<>(customer.getContactPersons());
+        List<CustomerDocument> oldDocuments = new ArrayList<>(customer.getDocuments());
+
         // Saved Addresses
         if (dto.getSavedAddresses() != null) {
             customer.getSavedAddresses().clear();
             // Enforce at most one default address
             boolean foundDefault = false;
-            for (SavedAddress addr : dto.getSavedAddresses()) {
+            for (SavedAddress dtoAddr : dto.getSavedAddresses()) {
+                SavedAddress addr = new SavedAddress();
+                if (dtoAddr.getId() != null) {
+                    addr = oldAddresses.stream()
+                            .filter(e -> dtoAddr.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new SavedAddress());
+                }
+                BeanUtils.copyProperties(dtoAddr, addr, "id", "customer");
+
                 if (addr.isDefault() && !foundDefault) {
                     foundDefault = true;
                 } else {
@@ -283,7 +297,7 @@ public class CustomerService {
                 customer.getSavedAddresses().add(addr);
             }
             // Sync denormalised field so the customer list response always has it
-            String defaultAddr = dto.getSavedAddresses().stream()
+            String defaultAddr = customer.getSavedAddresses().stream()
                     .filter(SavedAddress::isDefault)
                     .findFirst()
                     .map(a -> java.util.stream.Stream.of(a.getAddress1(), a.getAddress2(), a.getCity(), a.getCountry())
@@ -297,7 +311,16 @@ public class CustomerService {
         if (dto.getOpeningInvoices() != null) {
             customer.getOpeningInvoices().clear();
             if (hasSubmittedOpeningInvoices) {
-                for (OpeningInvoice inv : dto.getOpeningInvoices()) {
+                for (OpeningInvoice dtoInv : dto.getOpeningInvoices()) {
+                    OpeningInvoice inv = new OpeningInvoice();
+                    if (dtoInv.getId() != null) {
+                        inv = oldInvoices.stream()
+                                .filter(e -> dtoInv.getId().equals(e.getId()))
+                                .findFirst()
+                                .orElse(new OpeningInvoice());
+                    }
+                    BeanUtils.copyProperties(dtoInv, inv, "id", "customer");
+
                     initializeOpeningBalanceAmount(inv);
                     inv.setCustomer(customer);
                     customer.getOpeningInvoices().add(inv);
@@ -310,7 +333,16 @@ public class CustomerService {
         // Contact Persons
         if (dto.getContactPersons() != null) {
             customer.getContactPersons().clear();
-            for (ContactPerson cp : dto.getContactPersons()) {
+            for (ContactPerson dtoCp : dto.getContactPersons()) {
+                ContactPerson cp = new ContactPerson();
+                if (dtoCp.getId() != null) {
+                    cp = oldContacts.stream()
+                            .filter(e -> dtoCp.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new ContactPerson());
+                }
+                BeanUtils.copyProperties(dtoCp, cp, "id", "customer");
+
                 cp.setCustomer(customer);
                 customer.getContactPersons().add(cp);
             }
@@ -319,7 +351,16 @@ public class CustomerService {
         // Documents
         if (dto.getDocuments() != null) {
             customer.getDocuments().clear();
-            for (CustomerDocument doc : dto.getDocuments()) {
+            for (CustomerDocument dtoDoc : dto.getDocuments()) {
+                CustomerDocument doc = new CustomerDocument();
+                if (dtoDoc.getId() != null) {
+                    doc = oldDocuments.stream()
+                            .filter(e -> dtoDoc.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new CustomerDocument());
+                }
+                BeanUtils.copyProperties(dtoDoc, doc, "id", "customer");
+
                 doc.setCustomer(customer);
                 customer.getDocuments().add(doc);
             }

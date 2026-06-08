@@ -407,7 +407,11 @@ public class QuotationService {
         BigDecimal gross = quantity.multiply(price);
         BigDecimal discountAmount = gross.multiply(discount)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal taxable = gross.subtract(discountAmount);
+        BigDecimal footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : BigDecimal.ZERO;
+        BigDecimal taxable = gross.subtract(discountAmount).subtract(footerDisc);
+        if (taxable.compareTo(BigDecimal.ZERO) < 0) {
+            taxable = BigDecimal.ZERO;
+        }
         BigDecimal taxAmount = taxable.multiply(taxRate)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         BigDecimal lineTotal = taxable.add(taxAmount).setScale(2, RoundingMode.HALF_UP);
@@ -714,15 +718,22 @@ public class QuotationService {
             for (QuotationItem item : quotation.getItems()) {
                 double lineTotal = item.getLineTotal() != null ? item.getLineTotal().doubleValue() : 0;
                 double taxAmt    = item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : 0;
-                subTotal += (lineTotal - taxAmt);
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount().doubleValue() : 0;
+                
+                subTotal += (lineTotal - taxAmt + footerDisc);
                 taxTotal += taxAmt;
             }
         }
 
-        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
+        double billDiscAmt = quotation.getBillDiscountAmount() != null ? quotation.getBillDiscountAmount().doubleValue() : 0;
+        if (billDiscAmt == 0 && billDiscPct > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        }
+
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();

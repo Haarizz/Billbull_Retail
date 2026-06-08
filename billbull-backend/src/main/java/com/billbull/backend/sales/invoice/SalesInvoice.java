@@ -71,6 +71,12 @@ public class SalesInvoice {
     private Double amountPaid;
     private Double balance;
     private Double billDiscount;
+    
+    @Column(name = "bill_discount_amount")
+    private Double billDiscountAmount;
+
+    @Column(name = "bill_discount_type", length = 20)
+    private String billDiscountType;
 
     /** Flat delivery/shipping charge added to the invoice total (no VAT applied). */
     private Double deliveryCharge;
@@ -339,6 +345,22 @@ public class SalesInvoice {
 
     public void setBillDiscount(Double billDiscount) {
         this.billDiscount = billDiscount;
+    }
+
+    public Double getBillDiscountAmount() {
+        return billDiscountAmount;
+    }
+
+    public void setBillDiscountAmount(Double billDiscountAmount) {
+        this.billDiscountAmount = billDiscountAmount;
+    }
+
+    public String getBillDiscountType() {
+        return billDiscountType;
+    }
+
+    public void setBillDiscountType(String billDiscountType) {
+        this.billDiscountType = billDiscountType;
     }
 
     public Double getDeliveryCharge() {

@@ -24,6 +24,8 @@ public class SalesOrderItem {
     private Double price;
     private Double cost;
     private Double discount;
+    @Column(name = "footer_discount")
+    private Double footerDiscount;
     private Double taxRate;
     private Double taxAmount;
     private Double lineTotal;
@@ -175,6 +177,14 @@ public class SalesOrderItem {
 
     public void setDiscount(Double discount) {
         this.discount = discount;
+    }
+
+    public Double getFooterDiscount() {
+        return footerDiscount;
+    }
+
+    public void setFooterDiscount(Double footerDiscount) {
+        this.footerDiscount = footerDiscount;
     }
 
     public Double getTaxRate() {
