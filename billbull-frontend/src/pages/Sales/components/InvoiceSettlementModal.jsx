@@ -271,44 +271,6 @@ const InvoiceSettlementModal = ({
                                 </div>
                             </div>
 
-                            {/* Sales Payment Actions */}
-                            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
-                                <p className="text-xs font-bold text-slate-500 mb-3">Sales Payment Actions</p>
-                                <div className="flex flex-wrap gap-2">
-                                    <button 
-                                        onClick={() => {
-                                            const mocks = entries.filter(e => Number(e.amount) > 0).map((e, idx) => ({ id: 'draft-'+idx, receiptNumber: nextVoucherNo, voucherId: nextVoucherNo, amount: e.amount, mode: e.mode, paymentMode: e.mode, reference: e.reference, date: today(), status: 'Preview' }));
-                                            if (mocks.length === 0) return alert('Enter a payment amount first.');
-                                            mocks.forEach(rv => onPrintVoucher?.(rv));
-                                        }} 
-                                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"
-                                    ><Printer size={14} /> Print Payment</button>
-                                    <button 
-                                        onClick={() => {
-                                            const mocks = entries.filter(e => Number(e.amount) > 0).map((e, idx) => ({ id: 'draft-'+idx, receiptNumber: nextVoucherNo, voucherId: nextVoucherNo, amount: e.amount, mode: e.mode, paymentMode: e.mode, reference: e.reference, date: today(), status: 'Preview' }));
-                                            if (mocks.length === 0) return alert('Enter a payment amount first.');
-                                            mocks.forEach(rv => (onDownloadVoucher || onPrintVoucher)?.(rv));
-                                        }} 
-                                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"
-                                    ><Download size={14} /> Download PDF</button>
-                                    <button 
-                                        onClick={() => {
-                                            const mocks = entries.filter(e => Number(e.amount) > 0).map((e, idx) => ({ id: 'draft-'+idx, receiptNumber: nextVoucherNo, voucherId: nextVoucherNo, amount: e.amount, mode: e.mode, paymentMode: e.mode, reference: e.reference, date: today(), status: 'Preview' }));
-                                            if (mocks.length === 0) return alert('Enter a payment amount first.');
-                                            onEmailVoucher?.(mocks);
-                                        }} 
-                                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"
-                                    ><Mail size={14} /> Email Voucher</button>
-                                    <button 
-                                        onClick={() => {
-                                            const mocks = entries.filter(e => Number(e.amount) > 0).map((e, idx) => ({ id: 'draft-'+idx, receiptNumber: nextVoucherNo, voucherId: nextVoucherNo, amount: e.amount, mode: e.mode, paymentMode: e.mode, reference: e.reference, date: today(), status: 'Preview' }));
-                                            if (mocks.length === 0) return alert('Enter a payment amount first.');
-                                            onWhatsAppVoucher?.(mocks);
-                                        }} 
-                                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"
-                                    ><MessageCircle size={14} /> WhatsApp</button>
-                                </div>
-                            </div>
                         </>
                     ) : (
                         /* DONE phase — real voucher numbers from the backend */
@@ -337,8 +299,8 @@ const InvoiceSettlementModal = ({
                             <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
                                 <p className="text-xs font-bold text-slate-500 mb-3">Sales Payment Actions</p>
                                 <div className="flex flex-wrap gap-2">
-                                    <button onClick={() => recorded.forEach(rv => onPrintVoucher?.(rv))} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><Printer size={14} /> Print Payment</button>
-                                    <button onClick={() => recorded.forEach(rv => (onDownloadVoucher || onPrintVoucher)?.(rv))} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><Download size={14} /> Download PDF</button>
+                                    <button onClick={() => onPrintVoucher?.(recorded)} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><Printer size={14} /> Print Payment</button>
+                                    <button onClick={() => (onDownloadVoucher || onPrintVoucher)?.(recorded)} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><Download size={14} /> Download PDF</button>
                                     <button onClick={() => onEmailVoucher?.(recorded)} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><Mail size={14} /> Email Voucher</button>
                                     <button onClick={() => onWhatsAppVoucher?.(recorded)} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50"><MessageCircle size={14} /> WhatsApp</button>
                                 </div>

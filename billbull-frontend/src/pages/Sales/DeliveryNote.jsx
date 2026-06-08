@@ -1733,6 +1733,7 @@ const DeliveryNote = () => {
             hideTotalsTable: true,
             meta: {
                 status: status,
+                linkedQuotation: linkedPI || '',
                 linkedSalesOrder: linkedSO || '',
                 linkedSalesInvoice: linkedSI || '',
                 location: warehouse || '',

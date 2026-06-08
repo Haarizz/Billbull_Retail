@@ -389,6 +389,31 @@ const resolveStampUrl = (companyProfile = {}) => {
     return resolveDocumentImageUrl(stampPath) || null;
 };
 
+/**
+ * Resolves logo and stamp URLs using the three-tier priority chain:
+ *   1. Template-level asset (designer upload inside the template)
+ *   2. Branch asset (already merged into companyProfile by buildDocumentHeaderProfile)
+ *   3. Company asset (global fallback from company profile)
+ *
+ * The branch tier is transparent here — callers must pass a companyProfile that
+ * has already been resolved through buildDocumentHeaderProfile so that
+ * companyProfile.logoUrl / stampUrl already reflect the branch override.
+ */
+const resolveDocumentAssets = (designerSettings = {}, companyProfile = {}) => {
+    const templateLogo = resolveTemplateImageUrl(
+        designerSettings.logoUrl || designerSettings.companyLogoUrl
+    );
+    const templateStamp = resolveTemplateImageUrl(
+        designerSettings.stampUrl || designerSettings.stampImage
+    );
+    const branchOrCompanyLogo = companyProfile.logoUrl || null;
+    const branchOrCompanyStamp = companyProfile.stampUrl || null;
+    return {
+        logoUrl: templateLogo || branchOrCompanyLogo || null,
+        stampUrl: templateStamp || branchOrCompanyStamp || null,
+    };
+};
+
 export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
     const address = firstNonEmpty(
         companyProfile.fullAddress,
@@ -3072,8 +3097,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
     const isSalesDesigner = isSalesDesignerTemplate(template);
-    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
-    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(designerSettings, company);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
     const theme = buildTheme(template);
@@ -3176,8 +3200,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         company,
         currency,
         isPurchaseDesigner: true,
-        logoUrl: templateLogoUrl || company.logoUrl,
-        stampUrl: templateStampUrl || company.stampUrl,
+        logoUrl: resolvedLogoUrl,
+        stampUrl: resolvedStampUrl,
         companyVisibility,
         partyVisibility,
         theme,
@@ -3225,7 +3249,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
         // Default showCompanyStamp to true when a stamp image is available (branch or template),
         // so branch stamps render automatically without requiring a saved template toggle.
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(resolvedStampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -3247,8 +3271,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
 const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarget, options = {}) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
-    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
-    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(designerSettings, company);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
     if (template.category === 'Quotation') {
@@ -3356,8 +3379,8 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         currency,
         isPurchaseDesigner: false,
         isSalesDesigner: true,
-        logoUrl: templateLogoUrl || company.logoUrl,
-        stampUrl: templateStampUrl || company.stampUrl,
+        logoUrl: resolvedLogoUrl,
+        stampUrl: resolvedStampUrl,
         companyVisibility,
         partyVisibility,
         theme,
@@ -3408,7 +3431,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         showHighlight: summaryValue > 0 && pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar'], true),
         showPaymentDetails: false,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip'], false),
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(resolvedStampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -3636,9 +3659,8 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
     const showClosingBalance = pickSetting(settings, ['showClosingBalance'], true);
     const companyVisibility = buildCompanyVisibility(settings);
     const partyVisibility = buildPartyVisibility(settings);
-    const logoUrl = showLogo
-        ? (resolveTemplateImageUrl(settings.logoUrl || settings.companyLogoUrl) || company.logoUrl)
-        : '';
+    const { logoUrl: resolvedStatementLogoUrl } = resolveDocumentAssets(settings, company);
+    const logoUrl = showLogo ? (resolvedStatementLogoUrl || '') : '';
     const party = data.party || {};
     const statement = data.statement || {};
     const rows = normalizeStatementRows(data).filter((row) => isStatementRowVisible(row, settings, isCustomerStatement ? 'customer' : 'vendor'));
@@ -3751,7 +3773,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .company-name {
             font-size: ${Math.max(16, baseFontSize + 4)}px;
-            font-weight: 800;
+            font-weight: 700;
             margin-bottom: 7px;
         }
         .company-line,
@@ -3767,7 +3789,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             font-size: ${Math.max(22, baseFontSize + 11)}px;
             line-height: 1.1;
             letter-spacing: 0;
-            font-weight: 800;
+            font-weight: 700;
             text-transform: uppercase;
         }
         .statement-pill {
@@ -3777,7 +3799,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             background: ${accentColor};
             color: #111827;
             padding: 5px 11px;
-            font-weight: 800;
+            font-weight: 600;
             font-size: ${Math.max(10, baseFontSize - 3)}px;
             text-transform: uppercase;
         }
@@ -3799,14 +3821,14 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .card-label {
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             letter-spacing: 0.12em;
             text-transform: uppercase;
             margin-bottom: 8px;
         }
         .vendor-name {
             font-size: ${Math.max(15, baseFontSize + 2)}px;
-            font-weight: 800;
+            font-weight: 700;
             color: #111827;
             margin-bottom: 5px;
         }
@@ -3818,7 +3840,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .balance-value {
             color: #111827;
             font-size: ${Math.max(19, baseFontSize + 7)}px;
-            font-weight: 900;
+            font-weight: 700;
             margin-top: 2px;
         }
         .summary-grid {
@@ -3838,7 +3860,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .summary-label {
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             letter-spacing: 0.1em;
             text-transform: uppercase;
         }
@@ -3846,7 +3868,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             margin-top: 6px;
             color: #111827;
             font-size: ${Math.max(16, baseFontSize + 4)}px;
-            font-weight: 850;
+            font-weight: 700;
         }
         .summary-value.strong {
             color: ${accentColor};
@@ -3855,7 +3877,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             margin-top: 2px;
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             text-transform: uppercase;
         }
         .soa-table {
@@ -3870,7 +3892,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             border: 1px solid ${borderColor};
             padding: 6px 5px;
             font-size: ${Math.max(7, baseFontSize - 5)}px;
-            font-weight: 850;
+            font-weight: 600;
             text-transform: uppercase;
             text-align: left;
             line-height: 1.18;
@@ -3898,7 +3920,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .soa-table .debit { color: ${isCustomerStatement ? '#dc2626' : '#15803d'}; }
         .soa-table .credit { color: ${isCustomerStatement ? '#15803d' : '#c2410c'}; }
-        .soa-table .balance { color: #111827; font-weight: 800; }
+        .soa-table .balance { color: #111827; font-weight: 600; }
         .type-badge {
             display: block;
             border-radius: 4px;
@@ -3906,7 +3928,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             color: #334155;
             padding: 0;
             font-size: ${Math.max(7, baseFontSize - 5)}px;
-            font-weight: 800;
+            font-weight: 600;
             line-height: 1.15;
             text-transform: none;
             overflow-wrap: normal;
@@ -3914,7 +3936,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .closing-row td {
             background: #f8fafc;
-            font-weight: 850;
+            font-weight: 700;
             color: #111827;
         }
         .empty-row td {
@@ -4141,8 +4163,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
     const currencyConfig = resolveCurrencyDisplayConfig(company);
     const currencyLabel = renderCurrencySymbolHtml(company);
 
-    // ── header logo ──
-    const logoUrl = company.logoUrl;
+    // ── header logo: template > branch > company ──
+    const { logoUrl } = resolveDocumentAssets(s, company);
     const logoHtml = on('showCompanyLogo')
         ? (logoUrl
             ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" style="width:42px;height:42px;border-radius:8px;object-fit:contain;background:rgba(0,0,0,0.06);flex-shrink:0;" />`
@@ -4738,6 +4760,7 @@ const defaultPaymentReceiptSettings = () => ({
     showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true,
     showTotalOutstanding: true, showDiscountAllowed: true, showRemainingBalance: true, showTotalReceivedBold: true,
     showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: true,
+    showAmountInWords: true,
     showNote: true, showCompanyStamp: true, showQRCode: false, stampUrl: '',
     showGeneratedBy: true, showReceivedByLine: true,
     showCompanyName: true, showCompanyAddress: true, showCompanyPhone: true, showCompanyEmail: true, showTRN: true,
@@ -4752,9 +4775,11 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
     const esc = escapeHtml;
     const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    // Use plain currency label (e.g. "AED") to match the designer preview — avoid
-    // the dirham image which breaks inline table cell layout.
-    const currLabel = esc(renderCurrencySymbol(co));
+    // Use the HTML symbol renderer so AED shows the dirham glyph; same approach
+    // as other document renderers. Use mask-image variant so it inherits color.
+    const currHtml = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: false });
+    const currHtmlInherit = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: true });
+    const currHtmlGold = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: true });
 
     const r = data.receiptData || {};
     const cust = data.customerData || {};
@@ -4762,8 +4787,8 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const sum = data.summary || {};
     const pay = data.payment || {};
 
-    // Logo: designer-uploaded URL takes priority, then company profile logo, then initial circle
-    const resolvedLogoUrl = resolveTemplateImageUrl(s.logoUrl) || co.logoUrl || '';
+    // Asset resolution: template > branch > company (branch already merged into co by buildDocumentHeaderProfile)
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(s, co);
     const logoHtml = s.showLogo
         ? (resolvedLogoUrl
             ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
@@ -4792,8 +4817,8 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
         const statusColor = (inv.status || '').toLowerCase().includes('full') ? '#059669' : '#d97706';
         const statusBg = (inv.status || '').toLowerCase().includes('full') ? '#ecfdf5' : '#fffbeb';
         const statusBorder = (inv.status || '').toLowerCase().includes('full') ? '#6ee7b7' : '#fcd34d';
-        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:top;`;
-        const tdRight = `${tdBase}text-align:right;`;
+        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:middle;`;
+        const tdRight = `${tdBase}text-align:right;white-space:nowrap;`;
         return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'};">
             <td style="${tdBase}">
                 ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f - 1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
@@ -4801,18 +4826,17 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
                 ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f - 1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
             </td>
             ${s.showInvoiceDate ? `<td style="${tdRight}color:#64748b;">${esc(inv.date || '')}</td>` : ''}
-            ${s.showInvoiceTotal ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.total)}</div></td>` : ''}
-            ${s.showOutstanding ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.outstanding)}</div></td>` : ''}
-            ${s.showReceivedNow ? `<td style="${tdRight}"><div style="color:${gold};font-size:${f - 1}px;font-weight:600;">${currLabel}</div><div style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</div></td>` : ''}
-            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currLabel} 0.00</span>`}</td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="${tdRight}">${currHtml} ${fmt(inv.total)}</td>` : ''}
+            ${s.showOutstanding ? `<td style="${tdRight}">${currHtml} ${fmt(inv.outstanding)}</td>` : ''}
+            ${s.showReceivedNow ? `<td style="${tdRight}font-weight:700;color:#1a1a2e;">${currHtmlGold} ${fmt(inv.received)}</td>` : ''}
+            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
         </tr>`;
     }).join('');
 
-    // Stamp: use uploaded image if stampUrl is set, otherwise show dashed placeholder
     const stampHtml = s.showCompanyStamp ? `
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
-            ${s.stampUrl
-            ? `<img src="${esc(s.stampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
+            ${resolvedStampUrl
+            ? `<img src="${esc(resolvedStampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
             : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;">
                        <span style="font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</span>
                    </div>`
@@ -4914,15 +4938,23 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- SUMMARY (right-aligned) -->
     <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-      <table style="min-width:300px;border-collapse:collapse;font-size:${f}px;">
+      <table style="width:auto;border-collapse:collapse;font-size:${f}px;">
         <tbody>
-          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Total outstanding</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.totalOutstanding)}</td></tr>` : ''}
-          ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Discount allowed</td><td style="padding:3px 0 3px 12px;text-align:right;color:#e11d48;">${currLabel} —${fmt(sum.discount || 0)}</td></tr>` : ''}
-          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Remaining balance</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.remaining)}</td></tr>` : ''}
-          ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;">Total received now</td><td style="padding:6px 0 6px 12px;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;">${currLabel} ${fmt(sum.totalReceived)}</td></tr>` : ''}
+          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Total outstanding</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalOutstanding)}</span></td></tr>` : ''}
+          ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Discount allowed</td><td style="padding:3px 0;text-align:right;color:#e11d48;white-space:nowrap;min-width:100px;">${currHtmlInherit} <span style="display:inline-block;min-width:70px;text-align:right;">—${fmt(sum.discount || 0)}</span></td></tr>` : ''}
+          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Remaining balance</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.remaining)}</span></td></tr>` : ''}
+          ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;white-space:nowrap;">Total received now</td><td style="padding:6px 0;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalReceived)}</span></td></tr>` : ''}
         </tbody>
       </table>
     </div>
+
+    <!-- AMOUNT IN WORDS -->
+    ${s.showAmountInWords && sum.totalReceived ? `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <div style="font-size:${f}px;font-weight:600;color:#1a1a2e;text-align:right;background:#f8fafc;padding:6px 12px;border-radius:4px;border:1px solid #e2e8f0;">
+        <span style="color:#64748b;margin-right:4px;">Amount in words:</span> <span style="font-weight:700;color:#1a1a2e;">${formatAmountInWords(sum.totalReceived, r.accountCurrency || co.currency)}</span>
+      </div>
+    </div>` : ''}
 
     <!-- PAYMENT DETAILS -->
     ${s.showPaymentMethod && pay.method ? `

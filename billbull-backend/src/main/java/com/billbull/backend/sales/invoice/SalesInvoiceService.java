@@ -26,6 +26,7 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.sales.payment.Payment;
+import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.sales.payment.PaymentService;
 import com.billbull.backend.sales.payment.PaymentStatus;
 import com.billbull.backend.sales.payment.PaymentType;
@@ -85,6 +86,7 @@ public class SalesInvoiceService {
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
     private final PaymentService paymentService;
+    private final PaymentRepository paymentRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
@@ -110,6 +112,7 @@ public class SalesInvoiceService {
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
             PaymentService paymentService,
+            PaymentRepository paymentRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
@@ -134,6 +137,7 @@ public class SalesInvoiceService {
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
+        this.paymentRepository = paymentRepository;
         this.notifPublisher = notifPublisher;
     }
 
@@ -889,12 +893,30 @@ public class SalesInvoiceService {
 
         createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
 
-        // Sync invoice's paymentMode to the actual mode used for payment
-        if (paymentMode != null && !paymentMode.isBlank()) {
-            SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
-            toUpdate.setPaymentMode(paymentMode);
-            invoiceRepo.save(toUpdate);
+        // Recompute invoice amountPaid / balance / status from the sum of all
+        // payments recorded against it (the Payment rows are the source of truth).
+        SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
+        double totalPaid = paymentRepository.findByLinkedInvoice(toUpdate.getInvoiceNumber())
+                .stream()
+                .filter(p -> p.getStatus() != PaymentStatus.CANCELLED)
+                .mapToDouble(p -> p.getAmount() != null ? p.getAmount() : 0.0)
+                .sum();
+        double invoiceTotal = toUpdate.getInvoiceTotal() != null ? toUpdate.getInvoiceTotal() : 0.0;
+        double newBalance = BigDecimal.valueOf(Math.max(invoiceTotal - totalPaid, 0))
+                .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
+        toUpdate.setAmountPaid(
+                BigDecimal.valueOf(Math.min(totalPaid, invoiceTotal))
+                        .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue());
+        toUpdate.setBalance(newBalance);
+        if (totalPaid >= invoiceTotal - 0.005 && invoiceTotal > 0) {
+            toUpdate.setStatus(SalesInvoiceStatus.PAID);
+        } else if (totalPaid > 0) {
+            toUpdate.setStatus(SalesInvoiceStatus.PARTIALLY_PAID);
         }
+        if (paymentMode != null && !paymentMode.isBlank()) {
+            toUpdate.setPaymentMode(paymentMode);
+        }
+        invoiceRepo.save(toUpdate);
 
         return getById(id);
     }

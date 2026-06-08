@@ -47,11 +47,17 @@ class PostingEngineServiceTest {
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
 
     private PostingEngineService service;
 
     @BeforeEach
     void setUp() {
+        com.billbull.backend.sales.settings.SalesSettings settings =
+                new com.billbull.backend.sales.settings.SalesSettings();
+        settings.setCreditLimitPolicy(com.billbull.backend.sales.settings.CreditLimitPolicy.NO_IMPACT);
+        org.mockito.Mockito.lenient().when(salesSettingsService.getSettings()).thenReturn(settings);
+
         service = new PostingEngineService(
                 journalEntryRepository,
                 journalEntryService,
@@ -61,7 +67,8 @@ class PostingEngineServiceTest {
                 voucherSequenceService,
                 customerCreditService,
                 grnRepository,
-                glBalanceRepository);
+                glBalanceRepository,
+                salesSettingsService);
     }
 
     @Test

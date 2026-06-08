@@ -151,6 +151,9 @@ function defaultSettings(docType) {
     showDeliveryTerms: isDN || docType === "sales-order",
     showLocationStore: docType === "quotation" || docType === "sales-order",
     showWarehouseStore: isDN,
+    showQuotationRef: isDN,
+    showSalesOrderRef: isDN,
+    showSalesInvoiceRef: isDN,
     showGrandTotalBanner: !isGRN && !isDN,
     colNo: true,
     colProductImage: !isGRN && !isDN,
@@ -194,7 +197,7 @@ function defaultSettings(docType) {
 const MOCK = {
   company: { name: "GEEBU Enterprise Platforms LLC", address: "Suite No. 103 \xB7 Office No. 33\nAl Mamkhool \xB7 Dubai \xB7 U.A.E", phone: "+971 529 125 865", email: "crteam@geebu.io", website: "www.geebu.io", trn: "100047547540457", crn: "DED-2022-112345" },
   customer: { name: "GEEBU Enterprise Platforms Private Limited", code: "CUS-0042", billAddress: "Advent Complex \xB7 3rd Floor \xB7 Suite No. 307\nPinnacle Business Park\nP.O. Box 670525\nThrissur \xB7 Kerala \xB7 India\nGSTIN: 144AMGO 0990191918\nGSM: 80175 86 43 28\nbiz@geebu.io", shipAddress: "Warehouse 8, Industrial Area 12, Sharjah, UAE", phone: "+971 4 321 9876", email: "biz@geebu.io", trn: "144AMGO0990191918" },
-  doc: { number: "QTN-199194-1881", date: "2026-04-26", validUntil: "2026-05-14", dueDate: "2026-05-14", salesperson: "Mr. Nazam", paymentTerms: "Net 30 Days", currency: "AED", poRef: "INC-099919", location: "OXG-01", deliveryTerms: "DAP \u2013 Customer Warehouse", warehouse: "Warehouse 3 \u2014 Main Store, Fujairah" },
+  doc: { number: "QTN-199194-1881", date: "2026-04-26", validUntil: "2026-05-14", dueDate: "2026-05-14", salesperson: "Mr. Nazam", paymentTerms: "Net 30 Days", currency: "AED", poRef: "INC-099919", location: "OXG-01", deliveryTerms: "DAP \u2013 Customer Warehouse", warehouse: "Warehouse 3 \u2014 Main Store, Fujairah", quotationNo: "QUO-2026-000041", salesOrderNo: "SO-2026-001782", salesInvoiceNo: "SI-2026-004291" },
   items: [
     { no: 1, code: "JASEWAY-0001", name: "JASEWAY POS Machine", desc: 'i5-10th (10351GT) / 8 GB RAM / 256\nGB SSD / LCD 10"\nCapacitive touch screen\nBuilt-in Wifi\n+ Cash Drawer\n+ Thermal Receipt Printer', uom: "PCS", qty: 12, price: 1500, disc: 0, vat: 5, barcode: "6291041500213", sku: "JSW-POS-001-BLK", batch: "BTH-2025-0441", brand: "JASEWAY", binLocation: "A-01 / R-03 / B-07" },
     { no: 2, code: "POZONE-001", name: "POZONE PP610 Thermal Printer", desc: 'i5-10th (10351GT) / 8 GB RAM / 256\nGB SSD / LCD 10"\nTouch Panel\nCapacitive touch screen\nBuilt-in Wifi\nColour: Black\n+ Cash Drawer\n+ Thermal Receipt Printer', uom: "PCS", qty: 5, price: 7325, disc: 10, vat: 5, barcode: "6291041500220", sku: "PZN-PP610-WHT", batch: "BTH-2025-0512", brand: "POZONE", binLocation: "B-02 / R-01 / B-12" }
@@ -273,7 +276,10 @@ function ClassicPreview({ s, currencyConfig }) {
       s.showSalesperson && ["Account Executive", MOCK.doc.salesperson],
       s.showPaymentTerms && ["Payment Terms", MOCK.doc.paymentTerms],
       s.showCurrency && ["Currency", <CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} />],
-      s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms]
+      s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms],
+      s.showQuotationRef && ["Quotation No.", MOCK.doc.quotationNo],
+      s.showSalesOrderRef && ["SO No.", MOCK.doc.salesOrderNo],
+      s.showSalesInvoiceRef && ["SI No.", MOCK.doc.salesInvoiceNo]
     ].filter(Boolean);
     if (!metaItems.length) return null;
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", paddingTop: 64, paddingBottom: 2 }}>
@@ -811,6 +817,10 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <Row label="Location / Store"><Toggle value={s.showLocationStore} onChange={(v) => upd("showLocationStore", v)} /></Row>
               <Row label="Warehouse / Store"><Toggle value={s.showWarehouseStore} onChange={(v) => upd("showWarehouseStore", v)} /></Row>
               <Row label="Delivery Terms"><Toggle value={s.showDeliveryTerms} onChange={(v) => upd("showDeliveryTerms", v)} /></Row>
+              <SectionLabel icon={<FileText className="h-3 w-3" />} label="Document References" />
+              <Row label="Quotation No."><Toggle value={s.showQuotationRef} onChange={(v) => upd("showQuotationRef", v)} /></Row>
+              <Row label="SO No."><Toggle value={s.showSalesOrderRef} onChange={(v) => upd("showSalesOrderRef", v)} /></Row>
+              <Row label="SI No."><Toggle value={s.showSalesInvoiceRef} onChange={(v) => upd("showSalesInvoiceRef", v)} /></Row>
             </>}
 
             {
