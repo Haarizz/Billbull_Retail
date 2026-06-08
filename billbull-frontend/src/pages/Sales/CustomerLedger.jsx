@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
     Search, Filter, Download, Upload, Plus, MoreHorizontal, ChevronDown, Users, Wallet, MapPin, Phone, Mail,
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
-    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw
+    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw, BarChart2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
@@ -13,7 +13,7 @@ import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
-import { fetchStatementOfAccount } from '../../api/financialsApi';
+import { fetchStatementOfAccount, fetchARAgingReport } from '../../api/financialsApi';
 // ✅ Import Warehouse API
 import { getWarehouses } from '../../api/warehouseApi';
 // ✅ Import Sales Payment & Invoice API
@@ -57,14 +57,14 @@ import TableSkeleton from '../../components/common/TableSkeleton';
 // ==========================================
 
 const CUSTOMER_COLUMNS = [
-    { header: 'S.No.', key: 'sNo', width: 8 },
-    { header: 'Code', key: 'code', width: 15 },
-    { header: 'Customer Name', key: 'name', width: 30 },
-    { header: 'Group', key: 'group', width: 15 },
-    { header: 'Contact', key: 'contact', width: 20 },
-    { header: 'Email', key: 'email', width: 25 },
-    { header: 'Balance', key: 'balance', width: 15 },
-    { header: 'Status', key: 'status', width: 12 }
+    { header: 'S.No.', key: 'sNo', width: 8, pdfWidth: 35 },
+    { header: 'Code', key: 'code', width: 15, pdfWidth: 90 },
+    { header: 'Customer Name', key: 'name', width: 30, pdfWidth: 170 },
+    { header: 'Group', key: 'group', width: 15, pdfWidth: 60 },
+    { header: 'Contact', key: 'contact', width: 20, pdfWidth: 90 },
+    { header: 'Email', key: 'email', width: 25, pdfWidth: 140 },
+    { header: 'Balance', key: 'balance', width: 15, pdfWidth: 70 },
+    { header: 'Status', key: 'status', width: 12, pdfWidth: 60 }
 ];
 
 const getOpeningInvoiceOutstanding = (invoice = {}) => {
@@ -449,7 +449,7 @@ const AddContactModal = ({ isOpen, onClose, onSave, initialData }) => {
 // ==========================================
 
 const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) => {
-    const { defaultBranchName } = useBranch();
+    const { defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
     const { company } = useCompany();
     const currency = company?.currency || 'AED';
     const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
@@ -506,6 +506,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         salesman: '',
         taxGroup: 'Standard VAT 5%',
         branch: defaultBranchName || '',
+        allocatedBranches: [],
         warehouse: '',
         billingAddress: '',
         shippingAddress: '',
@@ -916,8 +917,6 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             </div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch</label><input name="branch" value={formData.branch} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-
                             {/* ✅ UPDATED WAREHOUSE DROPDOWN */}
                             <div>
                                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Warehouse</label>
@@ -939,6 +938,74 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             {/* ----------------------------- */}
 
                         </div>
+
+                        {/* Branch Allocation Section */}
+                        <div className="pt-6 mt-6 border-t border-slate-100">
+                            <h4 className="text-sm font-semibold text-slate-800 mb-4">Branch Allocation</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch <span className="text-red-500">*</span></label>
+                                    <div className="relative">
+                                        <select 
+                                            name="branch" 
+                                            value={formData.branch || activeBranch?.name || ''} 
+                                            onChange={(e) => {
+                                                handleInputChange(e);
+                                                const selectedBranch = e.target.value;
+                                                setFormData(prev => {
+                                                    const current = prev.allocatedBranches || [];
+                                                    if (!current.includes(selectedBranch)) {
+                                                        return { ...prev, allocatedBranches: [...current, selectedBranch] };
+                                                    }
+                                                    return prev;
+                                                });
+                                            }}
+                                            className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none focus:outline-none focus:border-[#F5C742]"
+                                        >
+                                            {availableBranches?.map(b => (
+                                                 <option key={b.id} value={b.name}>{b.name} {b.isDefault ? '(Default)' : ''}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocate to Branches</label>
+                                    <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2">
+                                        {availableBranches?.map(b => {
+                                            const isDefaultBranch = formData.branch === b.name || (!formData.branch && activeBranch?.name === b.name);
+                                            const isChecked = isDefaultBranch || formData.allocatedBranches?.includes(b.id) || formData.allocatedBranches?.includes(b.name);
+                                            
+                                            return (
+                                                <div key={b.id} className="flex items-center gap-2">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        id={`branch-${b.id}`}
+                                                        checked={isChecked}
+                                                        disabled={isDefaultBranch}
+                                                        onChange={(e) => {
+                                                            if (isDefaultBranch) return;
+                                                            const checked = e.target.checked;
+                                                            setFormData(prev => {
+                                                                const current = prev.allocatedBranches || [];
+                                                                if (checked) return { ...prev, allocatedBranches: [...current, b.name] };
+                                                                return { ...prev, allocatedBranches: current.filter(x => x !== b.name) };
+                                                            });
+                                                        }}
+                                                        className="rounded border-slate-300 text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed" 
+                                                    />
+                                                    <label htmlFor={`branch-${b.id}`} className={`text-xs ${isDefaultBranch ? 'text-slate-400 cursor-not-allowed' : 'text-slate-600 cursor-pointer'}`}>
+                                                        {b.name} <span className="text-[10px] text-slate-400">{b.isDefault ? '(Default)' : ''}</span>
+                                                    </label>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1">Select branches this customer can interact with. Uncheck to restrict.</p>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             );
@@ -1533,7 +1600,7 @@ const ReceiveMoneyView = () => {
         } finally {
             setIsLoading(false);
         }
-        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => { });
     };
 
     // Filtered Data
@@ -2139,7 +2206,8 @@ const CustomerSOAView = ({ customers = [] }) => {
         if (customers.length > 0 && !selectedCustomerCode) {
             setSelectedCustomerCode(customers[0].code);
         }
-    }, [customers, selectedCustomerCode]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers]);
 
     const handleGenerateStatement = async () => {
         if (!selectedCustomerCode || !startDate || !endDate) return;
@@ -2232,17 +2300,17 @@ const CustomerSOAView = ({ customers = [] }) => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                     <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-700">Select Customer *</label>
-                        <div className="relative">
-                            <select
-                                value={selectedCustomerCode}
-                                onChange={(e) => setSelectedCustomerCode(e.target.value)}
-                                className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white">
-                                {customers.map(c => (
-                                    <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                        </div>
+                        <SearchableDropdown
+                            options={customers.map(c => ({
+                                value: c.code,
+                                label: `${c.code} - ${c.name}`,
+                                subtitle: c.phone || c.mobile || 'No Phone'
+                            }))}
+                            value={selectedCustomerCode}
+                            onChange={(val) => setSelectedCustomerCode(val)}
+                            placeholder="Search by Name, Code or Phone..."
+                            className="w-full"
+                        />
                     </div>
                     <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-700">From Date</label>
@@ -2328,7 +2396,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                                         <span className={`px-2 py-0.5 border rounded text-[10px] ${entry.type === 'INVOICE' ? 'text-blue-600 bg-blue-50 border-blue-100' :
                                             (entry.type || '').includes('PAYMENT') ? 'text-green-600 bg-green-50 border-green-100' :
                                                 entry.type === 'OPENING_BALANCE' ? 'text-orange-700 bg-orange-50 border-orange-100' :
-                                                'text-slate-500 bg-slate-50'
+                                                    'text-slate-500 bg-slate-50'
                                             }`}>{formatStatementEntryType(entry.type)}</span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600">{entry.documentNo || '-'}</td>
@@ -2376,7 +2444,245 @@ const CustomerSOAView = ({ customers = [] }) => {
 };
 
 // ==========================================
-// 6. SUB-COMPONENTS (Stats & Cards)
+// 6. DEBTORS SUMMARY VIEW
+// ==========================================
+
+const DebtorsSummaryView = ({ customers = [] }) => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
+    const [isLoading, setIsLoading] = useState(false);
+    const [hasLoaded, setHasLoaded] = useState(false);
+    
+    // Data States
+    const [agingData, setAgingData] = useState([]);
+    const [summary, setSummary] = useState({
+        total: 0,
+        current: 0,
+        thirtySixty: 0,
+        sixtyPlus: 0,
+        sixtyNinety: 0,
+        ninetyPlus: 0
+    });
+
+    useEffect(() => {
+        if (customers.length > 0 && !hasLoaded) {
+            loadData();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers]);
+
+    const loadData = async () => {
+        setIsLoading(true);
+        try {
+            const invoicesData = await getAllSalesInvoices();
+            const today = new Date();
+
+            let total = 0, current = 0, thirtySixty = 0, sixtyNinety = 0, ninetyPlus = 0, sixtyPlus = 0;
+
+            const agedCustomers = customers.map(cust => {
+                const custInvoices = invoicesData.filter(inv => inv.customerCode === cust.code && inv.paymentStatus !== 'Paid' && Number(inv.balance || inv.amountDue || 0) > 0);
+                
+                let cTotal = 0, cCurr = 0, c30 = 0, c60 = 0, c90 = 0, c60P = 0;
+                
+                const processedInvoices = custInvoices.map(inv => {
+                    const invDate = new Date(inv.dueDate || inv.invoiceDate);
+                    const diffTime = Math.abs(today - invDate);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const isPast = invDate < today;
+                    
+                    const amt = Number(inv.balance || inv.amountDue || 0);
+                    cTotal += amt;
+                    
+                    if (!isPast || diffDays <= 30) {
+                        cCurr += amt;
+                    } else if (diffDays <= 60) {
+                        c30 += amt;
+                    } else if (diffDays <= 90) {
+                        c60 += amt;
+                        c60P += amt;
+                    } else {
+                        c90 += amt;
+                        c60P += amt;
+                    }
+                    
+                    return { ...inv, ageDays: isPast ? diffDays : 0, outstandingAmount: amt };
+                });
+
+                if (cust.balance > 0 && processedInvoices.length === 0) {
+                    const amt = Number(cust.balance);
+                    cTotal += amt; c60P += amt; c90 += amt;
+                }
+
+                total += cTotal; current += cCurr; thirtySixty += c30; sixtyNinety += c60; ninetyPlus += c90; sixtyPlus += c60P;
+
+                return {
+                    name: cust.name,
+                    code: cust.code,
+                    creditStatus: cust.creditStatus || 'Good',
+                    current: cCurr,
+                    thirtySixty: c30,
+                    sixtyNinety: c60,
+                    ninetyPlus: c90,
+                    sixtyPlus: c60P,
+                    totalOutstanding: cTotal
+                };
+            }).filter(c => c.totalOutstanding > 0).sort((a, b) => b.totalOutstanding - a.totalOutstanding);
+
+            setAgingData(agedCustomers);
+            setSummary({ total, current, thirtySixty, sixtyNinety, ninetyPlus, sixtyPlus });
+            setHasLoaded(true);
+        } catch (error) {
+            console.error("Error loading aging data", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 flex flex-col md:flex-row gap-4 items-start md:items-center print:hidden">
+                <div className="w-12 h-12 rounded-lg bg-white shadow-sm flex items-center justify-center shrink-0 border border-yellow-100">
+                    <BarChart2 className="text-yellow-600" size={24} />
+                </div>
+                <div className="flex-1">
+                    <h2 className="text-lg font-bold text-slate-800">Debtors Summary</h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                        Aging analysis and outstanding invoices breakdown
+                    </p>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <FileText className="text-blue-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-blue-600">Total Outstanding</span>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-600">
+                        <CurrencyAmount value={summary.total} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-emerald-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle2 className="text-emerald-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-emerald-600">Current (0-30)</span>
+                    </div>
+                    <div className="text-2xl font-bold text-emerald-500">
+                        <CurrencyAmount value={summary.current} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-orange-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <AlertCircle className="text-orange-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-orange-600">30-60 Days</span>
+                    </div>
+                    <div className="text-2xl font-bold text-orange-500">
+                        <CurrencyAmount value={summary.thirtySixty} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-red-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <XCircle className="text-red-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-red-600">60+ Days</span>
+                    </div>
+                    <div className="text-2xl font-bold text-red-600">
+                        <CurrencyAmount value={summary.sixtyPlus} currency={currency} />
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                <h3 className="text-sm font-bold text-slate-800 mb-6">Aging Distribution</h3>
+                <div className="space-y-6">
+                    {[
+                        { label: 'Current (0-30 days)', value: summary.current, color: 'bg-emerald-500' },
+                        { label: '30-60 days', value: summary.thirtySixty, color: 'bg-orange-500' },
+                        { label: '60-90 days', value: summary.sixtyNinety, color: 'bg-orange-500' },
+                        { label: '90+ days (Overdue)', value: summary.ninetyPlus, color: 'bg-red-500' },
+                    ].map((item, idx) => {
+                        const pct = summary.total > 0 ? Math.round((item.value / summary.total) * 100) : 0;
+                        return (
+                            <div key={idx}>
+                                <div className="flex justify-between text-xs font-medium text-slate-600 mb-2">
+                                    <span>{item.label}</span>
+                                    <span>{pct}%</span>
+                                </div>
+                                <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full ${item.color} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }}></div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200">
+                    <h3 className="text-sm font-bold text-slate-800">Outstanding by Customer</h3>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold text-xs text-left">Customer</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">Outstanding</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">Current</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">30-60 Days</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">60+ Days</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-left">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan="6" className="px-6 py-12 text-center text-slate-400">Loading aging data...</td>
+                                </tr>
+                            ) : agingData.length > 0 ? (
+                                agingData.map((cust, idx) => (
+                                    <tr key={idx} className="hover:bg-slate-50">
+                                        <td className="px-6 py-4">
+                                            <div className="font-medium text-slate-800">{cust.name}</div>
+                                            <div className="text-[10px] text-slate-500 mt-0.5">{cust.code}</div>
+                                        </td>
+                                        <td className="px-6 py-4 text-center font-bold text-slate-800">
+                                            <CurrencyAmount value={cust.totalOutstanding} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-emerald-500 font-medium">
+                                            <CurrencyAmount value={cust.current} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">
+                                            <CurrencyAmount value={cust.thirtySixty} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-red-500 font-medium">
+                                            <CurrencyAmount value={cust.sixtyPlus} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold text-white ${
+                                                cust.creditStatus === 'Good' ? 'bg-emerald-500' :
+                                                cust.creditStatus === 'Warning' ? 'bg-orange-500' :
+                                                'bg-orange-500'
+                                            }`}>
+                                                {cust.creditStatus === 'Good' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                                                {cust.creditStatus || 'Good'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan="6" className="px-6 py-12 text-center text-slate-400">No outstanding balances found.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// 7. SUB-COMPONENTS (Stats & Cards)
 // ==========================================
 
 const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => (
@@ -2556,6 +2862,8 @@ const CustomerLedger = () => {
                 return <ReceiveMoneyView />;
             case 'Customer SoA':
                 return <CustomerSOAView customers={customers} />;
+            case 'Debtors Summary':
+                return <DebtorsSummaryView customers={customers} />;
 
             case 'Customer List':
             default:
@@ -2611,17 +2919,17 @@ const CustomerLedger = () => {
                                 <table className="bb-nowrap-table w-full text-sm text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                         <tr>
-                                            <th className="px-3 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center w-12">S.No.</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Code</th>
-                                            <th className="px-2 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center">Photo</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Customer Name</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Group</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Contact</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Location</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap text-right">Balance</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Credit Status</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Status</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap text-right">Actions</th>
+                                            <th className="px-3 py-4 font-semibold text-xs whitespace-nowrap text-center w-12">S.No.</th>
+                                            <th className="px-4 py-4 font-semibold text-xs whitespace-nowrap w-24">Code</th>
+                                            <th className="px-2 py-4 font-semibold text-xs whitespace-nowrap text-center w-12">Photo</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Customer Name</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Group</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Contact</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Location</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap text-right">Balance</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Credit Status</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Status</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -2635,7 +2943,9 @@ const CustomerLedger = () => {
                                                             totalElements: filteredCustomers.length,
                                                         })}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
+                                                    <td className="px-4 py-4 text-xs font-mono text-slate-500 align-top pt-5">
+                                                        <div className="w-24 whitespace-normal break-words leading-tight">{cust.code}</div>
+                                                    </td>
 
                                                     <td className="px-2 py-4 whitespace-nowrap align-top pt-4 text-center">
                                                         <div
@@ -2787,13 +3097,21 @@ const CustomerLedger = () => {
                                 onExportExcel={() => exportToExcel(
                                     withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
-                                    'Customers'
+                                    'Customers',
+                                    {
+                                        companyProfile: company,
+                                        branch: activeBranch?.name
+                                    }
                                 )}
                                 onExportPdf={() => exportToPDF(
                                     withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customer List',
-                                    'Customers'
+                                    'Customers',
+                                    {
+                                        companyProfile: company,
+                                        branch: activeBranch?.name
+                                    }
                                 )}
                             />
                             <button
@@ -2818,7 +3136,8 @@ const CustomerLedger = () => {
                         {[
                             { id: 'Customer List', icon: Users },
                             { id: 'Receive Money', icon: Wallet },
-                            { id: 'Customer SoA', icon: FileText }
+                            { id: 'Customer SoA', icon: FileText },
+                            { id: 'Debtors Summary', icon: BarChart2 }
                         ].map(tab => (
                             <button
                                 key={tab.id}

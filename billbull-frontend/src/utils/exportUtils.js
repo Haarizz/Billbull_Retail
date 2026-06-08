@@ -5,12 +5,12 @@ import autoTable from 'jspdf-autotable';
 import { generateReportFilename } from './filenameUtils';
 
 // ── Brand colours ────────────────────────────────────────────────────────────
-const AMBER        = [245, 199, 66];   // #F5C742
-const AMBER_DARK   = [229, 180, 38];   // #E5B426
-const AMBER_LIGHT  = [255, 251, 240];  // #FFFBF0
-const AMBER_ARGB   = 'FFF5C742';
+const AMBER = [245, 199, 66];   // #F5C742
+const AMBER_DARK = [229, 180, 38];   // #E5B426
+const AMBER_LIGHT = [255, 251, 240];  // #FFFBF0
+const AMBER_ARGB = 'FFF5C742';
 const AMBER_LIGHT_ARGB = 'FFFFF8E7';
-const DARK_TEXT    = [26, 18, 0];
+const DARK_TEXT = [26, 18, 0];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const isImageColumn = (column) => column.type === 'image';
@@ -157,14 +157,19 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
 
         const columnStyles = {};
         columns.forEach((col, index) => {
-            if (!isImageColumn(col)) return;
-            const { width, height } = getImageSize(col);
-            columnStyles[index] = {
-                cellWidth: Math.max(width + 10, 48),
-                minCellHeight: height + 10,
-                halign: 'center',
-                valign: 'middle'
-            };
+            if (isImageColumn(col)) {
+                const { width, height } = getImageSize(col);
+                columnStyles[index] = {
+                    cellWidth: Math.max(width + 10, 48),
+                    minCellHeight: height + 10,
+                    halign: 'center',
+                    valign: 'middle'
+                };
+            } else if (col.pdfWidth) {
+                columnStyles[index] = { cellWidth: col.pdfWidth };
+            } else if (col.width && typeof col.width === 'number') {
+                columnStyles[index] = { cellWidth: col.width * 4 };
+            }
         });
 
         let finalY = metaY + 40;

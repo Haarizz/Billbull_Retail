@@ -290,7 +290,14 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                         </div>
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-800 text-sm">{qtn.qtnNo}</h4>
+                        <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 flex-wrap">
+                            {qtn.qtnNo}
+                            {qtn.revisions && qtn.revisions.length > 0 && (
+                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded">
+                                    Rev {qtn.revisions.length}
+                                </span>
+                            )}
+                        </h4>
                         <span className="text-xs text-slate-500">{formatDisplayDate(qtn.date)}</span>
                     </div>
                 </div>
@@ -313,17 +320,20 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
         {isExpanded && qtn.revisions && qtn.revisions.length > 0 && (
             <div className="bg-slate-50/50 border-t border-slate-100 divide-y divide-slate-100">
                 {qtn.revisions.map(rev => (
-                    <div key={`mob-rev-${rev.revId}`} className="p-3 pl-12 flex justify-between items-center text-xs">
-                        <div>
+                    <div key={`mob-rev-${rev.revId}`} className="p-3 pl-12 flex justify-between items-start text-xs">
+                        <div className="flex-1 min-w-0 mr-2">
                             <div className="font-bold text-slate-600 flex items-center gap-1.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></div>
                                 {rev.qtnNoDisplay}
                             </div>
                             <div className="text-slate-500 mt-0.5">{formatDisplayDate(rev.date)}</div>
+                            {rev.note && (
+                                <div className="text-slate-400 italic mt-1 leading-tight line-clamp-2">{rev.note}</div>
+                            )}
                         </div>
-                        <div className="text-right flex flex-col items-end gap-1">
+                        <div className="text-right flex flex-col items-end gap-1 shrink-0">
                             <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
-                            <div className="scale-90 origin-right">{renderStatusBadge(rev.status)}</div>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full">Superseded</span>
                         </div>
                     </div>
                 ))}
@@ -2409,6 +2419,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
                 return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
+            case 'Superseded':
+                return <span className="text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>;
             default:
                 return <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">Draft</span>;
         }
@@ -3024,6 +3036,11 @@ const Quotations = () => {
                                                         </button>
                                                     )}
                                                     {qtn.qtnNo}
+                                                    {qtn.revisions && qtn.revisions.length > 0 && (
+                                                        <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                                                            Rev {qtn.revisions.length}
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3">
@@ -3144,19 +3161,26 @@ const Quotations = () => {
                                                             // handleEditQuotation(qtn, rev); 
                                                         }}
                                                     >
-                                                        <td className="px-4 py-2 pl-10 text-slate-500 text-xs font-semibold">
-                                                            <div className="flex items-center gap-1">
+                                                        <td></td>
+                                                        <td className="px-4 py-2 pl-8 text-slate-500 text-xs font-semibold">
+                                                            <div className="flex items-center gap-1.5">
                                                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
                                                                 {rev.qtnNoDisplay}
                                                             </div>
                                                         </td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs">{formatDisplayDate(rev.date)}</td>
-                                                        <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
+                                                        <td className="px-4 py-2 text-slate-400 text-xs max-w-[180px]">
+                                                            {rev.note
+                                                                ? <span className="italic truncate block" title={rev.note}>{rev.note}</span>
+                                                                : <span className="italic opacity-40">—</span>
+                                                            }
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center text-slate-400 text-xs">—</td>
                                                         <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
                                                             <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
                                                         </td>
-                                                        <td className="px-4 py-2 text-right scale-90 origin-right">
-                                                            {renderStatusBadge(rev.status)}
+                                                        <td className="px-4 py-2 text-right">
+                                                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>
                                                         </td>
                                                         <td></td>
                                                     </tr>
@@ -4096,7 +4120,7 @@ const Quotations = () => {
                                             <div key={rev.revId} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
                                                 <div className="flex justify-between mb-2">
                                                     <span className="text-xs font-bold text-slate-700">{rev.qtnNoDisplay}</span>
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${rev.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500'}`}>{rev.status}</span>
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">Superseded</span>
                                                 </div>
                                                 <div className="text-[10px] text-slate-400 mb-2">{formatDisplayDate(rev.date)}</div>
                                                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded mb-3">
@@ -4448,9 +4472,7 @@ const Quotations = () => {
                                                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                                                 Revision: {compareRevision.qtnNoDisplay}
                                             </div>
-                                            <div className="scale-90 origin-right">
-                                                {renderStatusBadge(compareRevision.status)}
-                                            </div>
+                                            <span className="text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>
                                         </div>
                                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                             {/* Notes / Meta info for revision */}
