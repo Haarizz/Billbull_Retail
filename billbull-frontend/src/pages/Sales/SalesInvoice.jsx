@@ -3754,12 +3754,12 @@ const SalesInvoice = () => {
                                                                 />
                                                             </th>
                                                             <th className="px-3 py-2 w-16 text-center">Unit</th>
-                                                            <th className="px-3 py-2 w-16 text-center">Qty</th>
+                                                            <th className="px-3 py-2 w-24 text-center">Qty</th>
+                                                            <th className="px-3 py-2 w-32 text-right">Price</th>
+                                                            <th className="px-3 py-2 w-24 text-right">Line total</th>
                                                             {salesType === 'DIRECT_SALE' && (
                                                                 <th className="px-3 py-2 w-32 text-left">Warehouse</th>
                                                             )}
-                                                            <th className="px-3 py-2 w-20 text-right">Price</th>
-                                                            <th className="px-3 py-2 w-24 text-right">Line total</th>
                                                             <th className="px-3 py-2 w-16 text-center">Remarks</th>
                                                         </tr>
                                                     </thead>
@@ -3887,24 +3887,7 @@ const SalesInvoice = () => {
 
                                                                     </td>
 
-                                                                    {/* Warehouse (Direct Sale Only) */}
-                                                                    {salesType === 'DIRECT_SALE' && (
-                                                                        <td className="px-3 py-2">
 
-                                                                            <select
-                                                                                disabled={isReadOnlyInvoice}
-                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
-                                                                                value={item.warehouseId || ''}
-                                                                                onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
-                                                                            >
-                                                                                <option value="" className="text-slate-400">Select...</option>
-                                                                                {warehousesList.map(w => (
-                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
-                                                                                ))}
-                                                                            </select>
-
-                                                                        </td>
-                                                                    )}
 
                                                                     {/* FOC */}
                                                                     <td className="hidden px-3 py-2 text-center align-top">
@@ -3973,6 +3956,25 @@ const SalesInvoice = () => {
                                                                         </div>
 
                                                                     </td>
+
+                                                                    {/* Warehouse (Direct Sale Only) */}
+                                                                    {salesType === 'DIRECT_SALE' && (
+                                                                        <td className="px-3 py-2">
+
+                                                                            <select
+                                                                                disabled={isReadOnlyInvoice}
+                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
+                                                                                value={item.warehouseId || ''}
+                                                                                onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
+                                                                            >
+                                                                                <option value="" className="text-slate-400">Select...</option>
+                                                                                {warehousesList.map(w => (
+                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                                                                ))}
+                                                                            </select>
+
+                                                                        </td>
+                                                                    )}
 
                                                                     {/* Remarks / Action */}
                                                                     <td className="px-3 py-2 text-center">

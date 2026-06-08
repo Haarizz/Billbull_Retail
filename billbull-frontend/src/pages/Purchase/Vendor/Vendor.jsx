@@ -185,7 +185,7 @@ const RenderStars = ({ rating }) => (
 // ==========================================
 
 // NEW IMPORTS FOR PAYMENT MODULE
-import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
+import { getPostedInvoicesForPayment, getInvoices } from '../../../api/purchaseInvoiceApi';
 import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '../../../api/paymentApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 
@@ -848,7 +848,8 @@ const VendorSoA = ({ vendors }) => {
     if (vendors.length > 0 && !selectedVendorName) {
       setSelectedVendorName(vendors[0].name);
     }
-  }, [vendors, selectedVendorName]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors]);
 
   const handleGenerateStatement = async () => {
     if (!selectedVendorName || !startDate || !endDate) return;
@@ -986,17 +987,17 @@ const VendorSoA = ({ vendors }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700">Select Vendor *</label>
-            <div className="relative">
-              <select
-                value={selectedVendorName}
-                onChange={(e) => setSelectedVendorName(e.target.value)}
-                className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white">
-                {vendors.map(v => (
-                  <option key={v.id} value={v.name}>{v.code} - {v.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            </div>
+            <SearchableDropdown
+              options={vendors.map(v => ({
+                value: v.name,
+                label: `${v.code} - ${v.name}`,
+                subtitle: v.phone || v.mobile || 'No Phone'
+              }))}
+              value={selectedVendorName}
+              onChange={(val) => setSelectedVendorName(val)}
+              placeholder="Search by Name, Code or Phone..."
+              className="w-full"
+            />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700">From Date</label>
@@ -1149,6 +1150,7 @@ const VendorSoA = ({ vendors }) => {
 
 const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const { company } = useCompany();
+  const { defaultBranchName, branches: availableBranches } = useBranch();
   const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
   // Strict 6 steps
   const steps = [
@@ -1166,7 +1168,8 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const normalizeVendorFormData = (data = {}) => ({
     ...data,
     country: normalizeCountryValue(data.country || ''),
-    currency: normalizeCurrencyValue(data.currency || '')
+    currency: normalizeCurrencyValue(data.currency || ''),
+    allocatedBranches: data.allocatedBranches || []
   });
   const createInitialVendorFormState = () => normalizeVendorFormData({
     name: '',
@@ -1183,6 +1186,8 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
     payTerms: '',
     balType: 'Payable (We owe vendor)',
     payPref: 'Bank Transfer',
+    branch: defaultBranchName || '',
+    allocatedBranches: defaultBranchName ? [defaultBranchName] : [],
     ...(initialData || {})
   });
   const [formData, setFormData] = useState(createInitialVendorFormState);
@@ -1250,9 +1255,15 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
 
   const handleNext = () => {
     // Basic validation simulation for Step 1
-    if (currentStepIndex === 0 && !formData.name) {
-      alert("Please enter Vendor Name to proceed.");
-      return;
+    if (currentStepIndex === 0) {
+      if (!formData.name) {
+        alert("Please enter Vendor Name to proceed.");
+        return;
+      }
+      if (!formData.branch) {
+        alert("Please select a Default Branch to proceed.");
+        return;
+      }
     }
     if (currentStepIndex < steps.length - 1) {
       setCurrentStepIndex(prev => prev + 1);
@@ -1361,6 +1372,68 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Website</label><input type="text" placeholder="https://www.example.com" value={formData.website || ''} onChange={(e) => handleInputChange('website', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="col-span-1 md:col-span-2 space-y-1.5"><label className="text-xs font-semibold text-slate-700">Address</label><textarea rows={3} placeholder="Enter full address..." value={formData.address || ''} onChange={(e) => handleInputChange('address', e.target.value)} className="w-full p-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none resize-none"></textarea></div>
                 <div className="col-span-1 md:col-span-2 flex items-center gap-2 mt-2"><input type="checkbox" checked={formData.isPreferred || false} onChange={(e) => handleInputChange('isPreferred', e.target.checked)} className="w-4 h-4 text-[#F5C742] border-gray-300 rounded focus:ring-[#F5C742]" /><span className="text-sm text-slate-700">Mark as Preferred Supplier</span></div>
+
+                {/* Branch Allocation Section */}
+                <div className="col-span-1 md:col-span-2 mt-4 border-t border-slate-100 pt-6">
+                  <h4 className="text-sm font-bold text-slate-800 mb-4">Branch Allocation</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">Default Branch *</label>
+                          <div className="relative">
+                              <select 
+                                  value={formData.branch || ''} 
+                                  onChange={(e) => {
+                                      const selectedBranch = e.target.value;
+                                      handleInputChange('branch', selectedBranch);
+                                      if (selectedBranch && !formData.allocatedBranches?.includes(selectedBranch)) {
+                                          handleInputChange('allocatedBranches', [...(formData.allocatedBranches || []), selectedBranch]);
+                                      }
+                                  }} 
+                                  className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm text-slate-700 appearance-none focus:outline-none focus:border-[#F5C742]"
+                              >
+                                  {availableBranches?.map(b => (
+                                      <option key={b.id} value={b.name}>
+                                          {b.name === defaultBranchName ? `${b.name} - Default` : b.name}
+                                      </option>
+                                  ))}
+                              </select>
+                              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                          </div>
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">Allocate to Branches</label>
+                          <div className="flex flex-col gap-2 max-h-32 overflow-y-auto border border-slate-200 rounded-md p-3 bg-slate-50 custom-scrollbar">
+                              {availableBranches?.map(b => {
+                                  const isSelectedBranch = formData.branch === b.name;
+                                  const isSystemDefault = b.name === defaultBranchName;
+                                  return (
+                                  <label key={b.id} className={`flex items-center gap-2 ${isSelectedBranch ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                                      <input 
+                                          type="checkbox" 
+                                          disabled={isSelectedBranch}
+                                          checked={isSelectedBranch || formData.allocatedBranches?.includes(b.name) || false}
+                                          onChange={(e) => {
+                                              if (isSelectedBranch) return;
+                                              const checked = e.target.checked;
+                                              const currentAllocated = formData.allocatedBranches || [];
+                                              handleInputChange(
+                                                  'allocatedBranches', 
+                                                  checked ? [...currentAllocated, b.name] : currentAllocated.filter(name => name !== b.name)
+                                              );
+                                          }}
+                                          className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742] border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed" 
+                                      />
+                                      <span className={`text-sm ${isSelectedBranch ? 'text-slate-500 font-medium' : 'text-slate-700'}`}>
+                                          {b.name} {isSystemDefault && <span className="text-[10px] text-slate-400 ml-1">(Default)</span>}
+                                      </span>
+                                  </label>
+                              )})}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-1">Select branches this vendor can interact with. Uncheck to restrict.</p>
+                      </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1554,6 +1627,307 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
 
     </div>
   );
+};
+
+// ==========================================
+// 6. CREDITORS SUMMARY VIEW
+// ==========================================
+
+const CreditorsSummaryView = ({ vendors = [] }) => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
+    const [isLoading, setIsLoading] = useState(false);
+    const [hasLoaded, setHasLoaded] = useState(false);
+    
+    // Data States
+    const [agingData, setAgingData] = useState([]);
+    const [summary, setSummary] = useState({
+        total: 0,
+        current: 0,
+        thirtySixty: 0,
+        sixtyNinety: 0,
+        ninetyPlus: 0
+    });
+
+    // Invoices states
+    const [invoicesData, setInvoicesData] = useState([]);
+
+    useEffect(() => {
+        if (vendors.length > 0 && !hasLoaded) {
+            loadData();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vendors]);
+
+    const loadData = async () => {
+        setIsLoading(true);
+        try {
+            const invoices = await getInvoices();
+            setInvoicesData(invoices);
+            const today = new Date();
+
+            let total = 0, current = 0, thirtySixty = 0, sixtyNinety = 0, ninetyPlus = 0;
+
+            const agedVendors = vendors.map(ven => {
+                const venInvoices = invoices.filter(inv => 
+                    (inv.vendorId === ven.id || inv.vendorName === ven.name || inv.vendor === ven.name || inv.vendorCode === ven.code) && 
+                    inv.paymentStatus !== 'Paid' && 
+                    Number(inv.balance || inv.amountDue || 0) > 0
+                );
+                
+                let vTotal = 0, vCurr = 0, v30 = 0, v60 = 0, v90 = 0;
+                
+                const processedInvoices = venInvoices.map(inv => {
+                    const invDate = new Date(inv.dueDate || inv.invoiceDate);
+                    const diffTime = Math.abs(today - invDate);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const isPast = invDate < today;
+                    
+                    const amt = Number(inv.balance || inv.amountDue || 0);
+                    vTotal += amt;
+                    
+                    if (!isPast || diffDays <= 30) {
+                        vCurr += amt;
+                    } else if (diffDays <= 60) {
+                        v30 += amt;
+                    } else if (diffDays <= 90) {
+                        v60 += amt;
+                    } else {
+                        v90 += amt;
+                    }
+                    
+                    return { ...inv, ageDays: isPast ? diffDays : 0, outstandingAmount: amt };
+                });
+
+                if (ven.balance > 0 && processedInvoices.length === 0) {
+                    const amt = Number(ven.balance);
+                    vTotal += amt; v90 += amt; // opening balances usually go to oldest
+                }
+
+                total += vTotal; current += vCurr; thirtySixty += v30; sixtyNinety += v60; ninetyPlus += v90;
+
+                return {
+                    name: ven.name,
+                    code: ven.code,
+                    status: ven.status || 'Active',
+                    current: vCurr,
+                    thirtySixty: v30,
+                    sixtyNinety: v60,
+                    ninetyPlus: v90,
+                    totalOutstanding: vTotal
+                };
+            }).filter(v => v.totalOutstanding > 0).sort((a, b) => b.totalOutstanding - a.totalOutstanding);
+
+            setAgingData(agedVendors);
+            setSummary({ total, current, thirtySixty, sixtyNinety, ninetyPlus });
+            setHasLoaded(true);
+        } catch (error) {
+            console.error("Error loading creditors aging data", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div className="bg-white p-5 rounded-lg border-t-2 border-t-blue-500 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] flex flex-col justify-center border-l border-r border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Total Outstanding</div>
+                    <div className="text-2xl font-medium text-slate-800">
+                        <CurrencyAmount value={summary.total} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border-t-2 border-t-emerald-500 shadow-[0_2px_10px_-3px_rgba(16,185,129,0.1)] flex flex-col justify-center border-l border-r border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Current (0-30)</div>
+                    <div className="text-2xl font-medium text-slate-800">
+                        <CurrencyAmount value={summary.current} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border-t-2 border-t-yellow-400 shadow-[0_2px_10px_-3px_rgba(250,204,21,0.1)] flex flex-col justify-center border-l border-r border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">31-60 Days</div>
+                    <div className="text-2xl font-medium text-slate-800">
+                        <CurrencyAmount value={summary.thirtySixty} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border-t-2 border-t-orange-400 shadow-[0_2px_10px_-3px_rgba(251,146,60,0.1)] flex flex-col justify-center border-l border-r border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">61-90 Days</div>
+                    <div className="text-2xl font-medium text-slate-800">
+                        <CurrencyAmount value={summary.sixtyNinety} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border-t-2 border-t-red-500 shadow-[0_2px_10px_-3px_rgba(239,68,68,0.1)] flex flex-col justify-center border-l border-r border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Over 90 Days</div>
+                    <div className="text-2xl font-medium text-slate-800">
+                        <CurrencyAmount value={summary.ninetyPlus} currency={currency} />
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-100">
+                    <h3 className="text-base font-bold text-slate-800">Creditors Aging Analysis</h3>
+                    <p className="text-xs text-slate-500 mt-1">Outstanding payables breakdown by aging period</p>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="text-slate-400 border-b border-slate-200 uppercase text-[10px]">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold text-left">Vendor</th>
+                                <th className="px-6 py-4 font-semibold text-center">Total Outstanding</th>
+                                <th className="px-6 py-4 font-semibold text-center">Current</th>
+                                <th className="px-6 py-4 font-semibold text-center">31-60 Days</th>
+                                <th className="px-6 py-4 font-semibold text-center">61-90 Days</th>
+                                <th className="px-6 py-4 font-semibold text-center">Over 90 Days</th>
+                                <th className="px-6 py-4 font-semibold text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan="7" className="px-6 py-12 text-center text-slate-400">Loading aging data...</td>
+                                </tr>
+                            ) : agingData.length > 0 ? (
+                                <>
+                                    {agingData.map((ven, idx) => (
+                                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                            <td className="px-6 py-4">
+                                                <div className="font-semibold text-slate-800">{ven.name}</div>
+                                                <div className="text-[10px] text-slate-400 mt-0.5">{ven.code}</div>
+                                            </td>
+                                            <td className="px-6 py-4 text-center font-bold text-slate-800">
+                                                <CurrencyAmount value={ven.totalOutstanding} currency={currency} />
+                                            </td>
+                                            <td className="px-6 py-4 text-center text-slate-500 font-medium">
+                                                <CurrencyAmount value={ven.current} currency={currency} />
+                                            </td>
+                                            <td className="px-6 py-4 text-center text-slate-500 font-medium">
+                                                <CurrencyAmount value={ven.thirtySixty} currency={currency} />
+                                            </td>
+                                            <td className="px-6 py-4 text-center text-slate-500 font-medium">
+                                                <CurrencyAmount value={ven.sixtyNinety} currency={currency} />
+                                            </td>
+                                            <td className="px-6 py-4 text-center text-red-500 font-bold">
+                                                <CurrencyAmount value={ven.ninetyPlus} currency={currency} />
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                                    ven.status === 'Active' ? 'bg-emerald-100 text-emerald-600' :
+                                                    ven.status === 'On Hold' ? 'bg-yellow-100 text-yellow-600' :
+                                                    'bg-red-100 text-red-600'
+                                                }`}>
+                                                    {ven.status}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    <tr className="bg-[#F7F7FA] font-bold border-t border-slate-200">
+                                        <td className="px-6 py-4 text-slate-800">Total</td>
+                                        <td className="px-6 py-4 text-center text-slate-800">
+                                            <CurrencyAmount value={summary.total} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-slate-800">
+                                            <CurrencyAmount value={summary.current} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-slate-800">
+                                            <CurrencyAmount value={summary.thirtySixty} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-slate-800">
+                                            <CurrencyAmount value={summary.sixtyNinety} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-red-500">
+                                            <CurrencyAmount value={summary.ninetyPlus} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4"></td>
+                                    </tr>
+                                </>
+                            ) : (
+                                <tr>
+                                    <td colSpan="7" className="px-6 py-12 text-center text-slate-400">
+                                        <div className="flex flex-col items-center justify-center">
+                                            <AlertCircle size={32} className="mb-2 text-slate-300" />
+                                            No outstanding payables found.
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mt-6">
+                <div className="px-6 py-4 border-b border-slate-100">
+                    <h3 className="text-base font-bold text-slate-800">Outstanding Invoices Breakdown</h3>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="text-slate-400 border-b border-slate-200 uppercase text-[10px]">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold text-left">Invoice No.</th>
+                                <th className="px-6 py-4 font-semibold text-left">Vendor</th>
+                                <th className="px-6 py-4 font-semibold text-center">Date</th>
+                                <th className="px-6 py-4 font-semibold text-center">Due Date</th>
+                                <th className="px-6 py-4 font-semibold text-center">Amount</th>
+                                <th className="px-6 py-4 font-semibold text-center">Balance</th>
+                                <th className="px-6 py-4 font-semibold text-center">Days Overdue</th>
+                                <th className="px-6 py-4 font-semibold text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan="8" className="px-6 py-12 text-center text-slate-400">Loading invoices...</td>
+                                </tr>
+                            ) : invoicesData.length > 0 ? (
+                                invoicesData
+                                    .filter(inv => inv.paymentStatus !== 'Paid' && Number(inv.balance || inv.amountDue || 0) > 0)
+                                    .map((inv, idx) => {
+                                        const today = new Date();
+                                        const due = new Date(inv.dueDate || inv.invoiceDate);
+                                        const diffTime = today - due;
+                                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                        const isOverdue = diffDays > 0;
+                                        
+                                        return (
+                                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                                <td className="px-6 py-4 font-semibold text-slate-800">{inv.number}</td>
+                                                <td className="px-6 py-4 text-slate-600">{inv.vendorName || vendors.find(v => v.code === inv.vendorCode)?.name || 'Unknown'}</td>
+                                                <td className="px-6 py-4 text-center text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
+                                                <td className="px-6 py-4 text-center text-slate-500">{formatDisplayDate(inv.dueDate)}</td>
+                                                <td className="px-6 py-4 text-center font-medium text-slate-500">
+                                                    <CurrencyAmount value={inv.netTotal || inv.amountDue || 0} currency={currency} />
+                                                </td>
+                                                <td className="px-6 py-4 text-center font-bold text-slate-800">
+                                                    <CurrencyAmount value={inv.balance || inv.amountDue || 0} currency={currency} />
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    {isOverdue ? (
+                                                        <span className="text-red-500 font-bold text-[10px]">{diffDays} days</span>
+                                                    ) : (
+                                                        <span className="text-slate-400">-</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                                        isOverdue ? 'bg-red-50 text-red-500 border border-red-100' : 'bg-blue-50 text-blue-500 border border-blue-100'
+                                                    }`}>
+                                                        {isOverdue ? 'Overdue' : 'Due'}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                            ) : (
+                                <tr>
+                                    <td colSpan="8" className="px-6 py-12 text-center text-slate-400">No outstanding invoices.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // --- MAIN WRAPPER ---
@@ -1847,7 +2221,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
         </div>
 
         <div className="flex gap-8 mt-6 overflow-x-auto">
-          {["Vendors List", "Pay Invoices", "Vendor SoA"].map((tab) => (
+          {["Vendors List", "Pay Invoices", "Vendor SoA", "Creditors Summary"].map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`pb-3 text-sm font-medium transition-colors flex items-center gap-2 border-b-2 whitespace-nowrap ${activeTab === tab ? "border-[#F5C742] text-[#F5C742]" : "border-transparent text-gray-500 hover:text-gray-900"}`}>
               {tab === "Vendors List" && <Users className="h-4 w-4" />}
               {tab === "Pay Invoices" && <DollarSign className="h-4 w-4" />}
@@ -1957,16 +2331,16 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                 <table className="bb-nowrap-table w-full text-sm">
                   <thead className="bg-gray-50 border-b border-slate-200">
                     <tr>
-                      <th className="px-4 py-3 text-center font-medium text-gray-500 uppercase w-16 select-none">S.No.</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Code</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Name</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Category</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Contact</th>
-                      <th className="px-6 py-3 text-right font-medium text-gray-500 uppercase">Lead Time</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Rating</th>
-                      <th className="px-6 py-3 text-right font-medium text-gray-500 uppercase">Payable Balance</th>
-                      <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Status</th>
-                      <th className="px-6 py-3 text-center font-medium text-gray-500 uppercase">Actions</th>
+                      <th className="px-4 py-3 text-center font-medium text-gray-500 w-16 select-none">S.No.</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Vendor Code</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Vendor Name</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Category</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Contact</th>
+                      <th className="px-6 py-3 text-right font-medium text-gray-500">Lead Time</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Rating</th>
+                      <th className="px-6 py-3 text-right font-medium text-gray-500">Payable Balance</th>
+                      <th className="px-6 py-3 text-left font-medium text-gray-500">Status</th>
+                      <th className="px-6 py-3 text-center font-medium text-gray-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
@@ -1984,7 +2358,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                               totalElements: filteredVendors.length,
                             })}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
+                          <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span></div></td>
                           <td className="px-6 py-4"><div className="flex flex-col"><div className="font-medium text-slate-900 flex items-center gap-2">{vendor.name}{vendor.isPreferred && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-700 font-medium"><Star className="h-3 w-3 fill-purple-700" />Preferred</span>}</div><div className="text-xs text-gray-500">{vendor.email}</div></div></td>
                           <td className="px-6 py-4"><span className="text-xs px-2 py-1 rounded font-medium bg-blue-100 text-blue-700">{vendor.category}</span></td>
                           <td className="px-6 py-4 text-slate-600">{vendor.contact}</td>
@@ -2012,6 +2386,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
         {activeTab === "Pay Invoices" && <PayInvoices vendors={vendors} initialVendor={payInvoicesVendor} />}
         {activeTab === "Vendor SoA" && <VendorSoA vendors={vendors} />}
+        {activeTab === "Creditors Summary" && <CreditorsSummaryView vendors={vendors} />}
       </div>
     </>
   );

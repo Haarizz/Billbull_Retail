@@ -21,6 +21,7 @@ import {
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { getBranches } from '../../api/branchApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
@@ -579,6 +580,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
 const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   const [employees, setEmployees] = useState([]); // Employee State for Dropdown
   const [customers, setCustomers] = useState([]);
+  const [branches, setBranches] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [isCustomerSelectorOpen, setIsCustomerSelectorOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -605,12 +607,14 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   useEffect(() => {
     const fetchInitData = async () => {
       try {
-        const [employeesData, customersData] = await Promise.all([
+        const [employeesData, customersData, branchesData] = await Promise.all([
           getEmployees(),
-          getAllCustomers()
+          getAllCustomers(),
+          getBranches()
         ]);
         setEmployees(employeesData || []);
         setCustomers(Array.isArray(customersData) ? customersData : []);
+        setBranches(Array.isArray(branchesData) ? branchesData : []);
       } catch (error) {
         console.error("Failed to fetch initial data", error);
       }
@@ -828,10 +832,9 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
                 <div className="relative">
                   <select name="branch" value={formData.branch} onChange={handleChange} className="w-full h-11 px-4 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 appearance-none bg-white text-slate-600 cursor-pointer">
                     <option value="">Select branch</option>
-                    <option>Downtown Store</option>
-                    <option>Mall Branch</option>
-                    <option>Airport Outlet</option>
-                    <option>Suburb Center</option>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.name}>{b.name}</option>
+                    ))}
                   </select>
                   <ChevronDown className="absolute right-4 top-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
                 </div>

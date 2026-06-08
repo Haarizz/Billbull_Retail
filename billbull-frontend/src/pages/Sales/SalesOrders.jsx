@@ -489,29 +489,7 @@ const SalesOrders = () => {
       }
 
       let validCustomers = Array.isArray(custData) ? custData : [];
-
-      // Ensure a default Walk-in Customer exists in the list for quick selection
-      const hasWalkin = validCustomers.some(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
-      if (!hasWalkin) {
-        validCustomers = [{
-          id: 'WALKIN-ID',
-          code: 'WALKIN',
-          name: 'Walk-in Customer',
-          mobile: '',
-          phone: '',
-          trn: '',
-          address: 'Counter Sale',
-          balance: 0,
-          creditStatus: 'Good'
-        }, ...validCustomers];
-      }
       setCustomersList(validCustomers);
-
-      // ✅ Set default customer to Walk-in
-      const walkIn = validCustomers.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
-      if (walkIn) {
-        setSelectedCustomer(current => current || walkIn);
-      }
 
       setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
       setProformasList(Array.isArray(proformaData) ? proformaData : []);
@@ -1145,6 +1123,17 @@ const SalesOrders = () => {
       return;
     }
 
+    // Sales Orders require a mandatory registered customer — walk-in is not allowed.
+    const isWalkin = !selectedCustomer
+      || selectedCustomer.id === 'WALKIN-ID'
+      || selectedCustomer.code === 'WALKIN'
+      || /walk.?in/i.test(selectedCustomer.name || '')
+      || /cash.?customer/i.test(selectedCustomer.name || '');
+    if (isWalkin) {
+      alert('Walk-in / Cash Customer is not allowed for Sales Orders. Please select a registered customer.');
+      return;
+    }
+
     const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
     const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
 
@@ -1440,9 +1429,8 @@ const SalesOrders = () => {
     }
     setOrderDate(new Date().toISOString().split('T')[0]);
 
-    // ✅ Set default customer to Walk-in
-    const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
-    setSelectedCustomer(walkIn || null);
+    // Sales Orders require a registered customer — no walk-in default.
+    setSelectedCustomer(null);
 
     setLinkedSourceType('');
     setLinkedSourceSearch('');
@@ -2093,7 +2081,7 @@ const SalesOrders = () => {
               isOpen={isCustomerSearchOpen}
               onClose={() => setIsCustomerSearchOpen(false)}
               onSelect={handleSelectCustomer}
-              customers={customersList}
+              customers={customersList.filter(c => c.code !== 'WALKIN' && !/walk.?in/i.test(c.name || '') && !/cash.?customer/i.test(c.name || ''))}
               selectedCode={selectedCustomer?.code || ''}
               onCustomerCreated={fetchAllData}
             />
