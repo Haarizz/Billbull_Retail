@@ -26,7 +26,11 @@ import {
   Save,
   ChevronRight,
   AlertCircle,
-  Zap
+  Zap,
+  MoreVertical,
+  Eye,
+  Copy,
+  Receipt
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -40,7 +44,8 @@ import {
   getNextSalesOrderNumber,
   saveSalesOrder,
   uploadSalesOrderAttachment,
-  getSalesOrderReceiptVouchers
+  getSalesOrderReceiptVouchers,
+  getSalesOrderStats
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -93,6 +98,7 @@ import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import KpiCards from '../../components/common/KpiCards';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -190,6 +196,8 @@ const SalesOrders = () => {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
   // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
   const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
+  const [overflowMenu, setOverflowMenu] = useState(null); // { id, order, top, right }
+  const overflowMenuRef = useRef(null);
 
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
@@ -206,6 +214,8 @@ const SalesOrders = () => {
   const [listPage, setListPage] = useState(0);
   const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
   const [isListLoading, setIsListLoading] = useState(false);
+  const [soStats, setSoStats] = useState(null);
+  const [isStatsLoading, setIsStatsLoading] = useState(false);
   const _todaySO = new Date().toISOString().slice(0, 10);
   const [dateRange, setDateRange] = useState({ fromDate: _todaySO, toDate: _todaySO });
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
@@ -387,6 +397,7 @@ const SalesOrders = () => {
   useEffect(() => {
     fetchAllData();
     fetchSalesOrders();
+    fetchSoStats();
   }, []);
 
   // ✅ HANDLE INCOMING QUOTATION
@@ -528,6 +539,18 @@ const SalesOrders = () => {
     }
   };
 
+  const fetchSoStats = async () => {
+    setIsStatsLoading(true);
+    try {
+      const data = await getSalesOrderStats();
+      setSoStats(data);
+    } catch (err) {
+      console.error("Failed to load SO stats", err);
+    } finally {
+      setIsStatsLoading(false);
+    }
+  };
+
   // Refetch when the user pages through the list.
   useEffect(() => {
     if (activeTab !== 'list') return;
@@ -541,6 +564,18 @@ const SalesOrders = () => {
     window.addEventListener('billbull:branch-changed', handler);
     return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
+
+  // Close overflow menu when clicking outside.
+  useEffect(() => {
+    if (!overflowMenu) return;
+    const handleOutside = (e) => {
+      if (overflowMenuRef.current && !overflowMenuRef.current.contains(e.target)) {
+        setOverflowMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [overflowMenu]);
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
@@ -1522,7 +1557,7 @@ const SalesOrders = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); }}>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); setOverflowMenu(null); }}>
 
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
@@ -1572,6 +1607,69 @@ const SalesOrders = () => {
         }}
         isReadOnly={isLocked}
       />
+
+      {/* Overflow action menu — rendered fixed so it escapes overflow-x-auto clipping */}
+      {overflowMenu && (
+        <div
+          ref={overflowMenuRef}
+          style={{ position: 'fixed', top: overflowMenu.top, right: overflowMenu.right, zIndex: 9999 }}
+          className="w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {canExport('sales.order') && (
+            <>
+              <button
+                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); setIsEmailModalOpen(true); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+              >
+                <MessageCircle size={13} className="text-green-500" /> WhatsApp
+              </button>
+              <button
+                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+              >
+                <Smartphone size={13} className="text-blue-500" /> SMS
+              </button>
+            </>
+          )}
+          <div className="border-t border-slate-100 my-1" />
+          {canCreate('sales.order') && (
+            <button
+              onClick={() => {
+                const o = overflowMenu.order;
+                setOverflowMenu(null);
+                navigate('/sales/invoice', {
+                  state: {
+                    fromSalesOrder: {
+                      soNumber: o.soNumber,
+                      customerName: o.customerName,
+                      customerCode: o.customerCode,
+                      items: []
+                    }
+                  }
+                });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+            >
+              <Receipt size={13} className="text-purple-500" /> Convert to Invoice
+            </button>
+          )}
+          {canCreate('sales.order') && (
+            <button
+              onClick={() => {
+                const o = overflowMenu.order;
+                setOverflowMenu(null);
+                navigate('/sales/deliverynote', {
+                  state: { fromSalesOrder: { id: o.id, soNumber: o.soNumber } }
+                });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+            >
+              <Truck size={13} className="text-indigo-500" /> Create Delivery Note
+            </button>
+          )}
+        </div>
+      )}
 
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
@@ -1623,6 +1721,48 @@ const SalesOrders = () => {
 
       {/* ======================= VIEW: LIST ======================= */}
       {activeTab === 'list' && (
+        <div>
+        <KpiCards
+          loading={isStatsLoading}
+          cards={[
+            {
+              label: 'This Month Orders',
+              value: soStats?.thisMonthOrders ?? '—',
+              sub: `${soStats?.confirmedOrders ?? 0} confirmed`,
+              icon: <ShoppingCart size={18} />,
+              iconBg: 'bg-yellow-100',
+              iconColor: 'text-yellow-600',
+              accent: 'border-l-yellow-400',
+            },
+            {
+              label: 'This Month Value',
+              value: soStats != null ? formatCurrencyAmount(soStats.thisMonthValue, company) : '—',
+              sub: 'Confirmed + invoiced',
+              icon: <DollarSign size={18} />,
+              iconBg: 'bg-emerald-100',
+              iconColor: 'text-emerald-600',
+              accent: 'border-l-emerald-400',
+            },
+            {
+              label: 'Outstanding Balance',
+              value: soStats != null ? formatCurrencyAmount(soStats.outstandingBalance, company) : '—',
+              sub: 'Confirmed, not fully paid',
+              icon: <CreditCard size={18} />,
+              iconBg: 'bg-red-100',
+              iconColor: 'text-red-500',
+              accent: 'border-l-red-400',
+            },
+            {
+              label: "Today's Orders",
+              value: soStats?.todayOrders ?? '—',
+              sub: 'Placed today',
+              icon: <Calendar size={18} />,
+              iconBg: 'bg-blue-100',
+              iconColor: 'text-blue-500',
+              accent: 'border-l-blue-400',
+            },
+          ]}
+        />
         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
             <h2 className="font-bold text-slate-700 text-sm">Sales Orders</h2>
@@ -1724,10 +1864,49 @@ const SalesOrders = () => {
                       {renderStatusBadge(order.status)}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => handleLoadOrder(order)} className="p-1 hover:bg-yellow-100 rounded text-yellow-600 transition-colors" title="Edit / View"><FileText size={14} /></button>
-                        <button onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }} className="p-1 hover:bg-sky-100 rounded text-sky-500 transition-colors" title="Send Email"><Mail size={14} /></button>
-                        <button onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }} className="p-1 hover:bg-slate-200 rounded text-slate-500 transition-colors" title="Load & Print"><Printer size={14} /></button>
+                      <div className="flex justify-end items-center gap-1">
+                        {/* Primary actions */}
+                        <button
+                          onClick={() => handleLoadOrder(order)}
+                          className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600 transition-colors"
+                          title="View / Edit"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button
+                          onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }}
+                          className="p-1.5 hover:bg-slate-100 rounded text-slate-500 transition-colors"
+                          title="Print"
+                        >
+                          <Printer size={14} />
+                        </button>
+                        {canExport('sales.order') && (
+                          <button
+                            onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }}
+                            className="p-1.5 hover:bg-sky-100 rounded text-sky-500 transition-colors"
+                            title="Send Email"
+                          >
+                            <Mail size={14} />
+                          </button>
+                        )}
+
+                        {/* Overflow menu trigger */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const menuId = order.id || order.soNumber;
+                            if (overflowMenu?.id === menuId) {
+                              setOverflowMenu(null);
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setOverflowMenu({ id: menuId, order, top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                          }}
+                          className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors"
+                          title="More actions"
+                        >
+                          <MoreVertical size={14} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1758,6 +1937,7 @@ const SalesOrders = () => {
               onPageChange={setListPage}
             />
           </div>
+        </div>
         </div>
       )}
 

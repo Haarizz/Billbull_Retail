@@ -63,4 +63,16 @@ public interface QuotationRepository extends JpaRepository<Quotation, Long> {
       """)
   List<Quotation> findExpiredQuotations();
 
+  @Query("SELECT COALESCE(SUM(q.totalAmount), 0) FROM Quotation q WHERE q.date BETWEEN :from AND :to AND q.status <> com.billbull.backend.sales.quotation.QuotationStatus.REJECTED")
+  java.math.BigDecimal sumTotalBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
+
+  @Query("SELECT COUNT(q) FROM Quotation q WHERE q.date BETWEEN :from AND :to")
+  long countBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
+
+  @Query("SELECT COUNT(q) FROM Quotation q WHERE q.status IN (com.billbull.backend.sales.quotation.QuotationStatus.CONVERTED, com.billbull.backend.sales.quotation.QuotationStatus.INVOICED) AND q.date BETWEEN :from AND :to")
+  long countConvertedBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
+
+  @Query("SELECT COUNT(q) FROM Quotation q WHERE q.status IN (com.billbull.backend.sales.quotation.QuotationStatus.DRAFT, com.billbull.backend.sales.quotation.QuotationStatus.PENDING_APPROVAL, com.billbull.backend.sales.quotation.QuotationStatus.APPROVED)")
+  long countOpen();
+
 }

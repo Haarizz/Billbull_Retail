@@ -30,6 +30,11 @@ export const getSalesOrdersPage = async ({ page = 0, size = 30, search = "", sta
   return res.data;
 };
 
+export const getSalesOrderStats = async () => {
+  const res = await api.get(`${BASE_URL}/stats`);
+  return res.data;
+};
+
 // --------------------
 // GET BY ID
 // --------------------

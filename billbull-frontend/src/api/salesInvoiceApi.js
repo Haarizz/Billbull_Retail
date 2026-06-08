@@ -2,6 +2,11 @@ import api from "./axiosConfig";
 
 const BASE_URL = "/api/sales/invoices";
 
+export const getSalesInvoiceStats = async () => {
+  const res = await api.get(`${BASE_URL}/stats`);
+  return res.data;
+};
+
 // QA-040: ship a designed-template HTML body + CID inline attachments to the
 // backend, which forwards via JavaMail. htmlBody empty → backend rejects.
 export const sendSalesInvoiceEmail = async (

@@ -6,7 +6,7 @@ import {
   ArrowRight, RefreshCw, Building2, Grid3X3, ScanLine
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getWarehouses, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
+import { getWarehouseTree, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
 import { getBranches } from '../../../api/branchApi';
 import { hasRole } from '../../../api/auth';
 import { useBranch } from '../../../context/BranchContext';
@@ -182,7 +182,7 @@ const extractErrorMessage = (error, fallback) =>
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const Warehouse = () => {
-  const { defaultBranch } = useBranch();
+  const { defaultBranch, activeBranchId, isAllBranches } = useBranch();
   const isAdmin = hasRole('ADMIN');
   const [warehouses, setWarehouses]   = useState([]);
   const [branches, setBranches]       = useState([]);
@@ -198,7 +198,10 @@ const Warehouse = () => {
   const [modal, setModal]             = useState({ type: null, editing: null });
   const [form, setForm]               = useState({});
 
-  useEffect(() => { fetchWarehousesAndExpand(); }, []);
+  useEffect(() => {
+    setSelected({ type: null, item: null, parentId: null });
+    fetchWarehousesAndExpand();
+  }, [activeBranchId]);
   useEffect(() => { fetchBranches(); }, []);
   useEffect(() => {
     if (modal.type === 'warehouse' && !modal.editing && !form.branchId && defaultBranch?.id) {
@@ -217,30 +220,41 @@ const Warehouse = () => {
   const fetchWarehousesAndExpand = async () => {
     try {
       setLoading(true);
-      const data = await getWarehouses();
-      const warehouseList = Array.isArray(data) ? data : [];
+      const branchFilter = (isAdmin && !isAllBranches && activeBranchId && activeBranchId !== 'ALL')
+        ? activeBranchId
+        : null;
+      const tree = await getWarehouseTree(branchFilter);
+      const warehouseList = Array.isArray(tree.warehouses) ? tree.warehouses : [];
+      const zoneList     = Array.isArray(tree.zones)      ? tree.zones      : [];
+      const locatorList  = Array.isArray(tree.locators)   ? tree.locators   : [];
+      const binList      = Array.isArray(tree.bins)        ? tree.bins       : [];
+
       setWarehouses(warehouseList);
-      const expW = {}, expZ = {}, expL = {}, allZ = {}, allL = {}, allB = {};
-      let firstBin = null, firstBinLocatorId = null;
-      for (const wh of warehouseList) {
-        expW[wh.id] = true;
-        try {
-          const zoneData = await getZones(wh.id); allZ[wh.id] = zoneData || [];
-          for (const zone of (zoneData || [])) {
-            expZ[zone.id] = true;
-            try {
-              const locData = await getLocators(zone.id); allL[zone.id] = locData || [];
-              for (const loc of (locData || [])) {
-                expL[loc.id] = true;
-                try {
-                  const binData = await getBins(loc.id); allB[loc.id] = binData || [];
-                  if (!firstBin && binData?.length > 0) { firstBin = binData[0]; firstBinLocatorId = loc.id; }
-                } catch { allB[loc.id] = []; }
-              }
-            } catch { allL[zone.id] = []; }
-          }
-        } catch { allZ[wh.id] = []; }
+
+      const expW = {}, expZ = {}, expL = {};
+      const allZ = {}, allL = {}, allB = {};
+
+      for (const wh of warehouseList) expW[wh.id] = true;
+
+      for (const zone of zoneList) {
+        expZ[zone.id] = true;
+        allZ[zone.warehouseId] = allZ[zone.warehouseId] || [];
+        allZ[zone.warehouseId].push(zone);
       }
+
+      for (const loc of locatorList) {
+        expL[loc.id] = true;
+        allL[loc.zoneId] = allL[loc.zoneId] || [];
+        allL[loc.zoneId].push(loc);
+      }
+
+      let firstBin = null, firstBinLocatorId = null;
+      for (const bin of binList) {
+        allB[bin.locatorId] = allB[bin.locatorId] || [];
+        allB[bin.locatorId].push(bin);
+        if (!firstBin) { firstBin = bin; firstBinLocatorId = bin.locatorId; }
+      }
+
       setExpanded({ warehouses: expW, zones: expZ, locators: expL });
       setZones(allZ); setLocators(allL); setBins(allB);
       if (firstBin) setSelected({ type: 'bin', item: firstBin, parentId: firstBinLocatorId });

@@ -28,8 +28,14 @@ public class WarehouseController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
-    public List<WarehouseResponse> list() {
-        return service.list();
+    public List<WarehouseResponse> list(@RequestParam(required = false) Long branchId) {
+        return service.list(branchId);
+    }
+
+    @GetMapping("/tree")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    public WarehouseService.WarehouseTree tree(@RequestParam(required = false) Long branchId) {
+        return service.getTree(branchId);
     }
 
     @PostMapping

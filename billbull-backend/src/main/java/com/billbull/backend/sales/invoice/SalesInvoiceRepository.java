@@ -114,7 +114,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT si.invoiceDate, SUM(si.invoiceTotal), COUNT(si) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
-               "AND (:endDate IS NULL OR si.invoiceDate < :endDate) " +
+               "AND (:endDate IS NULL OR si.invoiceDate <= :endDate) " +
                "GROUP BY si.invoiceDate ORDER BY si.invoiceDate")
         List<Object[]> findSalesTrend(@Param("startDate") LocalDate startDate,
                                       @Param("endDate") LocalDate endDate);
@@ -122,18 +122,27 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT COALESCE(si.paymentMode, 'Cash'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
-               "AND (:endDate IS NULL OR si.invoiceDate < :endDate) " +
+               "AND (:endDate IS NULL OR si.invoiceDate <= :endDate) " +
                "GROUP BY si.paymentMode")
         List<Object[]> findPaymentBreakdown(@Param("startDate") LocalDate startDate,
                                             @Param("endDate") LocalDate endDate);
 
-        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0), COUNT(si), COALESCE(SUM(si.balance), 0) " +
-               "FROM SalesInvoice si " +
+        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
-               "AND (:endDate IS NULL OR si.invoiceDate < :endDate)")
-        Object[] findSalesTotals(@Param("startDate") LocalDate startDate,
-                                 @Param("endDate") LocalDate endDate);
+               "AND si.invoiceDate BETWEEN :from AND :to")
+        Double sumRevenueBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+        @Query("SELECT COUNT(si) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND si.invoiceDate BETWEEN :from AND :to")
+        long countBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+        @Query("SELECT COALESCE(SUM(si.balance), 0) FROM SalesInvoice si " +
+               "WHERE si.status IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.PARTIALLY_PAID" +
+               ") AND si.balance > 0")
+        Double sumOutstandingBalance();
 
         @Query(value = "SELECT COALESCE(d.name, 'Uncategorized') AS dept_name, SUM(sii.net_amount) AS revenue " +
                        "FROM sales_invoice_items sii " +
