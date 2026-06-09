@@ -3083,11 +3083,7 @@ const PurchaseInvoices = () => {
 
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: piBranchId,
-        }),
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -3115,7 +3111,7 @@ const PurchaseInvoices = () => {
       const fullVendor = findVendorRecord(vendorData, printableInvoice, printableInvoice?.vendorName, printableInvoice?.vendor);
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
-      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: piBranchId }), billBullLogo });
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
       await downloadPdf(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
     } catch (error) {
       console.error("Error downloading Invoice:", error);

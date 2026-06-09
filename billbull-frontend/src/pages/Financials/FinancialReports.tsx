@@ -1417,7 +1417,7 @@ function PettyCashReport() {
             <tr className="bg-[#FFF6D8]">
               <Td bold colSpan={4}>Closing Balance</Td>
               <Td right />
-              <Td right bold>{aed(withBalance[withBalance.length - 1].balance)}</Td>
+              <Td right bold>{withBalance.length > 0 ? aed(withBalance[withBalance.length - 1].balance) : aed(0)}</Td>
             </tr>
           </tbody>
         </Tbl>
@@ -1427,14 +1427,7 @@ function PettyCashReport() {
 }
 
 function CustomerAgingReport() {
-  const rows = mockCustomerAgingRows || [
-    { customer: "Al Futtaim Retail LLC", current: 12_500, d30: 8_200, d60: 3_500, d90: 0, d90plus: 0, total: 24_200 },
-    { customer: "Lulu Hypermarket", current: 28_000, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 28_000 },
-    { customer: "Carrefour UAE", current: 0, d30: 15_400, d60: 9_800, d90: 4_200, d90plus: 0, total: 29_400 },
-    { customer: "ENOC Stations", current: 5_600, d30: 3_200, d60: 0, d90: 0, d90plus: 0, total: 8_800 },
-    { customer: "Spinneys Group", current: 0, d30: 0, d60: 8_500, d90: 6_200, d90plus: 3_800, total: 18_500 },
-    { customer: "Union Coop", current: 9_200, d30: 4_500, d60: 0, d90: 0, d90plus: 0, total: 13_700 },
-  ];
+  const rows = mockCustomerAgingRows || [];
   const tot = (key: keyof typeof rows[0]) => rows.reduce((a, r) => a + (r[key] as number), 0);
   const chartData = [
     { label: "Current", value: tot("current") },
@@ -1595,13 +1588,7 @@ function CreditUtilizationReport() {
 }
 
 function VendorAgingReport() {
-  const rows = mockVendorAgingRows || [
-    { vendor: "Al Rawabi Foods LLC", current: 18_500, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 18_500 },
-    { vendor: "Agthia Group PJSC", current: 9_200, d30: 5_400, d60: 0, d90: 0, d90plus: 0, total: 14_600 },
-    { vendor: "Emirates Logistics Co.", current: 0, d30: 12_800, d60: 3_200, d90: 0, d90plus: 0, total: 16_000 },
-    { vendor: "DAFZA Warehouse Ltd.", current: 25_000, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 25_000 },
-    { vendor: "Sharjah Packaging LLC", current: 0, d30: 0, d60: 4_500, d90: 2_100, d90plus: 800, total: 7_400 },
-  ];
+  const rows = mockVendorAgingRows || [];
   const tot = (key: keyof typeof rows[0]) => rows.reduce((a, r) => a + (r[key] as number), 0);
   const chartData = [
     { label: "Current", value: tot("current") },
@@ -1760,11 +1747,11 @@ function OutstandingPayablesReport() {
 
 function VATReturnSummaryReport() {
   const vd = mockVatDashboard;
-  const outputTax = vd ? Number(vd.outputTax || 0) : 9_450;
-  const inputTax = vd ? Number(vd.inputTax || 0) : 5_510;
-  const netPayable = vd ? Number(vd.netTaxPayable || 0) : 3_940;
-  const salesBase = vd ? Number(vd.taxableSalesBase || 0) : 189_000;
-  const purchaseBase = vd ? Number(vd.taxablePurchaseBase || 0) : 110_200;
+  const outputTax = vd ? Number(vd.outputTax || 0) : 0;
+  const inputTax = vd ? Number(vd.inputTax || 0) : 0;
+  const netPayable = vd ? Number(vd.netTaxPayable || 0) : 0;
+  const salesBase = vd ? Number(vd.taxableSalesBase || 0) : 0;
+  const purchaseBase = vd ? Number(vd.taxablePurchaseBase || 0) : 0;
   const boxes = [
     { box: "1", label: "Standard rated supplies (5%)", taxable: salesBase, vat: outputTax },
     { box: "2", label: "Zero-rated supplies (0%)", taxable: 0, vat: 0 },
@@ -1842,15 +1829,7 @@ function VATOutputRegisterReport() {
         vat: Number(l.taxAmount || 0),
         total: Number(l.baseAmount || 0) + Number(l.taxAmount || 0),
       }))
-    : [
-        { date: "2026-01-05", inv: "TAX-INV-1001", customer: "Al Futtaim Retail LLC", taxable: 52_000, vatRate: "5%", vat: 2_600, total: 54_600 },
-        { date: "2026-01-08", inv: "TAX-INV-1002", customer: "Lulu Hypermarket", taxable: 28_000, vatRate: "5%", vat: 1_400, total: 29_400 },
-        { date: "2026-01-12", inv: "TAX-INV-1003", customer: "Carrefour UAE", taxable: 35_000, vatRate: "5%", vat: 1_750, total: 36_750 },
-        { date: "2026-01-15", inv: "TAX-INV-1004", customer: "ENOC Stations", taxable: 8_800, vatRate: "5%", vat: 440, total: 9_240 },
-        { date: "2026-01-18", inv: "TAX-INV-1005", customer: "Spinneys Group", taxable: 18_500, vatRate: "5%", vat: 925, total: 19_425 },
-        { date: "2026-01-22", inv: "TAX-INV-1006", customer: "Union Coop", taxable: 13_700, vatRate: "5%", vat: 685, total: 14_385 },
-        { date: "2026-01-25", inv: "TAX-INV-1007", customer: "Cash Customer", taxable: 12_000, vatRate: "0%", vat: 0, total: 12_000 },
-      ];
+    : [];
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
@@ -1911,15 +1890,7 @@ function VATInputRegisterReport() {
         vat: Number(l.taxAmount || 0),
         recoverable: Number(l.taxAmount || 0),
       }))
-    : [
-        { date: "2026-01-04", inv: "SI-9901", vendor: "Al Rawabi Foods LLC", taxable: 18_500, vat: 925, recoverable: 925 },
-        { date: "2026-01-06", inv: "SI-3340", vendor: "Agthia Group PJSC", taxable: 14_600, vat: 730, recoverable: 730 },
-        { date: "2026-01-10", inv: "SI-8820", vendor: "DAFZA Warehouse Ltd.", taxable: 25_000, vat: 1_250, recoverable: 1_250 },
-        { date: "2026-01-14", inv: "SI-7718", vendor: "Emirates Logistics Co.", taxable: 16_000, vat: 800, recoverable: 800 },
-        { date: "2026-01-18", inv: "SI-0055", vendor: "Sharjah Packaging LLC", taxable: 7_400, vat: 370, recoverable: 370 },
-        { date: "2026-01-20", inv: "UTIL-JAN", vendor: "DEWA (Utilities)", taxable: 4_200, vat: 210, recoverable: 210 },
-        { date: "2026-01-22", inv: "RENT-JAN", vendor: "Emaar Properties PJSC", taxable: 25_000, vat: 1_250, recoverable: 225 },
-      ];
+    : [];
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">

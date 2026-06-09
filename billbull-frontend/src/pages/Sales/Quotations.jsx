@@ -1007,11 +1007,11 @@ const Quotations = () => {
     // Server-driven paginated fetch for the Quotation list tab. Filters
     // (search + status) and the current page are pushed to the backend; the
     // response hydrates both the visible list and the footer meta.
-    const fetchQuotationsList = async () => {
+    const fetchQuotationsList = async (pageOverride) => {
         setIsListLoading(true);
         try {
             const data = await getQuotationsPage({
-                page: listPage,
+                page: pageOverride !== undefined ? pageOverride : listPage,
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
@@ -1045,21 +1045,44 @@ const Quotations = () => {
         }
     };
 
-    // Reset to first page whenever filter inputs change.
-    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
-
     const isInitialMount = useRef(true);
+    const isPageInitialMount = useRef(true);
+    // When true the next listPage change is a filter-driven reset — not a user
+    // page-navigation click — so the listPage-only effect should skip its fetch
+    // (the filter effect already issued one with page 0 passed directly).
+    const filterResetInFlight = useRef(false);
 
-    // Refetch whenever the user opens the list tab, changes filters, or pages.
+    // Effect 1: fires when filters or tab change. Resets to page 0 and fetches
+    // immediately using page=0, bypassing the listPage state for this one call.
     useEffect(() => {
         if (isInitialMount.current) {
             isInitialMount.current = false;
             return;
         }
         if (activeTab !== 'list') return;
-        fetchQuotationsList();
+
+        // Mark that the upcoming setListPage(0) is our own reset, not a user click.
+        filterResetInFlight.current = true;
+        setListPage(0);
+        fetchQuotationsList(0); // pass override page so we don't read stale state
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
+    }, [activeTab, searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
+
+    // Effect 2: fires only when the user explicitly navigates to a different page.
+    useEffect(() => {
+        if (isPageInitialMount.current) {
+            isPageInitialMount.current = false;
+            return;
+        }
+        if (filterResetInFlight.current) {
+            // This listPage change was triggered by a filter reset — skip; Effect 1 already fetched.
+            filterResetInFlight.current = false;
+            return;
+        }
+        if (activeTab !== 'list') return;
+        fetchQuotationsList(listPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [listPage]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -2263,12 +2286,13 @@ const Quotations = () => {
                     image: i.image ? getImageUrl(i.image) : ''
                 })),
                 totals: {
-                    subTotal: resolvedSummary.subTotal,
+                    subTotal: resolvedSummary.grossTotal,
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
                     currency: getDisplayCurrencyProps(qtn.currency).currency,
                     billDiscount: resolvedBillDiscount,
-                    billDiscountAmount: resolvedSummary.billDiscountAmount
+                    billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                    discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                 },
                 meta: {
                     validTill: qtn.validTill,
@@ -2304,7 +2328,7 @@ const Quotations = () => {
             const resolvedBillDiscount = Number(qtn.billDiscount || 0);
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.subTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: resolvedSummary.billDiscountAmount }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0) }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
             await downloadPdf(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
@@ -2509,12 +2533,13 @@ const Quotations = () => {
             image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
         })),
         totals: {
-            subTotal,
+            subTotal: grossTotal,
             tax: totalTax,
             grandTotal,
             currency: displayCurrencyProps.currency,
             billDiscount,
-            billDiscountAmount
+            billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+            discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
         },
         meta: {
             validTill,
@@ -2927,9 +2952,8 @@ const Quotations = () => {
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                                <DateFilter onChange={(range) => { 
-                                    setDateRange(prev => (prev?.fromDate === range?.fromDate && prev?.toDate === range?.toDate) ? prev : range); 
-                                    setListPage(0); 
+                                <DateFilter onChange={(range) => {
+                                    setDateRange(prev => (prev?.fromDate === range?.fromDate && prev?.toDate === range?.toDate) ? prev : range);
                                 }} />
                                 {/* Search */}
                                 <div className="relative">

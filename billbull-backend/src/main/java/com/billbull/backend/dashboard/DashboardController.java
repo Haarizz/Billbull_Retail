@@ -17,16 +17,18 @@ public class DashboardController {
     @GetMapping("/summary")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardSummaryResponse> getSummary(
-            @RequestParam(defaultValue = "All Time") String timeRange) {
-        return ResponseEntity.ok(dashboardService.getSummary(timeRange));
+            @RequestParam(defaultValue = "All Time") String timeRange,
+            @RequestParam(required = false) Long branchId) {
+        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
     }
 
     /** Force-clears the server-side cache and returns fresh data immediately. */
     @PostMapping("/summary/refresh")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardSummaryResponse> refresh(
-            @RequestParam(defaultValue = "All Time") String timeRange) {
+            @RequestParam(defaultValue = "All Time") String timeRange,
+            @RequestParam(required = false) Long branchId) {
         dashboardService.invalidateCache();
-        return ResponseEntity.ok(dashboardService.getSummary(timeRange));
+        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
     }
 }

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -86,6 +86,7 @@ import {
   type GlobalSearchResult,
   type BranchSummary,
 } from "../../api/billbull-dashboard-service";
+import { useBranch } from "../../context/BranchContext";
 
 // Props
 interface DashboardProps {
@@ -145,6 +146,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
+  // Global branch context
+  const { activeBranchId, isAllBranches } = useBranch();
+
   // Filters
   const [dateFilter, setDateFilter] = useState<DateFilter>("year");
   const [branchFilter, setBranchFilter] = useState<string>("all");
@@ -152,10 +156,20 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   const [advancedFilters, setAdvancedFilters] = useState<DashboardAdvancedFilters>(
     EMPTY_ADVANCED_FILTERS
   );
+  // Tracks whether the component has finished its initial mount load
+  const isInitialMount = useRef(true);
   const [appliedAdvancedFilters, setAppliedAdvancedFilters] =
     useState<DashboardAdvancedFilters>(EMPTY_ADVANCED_FILTERS);
   const [searchTerm, setSearchTerm] = useState("");
   const [showSearchResults, setShowSearchResults] = useState(false);
+
+  // Sync global branch to dashboard branch filter
+  useEffect(() => {
+    const newFilter = isAllBranches || !activeBranchId || activeBranchId === "ALL" 
+      ? "all" 
+      : String(activeBranchId);
+    setBranchFilter(newFilter);
+  }, [activeBranchId, isAllBranches]);
 
   // Loading / status
   const [isLoading, setIsLoading] = useState(true);
@@ -376,9 +390,21 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
     Promise.all([
       loadDashboardData(),
       checkServerHealth(),
-    ]).finally(() => setIsRefreshing(false));
+    ]).finally(() => {
+      setIsRefreshing(false);
+      // Mark initial load as done so the filter-change effect can take over
+      isInitialMount.current = false;
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-fetch data whenever branch or date filter changes (skip first mount)
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    billbullDashboardService.invalidateCaches();
+    loadDashboardData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchFilter, dateFilter]);
 
   // Refresh — clears all caches then reloads
   const refreshData = useCallback(

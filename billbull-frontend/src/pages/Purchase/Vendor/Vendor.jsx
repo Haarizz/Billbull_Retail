@@ -898,11 +898,7 @@ const VendorSoA = ({ vendors }) => {
         { startDate, endDate }
       );
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: activeBranch?.id,
-        }),
+        companyProfile: company,
         billBullLogo,
       });
 
@@ -946,11 +942,7 @@ const VendorSoA = ({ vendors }) => {
         linkedInvoice
       );
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: voucherForPrint.branch?.id ?? voucherForPrint.branchId ?? activeBranch?.id,
-        }),
+        companyProfile: company,
         billBullLogo,
       });
 

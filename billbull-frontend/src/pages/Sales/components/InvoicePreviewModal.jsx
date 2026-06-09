@@ -85,6 +85,7 @@ html, body { min-height: 0 !important; height: auto !important; background: #fff
 .content-stack { flex: none !important; }
 #footer-push-spacer, #footer-inner-spacer { display: none !important; height: 0 !important; }
 .ov-page { height: auto !important; overflow: visible !important; }
+.document-watermark { position: fixed !important; }
 </style>
 <script id="__preview_ov_sizer__">
 (function () {
@@ -160,7 +161,7 @@ const InvoicePreviewModal = ({
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[1px] p-4">
-            <div className="bg-[#F7F8FA] w-[760px] max-w-[96vw] max-h-[94vh] rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col">
+            <div className="bg-[#F7F8FA] w-[1000px] max-w-[96vw] max-h-[96vh] rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col">
                 {/* Modal Header */}
                 <div className="px-5 py-4 bg-white border-b border-slate-100 flex justify-between items-start">
                     <div className="flex items-start gap-3">

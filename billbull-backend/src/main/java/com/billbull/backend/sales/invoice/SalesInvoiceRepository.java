@@ -114,26 +114,50 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT si.invoiceDate, SUM(si.invoiceTotal), COUNT(si) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
                "GROUP BY si.invoiceDate ORDER BY si.invoiceDate")
         List<Object[]> findSalesTrend(@Param("startDate") LocalDate startDate,
-                                      @Param("endDate") LocalDate endDate);
+                                      @Param("endDate") LocalDate endDate,
+                                      @Param("branchId") Long branchId);
+
+        default List<Object[]> findSalesTrend(LocalDate startDate, LocalDate endDate) {
+            return findSalesTrend(startDate, endDate, null);
+        }
 
         @Query("SELECT COALESCE(si.paymentMode, 'Cash'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
                "GROUP BY si.paymentMode")
         List<Object[]> findPaymentBreakdown(@Param("startDate") LocalDate startDate,
-                                            @Param("endDate") LocalDate endDate);
+                                            @Param("endDate") LocalDate endDate,
+                                            @Param("branchId") Long branchId);
+
+        default List<Object[]> findPaymentBreakdown(LocalDate startDate, LocalDate endDate) {
+            return findPaymentBreakdown(startDate, endDate, null);
+        }
 
         @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND si.invoiceDate BETWEEN :from AND :to")
-        Double sumRevenueBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId)")
+        Double sumRevenueBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                                 @Param("branchId") Long branchId);
+
+        default Double sumRevenueBetween(LocalDate from, LocalDate to) {
+            return sumRevenueBetween(from, to, null);
+        }
 
         @Query("SELECT COUNT(si) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND si.invoiceDate BETWEEN :from AND :to")
-        long countBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId)")
+        long countBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                          @Param("branchId") Long branchId);
+
+        default long countBetween(LocalDate from, LocalDate to) {
+            return countBetween(from, to, null);
+        }
 
         @Query("SELECT COALESCE(SUM(si.balance), 0) FROM SalesInvoice si " +
                "WHERE si.status IN (" +
@@ -150,18 +174,30 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "WHERE si.status <> 'CANCELLED' " +
                        "AND si.invoice_date >= :startDate " +
                        "AND si.invoice_date < :endDate " +
+                       "AND (:branchId IS NULL OR si.branch_id = :branchId) " +
                        "GROUP BY d.name ORDER BY revenue DESC LIMIT 4",
                nativeQuery = true)
         List<Object[]> findTopDepartments(@Param("startDate") LocalDate startDate,
-                                          @Param("endDate") LocalDate endDate);
+                                          @Param("endDate") LocalDate endDate,
+                                          @Param("branchId") Long branchId);
+
+        default List<Object[]> findTopDepartments(LocalDate startDate, LocalDate endDate) {
+            return findTopDepartments(startDate, endDate, null);
+        }
 
         @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(Pageable pageable);
 
         @Query("SELECT COALESCE(SUM(si.taxTotal), 0) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
-               "AND si.invoiceDate BETWEEN :from AND :to")
-        Double sumTaxTotalBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId)")
+        Double sumTaxTotalBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                                  @Param("branchId") Long branchId);
+
+        default Double sumTaxTotalBetween(LocalDate from, LocalDate to) {
+            return sumTaxTotalBetween(from, to, null);
+        }
 
         @Query("SELECT COUNT(DISTINCT si.customerName) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
@@ -180,26 +216,43 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "LEFT JOIN departments d ON d.id = p.department_id " +
                        "WHERE si.status <> 'CANCELLED' " +
                        "AND si.invoice_date BETWEEN :startDate AND :endDate " +
+                       "AND (:branchId IS NULL OR si.branch_id = :branchId) " +
                        "GROUP BY sii.item_code ORDER BY revenue DESC LIMIT 5",
                nativeQuery = true)
         List<Object[]> findTopProductsBetween(@Param("startDate") LocalDate startDate,
-                                              @Param("endDate") LocalDate endDate);
+                                              @Param("endDate") LocalDate endDate,
+                                              @Param("branchId") Long branchId);
 
-        // Hourly sales for a single day (uses created_at timestamp)
+        default List<Object[]> findTopProductsBetween(LocalDate startDate, LocalDate endDate) {
+            return findTopProductsBetween(startDate, endDate, null);
+        }
+
         @Query(value = "SELECT EXTRACT(HOUR FROM si.created_at) AS hour, " +
                        "COALESCE(SUM(si.invoice_total), 0) AS sales, COUNT(si.id) AS cnt " +
                        "FROM sales_invoices si " +
                        "WHERE si.status <> 'CANCELLED' AND DATE(si.created_at) = :date " +
+                       "AND (:branchId IS NULL OR si.branch_id = :branchId) " +
                        "GROUP BY EXTRACT(HOUR FROM si.created_at) ORDER BY hour",
                nativeQuery = true)
-        List<Object[]> findHourlySalesTrend(@Param("date") LocalDate date);
+        List<Object[]> findHourlySalesTrend(@Param("date") LocalDate date,
+                                            @Param("branchId") Long branchId);
+
+        default List<Object[]> findHourlySalesTrend(LocalDate date) {
+            return findHourlySalesTrend(date, null);
+        }
 
         // Branch-level revenue breakdown for a date range
         @Query("SELECT COALESCE(si.branchName, 'Head Office'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
                "GROUP BY si.branchName ORDER BY SUM(si.invoiceTotal) DESC")
-        List<Object[]> findBranchPerformanceBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+        List<Object[]> findBranchPerformanceBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                                                    @Param("branchId") Long branchId);
+
+        default List<Object[]> findBranchPerformanceBetween(LocalDate from, LocalDate to) {
+            return findBranchPerformanceBetween(from, to, null);
+        }
 
         // Daily profit trend (net_amount minus cost × quantity per day)
         @Query(value = "SELECT si.invoice_date, " +
@@ -207,17 +260,29 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
                        "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to " +
+                       "AND (:branchId IS NULL OR si.branch_id = :branchId) " +
                        "GROUP BY si.invoice_date ORDER BY si.invoice_date",
                nativeQuery = true)
-        List<Object[]> findDailyProfitTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
+        List<Object[]> findDailyProfitTrend(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                                            @Param("branchId") Long branchId);
+
+        default List<Object[]> findDailyProfitTrend(LocalDate from, LocalDate to) {
+            return findDailyProfitTrend(from, to, null);
+        }
 
         // Total profit for a date range
         @Query(value = "SELECT COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
-                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to",
+                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to " +
+                       "AND (:branchId IS NULL OR si.branch_id = :branchId)",
                nativeQuery = true)
-        Double sumProfitBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+        Double sumProfitBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
+                                @Param("branchId") Long branchId);
+
+        default Double sumProfitBetween(LocalDate from, LocalDate to) {
+            return sumProfitBetween(from, to, null);
+        }
 
         // --- RECONCILIATION QUERIES ---
 

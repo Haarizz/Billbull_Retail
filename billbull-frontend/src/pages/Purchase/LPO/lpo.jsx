@@ -2647,11 +2647,7 @@ const LPOList = () => {
         const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-          companyProfile: buildDocumentHeaderProfile({
-            company,
-            branches: availableBranches || [],
-            branchId: detailedLpo?.branchId ?? activeBranch?.id,
-          }),
+          companyProfile: company,
           billBullLogo
         });
         printHtml(html);
@@ -2677,7 +2673,7 @@ const LPOList = () => {
       if (defaultTemplate) {
         const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
-        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: detailedLpo?.branchId ?? activeBranch?.id }), billBullLogo });
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
         await downloadPdf(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
       } else {
         toast.error("No default template for LPO found.");
@@ -2866,11 +2862,7 @@ const LPOList = () => {
         null
       );
       const html = await generatePrintHtmlAsync(template, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: voucher?.branch?.id ?? row?.branchId ?? activeBranch?.id,
-        }),
+        companyProfile: company,
         billBullLogo
       });
       printHtml(html);
