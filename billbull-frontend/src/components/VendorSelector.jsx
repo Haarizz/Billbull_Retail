@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Search, X, Plus, Check, Phone, Mail, MapPin, ChevronDown, Store } from 'lucide-react';
 import { createVendor } from '../api/vendorsApi';
+import { useBranch } from '../context/BranchContext';
 import toast from 'react-hot-toast';
 
 // ==========================================
@@ -15,6 +16,7 @@ const VendorSelector = ({
     selectedCode = '',
     onVendorCreated
 }) => {
+    const { defaultBranchName, activeBranch } = useBranch();
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -158,7 +160,9 @@ const VendorSelector = ({
                 mobile: newVendor.mobile.trim(),
                 email: newVendor.email.trim(),
                 trn: newVendor.trn.trim(),
-                status: 'ACTIVE'
+                status: 'ACTIVE',
+                branch: activeBranch?.name || defaultBranchName || '',
+                allocatedBranches: [activeBranch?.name || defaultBranchName].filter(Boolean)
             };
 
             const saved = await createVendor(payload);
