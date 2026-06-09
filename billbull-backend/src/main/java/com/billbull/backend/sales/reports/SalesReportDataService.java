@@ -1424,6 +1424,9 @@ public class SalesReportDataService {
                     List<SalesReturn> returns = returnsByDate.getOrDefault(date, List.of());
                     double gross = sumInvoices(invoices, true, true);
                     double returnTotal = sumReturns(returns);
+                    double net = gross - returnTotal;
+                    double cost = invoices.stream().filter(this::isRecognizedInvoice)
+                            .mapToDouble(inv -> invoiceCost(inv, data)).sum();
                     return row(
                             "name", date.toString(),
                             "date", date,
@@ -1432,7 +1435,10 @@ public class SalesReportDataService {
                             "returns", returnTotal,
                             "discount", totalDiscount(invoices),
                             "vat", invoices.stream().mapToDouble(i -> n(i.getTaxTotal())).sum(),
-                            "netSales", gross - returnTotal,
+                            "netSales", net,
+                            "cogs", cost,
+                            "grossProfit", net - cost,
+                            "gpPercent", net > 0 ? Math.round((net - cost) * 1000.0 / net) / 10.0 : 0.0,
                             "collected", paidAmount(invoices),
                             "outstanding", outstandingAmount(invoices));
                 })

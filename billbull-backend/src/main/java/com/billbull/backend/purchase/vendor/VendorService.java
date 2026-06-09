@@ -64,31 +64,26 @@ public class VendorService {
     }
 
     public List<VendorListResponse> list(String branchName) {
-        // Batch the three balance aggregates into one grouped query each (keyed by
-        // vendor name) instead of running them per-vendor — turns 3×N queries into
-        // 3 total, which is the difference between ~12s and instant at 300 vendors.
-        java.util.Map<String, BigDecimal> invoicedByName = toAmountMap(invRepo.sumInvoicedGroupedByVendorName());
-        java.util.Map<String, BigDecimal> paidByName = toAmountMap(payRepo.sumPaymentsGroupedByVendorName());
+        // Batch the two balance aggregates into one grouped query each (keyed by
+        // vendor name) instead of running them per-vendor — turns N×2 queries into
+        // 2 total, which is the difference between ~12s and instant at 300 vendors.
+        // Invoice outstanding: grandTotal of POSTED, unpaid/partial invoices per vendor name.
+        java.util.Map<String, BigDecimal> invoiceOutstandingByName = toAmountMap(invRepo.sumOutstandingByVendorName());
+        // On-account payments (not linked to any invoice — settle opening balance).
         java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
 
         List<VendorListResponse> result = repo.findByIsActiveTrue()
                 .stream()
                 .map(v -> {
-                    // Compute payable balance live:
-                    // openingBalance + totalInvoiced − totalPaid
                     BigDecimal openingBal  = v.getOpeningBalance() != null ? v.getOpeningBalance() : BigDecimal.ZERO;
-                    BigDecimal totalInvoiced = invoicedByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal totalPaid = paidByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal payableBalance = openingBal.add(totalInvoiced).subtract(totalPaid);
 
-                    // Opening balance still owed after netting off on-account (non
-                    // invoice-linked) payments — prevents the Payments screen from
-                    // showing the OB as unpaid once it has been settled.
+                    // Opening balance still owed after netting off on-account payments.
                     BigDecimal onAccountPaid = onAccountByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid);
-                    if (openingOutstanding.compareTo(BigDecimal.ZERO) < 0) {
-                        openingOutstanding = BigDecimal.ZERO;
-                    }
+                    BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid).max(BigDecimal.ZERO);
+
+                    // Payable = unpaid/partial invoice outstanding + remaining opening balance.
+                    BigDecimal invOutstanding = invoiceOutstandingByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal payableBalance = invOutstanding.add(openingOutstanding);
 
                     VendorListResponse r = new VendorListResponse(
                             v.getId(),

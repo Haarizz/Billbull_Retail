@@ -244,4 +244,27 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         java.math.BigDecimal sumGlobalOutstandingBalance();
+
+        /**
+         * Bulk AR per customer: returns [customerCode, totalInvoiceAmount] for all
+         * non-cancelled invoices. Used by CustomerService to compute currentBalance
+         * for the customer list without N+1 per-customer queries.
+         */
+        @Query("SELECT s.customerCode, COALESCE(SUM(s.invoiceTotal), 0) FROM SalesInvoice s " +
+               "WHERE s.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND s.customerCode IS NOT NULL " +
+               "GROUP BY s.customerCode")
+        List<Object[]> sumInvoiceTotalByCustomerCode();
+
+        /**
+         * Bulk AR per customer: returns [customerCode, outstandingBalance] using the
+         * per-invoice balance field (maintained on each payment). More accurate than
+         * invoiceTotal - receipts for the customer list receivables tile.
+         */
+        @Query("SELECT s.customerCode, COALESCE(SUM(s.balance), 0) FROM SalesInvoice s " +
+               "WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID) " +
+               "AND s.customerCode IS NOT NULL " +
+               "GROUP BY s.customerCode")
+        List<Object[]> sumOutstandingBalanceByCustomerCode();
 }

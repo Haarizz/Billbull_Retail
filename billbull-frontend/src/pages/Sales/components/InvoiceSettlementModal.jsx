@@ -1,11 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, Plus, Printer, Download, Mail, MessageCircle, CheckCircle2, Banknote } from 'lucide-react';
+import { X, Plus, Printer, Download, Mail, MessageCircle, CheckCircle2, Banknote, AlertCircle } from 'lucide-react';
 import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import { getNextSalesPaymentNumber } from '../../../api/salesPaymentApi';
 
 // Post-confirm Sales Payment settlement. Opened right after a Sales Invoice is
-// confirmed so the user can record payment received against it (or skip and
-// leave it on credit).
+// confirmed so the user can record payment received against it.
 //
 // Persistence uses the SAME path as the invoice "Pay" button — each entry is
 // posted through recordInvoicePayment → /payment-detailed, which makes the
@@ -42,50 +41,96 @@ const InvoiceSettlementModal = ({
     const [phase, setPhase] = useState('input'); // 'input' | 'done'
     const [recorded, setRecorded] = useState([]);
     const [nextVoucherNo, setNextVoucherNo] = useState('—');
-    const [quickMode, setQuickMode] = useState('Cash');
+    // No pre-selection — user must explicitly choose a pay mode
+    const [quickMode, setQuickMode] = useState(null);
+    const [showModeError, setShowModeError] = useState(false);
 
     useEffect(() => {
         getNextSalesPaymentNumber()
             .then(num => setNextVoucherNo(num))
             .catch(() => setNextVoucherNo('Auto-generated'));
     }, []);
+
+    // Start with no mode selected — amount pre-filled but mode is blank
     const [entries, setEntries] = useState([
-        { mode: 'Cash', amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() },
+        { mode: '', amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() },
     ]);
 
-    const totalSettled = useMemo(
-        () => entries.reduce((sum, e) => sum + (Number(e.amount) || 0), 0),
+    // Cash/Card/Bank/Cheque entries — the ones that actually move money
+    const paidEntries = useMemo(
+        () => entries.filter(e => e.mode !== '' && e.mode !== 'Credit' && Number(e.amount) > 0),
         [entries]
     );
+    const totalSettled = useMemo(
+        () => paidEntries.reduce((sum, e) => sum + (Number(e.amount) || 0), 0),
+        [paidEntries]
+    );
+    // Whether any Credit entry is present (rest goes on credit)
+    const hasCreditEntry = useMemo(
+        () => entries.some(e => e.mode === 'Credit'),
+        [entries]
+    );
+
+    // Every entry with amount > 0 must have a mode selected (Credit entries always have a mode)
+    const allModesSelected = useMemo(
+        () => entries.every(e => Number(e.amount) <= 0 || e.mode !== ''),
+        [entries]
+    );
+    const anyModeSelected = quickMode !== null;
+
     const balanceDue = Math.max(invoiceAmount - totalSettled, 0);
-    const statusLabel = balanceDue <= 0.009 && totalSettled > 0
+    const isPureCreditSettlement = hasCreditEntry && totalSettled <= 0.004;
+    const isFullyPaid = !isPureCreditSettlement && balanceDue <= 0.009 && totalSettled > 0;
+    const statusLabel = isFullyPaid
         ? 'Fully Paid'
-        : (totalSettled > 0 ? 'Partially Paid' : 'Unpaid (On Credit)');
-    const isFullyPaid = statusLabel === 'Fully Paid';
+        : isPureCreditSettlement
+            ? 'On Credit'
+            : totalSettled > 0
+                ? hasCreditEntry ? 'Partially Paid / Credit Balance' : 'Partially Paid'
+                : 'Unpaid (On Credit)';
+
+    // Finalize is allowed when: a mode is selected AND (some money paid OR pure credit chosen)
+    const canFinalize = allModesSelected && anyModeSelected && (totalSettled > 0 || isPureCreditSettlement);
 
     const setEntry = (idx, patch) =>
-        setEntries(prev => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+        setEntries(prev => {
+            const updated = prev.map((e, i) => (i === idx ? { ...e, ...patch } : e));
+            // Keep credit entry amount in sync with remaining balance
+            const otherPaid = updated.reduce((s, e, i) => e.mode !== 'Credit' && Number(e.amount) > 0 ? s + Number(e.amount) : s, 0);
+            return updated.map(e => e.mode === 'Credit' ? { ...e, amount: Math.max(invoiceAmount - otherPaid, 0).toFixed(2) } : e);
+        });
 
     const handleQuickMode = (mode) => {
         setQuickMode(mode);
+        setShowModeError(false);
         setEntries(prev => {
-            if (prev.length === 0) {
-                return [{ mode, amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }];
+            const base = prev.length === 0
+                ? [{ mode, amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }]
+                : prev.map((e, i) => (i === 0 ? { ...e, mode } : e));
+            // For Credit quick-mode, auto-fill amount with full invoice total
+            if (mode === 'Credit') {
+                const otherPaid = base.reduce((s, e, i) => i !== 0 && e.mode !== 'Credit' ? s + (Number(e.amount) || 0) : s, 0);
+                return base.map((e, i) => i === 0 ? { ...e, amount: Math.max(invoiceAmount - otherPaid, 0).toFixed(2) } : e);
             }
-            return prev.map((e, i) => (i === 0 ? { ...e, mode } : e));
+            return base;
         });
     };
 
     const addEntry = () => {
         const remaining = Math.max(invoiceAmount - totalSettled, 0);
-        setEntries(prev => [...prev, { mode: 'Cash', amount: remaining > 0 ? remaining.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }]);
+        setEntries(prev => [...prev, { mode: '', amount: remaining > 0 ? remaining.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }]);
     };
 
     const removeEntry = (idx) => setEntries(prev => prev.filter((_, i) => i !== idx));
 
     const handleConfirm = async () => {
-        const valid = entries
-            .filter(e => Number(e.amount) > 0)
+        if (!allModesSelected) {
+            setShowModeError(true);
+            return;
+        }
+        // Paid entries: Cash/Card/Bank/Cheque with positive amounts
+        const paidValid = entries
+            .filter(e => Number(e.amount) > 0 && e.mode !== '' && e.mode !== 'Credit')
             .map(e => ({
                 mode: e.mode,
                 amount: e.amount,
@@ -93,6 +138,11 @@ const InvoiceSettlementModal = ({
                 bankAccount: e.mode !== 'Cash' ? e.bankAccount : '',
                 chequeDate: e.mode === 'Cheque' ? e.chequeDate : null,
             }));
+        // Credit entries: passed through with amount=0 so backend stamps paymentMode
+        const creditEntries = entries
+            .filter(e => e.mode === 'Credit')
+            .map(e => ({ mode: 'Credit', amount: '0', reference: e.reference, bankAccount: '', chequeDate: null }));
+        const valid = [...paidValid, ...creditEntries];
         if (valid.length === 0) return;
         const result = await onConfirm?.(valid);
         if (result && Array.isArray(result.receipts)) {
@@ -151,33 +201,65 @@ const InvoiceSettlementModal = ({
                                 <span className="text-xs text-slate-500">{new Date().toLocaleDateString('en-GB').replace(/\//g, '/')}</span>
                             </div>
 
-                            {/* Quick payment mode */}
-                            <div>
-                                <p className="text-xs font-bold text-slate-700 mb-2">Quick Payment Mode</p>
+                            {/* Pay Mode — mandatory selection */}
+                            <div className={`rounded-lg border-2 p-4 transition-colors ${showModeError && !anyModeSelected ? 'border-red-400 bg-red-50' : anyModeSelected ? 'border-emerald-300 bg-emerald-50/40' : 'border-[#FDE6A9] bg-[#FFF8E7]'}`}>
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                                        {showModeError && !anyModeSelected
+                                            ? <AlertCircle size={14} className="text-red-500" />
+                                            : anyModeSelected
+                                                ? <CheckCircle2 size={14} className="text-emerald-500" />
+                                                : <AlertCircle size={14} className="text-amber-500" />
+                                        }
+                                        Pay Mode
+                                        <span className="text-red-500">*</span>
+                                    </p>
+                                    {anyModeSelected && (
+                                        <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200">
+                                            <CheckCircle2 size={12} />
+                                            {MODE_EMOJI[quickMode]} {quickMode} selected
+                                        </span>
+                                    )}
+                                    {!anyModeSelected && (
+                                        <span className="text-[11px] text-amber-700 font-medium">Select a pay mode to proceed</span>
+                                    )}
+                                </div>
                                 <div className="flex flex-wrap gap-2">
                                     {QUICK_MODES.map(mode => (
                                         <button
                                             key={mode}
                                             onClick={() => handleQuickMode(mode)}
-                                            className={`px-4 py-2 rounded-full text-xs font-bold border transition-colors ${
+                                            className={`px-4 py-2 rounded-full text-xs font-bold border-2 transition-all ${
                                                 quickMode === mode
-                                                    ? 'bg-[#F5C742] border-[#F5C742] text-slate-900'
-                                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                                    ? 'bg-[#F5C742] border-[#F5C742] text-slate-900 shadow-sm scale-105'
+                                                    : showModeError && !anyModeSelected
+                                                        ? 'bg-white border-red-200 text-slate-600 hover:bg-red-50 hover:border-red-400'
+                                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-[#FFF8E7] hover:border-[#F5C742]'
                                             }`}
                                         >
-                                            {mode}
+                                            {MODE_EMOJI[mode]} {mode}
                                         </button>
                                     ))}
                                 </div>
+                                {showModeError && !anyModeSelected && (
+                                    <p className="mt-2 text-xs text-red-600 font-medium flex items-center gap-1">
+                                        <AlertCircle size={12} /> Please select a pay mode before finalizing.
+                                    </p>
+                                )}
                             </div>
 
                             {/* Payment entries */}
                             {entries.map((entry, idx) => (
-                                <div key={idx} className="rounded-lg border border-slate-200 p-4">
+                                <div key={idx} className={`rounded-lg border p-4 transition-colors ${entry.mode === '' && Number(entry.amount) > 0 ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200'}`}>
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2">
                                             <span className="w-5 h-5 rounded-full bg-[#F5C742] text-slate-900 text-[11px] font-bold flex items-center justify-center">{idx + 1}</span>
                                             <span className="text-sm font-bold text-slate-700">Payment Entry {idx + 1}</span>
+                                            {entry.mode && (
+                                                <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                                    {MODE_EMOJI[entry.mode]} {entry.mode}
+                                                </span>
+                                            )}
                                         </div>
                                         {entries.length > 1 && (
                                             <button onClick={() => removeEntry(idx)} className="text-slate-400 hover:text-red-500"><X size={16} /></button>
@@ -185,30 +267,47 @@ const InvoiceSettlementModal = ({
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Mode</label>
+                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                                Payment Mode <span className="text-red-500">*</span>
+                                            </label>
                                             <select
                                                 value={entry.mode}
-                                                onChange={(e) => setEntry(idx, { mode: e.target.value, bankAccount: '' })}
-                                                className="w-full text-sm p-2 border border-slate-300 rounded-md bg-white outline-none focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742]"
+                                                onChange={(e) => {
+                                                    const newMode = e.target.value;
+                                                    // Auto-fill credit amount with remaining balance
+                                                    const patch = { mode: newMode, bankAccount: '' };
+                                                    if (newMode === 'Credit') {
+                                                        const otherPaid = entries.reduce((s, en, i) => i !== idx && en.mode !== 'Credit' ? s + (Number(en.amount) || 0) : s, 0);
+                                                        patch.amount = Math.max(invoiceAmount - otherPaid, 0).toFixed(2);
+                                                    }
+                                                    setEntry(idx, patch);
+                                                    if (idx === 0) setQuickMode(newMode || null);
+                                                    if (newMode) setShowModeError(false);
+                                                }}
+                                                className={`w-full text-sm p-2 border rounded-md bg-white outline-none focus:ring-1 focus:ring-[#F5C742] ${entry.mode === '' ? 'border-amber-400 focus:border-[#F5C742]' : 'border-slate-300 focus:border-[#F5C742]'}`}
                                             >
+                                                <option value="">— Select pay mode —</option>
                                                 {ENTRY_MODES.map(m => (
                                                     <option key={m} value={m}>{MODE_EMOJI[m]} {m}</option>
                                                 ))}
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">Amount ({currency})</label>
+                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                                {entry.mode === 'Credit' ? `Credit Balance (${currency})` : `Amount (${currency})`}
+                                            </label>
                                             <input
                                                 type="number"
                                                 value={entry.amount}
-                                                onChange={(e) => setEntry(idx, { amount: e.target.value })}
-                                                className="w-full text-sm p-2 border border-slate-300 rounded-md outline-none focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742]"
+                                                readOnly={entry.mode === 'Credit'}
+                                                onChange={(e) => entry.mode !== 'Credit' && setEntry(idx, { amount: e.target.value })}
+                                                className={`w-full text-sm p-2 border rounded-md outline-none focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] ${entry.mode === 'Credit' ? 'bg-orange-50 border-orange-200 text-orange-700 font-bold cursor-default' : 'border-slate-300 bg-white'}`}
                                             />
                                         </div>
                                     </div>
 
                                     {/* Bank Account — shown for modes that require bank selection */}
-                                    {entry.mode !== 'Cash' && entry.mode !== 'Card' && entry.mode !== 'Credit' && (
+                                    {entry.mode !== '' && entry.mode !== 'Cash' && entry.mode !== 'Card' && entry.mode !== 'Credit' && (
                                         <div className="mt-3 grid grid-cols-2 gap-4">
                                             <div className={entry.mode === 'Cheque' ? '' : 'col-span-2'}>
                                                 <label className="block text-[11px] font-bold text-slate-600 mb-1">Bank Account</label>
@@ -262,11 +361,22 @@ const InvoiceSettlementModal = ({
                             {/* Total settled + status */}
                             <div className="rounded-lg border border-slate-200 p-4">
                                 <div className="flex justify-between items-center">
-                                    <span className="text-sm font-bold text-slate-600">Total Settled:</span>
+                                    <span className="text-sm font-bold text-slate-600">Total Paid Now:</span>
                                     <span className="text-xl font-bold text-slate-800">{money(totalSettled)}</span>
                                 </div>
-                                <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm ${isFullyPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>
-                                    <CheckCircle2 size={16} className={isFullyPaid ? 'text-emerald-500' : 'text-slate-400'} />
+                                {hasCreditEntry && balanceDue > 0.004 && (
+                                    <div className="mt-2 flex justify-between items-center text-sm text-slate-500">
+                                        <span>Credit Balance:</span>
+                                        <span className="font-bold text-orange-600">{money(balanceDue)}</span>
+                                    </div>
+                                )}
+                                <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
+                                    isFullyPaid ? 'bg-emerald-50 text-emerald-700'
+                                    : isPureCreditSettlement ? 'bg-orange-50 text-orange-700'
+                                    : hasCreditEntry ? 'bg-orange-50 text-orange-700'
+                                    : 'bg-slate-50 text-slate-600'
+                                }`}>
+                                    <CheckCircle2 size={16} className={isFullyPaid ? 'text-emerald-500' : isPureCreditSettlement || hasCreditEntry ? 'text-orange-400' : 'text-slate-400'} />
                                     Invoice will be marked as <strong>{statusLabel}</strong>.
                                 </div>
                             </div>
@@ -289,8 +399,12 @@ const InvoiceSettlementModal = ({
                                 )}
                                 {recorded.map((rv) => (
                                     <div key={rv.id || rv.receiptNumber} className="px-4 py-3">
-                                        <p className="text-sm font-bold text-slate-800 tracking-wide">{rv.receiptNumber}</p>
-                                        <p className="text-[11px] text-slate-500">{rv.mode} • {money(rv.amount)}{rv.reference ? ` • ${rv.reference}` : ''}</p>
+                                        <p className={`text-sm font-bold tracking-wide ${rv.mode === 'Credit' ? 'text-orange-700' : 'text-slate-800'}`}>{rv.receiptNumber}</p>
+                                        <p className="text-[11px] text-slate-500">
+                                            {rv.mode}
+                                            {rv.mode === 'Credit' ? ' — balance left on credit' : ` • ${money(rv.amount)}`}
+                                            {rv.reference ? ` • ${rv.reference}` : ''}
+                                        </p>
                                     </div>
                                 ))}
                             </div>
@@ -312,22 +426,24 @@ const InvoiceSettlementModal = ({
                 {/* Footer */}
                 <div className="px-6 py-4 border-t border-slate-100 flex justify-between items-center bg-white">
                     {phase === 'input' ? (
-                        <>
-                            <button
-                                onClick={onSkip}
-                                disabled={isSaving}
-                                className="px-5 py-2.5 bg-white border border-slate-300 text-slate-700 text-sm font-bold rounded-md hover:bg-slate-50 disabled:opacity-50"
-                            >
-                                Skip Settlement
-                            </button>
+                        <div className="ml-auto flex items-center gap-3">
+                            {!canFinalize && (
+                                <span className="text-[11px] text-slate-500 font-medium">
+                                    {!anyModeSelected ? 'Select a pay mode to enable' : (!isPureCreditSettlement && totalSettled <= 0) ? 'Enter an amount to enable' : ''}
+                                </span>
+                            )}
                             <button
                                 onClick={handleConfirm}
-                                disabled={isSaving || totalSettled <= 0}
-                                className="flex items-center gap-2 px-6 py-2.5 bg-[#F5C742] text-slate-900 text-sm font-bold rounded-md hover:bg-yellow-500 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={isSaving || !canFinalize}
+                                className={`flex items-center gap-2 px-6 py-2.5 text-sm font-bold rounded-md shadow-sm transition-all ${
+                                    canFinalize
+                                        ? 'bg-[#F5C742] text-slate-900 hover:bg-yellow-500 cursor-pointer'
+                                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                } disabled:opacity-70`}
                             >
-                                <CheckCircle2 size={16} /> {isSaving ? 'Saving…' : 'Confirm & Finalize Settlement'}
+                                <CheckCircle2 size={16} /> {isSaving ? 'Saving…' : isPureCreditSettlement ? 'Confirm Credit Settlement' : 'Confirm & Finalize Settlement'}
                             </button>
-                        </>
+                        </div>
                     ) : (
                         <button
                             onClick={onDone}

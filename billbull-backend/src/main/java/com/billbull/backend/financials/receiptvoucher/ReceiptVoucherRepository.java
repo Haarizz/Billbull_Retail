@@ -50,6 +50,16 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     /** QA-018: batch lookup used by StatementService to populate description/reference. */
     List<ReceiptVoucher> findByVoucherIdIn(List<String> voucherIds);
 
+    /**
+     * Bulk receipts per customer: returns [customerCode, totalReceiptAmount] for all
+     * completed receipts. Used by CustomerService to compute currentBalance for the
+     * customer list without N+1 per-customer queries.
+     */
+    @Query("SELECT rv.customerCode, COALESCE(SUM(rv.amount), 0) FROM ReceiptVoucher rv " +
+           "WHERE LOWER(rv.status) = 'completed' AND rv.customerCode IS NOT NULL " +
+           "GROUP BY rv.customerCode")
+    List<Object[]> sumCompletedAmountByCustomerCode();
+
     /** All advance receipts for a customer (purpose = ADVANCE_RECEIVED). */
     List<ReceiptVoucher> findByCustomerCodeAndPurpose(String customerCode, ReceiptPurpose purpose);
 
