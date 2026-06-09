@@ -158,6 +158,11 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(Pageable pageable);
 
+        @Query("SELECT COALESCE(SUM(si.taxTotal), 0) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND si.invoiceDate BETWEEN :from AND :to")
+        Double sumTaxTotalBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
         @Query("SELECT COUNT(DISTINCT si.customerName) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :from AND :to")
@@ -167,7 +172,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "MIN(COALESCE(p.name, sii.item_name)) AS product_name, " +
                        "COALESCE(MIN(d.name), 'Uncategorized') AS dept_name, " +
                        "SUM(sii.quantity) AS qty_sold, " +
-                       "SUM(sii.net_amount) AS revenue " +
+                       "SUM(sii.net_amount) AS revenue, " +
+                       "MIN(p.id) AS product_id " +
                        "FROM sales_invoice_items sii " +
                        "JOIN sales_invoices si ON si.id = sii.sales_invoice_id " +
                        "LEFT JOIN products p ON p.code = sii.item_code AND p.is_active = true " +
@@ -178,6 +184,40 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                nativeQuery = true)
         List<Object[]> findTopProductsBetween(@Param("startDate") LocalDate startDate,
                                               @Param("endDate") LocalDate endDate);
+
+        // Hourly sales for a single day (uses created_at timestamp)
+        @Query(value = "SELECT EXTRACT(HOUR FROM si.created_at) AS hour, " +
+                       "COALESCE(SUM(si.invoice_total), 0) AS sales, COUNT(si.id) AS cnt " +
+                       "FROM sales_invoices si " +
+                       "WHERE si.status <> 'CANCELLED' AND DATE(si.created_at) = :date " +
+                       "GROUP BY EXTRACT(HOUR FROM si.created_at) ORDER BY hour",
+               nativeQuery = true)
+        List<Object[]> findHourlySalesTrend(@Param("date") LocalDate date);
+
+        // Branch-level revenue breakdown for a date range
+        @Query("SELECT COALESCE(si.branchName, 'Head Office'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "GROUP BY si.branchName ORDER BY SUM(si.invoiceTotal) DESC")
+        List<Object[]> findBranchPerformanceBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+        // Daily profit trend (net_amount minus cost × quantity per day)
+        @Query(value = "SELECT si.invoice_date, " +
+                       "COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
+                       "FROM sales_invoices si " +
+                       "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
+                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to " +
+                       "GROUP BY si.invoice_date ORDER BY si.invoice_date",
+               nativeQuery = true)
+        List<Object[]> findDailyProfitTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+        // Total profit for a date range
+        @Query(value = "SELECT COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
+                       "FROM sales_invoices si " +
+                       "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
+                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to",
+               nativeQuery = true)
+        Double sumProfitBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
         // --- RECONCILIATION QUERIES ---
 

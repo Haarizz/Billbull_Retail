@@ -29,6 +29,11 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
     Double getTotalReturnsBetweenDates(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
+    @Query("SELECT r.returnDate, COALESCE(SUM(r.totalAmount), 0) FROM SalesReturn r " +
+           "WHERE r.returnDate BETWEEN :from AND :to " +
+           "GROUP BY r.returnDate ORDER BY r.returnDate")
+    List<Object[]> findDailyReturnsTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
     @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.status = 'APPROVED'")
     Double getTotalApprovedReturns();
 

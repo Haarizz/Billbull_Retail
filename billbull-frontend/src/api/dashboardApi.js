@@ -53,11 +53,31 @@ const fetchDashboardSummary = async (timeRange) => {
 const transformBackendDashboard = (backend, timeRange) => {
     const empty = createEmptyDashboardData();
 
-    // Sales trend: array of { date, sales, count } → object keyed by date
+    // Sales trend: array of { date, sales, count, profit, returns } → object keyed by date
     const salesTrend = {};
-    (backend.salesTrend ?? []).forEach(({ date, sales, count }) => {
-        salesTrend[date] = { sales, count };
+    (backend.salesTrend ?? []).forEach(({ date, sales, count, profit, returns: ret }) => {
+        salesTrend[date] = { sales, count, profit: profit ?? 0, returns: ret ?? 0 };
     });
+
+    // Hourly sales: format hour integer → label string
+    const formatHour = (h) => {
+        if (h === 0) return '12 AM';
+        if (h < 12) return `${h} AM`;
+        if (h === 12) return '12 PM';
+        return `${h - 12} PM`;
+    };
+    const hourlySales = (backend.hourlySales ?? []).map(({ hour, sales, count }) => ({
+        hourLabel: formatHour(hour),
+        amount: sales ?? 0,
+        key: String(hour),
+    }));
+
+    // Branch performance
+    const branchPerformance = (backend.branchPerformance ?? []).map(({ branch, sales }) => ({
+        branch: branch ?? 'Head Office',
+        sales: sales ?? 0,
+        key: branch ?? 'Head Office',
+    }));
     const salesTrendMeta = buildSalesTrendMeta(salesTrend, timeRange);
 
     // Payment breakdown: array of { label, value } → bucket totals
@@ -125,6 +145,8 @@ const transformBackendDashboard = (backend, timeRange) => {
             lpoCount: pm.totalLpos ?? 0,
             grnCount: pm.grnCount ?? 0,
             totalPurchases: pm.totalPurchaseValue ?? 0,
+            suppliersCount: pm.suppliersCount ?? 0,
+            outstandingToSuppliers: backend.accountingSnapshot?.supplierPayables ?? 0,
         },
         inventory: {
             ...empty.inventory,
@@ -135,6 +157,13 @@ const transformBackendDashboard = (backend, timeRange) => {
             stockValueCost: im.stockValueCost ?? 0,
             stockValueRetail: im.stockValueCost ?? 0,
             lowStockProducts: (im.lowStockProducts ?? []).map((p) => ({
+                productId: p.productId ?? p.id,
+                sku: p.sku ?? p.code ?? '',
+                item: p.name ?? p.productName ?? '',
+                onHand: p.onHand ?? p.currentStock ?? 0,
+                lastSold: p.lastSold ?? null,
+            })),
+            slowMovingProducts: (im.slowMovingProducts ?? []).map((p) => ({
                 productId: p.productId ?? p.id,
                 sku: p.sku ?? p.code ?? '',
                 item: p.name ?? p.productName ?? '',
@@ -155,6 +184,9 @@ const transformBackendDashboard = (backend, timeRange) => {
         salesTrend,
         salesTrendMeta,
         topDepartments,
+        accountingSnapshot: backend.accountingSnapshot ?? null,
+        hourlySales,
+        branchPerformance,
         lastUpdated: new Date().toISOString(),
     };
 };

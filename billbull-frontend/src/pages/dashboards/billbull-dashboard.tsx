@@ -220,8 +220,11 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   };
 
   const formatTime = (value: any) => {
+    if (!value) return "—";
+    // A date-only string (no "T" separator) has no real time — avoid showing "12:00 AM"
+    if (typeof value === "string" && !value.includes("T") && !value.includes(" ")) return "—";
     const d = safeDate(value);
-    if (!d) return "";
+    if (!d) return "—";
     return format(d, "hh:mm a");
   };
 

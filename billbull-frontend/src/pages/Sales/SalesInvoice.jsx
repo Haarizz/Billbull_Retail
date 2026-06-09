@@ -201,6 +201,8 @@ const SalesInvoice = () => {
     const directCreateHandled = useRef(false);
     const directOpenHandled = useRef(false);
     const editorDataLoaded = useRef(false);
+    // Capture invoiceId at mount so location.state changes can't lose it
+    const pendingOpenIdRef = useRef(location.state?.invoiceId ?? null);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -1207,18 +1209,15 @@ const SalesInvoice = () => {
         window.history.replaceState({}, document.title);
     }, [customersList.length, location.state]);
 
-    // Open a specific invoice by ID (from dashboard search navigation)
+    // Open a specific invoice by ID navigated from dashboard / global search
     useEffect(() => {
-        const targetId = location.state?.invoiceId;
-        if (!targetId || directOpenHandled.current) return;
-        if (customersList.length === 0) return;
-
-        directOpenHandled.current = true;
+        const targetId = pendingOpenIdRef.current;
+        if (!targetId || customersList.length === 0) return;
+        pendingOpenIdRef.current = null; // consume so it doesn't re-fire
         api.get(`/api/sales/invoices/${targetId}`)
             .then(res => { handleLoadInvoice(res.data); })
-            .catch(err => console.error('Failed to open invoice', err));
-        window.history.replaceState({}, document.title);
-    }, [customersList.length, location.state]);
+            .catch(err => console.error('Failed to open invoice:', err));
+    }, [customersList.length]);
 
     const handleSelectCustomer = async (cust) => {
         if (isReadOnlyInvoice) return;

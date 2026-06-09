@@ -2435,7 +2435,7 @@ const Products = () => {
     }
   };
 
-  const handleEdit = async (productInfo) => {
+  const handleEdit = async (productInfo, { silent = false } = {}) => {
     try {
       setLoading(true);
       const fullProductData = await getProductById(productInfo.id);
@@ -2543,11 +2543,25 @@ const Products = () => {
       setCurrentView('add');
     } catch (err) {
       console.error("Failed to fetch product details", err);
-      alert("Failed to load product details for editing.");
+      if (!silent) alert("Failed to load product details for editing.");
     } finally {
       setLoading(false);
     }
   };
+
+  // Open a specific product by ID navigated from another page (e.g. dashboard top-selling items)
+  useEffect(() => {
+    const targetId = location.state?.productId;
+    if (!targetId) return;
+    navigate(location.pathname, { replace: true, state: {} });
+    // Only treat as a DB id when it has no leading zeros (numeric ids never have them)
+    const numericStr = String(targetId);
+    const numId = Number(numericStr);
+    const looksLikeDbId = Number.isInteger(numId) && numId > 0 && String(numId) === numericStr;
+    if (looksLikeDbId) {
+      handleEdit({ id: numId }, { silent: true });
+    }
+  }, [location.state?.productId]);
 
   const handleScanInput = (e) => {
     if (e.key === "Enter") {

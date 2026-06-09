@@ -1035,7 +1035,8 @@ const VendorSoA = ({ vendors }) => {
 
       {/* STATEMENT UI */}
       {statementData && selectedVendorDetails && (
-        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm print:hidden">
+        <div className="overflow-x-auto print:hidden">
+        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm min-w-[640px]">
           <div className="flex justify-between items-start mb-6">
             <div>
               <h2 className="text-xl font-bold text-slate-900">STATEMENT OF ACCOUNT</h2>
@@ -1122,6 +1123,7 @@ const VendorSoA = ({ vendors }) => {
           <div className="mt-8 text-center text-xs text-slate-400">
             <p>This is a computer-generated statement and does not require a signature.</p>
           </div>
+        </div>
         </div>
       )}
 

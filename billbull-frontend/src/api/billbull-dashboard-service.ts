@@ -319,7 +319,7 @@ class BillBullDashboardService {
       .map((r) => {
         const d = new Date(r.date + "T00:00:00");
         const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        return { label, sales: Number(r.sales ?? 0), returns: 0, profit: 0, key: r.date };
+        return { label, sales: Number(r.sales ?? 0), returns: Number(r.returns ?? 0), profit: Number(r.profit ?? 0), key: r.date };
       });
     return { success: true, data: points };
   }
@@ -421,7 +421,7 @@ class BillBullDashboardService {
     const summary = await this.getSummary(timeRange, branchFilter, filters);
     const raw: Array<any> = summary?.topProducts ?? [];
     const items: TopSellingItem[] = raw.map((p: any, i: number) => ({
-      id: String(p.id ?? p.sku ?? p.code ?? i),
+      id: p.id != null ? String(p.id) : String(p.sku ?? p.code ?? i),
       code: String(p.sku ?? p.code ?? ""),
       name: String(p.name ?? p.sku ?? "Unknown"),
       department: String(p.department ?? "Uncategorized"),
@@ -437,7 +437,7 @@ class BillBullDashboardService {
     filters: DashboardAdvancedFilters = {}
   ): Promise<ServiceResponse<SlowMovingItem[]>> {
     const summary = await this.getSummary("This Year", branchFilter, filters);
-    const raw: Array<any> = summary?.inventory?.lowStockProducts ?? [];
+    const raw: Array<any> = summary?.inventory?.slowMovingProducts ?? summary?.inventory?.lowStockProducts ?? [];
     const today = new Date();
     const items: SlowMovingItem[] = raw.slice(0, 10).map((r: any, i: number) => {
       const lastSold = r.lastSold && r.lastSold !== "N/A" ? String(r.lastSold) : null;
@@ -475,7 +475,7 @@ class BillBullDashboardService {
       return {
         id: String(t.id ?? t.invoiceNumber ?? ""),
         billNo: String(t.invoiceNumber ?? t.id ?? ""),
-        billTime: t.date ?? new Date().toISOString(),
+        billTime: t.createdAt ?? t.date ?? new Date().toISOString(),
         customerName: t.customerName ?? t.customer ?? null,
         totalAmount: Number(t.amount ?? 0),
         status: mappedStatus,
@@ -512,24 +512,24 @@ class BillBullDashboardService {
   ): Promise<ServiceResponse<AccountingSnapshot>> {
     const timeRange = dateFilterToTimeRange(dateFilter);
     const summary = await this.getSummary(timeRange, branchFilter, filters);
-    const sales = summary?.sales ?? {};
+    const as: any = summary?.accountingSnapshot ?? {};
     const sm = summary?.salesMetrics ?? {};
-    const fm = summary?.financial ?? summary?.financialMetrics ?? {};
-    const inflow = Number(sales.totalSales ?? sm.totalRevenue ?? 0);
-    const outflow = Number(fm.totalExpenses ?? 0);
+    // Fall back to salesMetrics values if new accountingSnapshot field is absent (old backend)
+    const inflow = Number(as.cashInflow ?? sm.totalRevenue ?? 0);
+    const outflow = Number(as.cashOutflow ?? 0);
     return {
       success: true,
       data: {
-        netCashFlow: inflow - outflow,
+        netCashFlow: Number(as.netCashFlow ?? inflow - outflow),
         cashInflow: inflow,
         cashOutflow: outflow,
-        totalExpenses: outflow,
-        majorExpenseHead: "",
-        vatPayable: 0,
-        vatOnSales: 0,
-        vatOnPurchases: 0,
-        customerReceivables: Number(fm.receivables ?? sm.outstanding ?? 0),
-        supplierPayables: Number(fm.payables ?? 0),
+        totalExpenses: Number(as.totalExpenses ?? outflow),
+        majorExpenseHead: String(as.majorExpenseHead ?? ""),
+        vatPayable: Number(as.vatPayable ?? 0),
+        vatOnSales: Number(as.vatOnSales ?? 0),
+        vatOnPurchases: Number(as.vatOnPurchases ?? 0),
+        customerReceivables: Number(as.customerReceivables ?? sm.outstanding ?? 0),
+        supplierPayables: Number(as.supplierPayables ?? 0),
       },
     };
   }
