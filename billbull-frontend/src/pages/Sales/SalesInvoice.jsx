@@ -339,7 +339,7 @@ const SalesInvoice = () => {
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
-    const [branch, setBranch] = useState(defaultBranch?.name || '');
+    const [branch, setBranch] = useState(activeBranch?.name || defaultBranch?.name || '');
     const createBlankInvoiceItem = () => ({
         id: Date.now() + Math.random(),
         code: '',
@@ -725,10 +725,11 @@ const SalesInvoice = () => {
     }, [defaultBranch, warehousesList]);
 
     useEffect(() => {
-        if (!invoiceId && defaultBranch?.name) {
-            setBranch(prev => prev || defaultBranch.name);
+        if (!invoiceId) {
+            const preferred = activeBranch?.name || defaultBranch?.name;
+            if (preferred) setBranch(preferred);
         }
-    }, [defaultBranch?.name, invoiceId]);
+    }, [activeBranch?.name, defaultBranch?.name, invoiceId]);
 
     // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
     useEffect(() => {
@@ -1184,7 +1185,7 @@ const SalesInvoice = () => {
         setPaymentMode('');
         setPaymentTerms('Immediate');
         setSalesperson('John Doe');
-        setBranch(defaultBranch?.name || '');
+        setBranch(activeBranch?.name || defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
         setDeliveryCharge(0);
@@ -1904,10 +1905,6 @@ const SalesInvoice = () => {
         }
         const hasItems = items.some(i => i && (i.code || i.name) && Number(i.qty) > 0);
         if (!hasItems) { alert("Add at least one item before saving."); return; }
-        if (mode === 'Confirmed' && !paymentMode) {
-            alert("Please select a payment mode before confirming the invoice.");
-            return;
-        }
         setPreviewMode(mode);
     };
 
@@ -2261,9 +2258,11 @@ const SalesInvoice = () => {
         setIsSettlementSaving(true);
         const todayStr = new Date().toISOString().split('T')[0];
         try {
-            // Record each entry through the same /payment-detailed path the Pay
-            // button uses — the backend mints a real ReceiptVoucher per entry.
-            for (const e of entries) {
+            const paidEntries = entries.filter(e => e.mode !== 'Credit' && Number(e.amount) > 0);
+            const hasCreditEntry = entries.some(e => e.mode === 'Credit');
+
+            // Post each real-money entry through /payment-detailed
+            for (const e of paidEntries) {
                 await recordInvoicePayment(inv.id, {
                     amount: Number(e.amount),
                     paymentMode: e.mode,
@@ -2273,27 +2272,51 @@ const SalesInvoice = () => {
                     ...(e.mode === 'Cheque' && e.chequeDate ? { chequeDate: e.chequeDate } : {}),
                 });
             }
+            // Credit entry: stamp paymentMode=Credit on the invoice (no amount)
+            if (hasCreditEntry) {
+                await recordInvoicePayment(inv.id, {
+                    amount: 0,
+                    paymentMode: 'Credit',
+                    paymentReference: entries.find(e => e.mode === 'Credit')?.reference || '',
+                    paymentDate: todayStr,
+                });
+            }
             await fetchInvoices();
 
             // Surface the real voucher number(s) the backend just created for
             // this invoice (mirrors the Receipts-history mapping).
             let receipts = [];
             try {
-                const sps = await getSalesPaymentsByInvoice(inv.invoiceNumber);
-                receipts = (Array.isArray(sps) ? sps : [])
-                    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
-                    .slice(0, entries.length)
-                    .map(sp => ({
-                        id: sp.id,
-                        receiptNumber: sp.paymentNumber || `SP-${sp.id}`,
-                        date: sp.paymentDate,
-                        customerName: sp.customerName || inv.customerName,
-                        amount: Number(sp.amount || 0),
-                        mode: sp.paymentMode || 'Cash',
-                        reference: sp.referenceNumber || '',
-                        status: sp.status || 'Completed',
-                    }))
-                    .reverse(); // back to chronological order
+                if (paidEntries.length > 0) {
+                    const sps = await getSalesPaymentsByInvoice(inv.invoiceNumber);
+                    receipts = (Array.isArray(sps) ? sps : [])
+                        .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
+                        .slice(0, paidEntries.length)
+                        .map(sp => ({
+                            id: sp.id,
+                            receiptNumber: sp.paymentNumber || `SP-${sp.id}`,
+                            date: sp.paymentDate,
+                            customerName: sp.customerName || inv.customerName,
+                            amount: Number(sp.amount || 0),
+                            mode: sp.paymentMode || 'Cash',
+                            reference: sp.referenceNumber || '',
+                            status: sp.status || 'Completed',
+                        }))
+                        .reverse();
+                }
+                // For credit settlement, surface a synthetic entry in the done-phase
+                if (hasCreditEntry) {
+                    receipts.push({
+                        id: 'credit',
+                        receiptNumber: 'On Credit',
+                        date: todayStr,
+                        customerName: inv.customerName,
+                        amount: 0,
+                        mode: 'Credit',
+                        reference: entries.find(e => e.mode === 'Credit')?.reference || '',
+                        status: 'On Credit',
+                    });
+                }
             } catch { /* number lookup is best-effort */ }
 
             return { receipts };
@@ -2669,7 +2692,7 @@ const SalesInvoice = () => {
                 expiry: i.expiry || i.expiryDate || ''
             })),
             totals: {
-                subTotal: resolvedSummary.subTotal,
+                subTotal: resolvedSummary.grossTotal,
                 tax: resolvedSummary.tax,
                 grandTotal: resolvedSummary.grandTotal,
                 currency: company?.currencySymbol || company?.currency || 'AED',
@@ -2811,7 +2834,7 @@ const SalesInvoice = () => {
                         expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
-                        subTotal: resolvedSummary.subTotal,
+                        subTotal: resolvedSummary.grossTotal,
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',

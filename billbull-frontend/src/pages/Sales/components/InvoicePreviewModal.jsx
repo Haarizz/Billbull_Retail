@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, X, Download, Printer, Mail, MessageCircle, Save, CheckCircle2 } from 'lucide-react';
 
 // "Review before committing" preview for a Sales Invoice. Shown after the user
@@ -17,6 +17,98 @@ import { Eye, X, Download, Printer, Mail, MessageCircle, Save, CheckCircle2 } fr
 // browser print dialog when rendered inside the preview iframe.
 const stripScripts = (html) => String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
 
+// The print template sets html/body/.document-shell to a fixed paper size (e.g. 210mm × 297mm
+// for A4). These rules sit outside @media print so they apply on screen too, making the iframe
+// content as tall as a full page even when the invoice is short — leaving a large blank gap.
+//
+// Strategy: strip the paper-dimension rules from the generated <style> block using regex, then
+// inject a small normalisation style so the shell shrinks to its natural content height.
+const preparePreviewHtml = (html) => {
+    // The print template is built for physical paper (A4 = 210×297mm).
+    // Three things conspire to create the blank gap in the modal:
+    //
+    //  1. html + body get  min-height:297mm  → the page is always a full A4 tall.
+    //  2. .document-shell  gets  min-height:297mm  → same.
+    //  3. .document-footer-group has  margin-top:auto  inside a flex-column shell
+    //     → it floats to the *bottom* of that 297mm container.
+    //  4. #footer-push-spacer is sized by an inline script to push the footer down.
+    //
+    // Strategy: directly mutate the generated <style> text — replace the exact
+    // property values the renderer injects — then hide the spacer divs.
+    // We do NOT use !important overrides (they failed because the specificity of
+    // the renderer's own rules won out in some browsers); we replace at source.
+
+    let out = html;
+
+    // ── 1. Null-out the paper-size block that the renderer injects ──────────
+    // Exact template from buildPrintStyles (line ~2684):
+    //   html,\n        body {\n            width: Xmm;\n            min-height: Ymm;\n        }
+    // Replace min-height with 0 and width with 100%.
+    out = out.replace(
+        /(html\s*,\s*\n?\s*body\s*\{[^}]*?)(width\s*:\s*[\d.]+mm)/g,
+        '$1width: 100%'
+    );
+    out = out.replace(
+        /(html\s*,\s*\n?\s*body\s*\{[^}]*?)(min-height\s*:\s*[\d.]+mm)/g,
+        '$1min-height: 0'
+    );
+
+    // ── 2. Null-out .document-shell paper dimensions ─────────────────────────
+    // The renderer overwrites .document-shell with width:Xmm + min-height:Ymm.
+    // We target only the print-styles block (it always has both on adjacent lines).
+    out = out.replace(
+        /(\s\.document-shell\s*\{[^}]*?)(width\s*:\s*[\d.]+mm)/g,
+        '$1width: 100%'
+    );
+    out = out.replace(
+        /(\s\.document-shell\s*\{[^}]*?)(min-height\s*:\s*[\d.]+mm)/g,
+        '$1min-height: 0'
+    );
+
+    // ── 3. Kill margin-top:auto on footer-group so it doesn't float down ─────
+    out = out.replace(
+        /(\s\.document-footer-group\s*\{[^}]*?)(margin-top\s*:\s*auto)/g,
+        '$1margin-top: 16px'
+    );
+
+    // ── 4. For overlay templates: remove fixed height from .ov-page ──────────
+    out = out.replace(
+        /(\s\.ov-page\s*\{[^}]*?)(height\s*:\s*[\d.]+mm)/g,
+        '$1height: auto'
+    );
+
+    // ── 5. Inject minimal reset + overlay page sizer ─────────────────────────
+    const injection = `<style id="__preview_reset__">
+html, body { min-height: 0 !important; height: auto !important; background: #fff !important; }
+.document-shell { min-height: 0 !important; height: auto !important; }
+.document-footer-group { margin-top: 16px !important; }
+.content-stack { flex: none !important; }
+#footer-push-spacer, #footer-inner-spacer { display: none !important; height: 0 !important; }
+.ov-page { height: auto !important; overflow: visible !important; }
+</style>
+<script id="__preview_ov_sizer__">
+(function () {
+    function sizeOvPages() {
+        document.querySelectorAll('.ov-page').forEach(function (page) {
+            var base = page.getBoundingClientRect().top;
+            var max = 0;
+            page.querySelectorAll('*').forEach(function (el) {
+                var pos = window.getComputedStyle(el).position;
+                if (pos === 'absolute' || pos === 'fixed') {
+                    var b = el.getBoundingClientRect().bottom - base;
+                    if (b > max) max = b;
+                }
+            });
+            if (max > 0) page.style.height = (max + 16) + 'px';
+        });
+    }
+    window.addEventListener('load', sizeOvPages);
+}());
+</script>`;
+
+    return out.replace(/<\/head>/i, injection + '</head>');
+};
+
 const InvoicePreviewModal = ({
     mode = 'Draft',
     invoiceNo = '',
@@ -32,6 +124,21 @@ const InvoicePreviewModal = ({
     const [html, setHtml] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    const [iframeHeight, setIframeHeight] = useState('70vh');
+    const iframeRef = useRef(null);
+
+    const syncIframeHeight = useCallback(() => {
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+        try {
+            const doc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (!doc) return;
+            const h = doc.documentElement.scrollHeight || doc.body.scrollHeight;
+            if (h > 0) setIframeHeight(`${h + 8}px`);
+        } catch {
+            // cross-origin guard — keep existing height
+        }
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -40,7 +147,7 @@ const InvoicePreviewModal = ({
         Promise.resolve(getHtml?.())
             .then((result) => {
                 if (cancelled) return;
-                if (result) setHtml(stripScripts(result));
+                if (result) setHtml(preparePreviewHtml(stripScripts(result)));
                 else setError(true);
             })
             .catch(() => { if (!cancelled) setError(true); })
@@ -79,23 +186,25 @@ const InvoicePreviewModal = ({
 
                 {/* Document body (default print template) */}
                 <div className="flex-1 overflow-y-auto p-5 bg-[#EEF0F3]">
-                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden min-h-[400px]">
+                    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
                         {loading && (
-                            <div className="flex items-center justify-center h-[400px] text-sm text-slate-400">
+                            <div className="flex items-center justify-center h-64 text-sm text-slate-400">
                                 Rendering preview…
                             </div>
                         )}
                         {!loading && error && (
-                            <div className="flex items-center justify-center h-[400px] text-sm text-slate-400">
+                            <div className="flex items-center justify-center h-64 text-sm text-slate-400">
                                 Preview unavailable — no default print template found.
                             </div>
                         )}
                         {!loading && !error && (
                             <iframe
+                                ref={iframeRef}
                                 title="Invoice preview"
                                 srcDoc={html}
                                 className="w-full"
-                                style={{ height: '70vh', border: 'none' }}
+                                style={{ height: iframeHeight, border: 'none', display: 'block' }}
+                                onLoad={syncIframeHeight}
                             />
                         )}
                     </div>

@@ -114,6 +114,10 @@ public class Customer {
     private BigDecimal balance = BigDecimal.ZERO;
     private BigDecimal totalSales = BigDecimal.ZERO;
 
+    /** Computed at list-load time: openingBalance + invoiceTotal - receipts. Not persisted. */
+    @jakarta.persistence.Transient
+    private BigDecimal currentBalance;
+
     // =========================
     // RELATIONSHIPS (IGNORED IN JSON)
     // =========================
@@ -276,6 +280,9 @@ public class Customer {
 
     public BigDecimal getTotalSales() { return totalSales; }
     public void setTotalSales(BigDecimal totalSales) { this.totalSales = totalSales; }
+
+    public BigDecimal getCurrentBalance() { return currentBalance; }
+    public void setCurrentBalance(BigDecimal currentBalance) { this.currentBalance = currentBalance; }
 
     public List<SavedAddress> getSavedAddresses() { return savedAddresses; }
     public void setSavedAddresses(List<SavedAddress> savedAddresses) { this.savedAddresses = savedAddresses; }

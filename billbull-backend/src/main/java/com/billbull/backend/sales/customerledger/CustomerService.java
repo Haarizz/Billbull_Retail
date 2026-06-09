@@ -12,8 +12,10 @@ import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -42,6 +44,9 @@ public class CustomerService {
     @Autowired
     private BranchRepository branchRepository;
 
+    @Autowired
+    private OpeningInvoiceRepository openingInvoiceRepository;
+
     // =========================
     // GET ALL CUSTOMERS
     // QA-028: force-initialise savedAddresses while the JPA session is open.
@@ -63,6 +68,37 @@ public class CustomerService {
                 customer.getBranchAllocations().size();
             }
         }
+
+        // Bulk-fetch accurate outstanding balances without N+1 queries.
+        // Use per-invoice balance field (maintained on each payment) + opening invoice outstanding.
+        Map<String, BigDecimal> invoiceOutstanding = new HashMap<>();
+        for (Object[] row : salesInvoiceRepo.sumOutstandingBalanceByCustomerCode()) {
+            if (row[0] != null) {
+                invoiceOutstanding.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        Map<String, BigDecimal> openingOutstanding = new HashMap<>();
+        for (Object[] row : openingInvoiceRepository.sumOutstandingByCustomerCode()) {
+            if (row[0] != null) {
+                openingOutstanding.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        // Also bulk-fetch invoice totals for totalSales display (unchanged)
+        Map<String, BigDecimal> invoiceTotals = new HashMap<>();
+        for (Object[] row : salesInvoiceRepo.sumInvoiceTotalByCustomerCode()) {
+            if (row[0] != null) {
+                invoiceTotals.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        for (Customer c : customers) {
+            BigDecimal openingBalance = c.getBalance() != null ? c.getBalance() : BigDecimal.ZERO;
+            BigDecimal invoiced = invoiceTotals.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            BigDecimal invOutstanding = invoiceOutstanding.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            BigDecimal opnOutstanding = openingOutstanding.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            c.setCurrentBalance(invOutstanding.add(opnOutstanding));
+            c.setTotalSales(openingBalance.add(invoiced));
+        }
+
         if (!filterByBranch) {
             return customers;
         }

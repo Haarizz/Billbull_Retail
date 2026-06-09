@@ -19,12 +19,12 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     @org.springframework.data.jpa.repository.Query("SELECT SUM(p.amount) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
     java.math.BigDecimal calculateOpeningBalance(String vendorName, java.time.LocalDate startDate);
 
-    /** Total payments made to a vendor (all non-cancelled payment vouchers). */
-    @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.status <> 'CANCELLED'")
+    /** Total posted/cleared payments made to a vendor (excludes pending approval and rejected). */
+    @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED)")
     java.math.BigDecimal sumPaymentsByVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
 
     /** Batched variant of {@link #sumPaymentsByVendorName}: one grouped query for all vendors. Rows: [vendorName, sum]. */
-    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.status <> 'CANCELLED' GROUP BY p.vendorName")
+    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
     List<Object[]> sumPaymentsGroupedByVendorName();
 
     /**

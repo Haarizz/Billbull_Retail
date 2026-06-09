@@ -471,12 +471,15 @@ const Quotations = () => {
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
     const [sourceInquiry, setSourceInquiry] = useState(null);
 
-    const createBranchSnapshot = () => ({
-        id: defaultBranch?.id ?? null,
-        name: defaultBranch?.name || '',
-        code: defaultBranch?.code || '',
-        location: defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
-    });
+    const createBranchSnapshot = () => {
+        const src = activeBranch || defaultBranch;
+        return {
+            id: src?.id ?? null,
+            name: src?.name || '',
+            code: src?.code || '',
+            location: src?.defaultWarehouseName || src?.address || ''
+        };
+    };
 
     const [quotationBranch, setQuotationBranch] = useState(createBranchSnapshot);
 
@@ -581,6 +584,8 @@ const Quotations = () => {
 
         setQuotationBranch(createBranchSnapshot());
     }, [
+        activeBranch?.id,
+        activeBranch?.name,
         defaultBranch?.id,
         defaultBranch?.name,
         defaultBranch?.code,

@@ -1002,7 +1002,8 @@ const Payment = () => {
                                                 <tbody className="divide-y divide-slate-100">
                                                     {customerInvoices.length > 0 ? customerInvoices.map(inv => {
                                                         const isSelected = !!selectedInvoices[inv.invoiceNo];
-                                                        const isOverdue = inv.dueDate && new Date(inv.dueDate) < new Date();
+                                                        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+                                                        const isOverdue = inv.dueDate && new Date(inv.dueDate) < todayStart;
                                                         return (
                                                             <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-yellow-50/50' : ''}`}>
                                                                 <td className="px-4 py-3 text-center">

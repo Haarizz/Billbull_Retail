@@ -874,6 +874,19 @@ public class SalesInvoiceService {
     }
 
     // ----------------------------
+    // CREDIT-ONLY SETTLEMENT
+    // ----------------------------
+    @Transactional
+    public SalesInvoice markAsCreditSettled(Long id) {
+        SalesInvoice invoice = getById(id);
+        // No money received — keep status as CONFIRMED (outstanding on credit).
+        // Stamp paymentMode so the invoice history shows "Credit".
+        invoice.setPaymentMode("Credit");
+        invoiceRepo.save(invoice);
+        return getById(id);
+    }
+
+    // ----------------------------
     // RECORD PAYMENT
     // ----------------------------
     @Transactional

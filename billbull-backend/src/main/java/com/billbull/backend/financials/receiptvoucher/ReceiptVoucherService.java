@@ -477,7 +477,10 @@ public class ReceiptVoucherService {
         boolean delivered = isEffectivelyDelivered(invoice);
 
         if (totalPaid >= invoiceTotal && invoiceTotal > 0) {
-            return delivered ? SalesInvoiceStatus.PAID : SalesInvoiceStatus.PARTIALLY_PAID;
+            // Full payment received → always PAID regardless of delivery status.
+            // Delivery-blocks-PAID is enforced only for manual status changes in
+            // SalesInvoiceService.updateStatus, not for payment sync.
+            return SalesInvoiceStatus.PAID;
         }
 
         if (totalPaid > 0) {

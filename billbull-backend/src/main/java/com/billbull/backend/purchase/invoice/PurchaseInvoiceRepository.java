@@ -54,8 +54,19 @@ public interface PurchaseInvoiceRepository
         java.math.BigDecimal sumInvoicedByVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
 
         /** Batched variant of {@link #sumInvoicedByVendorName}: one grouped query for all vendors. Rows: [vendorName, sum]. */
-        @org.springframework.data.jpa.repository.Query("SELECT i.vendorName, COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.status <> 'CANCELLED' GROUP BY i.vendorName")
+        @org.springframework.data.jpa.repository.Query("SELECT i.vendorName, COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.status = com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED GROUP BY i.vendorName")
         java.util.List<Object[]> sumInvoicedGroupedByVendorName();
+
+        /**
+         * Bulk outstanding AP per vendor: sum of grandTotal for POSTED invoices that are
+         * not fully paid. Rows: [vendorName, outstandingSum].
+         */
+        @org.springframework.data.jpa.repository.Query("SELECT i.vendorName, COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i " +
+               "WHERE i.status = com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED " +
+               "AND i.paymentStatus <> com.billbull.backend.purchase.invoice.PaymentStatus.PAID " +
+               "AND i.vendorName IS NOT NULL " +
+               "GROUP BY i.vendorName")
+        java.util.List<Object[]> sumOutstandingByVendorName();
 
         @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', CAST(0 AS big_decimal), s.grandTotal, CAST(s.status AS string)) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,

@@ -1949,7 +1949,8 @@ const ReceiveMoneyView = () => {
                                     {customerInvoices.length > 0 ? (
                                         customerInvoices.map(inv => {
                                             const balance = (inv.balance != null ? inv.balance : (inv.invoiceTotal - (inv.amountPaid || 0)));
-                                            const isOverdue = inv.dueDate && new Date(inv.dueDate) < new Date();
+                                            const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+                                            const isOverdue = inv.dueDate && new Date(inv.dueDate) < todayStart;
 
                                             return (
                                                 <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${selectedInvoices[inv.invoiceNumber] ? 'bg-yellow-50/50' : ''}`}>
@@ -2750,7 +2751,7 @@ const CustomerLedger = () => {
                 status: c.status || 'Active',
                 contact: c.mobile || c.phone || '',
                 location: [c.city, c.country].filter(Boolean).join('\n'),
-                balance: Number(c.balance || 0),
+                balance: Number(c.currentBalance ?? c.balance ?? 0),
                 totalSales: Number(c.totalSales || 0),
             }));
 

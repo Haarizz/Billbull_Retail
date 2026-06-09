@@ -40,6 +40,7 @@ import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/pri
 import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { getBranches } from "../../../api/branchApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import { useBranch } from "../../../context/BranchContext";
 
 type ReportGroupId =
   | "summary"
@@ -391,6 +392,9 @@ const REPORTS: ReportDef[] = [
     tags: ["Audit"],
   },
 ];
+
+// Backend-provided KPI totals for Sales Summary (authoritative — avoids re-deriving from chart rows)
+let mockSalesSummaryTotals: { grossSales: number; netSales: number; grossProfit: number; tax: number; returns: number } | null = null;
 
 // Mock data for Sales Summary Report
 let mockSalesSummaryData = [
@@ -1179,6 +1183,21 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
 
   switch (reportId) {
     case "sales_summary": {
+      // Extract authoritative totals from backend cards (Gross Sales, Net Sales, Gross Profit, VAT Collected)
+      const cardMap: Record<string, number> = {};
+      if (Array.isArray(data.cards)) {
+        for (const c of data.cards as any[]) {
+          if (c?.label) cardMap[String(c.label).toLowerCase().replace(/\s+/g, "_")] = n(c.value);
+        }
+      }
+      mockSalesSummaryTotals = {
+        grossSales: cardMap["gross_sales"] ?? 0,
+        netSales: cardMap["net_sales"] ?? 0,
+        grossProfit: cardMap["gross_profit"] ?? 0,
+        tax: cardMap["vat_collected"] ?? 0,
+        returns: 0, // derived below from row data
+      };
+
       const source = chartRows(data, "Daily").length ? chartRows(data, "Daily") : rows;
       mockSalesSummaryData = source.map((row) => {
         const netSales = n(row.netSales);
@@ -1196,6 +1215,8 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
           gp: n(row.gpPercent) || pct(grossProfit || Math.max(0, netSales - cogs), netSales),
         };
       });
+      // Populate returns from row data since cards don't expose it separately
+      mockSalesSummaryTotals.returns = mockSalesSummaryData.reduce((s, d) => s + d.returns, 0);
       break;
     }
     case "daily_sales": {
@@ -1864,6 +1885,7 @@ interface SalesReportsProps {
 }
 
 export function SalesReports({ onNavigate }: SalesReportsProps) {
+  const { activeBranchId, isAllBranches } = useBranch();
   const [activeReport, setActiveReport] = useState<ReportId>("sales_summary");
   const [query, setQuery] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -1887,7 +1909,9 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const _todayStr = _today.toISOString().split("T")[0];
   const [dateFrom, setDateFrom] = useState(_firstOfMonth);
   const [dateTo, setDateTo] = useState(_todayStr);
-  const [branch, setBranch] = useState("All");
+  const [branch, setBranch] = useState<string>(() =>
+    isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)
+  );
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
   const [companyProfile, setCompanyProfile] = useState<any>(null);
@@ -1906,6 +1930,15 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       .then((data: string[]) => setSalespersons(data))
       .catch(() => {});
   }, []);
+
+  // Sync branch filter when the sidebar branch selector changes
+  useEffect(() => {
+    setBranch(
+      isAllBranches || !activeBranchId || activeBranchId === "ALL"
+        ? "All"
+        : String(activeBranchId)
+    );
+  }, [activeBranchId, isAllBranches]);
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -2484,13 +2517,21 @@ function SalesSummaryReport() {
     return { ...d, cogs: cost, grossProfit: gp, gp: d.netSales > 0 ? parseFloat(((gp / d.netSales) * 100).toFixed(1)) : 0 };
   });
 
-  const totalGrossSales = rows.reduce((sum, d) => sum + d.grossSales, 0);
-  const totalReturns = rows.reduce((sum, d) => sum + d.returns, 0);
+  const rowGrossSales = rows.reduce((sum, d) => sum + d.grossSales, 0);
+  const rowReturns = rows.reduce((sum, d) => sum + d.returns, 0);
   const totalDiscounts = rows.reduce((sum, d) => sum + d.discounts, 0);
-  const totalNetSales = rows.reduce((sum, d) => sum + d.netSales, 0);
-  const totalTax = rows.reduce((sum, d) => sum + d.tax, 0);
+  const rowNetSales = rows.reduce((sum, d) => sum + d.netSales, 0);
+  const rowTax = rows.reduce((sum, d) => sum + d.tax, 0);
   const totalCOGS = rows.reduce((sum, d) => sum + d.cogs, 0);
-  const totalGrossProfit = rows.reduce((sum, d) => sum + d.grossProfit, 0);
+  const rowGrossProfit = rows.reduce((sum, d) => sum + d.grossProfit, 0);
+
+  // Use backend-provided card totals when available (authoritative); fall back to row sums
+  const totalGrossSales = mockSalesSummaryTotals?.grossSales ?? rowGrossSales;
+  const totalReturns = mockSalesSummaryTotals?.returns ?? rowReturns;
+  const totalNetSales = mockSalesSummaryTotals?.netSales ?? rowNetSales;
+  const totalTax = mockSalesSummaryTotals?.tax ?? rowTax;
+  const totalGrossProfit = mockSalesSummaryTotals?.grossProfit ?? rowGrossProfit;
+
   const avgGP = totalNetSales > 0 ? (totalGrossProfit / totalNetSales * 100) : 0;
   const returnsPct = totalGrossSales > 0 ? ((totalReturns / totalGrossSales) * 100).toFixed(1) : "0.0";
   const detailRangeLabel = dateRangeLabel(rows);
