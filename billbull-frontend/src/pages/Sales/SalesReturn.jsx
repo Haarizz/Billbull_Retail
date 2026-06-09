@@ -749,8 +749,8 @@ const SalesReturn = () => {
                            </div>
                             <div className="md:col-span-2 flex gap-2">
                                <ExportDropdown
-                                   onExportExcel={() => exportToExcel(filteredReturns, SALES_RETURN_COLUMNS, 'Sales_Returns')}
-                                   onExportPdf={() => exportToPDF(filteredReturns, SALES_RETURN_COLUMNS, 'Sales Returns List', 'Sales_Returns')}
+                                   onExportExcel={() => exportToExcel(filteredReturns, SALES_RETURN_COLUMNS, 'Sales_Returns', { companyProfile: company, branch: activeBranch?.name || '' })}
+                                   onExportPdf={() => exportToPDF(filteredReturns, SALES_RETURN_COLUMNS, 'Sales Returns List', 'Sales_Returns', { companyProfile: company, branch: activeBranch?.name || '' })}
                                />
                                <button
                                   onClick={handleCreateNew}

@@ -1805,7 +1805,8 @@ const SalesOrders = () => {
                         totalElements: listPageMeta.totalElements,
                       }),
                       SALES_ORDER_COLUMNS,
-                      'Sales_Orders'
+                      'Sales_Orders',
+                      { companyProfile: company, branch: activeBranch?.name || '' }
                     )}
                     onExportPdf={() => exportToPDF(
                       withListSerialNumbers(exportOrdersList, {
@@ -1816,7 +1817,8 @@ const SalesOrders = () => {
                       }),
                       SALES_ORDER_COLUMNS,
                       'Sales Orders',
-                      'Sales_Orders'
+                      'Sales_Orders',
+                      { companyProfile: company, branch: activeBranch?.name || '' }
                     )}
                   />
                 )}

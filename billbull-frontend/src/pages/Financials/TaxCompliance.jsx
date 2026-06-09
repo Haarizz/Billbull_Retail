@@ -17,6 +17,8 @@ import {
 } from '../../api/taxApi';
 import { getTaxDashboard, getTaxReconciliation } from '../../api/financialReportsBackendApi';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
 import toast from 'react-hot-toast'; // Assuming toast is available, otherwise alert fallback
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -40,6 +42,9 @@ const parseNumericInput = (value) => {
 };
 
 export default function TaxCompliance() {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
+
     // --- 1. State Management ---
 
     // Default active tab
@@ -588,11 +593,12 @@ export default function TaxCompliance() {
         const exportRows = buildFilingExportRows(rows);
         const fileName = `${config.type.replace(/[^a-z0-9]+/gi, '_')}_Tax_Report`;
 
+        const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
         try {
             if (format === 'pdf') {
-                exportToPDF(exportRows, filingExportColumns, `${config.type} Tax Report`, fileName);
+                exportToPDF(exportRows, filingExportColumns, `${config.type} Tax Report`, fileName, branchMeta);
             } else {
-                await exportToExcel(exportRows, filingExportColumns, fileName);
+                await exportToExcel(exportRows, filingExportColumns, fileName, branchMeta);
             }
             toast.success(`${config.type} report exported`);
         } catch (error) {
@@ -609,7 +615,7 @@ export default function TaxCompliance() {
         }
 
         try {
-            await exportToExcel(buildFilingExportRows(rows), filingExportColumns, 'Tax_Filing_Report');
+            await exportToExcel(buildFilingExportRows(rows), filingExportColumns, 'Tax_Filing_Report', { companyProfile: company, branch: activeBranch?.name || '' });
             toast.success('Tax filing report exported');
         } catch (error) {
             console.error("Error exporting filing report:", error);
@@ -625,7 +631,7 @@ export default function TaxCompliance() {
         }
 
         try {
-            await exportToExcel(rows, reconciliationExportColumns, 'Tax_Reconciliation');
+            await exportToExcel(rows, reconciliationExportColumns, 'Tax_Reconciliation', { companyProfile: company, branch: activeBranch?.name || '' });
             toast.success('Tax reconciliation exported');
         } catch (error) {
             console.error("Error exporting tax reconciliation:", error);

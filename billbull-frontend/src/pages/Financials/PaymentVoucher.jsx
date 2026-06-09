@@ -40,6 +40,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { getPostedInvoicesForPayment } from '../../api/purchaseInvoiceApi';
 
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
@@ -99,6 +100,7 @@ const expenseVoucherNumber = (exp) => `EXP-${String(exp.id || '').padStart(5, '0
 
 const PaymentVoucher = () => {
     const { company } = useCompany();
+    const { activeBranch } = useBranch();
     const currency = resolveCurrencyDisplayCode(company || {});
 
     const [rows, setRows] = useState([]);
@@ -391,7 +393,8 @@ const PaymentVoucher = () => {
                 date: r.date ? formatDisplayDate(r.date) : ''
             })),
             TABLE_COLUMNS,
-            'Payment_Vouchers'
+            'Payment_Vouchers',
+            { companyProfile: company, branch: activeBranch?.name || '' }
         );
     };
 
@@ -404,7 +407,8 @@ const PaymentVoucher = () => {
             })),
             TABLE_COLUMNS,
             'Payment Vouchers',
-            'Payment_Vouchers'
+            'Payment_Vouchers',
+            { companyProfile: company, branch: activeBranch?.name || '' }
         );
     };
 

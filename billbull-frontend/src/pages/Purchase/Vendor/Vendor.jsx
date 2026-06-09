@@ -2027,6 +2027,7 @@ const Vendor = () => {
 // Sub-Component: ListView with Actions wired
 const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete, onImport }) => {
   const { company } = useCompany();
+  const { activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const [activeTab, setActiveTab] = useState("Vendors List");
   const [payInvoicesVendor, setPayInvoicesVendor] = useState(null);
@@ -2126,14 +2127,14 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
     exportToExcel(withExportSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
-    })), VENDOR_COLUMNS, 'Vendor_List');
+    })), VENDOR_COLUMNS, 'Vendor_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   const handleExportPdf = () => {
     exportToPDF(withExportSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
-    })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
+    })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   const handleImportFileChange = async (e) => {

@@ -424,6 +424,10 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
     const email = escapeHtml(companyProfile.email || '');
     const phone = escapeHtml(companyProfile.phone || '');
     const trn = escapeHtml(companyProfile.trn || '');
+    const branchDisplay = escapeHtml(
+        companyProfile.branchName ||
+        (meta.branch && meta.branch !== 'All' ? String(meta.branch) : '')
+    );
 
     const reportTitle = escapeHtml(viewModel.reportTitle || meta.reportTitle || 'Sales Report');
     const sections = Array.isArray(viewModel.sections) ? viewModel.sections : [];
@@ -467,6 +471,7 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
         <div class="top">
             <div class="company">
                 <h2>${companyName}</h2>
+                ${branchDisplay ? `<p style="font-size:8pt;color:#b45309;font-weight:500;margin-top:1px;">Branch: ${branchDisplay}</p>` : ''}
                 ${address ? `<p>${address}</p>` : ''}
                 ${(email || phone) ? `<p>${email ? `Email: ${email}` : ''}${email && phone ? ' &nbsp;|&nbsp; ' : ''}${phone ? `Phone: ${phone}` : ''}</p>` : ''}
                 ${trn ? `<p>TRN: ${trn}</p>` : ''}

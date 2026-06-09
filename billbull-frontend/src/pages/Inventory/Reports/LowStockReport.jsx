@@ -7,8 +7,12 @@ import { getWarehouses } from '../../../api/warehouseApi';
 import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
 import toast from 'react-hot-toast';
+import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '../../../context/CompanyContext';
 
 const LowStockReport = () => {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
     const [filters, setFilters] = useState({
         dateFrom: '', dateTo: '', warehouse: 'All',
         department: 'All', brand: 'All',
@@ -127,11 +131,11 @@ const LowStockReport = () => {
     useEffect(() => { loadWarehouses(); generateReport(); }, []);
 
     const handleExportExcel = () => {
-        exportToExcel(data, reportColumns, 'Low_Stock_Report');
+        exportToExcel(data, reportColumns, 'Low_Stock_Report', { companyProfile: company, branch: activeBranch?.name || '' });
     };
 
     const handleExportPdf = () => {
-        exportToPDF(data, reportColumns, 'Low Stock / Reorder Report', 'Low_Stock_Report');
+        exportToPDF(data, reportColumns, 'Low Stock / Reorder Report', 'Low_Stock_Report', { companyProfile: company, branch: activeBranch?.name || '' });
     };
 
     const handlePrint = async () => {

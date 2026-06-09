@@ -817,7 +817,8 @@ const Payment = () => {
                                                     totalElements: listPageMeta.totalElements,
                                                 }),
                                                 PAYMENT_COLUMNS,
-                                                'Sales_Payments'
+                                                'Sales_Payments',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                             onExportPdf={() => exportToPDF(
                                                 withListSerialNumbers(filteredPayments, {
@@ -828,7 +829,8 @@ const Payment = () => {
                                                 }),
                                                 PAYMENT_COLUMNS,
                                                 'Sales Payments List',
-                                                'Sales_Payments'
+                                                'Sales_Payments',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                         />
                                         <button

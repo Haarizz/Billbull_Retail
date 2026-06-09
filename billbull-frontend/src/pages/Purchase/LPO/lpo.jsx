@@ -2988,11 +2988,11 @@ const LPOList = () => {
   };
 
   const handleExportExcel = async () => {
-    exportToExcel(await buildExportRows(), LPO_COLUMNS, 'LPO_List');
+    exportToExcel(await buildExportRows(), LPO_COLUMNS, 'LPO_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   const handleExportPdf = async () => {
-    exportToPDF(await buildExportRows(), LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
+    exportToPDF(await buildExportRows(), LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   return (
