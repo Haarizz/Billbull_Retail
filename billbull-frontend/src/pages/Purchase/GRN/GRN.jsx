@@ -2738,11 +2738,7 @@ const GRN = () => {
 
       const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: grnBranchId,
-        }),
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -2769,7 +2765,7 @@ const GRN = () => {
       const fullVendor = findVendorRecord(vendorData, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
       const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
-      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: grnBranchId }), billBullLogo });
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
       await downloadPdf(html, fullGrn?.grnNumber || grn?.grnNumber || 'GRN');
     } catch (error) {
       console.error("Error downloading GRN:", error);

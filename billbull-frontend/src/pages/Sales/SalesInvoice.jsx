@@ -67,7 +67,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -2876,11 +2876,25 @@ const SalesInvoice = () => {
         }
     };
 
-    // Async source for the review preview modal — renders the current editor
-    // form through the default print template, stamped DRAFT / TAX INVOICE.
+    // Async source for the review preview modal — uses the email renderer so
+    // the preview has no fixed paper-height blank gaps and matches email layout.
     const getPreviewHtml = async () => {
-        const titleOverride = 'TAX INVOICE';
-        return buildInvoiceHtml(buildCurrentFormPrintSource(), { titleOverride });
+        const family = await getTemplateFamily('Sales Invoice');
+        const list = Array.isArray(family) ? family : [];
+        const lastId = sessionStorage.getItem('salesInvoiceTemplateId');
+        const defaultTemplate = (lastId && list.find(t => String(t.id) === lastId))
+            || list.find(t => t.isDefault)
+            || list[0];
+        if (!defaultTemplate) return null;
+        const printData = buildCurrentInvoicePrintData();
+        printData.title = 'TAX INVOICE';
+        const invoiceBranchId = activeBranch?.id;
+        const branchProfile = buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: invoiceBranchId,
+        });
+        return generateEmailHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
     };
 
     const handleDownloadClick = async (invoice = null) => {

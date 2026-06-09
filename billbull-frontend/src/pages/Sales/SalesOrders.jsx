@@ -1053,12 +1053,13 @@ const SalesOrders = () => {
         expiry: i.expiry || i.expiryDate || ''
       })),
       totals: {
-        subTotal,
+        subTotal: grossTotal,
         tax: totalTax,
         grandTotal: orderTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
         billDiscount: Number(billDiscount) || 0,
-        billDiscountAmount
+        billDiscountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
+        discountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
       },
       meta: (() => {
         const printBranchId = loadedSoBranchId ?? activeBranch?.id;

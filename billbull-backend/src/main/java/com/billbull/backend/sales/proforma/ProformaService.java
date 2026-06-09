@@ -313,6 +313,12 @@ public class ProformaService {
         res.setSalesOrderNo(pi.getSalesOrderNo());
         res.setWarehouseId(pi.getWarehouse() != null ? pi.getWarehouse().getId() : null);
         res.setWarehouseName(pi.getWarehouse() != null ? pi.getWarehouse().getName() : null);
+        if (pi.getBranch() != null) {
+            res.setBranch(new ProformaResponse.BranchInfo(
+                    pi.getBranch().getId(),
+                    pi.getBranch().getName(),
+                    pi.getBranch().getCode()));
+        }
 
         res.setSubTotal(pi.getSubTotal());
         res.setBillDiscount(pi.getBillDiscount());

@@ -13,6 +13,24 @@ public class ProformaResponse {
 
     private Long customerId;
     private String customerCode;
+
+    public static class BranchInfo {
+        private Long id;
+        private String name;
+        private String code;
+
+        public BranchInfo(Long id, String name, String code) {
+            this.id = id;
+            this.name = name;
+            this.code = code;
+        }
+
+        public Long getId() { return id; }
+        public String getName() { return name; }
+        public String getCode() { return code; }
+    }
+
+    private BranchInfo branch;
     private String customerName;
     private String customerTrn;
 
@@ -221,5 +239,6 @@ public class ProformaResponse {
 		this.items = items;
 	}
 
-    // getters
+    public BranchInfo getBranch() { return branch; }
+    public void setBranch(BranchInfo branch) { this.branch = branch; }
 }

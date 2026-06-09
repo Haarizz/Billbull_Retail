@@ -566,11 +566,7 @@ const PaymentVoucher = () => {
             );
 
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-                companyProfile: buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: voucher.branchId ?? activeBranch?.id,
-                }),
+                companyProfile: company,
                 billBullLogo
             });
 
@@ -604,11 +600,7 @@ const PaymentVoucher = () => {
             );
 
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-                companyProfile: buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id,
-                }),
+                companyProfile: company,
                 billBullLogo
             });
 
@@ -629,7 +621,7 @@ const PaymentVoucher = () => {
             const fullVendor = findVendorRecord(vendors, voucherDetail, voucherDetail?.vendorName);
             const linkedInvoice = purchaseInvoices.find((invoice) => Number(invoice.id ?? invoice.dbId) === Number(voucherDetail.invoiceId) || Number(invoice.dbId) === Number(voucherDetail.invoiceId) || String(invoice.invoiceNumber || '') === String(voucherDetail.invoiceId || '')) || null;
             const printData = buildPaymentVoucherPrintData(voucherDetail, fullVendor, company, linkedInvoice);
-            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id }), billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
             await downloadPdf(html, voucherDetail?.voucherNumber || voucher?.voucherNumber || 'Payment-Voucher');
         } catch (error) {
             console.error("Error downloading Voucher:", error);

@@ -714,15 +714,24 @@ const normaliseItem = (item = {}) => {
 
 const getColumnDefaults = (category, isPurchaseDocument) => {
     const isVoucherLike = ['Payment Voucher', 'Cheque', 'Customer Statement of Account', 'Vendor Statement of Account'].includes(category);
-    return isPurchaseDocument
-        ? {
+    if (isPurchaseDocument) {
+        return {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucherLike,
             unitPrice: !isVoucherLike,
             taxableAmount: !isVoucherLike,
             tax: category === 'Purchase Invoice'
-        }
-        : DEFAULT_TEMPLATE_COLUMNS;
+        };
+    }
+    if (category === 'Quotation') {
+        return {
+            ...DEFAULT_TEMPLATE_COLUMNS,
+            sku: true,
+            brand: true,
+            barcode: true
+        };
+    }
+    return DEFAULT_TEMPLATE_COLUMNS;
 };
 
 const createColumnModel = (rawColumns = {}) => {
@@ -1469,6 +1478,9 @@ const buildHeader = (layout, renderTarget = 'print') => {
                 ${companyVisibility.name && layout.company.localName && layout.company.localName !== layout.company.companyName
                 ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
                 : ''}
+                ${layout.company.branchName && layout.company.branchName !== layout.company.companyName
+                ? `<div class="company-copy" style="font-weight:500;">${escapeHtml(layout.company.branchName)}</div>`
+                : ''}
                 ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
@@ -1578,7 +1590,7 @@ const buildCoreStyles = () => `
     }
     .document-header-designer {
         display: grid;
-        grid-template-columns: 27fr 33fr 40fr;
+        grid-template-columns: 24fr 31fr 45fr;
         grid-template-rows: auto;
         align-items: start;
         gap: 0 16px;
@@ -1587,7 +1599,7 @@ const buildCoreStyles = () => `
     .document-header-designer .header-left {
         grid-column: 1;
         min-width: 0;
-        overflow: hidden;
+        overflow: visible;
         word-break: break-word;
         overflow-wrap: break-word;
     }
@@ -1604,7 +1616,7 @@ const buildCoreStyles = () => `
         min-width: 0;
         word-break: break-word;
         overflow-wrap: break-word;
-        overflow: hidden;
+        overflow: visible;
     }
     /* Sales designer header — fixed 27/33/40 grid so long names never
        collapse or expand adjacent columns. Mirrors ClassicPreview proportions. */
@@ -1619,7 +1631,7 @@ const buildCoreStyles = () => `
     .document-header-sales .header-left {
         grid-column: 1;
         min-width: 0;
-        overflow: hidden;
+        overflow: visible;
         word-break: break-word;
         overflow-wrap: break-word;
     }
@@ -1714,15 +1726,21 @@ const buildCoreStyles = () => `
         font-weight: 700;
         margin: 0 0 24px;
         color: #000000;
+        width: auto;
+        min-width: fit-content;
+        overflow: visible;
         white-space: nowrap;
-        word-break: keep-all;
+        word-break: break-word;
     }
     .document-header-designer .document-title {
         margin: 0 0 14px;
-        white-space: nowrap;
-        word-break: keep-all;
         letter-spacing: -0.5px;
         line-height: 1.35;
+        width: auto;
+        min-width: fit-content;
+        overflow: visible;
+        white-space: nowrap;
+        word-break: break-word;
     }
     .header-center {
         display: grid;
@@ -2342,7 +2360,9 @@ const buildCoreStyles = () => `
     .amount-negative td {
         color: #b91c1c;
     }
-    .amount-negative .tot-currency {
+    .amount-negative .tot-currency,
+    .amount-negative .tot-label,
+    .document-shell-designer .amount-negative .tot-label {
         color: #b91c1c;
     }
     .signature-grid {
@@ -2539,8 +2559,10 @@ const buildTemplateThemeStyles = (layout) => {
             border-top: 0;
         }
         .document-header-designer .company-name {
-            font-size: ${theme.fontSize + 3}px;
+            font-size: ${theme.fontSize - 1}px;
             font-weight: 700;
+            white-space: nowrap;
+            letter-spacing: -0.5px;
         }
         .document-header-designer .bill-to-name {
             font-size: ${theme.fontSize + 1}px;
@@ -2663,15 +2685,16 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
     const resolvedPaperSize = paperSize || 'A4';
     const resolvedOrientation = orientation || 'Portrait';
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
-    const shellPadding = layout.isPurchaseDesigner ? '28px 32px' : '12mm';
+    const isDesignerLayout = layout.isPurchaseDesigner || layout.isSalesDesigner;
+    const shellPadding = isDesignerLayout ? '28px 32px' : '12mm';
     // Strategy: @page handles top+bottom margins on every page (incl. continuation).
     // Shell padding handles left+right, plus a small cloned top buffer for rows
     // that start on a continuation page when browser print margins are tight.
-    // Purchase-designer keeps its own padding without @page adjustment.
-    const pageTopBottom = layout.isPurchaseDesigner ? '0' : '12mm';
-    const continuousPageTop = layout.isPurchaseDesigner ? '0' : '26mm';
-    const continuationInnerGap = layout.isPurchaseDesigner ? '0' : '4mm';
-    const shellPaddingPrint = layout.isPurchaseDesigner ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
+    // Designer layouts (purchase + sales) keep their own padding without @page adjustment.
+    const pageTopBottom = isDesignerLayout ? '0' : '12mm';
+    const continuousPageTop = isDesignerLayout ? '0' : '26mm';
+    const continuationInnerGap = isDesignerLayout ? '0' : '4mm';
+    const shellPaddingPrint = isDesignerLayout ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
 
     return `
         @page {
@@ -2778,7 +2801,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .document-header-designer .header-left {
                 grid-column: 1 !important;
                 min-width: 0 !important;
-                overflow: hidden !important;
+                overflow: visible !important;
                 word-break: break-word !important;
                 overflow-wrap: break-word !important;
             }
@@ -2805,9 +2828,12 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-header-designer .document-title {
                 margin-bottom: 14px !important;
-                white-space: nowrap !important;
-                word-break: keep-all !important;
                 line-height: 1.35 !important;
+                width: auto !important;
+                min-width: fit-content !important;
+                overflow: visible !important;
+                white-space: nowrap !important;
+                word-break: break-word !important;
             }
             .document-table thead {
                 display: table-row-group !important;
@@ -2844,7 +2870,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .document-header-sales .header-left {
                 grid-column: 1 !important;
                 min-width: 0 !important;
-                overflow: hidden !important;
+                overflow: visible !important;
                 word-break: break-word !important;
                 overflow-wrap: break-word !important;
             }
@@ -2983,6 +3009,13 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 white-space: nowrap !important;
                 overflow: hidden !important;
                 text-overflow: ellipsis !important;
+            }
+            .document-header-designer .company-name {
+                white-space: nowrap !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+                word-break: normal !important;
+                overflow-wrap: normal !important;
             }
             .bill-to-name {
                 white-space: normal !important;
@@ -4623,27 +4656,35 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
             if (usableHN < 200) usableHN = rawPageH * 0.82;
 
             var shellRect  = shell.getBoundingClientRect();
-            var spacerRect = spacer.getBoundingClientRect();
-            var footerH    = footer.getBoundingClientRect().height;
+            var footerRect = footer.getBoundingClientRect();
+            var footerH    = footerRect.height;
 
-            var offsetFromShellTop = spacerRect.top - shellRect.top;
+            // Use the footer's actual rendered top (which includes the spacer's
+            // margin-bottom and any other spacing) to determine how much of the
+            // current page has been consumed before the footer begins.
+            var footerTopFromShell = footerRect.top - shellRect.top;
 
-            // Determine which print page the spacer falls on
+            // Determine which print page the footer starts on
             var pageIndex   = 0;
             var accumulated = usableH0;
-            while (offsetFromShellTop >= accumulated) {
+            while (footerTopFromShell >= accumulated) {
                 pageIndex++;
                 accumulated += usableHN;
             }
 
             var usableH    = pageIndex === 0 ? usableH0 : usableHN;
             var pageStart  = pageIndex === 0 ? 0 : usableH0 + (pageIndex - 1) * usableHN;
-            var usedOnPage = offsetFromShellTop - pageStart;
+            var usedOnPage = footerTopFromShell - pageStart;
             var remaining  = usableH - usedOnPage;
             if (remaining < 0) remaining = 0;
 
             if (remaining >= footerH) {
-                // Footer fits on this page — bottom-align via outer spacer
+                // Footer fits on this page — push it to the bottom by expanding
+                // the outer spacer. gap = remaining - footerH positions the footer
+                // so its bottom lands exactly at the page boundary. The spacer's
+                // margin-bottom is already included in footerTopFromShell (since we
+                // measured the footer's actual rendered top), so expanding the
+                // spacer by gap px shifts the footer down by exactly gap px.
                 var gap = remaining - footerH;
                 spacer.style.height = (gap > 0 ? gap : 0) + 'px';
             } else {
@@ -4690,7 +4731,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     const layout = buildLayout(template, data, options, renderTarget);
     const shellClasses = [
         'document-shell',
-        layout.isPurchaseDesigner ? 'document-shell-designer' : ''
+        (layout.isPurchaseDesigner || layout.isSalesDesigner) ? 'document-shell-designer' : ''
     ].filter(Boolean).join(' ');
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`

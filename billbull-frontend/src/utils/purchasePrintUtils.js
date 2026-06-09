@@ -986,12 +986,19 @@ export const findVendorRecord = (vendors, ...candidates) => {
         .flatMap((candidate) => {
             if (!candidate) return [];
             if (typeof candidate === "object") {
+                const nested = typeof candidate.vendor === "object" && candidate.vendor !== null ? candidate.vendor : {};
                 return [
                     candidate.vendorId,
                     candidate.vendorCode,
                     candidate.vendorName,
-                    candidate.vendor,
+                    typeof candidate.vendor === "string" ? candidate.vendor : undefined,
                     candidate.name,
+                    nested.id,
+                    nested.vendorId,
+                    nested.code,
+                    nested.vendorCode,
+                    nested.name,
+                    nested.vendorName
                 ];
             }
             return [candidate];

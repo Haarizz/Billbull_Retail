@@ -45,8 +45,10 @@ const writeLocalStorageCache = (timeRange, data) => {
     }
 };
 
-const fetchDashboardSummary = async (timeRange) => {
-    const response = await api.get('/api/dashboard/summary', { params: { timeRange } });
+const fetchDashboardSummary = async (timeRange, branchId) => {
+    const params = { timeRange };
+    if (branchId) params.branchId = branchId;
+    const response = await api.get('/api/dashboard/summary', { params });
     return response.data;
 };
 
@@ -1318,10 +1320,15 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
     }
 
     const request = (async () => {
-        // Fast path: single aggregated backend endpoint
-        if (!filtersActive && !forceClient) {
+        // Fast path: single aggregated backend endpoint.
+        // Use it when there are no client-side-only filters (custom date range / amount / status).
+        // Branch-only filtering is handled server-side, so it qualifies for the fast path.
+        const hasClientOnlyFilters = filters.fromDate || filters.toDate ||
+            (filters.invoiceStatus && filters.invoiceStatus !== 'all') ||
+            filters.minAmount || filters.maxAmount;
+        if (!hasClientOnlyFilters && !forceClient) {
             try {
-                const backend = await fetchDashboardSummary(effectiveTimeRange);
+                const backend = await fetchDashboardSummary(effectiveTimeRange, filters.branchId || null);
                 return transformBackendDashboard(backend, effectiveTimeRange);
             } catch (backendError) {
                 console.warn('Dashboard summary endpoint unavailable, falling back to full fetch:', backendError?.message);

@@ -80,7 +80,12 @@ public class DashboardService {
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public DashboardSummaryResponse getSummary(String timeRange) {
-        String cacheKey = timeRange == null ? "All Time" : timeRange;
+        return getSummary(timeRange, null);
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public DashboardSummaryResponse getSummary(String timeRange, Long branchId) {
+        String cacheKey = (timeRange == null ? "All Time" : timeRange) + ":" + (branchId == null ? "all" : branchId);
 
         // Serve from cache if still fresh
         CacheEntry cached = SUMMARY_CACHE.get(cacheKey);
@@ -94,15 +99,15 @@ public class DashboardService {
 
         // Run all independent queries in parallel.
         LocalDate today = LocalDate.now();
-        CompletableFuture<List<Object[]>> trendF        = CompletableFuture.supplyAsync(() -> invoiceRepo.findSalesTrend(startDate, endDate), QUERY_POOL);
-        CompletableFuture<List<Object[]>> payF          = CompletableFuture.supplyAsync(() -> invoiceRepo.findPaymentBreakdown(startDate, endDate), QUERY_POOL);
-        CompletableFuture<List<Object[]>> deptF         = CompletableFuture.supplyAsync(() -> invoiceRepo.findTopDepartments(startDate, endDate), QUERY_POOL);
-        CompletableFuture<Double>         revenueF      = CompletableFuture.supplyAsync(() -> invoiceRepo.sumRevenueBetween(startDate, endDate), QUERY_POOL);
-        CompletableFuture<Long>           invCountF     = CompletableFuture.supplyAsync(() -> invoiceRepo.countBetween(startDate, endDate), QUERY_POOL);
+        CompletableFuture<List<Object[]>> trendF        = CompletableFuture.supplyAsync(() -> invoiceRepo.findSalesTrend(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<List<Object[]>> payF          = CompletableFuture.supplyAsync(() -> invoiceRepo.findPaymentBreakdown(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<List<Object[]>> deptF         = CompletableFuture.supplyAsync(() -> invoiceRepo.findTopDepartments(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<Double>         revenueF      = CompletableFuture.supplyAsync(() -> invoiceRepo.sumRevenueBetween(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<Long>           invCountF     = CompletableFuture.supplyAsync(() -> invoiceRepo.countBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<Double>         outstandingF  = CompletableFuture.supplyAsync(() -> invoiceRepo.sumOutstandingBalance(), QUERY_POOL);
         CompletableFuture<List<SalesInvoice>> recentF   = CompletableFuture.supplyAsync(() -> invoiceRepo.findRecentForDashboard(PageRequest.of(0, 10)), QUERY_POOL);
         CompletableFuture<Long>           customerF     = CompletableFuture.supplyAsync(() -> customerRepo.count(), QUERY_POOL);
-        CompletableFuture<List<Object[]>> topProductsF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findTopProductsBetween(startDate, endDate), QUERY_POOL);
+        CompletableFuture<List<Object[]>> topProductsF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findTopProductsBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<Long>           totalLposF    = CompletableFuture.supplyAsync(() -> lpoRepo.count(), QUERY_POOL);
         CompletableFuture<Long>           pendingLposF  = CompletableFuture.supplyAsync(() ->
                 lpoRepo.countByStatus(LpoStatus.PENDING_APPROVAL) + lpoRepo.countByStatus(LpoStatus.APPROVED), QUERY_POOL);
@@ -116,11 +121,11 @@ public class DashboardService {
         CompletableFuture<Double> expenseTotalF         = CompletableFuture.supplyAsync(() -> expenseRepo.sumTotalBetween(startDate, endDate), QUERY_POOL);
         CompletableFuture<Double> expenseTaxF           = CompletableFuture.supplyAsync(() -> expenseRepo.sumTaxBetween(startDate, endDate), QUERY_POOL);
         CompletableFuture<List<Object[]>> expenseCatF   = CompletableFuture.supplyAsync(() -> expenseRepo.findTopCategoryBetween(startDate, endDate), QUERY_POOL);
-        CompletableFuture<Double> vatOnSalesF           = CompletableFuture.supplyAsync(() -> invoiceRepo.sumTaxTotalBetween(startDate, endDate), QUERY_POOL);
-        CompletableFuture<List<Object[]>> hourlySalesF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findHourlySalesTrend(today), QUERY_POOL);
-        CompletableFuture<List<Object[]>> branchPerfF   = CompletableFuture.supplyAsync(() -> invoiceRepo.findBranchPerformanceBetween(startDate, endDate), QUERY_POOL);
-        CompletableFuture<List<Object[]>> dailyProfitF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findDailyProfitTrend(startDate, endDate), QUERY_POOL);
-        CompletableFuture<Double>         totalProfitF  = CompletableFuture.supplyAsync(() -> invoiceRepo.sumProfitBetween(startDate, endDate), QUERY_POOL);
+        CompletableFuture<Double> vatOnSalesF           = CompletableFuture.supplyAsync(() -> invoiceRepo.sumTaxTotalBetween(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<List<Object[]>> hourlySalesF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findHourlySalesTrend(today, branchId), QUERY_POOL);
+        CompletableFuture<List<Object[]>> branchPerfF   = CompletableFuture.supplyAsync(() -> invoiceRepo.findBranchPerformanceBetween(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<List<Object[]>> dailyProfitF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findDailyProfitTrend(startDate, endDate, branchId), QUERY_POOL);
+        CompletableFuture<Double>         totalProfitF  = CompletableFuture.supplyAsync(() -> invoiceRepo.sumProfitBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<List<Object[]>> dailyReturnsF = CompletableFuture.supplyAsync(() -> returnRepo.findDailyReturnsTrend(startDate, endDate), QUERY_POOL);
         CompletableFuture<Double>         totalReturnsF = CompletableFuture.supplyAsync(() -> returnRepo.getTotalReturnsBetweenDates(startDate, endDate), QUERY_POOL);
 

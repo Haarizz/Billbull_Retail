@@ -33,11 +33,13 @@ export const buildDocumentHeaderProfile = ({ company = {}, branches = [], branch
     ].filter((part) => part && String(part).trim());
     const branchAddress = branchAddressParts.join(', ');
 
-    // Branch values take precedence; company fields fill gaps (e.g. currency,
-    // stamp, website) and remain visible.
+    // Company name & details always appear in the header; branch-specific fields
+    // (address, phone, email, TRN, bank details, logo) override company values
+    // so the correct branch contact info is printed.
     return {
         ...company,
-        companyName: branch.name || company.companyName,
+        // Keep company name — do NOT replace with branch name.
+        companyName: company.companyName || company.name,
         address: branchAddress || company.address,
         phone: branch.phone || company.phone,
         email: branch.email || company.email,

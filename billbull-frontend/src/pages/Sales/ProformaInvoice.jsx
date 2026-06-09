@@ -32,7 +32,9 @@ import {
   Info,
   Paperclip,
   ShoppingCart as ShoppingCartIcon,
-  Zap
+  Zap,
+  MoreVertical,
+  Eye
 } from 'lucide-react';
 
 import { useMemo } from 'react';
@@ -122,8 +124,11 @@ const ProformaInvoice = () => {
   const { defaultBranch, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
   const [loadedPiBranchId, setLoadedPiBranchId] = useState(null);
   const [activeTab, setActiveTab] = useState('list');
+  const [overflowMenu, setOverflowMenu] = useState(null);
+  const overflowMenuRef = useRef(null);
   const [piId, setPiId] = useState(null);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+  const [pendingAction, setPendingAction] = useState(null);
   const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
 
   // --- DATA LIST STATES (Fetched from APIs) ---
@@ -202,6 +207,20 @@ const ProformaInvoice = () => {
   });
 
   const [items, setItems] = useState([createBlankProformaItem()]);
+
+  useEffect(() => {
+    if (pendingAction && pendingAction.id === piId && items.length > 0) {
+      const action = pendingAction.action;
+      setPendingAction(null);
+      if (action === 'print') {
+        setTimeout(handlePrintClick, 500);
+      } else if (action === 'issue') {
+        setTimeout(handleIssuePI, 500);
+      } else if (action === 'pay') {
+        setTimeout(handleOpenPaymentModal, 500);
+      }
+    }
+  }, [piId, items, pendingAction]);
 
   // âœ… GLOBAL SHORTCUTS
   useShortcuts({
@@ -532,12 +551,13 @@ const ProformaInvoice = () => {
         image: i.image ? getImageUrl(i.image) : ''
       })),
       totals: {
-        subTotal,
+        subTotal: grossTotal,
         tax: totalTax,
         grandTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
-        billDiscount: 0,
-        billDiscountAmount: 0
+        billDiscount: Number(billDiscount) || 0,
+        billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+        discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
       },
       meta: {
         validTill: validUntil,
@@ -1266,9 +1286,71 @@ const ProformaInvoice = () => {
         setIsQuotationOpen(false);
         setIsSalesOrderOpen(false);
         setIsCurrencyOpen(false);
+        setOverflowMenu(null);
       }}
     >
       <main className="flex-1 p-4 md:p-6 flex flex-col min-w-0">
+        {/* Overflow action menu */}
+        {overflowMenu && (
+          <div
+            ref={overflowMenuRef}
+            style={{ position: 'fixed', top: overflowMenu.top, right: overflowMenu.right, zIndex: 9999 }}
+            className="w-48 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => { setOverflowMenu(null); handleRowClick(overflowMenu.pi); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors text-left font-medium"
+            >
+              <Eye size={14} className="text-blue-500" /> View / Edit
+            </button>
+            <button
+              onClick={() => { 
+                setOverflowMenu(null); 
+                handleRowClick(overflowMenu.pi);
+                setPendingAction({ id: overflowMenu.pi.id, action: 'print' });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors text-left font-medium"
+            >
+              <Printer size={14} className="text-slate-500" /> Print
+            </button>
+            <button
+              onClick={() => { 
+                setOverflowMenu(null); 
+                handleRowClick(overflowMenu.pi);
+                setTimeout(() => { setIsEmailModalOpen(true); }, 300);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors text-left font-medium"
+            >
+              <Mail size={14} className="text-sky-500" /> Send Email
+            </button>
+            {overflowMenu.pi.status !== 'ISSUED' && overflowMenu.pi.status !== 'Issued' && (
+              <button
+                onClick={() => { 
+                  setOverflowMenu(null); 
+                  handleRowClick(overflowMenu.pi);
+                  setPendingAction({ id: overflowMenu.pi.id, action: 'issue' });
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors text-left font-medium"
+              >
+                <CheckCircle2 size={14} className="text-emerald-600" /> Issue Proforma
+              </button>
+            )}
+            {Number(overflowMenu.pi.balanceDue || 0) > 0 && (
+              <button
+                onClick={() => { 
+                  setOverflowMenu(null); 
+                  handleRowClick(overflowMenu.pi);
+                  setPendingAction({ id: overflowMenu.pi.id, action: 'pay' });
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors text-left font-medium"
+              >
+                <Wallet size={14} className="text-purple-600" /> Pay
+              </button>
+            )}
+          </div>
+        )}
+
         {/* --- MODALS --- */}
         <ProductSelector
           isOpen={isProductSelectorOpen}
@@ -1451,10 +1533,11 @@ const ProformaInvoice = () => {
                       <div className="flex items-center justify-end gap-1">Total {sortConfig.key === 'total' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
                     <th className="px-4 py-3 text-right">Status</th>
+                    <th className="px-4 py-3 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/30">
-                  {isListLoading && <TableSkeleton cols={7} rows={8} />}
+                  {isListLoading && <TableSkeleton cols={8} rows={8} />}
                   {filteredProformas.map((pi, index) => (
                     <tr
                       key={pi.id}
@@ -1476,15 +1559,39 @@ const ProformaInvoice = () => {
                         {pi.customerCode && <div className="text-[10px] text-slate-400">{pi.customerCode}</div>}
                       </td>
                       <td className="px-4 py-3 text-[11px] text-slate-600">
-                        {pi.branch?.code ? pi.branch.code : <span className="text-slate-300">—</span>}
+                        {pi.branch?.name
+                          ? <div>
+                              <div className="font-medium text-slate-700">{pi.branch.name}</div>
+                              {pi.branch.code && <div className="text-[10px] text-slate-400">{pi.branch.code}</div>}
+                            </div>
+                          : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex justify-center">
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation();
+                              const menuId = pi.id || pi.piNumber;
+                              if (overflowMenu?.id === menuId) {
+                                setOverflowMenu(null);
+                                return;
+                              }
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setOverflowMenu({ id: menuId, pi, top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                            }} 
+                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors border border-slate-200"
+                          >
+                            <MoreVertical size={16} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {filteredProformas.length === 0 && (
                     <tr>
-                      <td colSpan="7" className="text-center py-12 text-slate-400">
+                      <td colSpan="8" className="text-center py-12 text-slate-400">
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                             <Search size={20} className="text-slate-400" />
@@ -1551,6 +1658,12 @@ const ProformaInvoice = () => {
                       <div className="flex flex-col col-span-2 sm:col-span-1">
                         <label className="text-xs font-semibold text-slate-500 mb-1">Valid Till <span className="text-red-500">*</span></label>
                         <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
+                      </div>
+                      <div className="flex flex-col col-span-2">
+                        <label className="text-xs font-semibold text-slate-500 mb-1">Branch</label>
+                        <div className="text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-slate-700 truncate">
+                          {activeBranch?.name || defaultBranchName || '—'}
+                        </div>
                       </div>
                       {/* Source Type Selector */}
                       <div className="flex flex-col col-span-2">
