@@ -8,10 +8,14 @@ import { getOutOfStockReport } from '../../../api/inventoryReportsApi';
 import { getWarehouses } from '../../../api/warehouseApi';
 import toast from 'react-hot-toast';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '../../../context/CompanyContext';
 
 const PAGE_SIZE = 25;
 
 const OutOfStockReport = () => {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
     const [filters, setFilters] = useState({
         dateFrom: '', dateTo: '', warehouse: 'All',
         department: 'All', brand: 'All', searchQuery: ''
@@ -266,8 +270,8 @@ const OutOfStockReport = () => {
                         <div className="flex flex-wrap items-center gap-2">
                             <span style={{ fontSize: 12, color: '#6b7280', background: '#f3f4f6', borderRadius: 6, padding: '4px 10px' }}>{data.length} items</span>
                             <ExportDropdown
-                                onExportExcel={() => exportToExcel(data, reportColumns, 'Out_Of_Stock_Report')}
-                                onExportPdf={() => exportToPDF(data, reportColumns, 'Out of Stock Report', 'Out_Of_Stock_Report')}
+                                onExportExcel={() => exportToExcel(data, reportColumns, 'Out_Of_Stock_Report', { companyProfile: company, branch: activeBranch?.name || '' })}
+                                onExportPdf={() => exportToPDF(data, reportColumns, 'Out of Stock Report', 'Out_Of_Stock_Report', { companyProfile: company, branch: activeBranch?.name || '' })}
                                 onPrint={handlePrint}
                                 disabled={data.length === 0 || loading}
                             />

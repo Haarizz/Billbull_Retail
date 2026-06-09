@@ -2967,7 +2967,8 @@ const Quotations = () => {
                                             totalElements: listPageMeta.totalElements,
                                         }),
                                         QUOTATION_COLUMNS,
-                                        'Quotations'
+                                        'Quotations',
+                                        { companyProfile: company, branch: activeBranch?.name || '' }
                                     )}
                                     onExportPdf={() => exportToPDF(
                                         withListSerialNumbers(filteredQuotations, {
@@ -2978,7 +2979,8 @@ const Quotations = () => {
                                         }),
                                         QUOTATION_COLUMNS,
                                         'Quotations List',
-                                        'Quotations'
+                                        'Quotations',
+                                        { companyProfile: company, branch: activeBranch?.name || '' }
                                     )}
                                 />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">

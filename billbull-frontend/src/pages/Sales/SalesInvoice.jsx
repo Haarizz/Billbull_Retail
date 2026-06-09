@@ -3247,7 +3247,8 @@ const SalesInvoice = () => {
                                                     totalElements: listPageMeta.totalElements,
                                                 }),
                                                 SALES_INVOICE_COLUMNS,
-                                                'Sales_Invoices'
+                                                'Sales_Invoices',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                             onExportPdf={() => exportToPDF(
                                                 withListSerialNumbers(filteredInvoices, {
@@ -3258,7 +3259,8 @@ const SalesInvoice = () => {
                                                 }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales Invoices',
-                                                'Sales_Invoices'
+                                                'Sales_Invoices',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                         />
                                         <button

@@ -8,6 +8,8 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '../../../context/CompanyContext';
 
 // ==========================================
 // CONFIGURATION
@@ -399,6 +401,8 @@ const ChecklistItem = ({ checked, label }) => (
 // ==========================================
 
 const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
     const LIST_PAGE_SIZE = 30;
     const [listPage, setListPage] = useState(0);
     useEffect(() => { setListPage(0); }, [data.length]);
@@ -414,10 +418,10 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                     <ExportDropdown
                         onExportExcel={() => exportToExcel(withListSerialNumbers(data, {
                             documentNumberSelector: (row) => row.transferNo,
-                        }), STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        }), STOCK_TRANSFER_COLUMNS, 'StockTransfers', { companyProfile: company, branch: activeBranch?.name || '' })}
                         onExportPdf={() => exportToPDF(withListSerialNumbers(data, {
                             documentNumberSelector: (row) => row.transferNo,
-                        }), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                        }), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers', { companyProfile: company, branch: activeBranch?.name || '' })}
                     />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />

@@ -804,11 +804,11 @@ const ReceiptVoucher = () => {
     );
 
     const handleExportExcel = () => {
-        exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers');
+        exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers', { companyProfile: company, branch: activeBranch?.name || '' });
     };
 
     const handleExportPdf = () => {
-        exportToPDF(filteredReceipts, RECEIPT_COLUMNS, 'Receipt Vouchers', 'Receipt_Vouchers');
+        exportToPDF(filteredReceipts, RECEIPT_COLUMNS, 'Receipt Vouchers', 'Receipt_Vouchers', { companyProfile: company, branch: activeBranch?.name || '' });
     };
 
 

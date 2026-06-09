@@ -3179,7 +3179,8 @@ const PurchaseInvoices = () => {
         documentNumberSelector: (inv) => inv.id,
       }),
       INVOICE_COLUMNS,
-      'Purchase_Invoice_List'
+      'Purchase_Invoice_List',
+      { companyProfile: company, branch: activeBranch?.name || '' }
     );
   };
 
@@ -3190,7 +3191,8 @@ const PurchaseInvoices = () => {
       }),
       INVOICE_COLUMNS,
       'Purchase Invoices',
-      'Purchase_Invoice_List'
+      'Purchase_Invoice_List',
+      { companyProfile: company, branch: activeBranch?.name || '' }
     );
   };
 

@@ -34,6 +34,7 @@ import { getDepartments } from "../../../api/departmentsApi";
 import { exportToExcel } from "../../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
+import { useBranch } from "../../../context/BranchContext";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 
 type ReportGroupId =
@@ -1021,6 +1022,7 @@ interface InventoryReportsProps {
 }
 
 export default function InventoryReports({ onNavigate }: InventoryReportsProps) {
+  const { activeBranch } = useBranch();
   const [activeReport, setActiveReport] = useState<ReportId>("soh");
   const [query, setQuery] = useState("");
   const [warehouseOptions, setWarehouseOptions] = useState<Array<{ id: string; name: string }>>([]);
@@ -1128,7 +1130,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     [activeReport]
   );
 
-  const exportMeta = () => ({ dateFrom, dateTo, branch: warehouse, companyProfile });
+  const exportMeta = () => ({ dateFrom, dateTo, branch: activeBranch?.name || 'All', companyProfile });
 
   function getActiveViewModel(): { reportTitle: string } & ReportViewModel {
     const vm = getReportView(activeReport);

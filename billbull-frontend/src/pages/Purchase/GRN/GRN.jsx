@@ -2581,14 +2581,14 @@ const GRN = () => {
     exportToExcel(filteredData.map((row) => ({
       ...row,
       value: formatCurrencyDisplay(row.value, currencyLabel)
-    })), GRN_COLUMNS, 'GRN_List');
+    })), GRN_COLUMNS, 'GRN_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   const handleExportPdf = () => {
     exportToPDF(filteredData.map((row) => ({
       ...row,
       value: formatCurrencyDisplay(row.value, currencyLabel)
-    })), GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List');
+    })), GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   const handleSubmitQC = async (formData, items) => {

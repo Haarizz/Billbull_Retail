@@ -1407,7 +1407,8 @@ const ProformaInvoice = () => {
                       totalElements: listPageMeta.totalElements,
                     }),
                     PROFORMA_COLUMNS,
-                    'Proforma_Invoices'
+                    'Proforma_Invoices',
+                    { companyProfile: company, branch: activeBranch?.name || '' }
                   )}
                   onExportPdf={() => exportToPDF(
                     withListSerialNumbers(filteredProformas, {
@@ -1418,7 +1419,8 @@ const ProformaInvoice = () => {
                     }),
                     PROFORMA_COLUMNS,
                     'Proforma Invoices',
-                    'Proforma_Invoices'
+                    'Proforma_Invoices',
+                    { companyProfile: company, branch: activeBranch?.name || '' }
                   )}
                 />
                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">

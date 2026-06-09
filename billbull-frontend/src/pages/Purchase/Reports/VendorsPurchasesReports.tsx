@@ -3495,7 +3495,12 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
 
   const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
 
-  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+  const exportMeta = () => ({
+    dateFrom,
+    dateTo,
+    branch: branch === 'All' ? 'All' : branches.find((b: any) => String(b.id) === String(branch))?.name || branch,
+    companyProfile,
+  });
 
   function handleExportPdf() {
     const vm = getReportView(activeReport);

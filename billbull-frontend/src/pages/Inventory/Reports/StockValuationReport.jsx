@@ -8,8 +8,12 @@ import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
 import toast from 'react-hot-toast';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '../../../context/CompanyContext';
 
 const StockValuationReport = () => {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
     const [filters, setFilters] = useState({
         dateFrom: '', dateTo: '', warehouse: 'All',
         department: 'All', brand: 'All',
@@ -168,8 +172,8 @@ const StockValuationReport = () => {
 
     useEffect(() => { loadWarehouses(); generateReport(); }, []);
 
-    const handleExportExcel = () => exportToExcel(data, reportColumns, 'Stock_Valuation_Report');
-    const handleExportPdf = () => exportToPDF(data, reportColumns, 'Stock Valuation Report', 'Stock_Valuation_Report');
+    const handleExportExcel = () => exportToExcel(data, reportColumns, 'Stock_Valuation_Report', { companyProfile: company, branch: activeBranch?.name || '' });
+    const handleExportPdf = () => exportToPDF(data, reportColumns, 'Stock Valuation Report', 'Stock_Valuation_Report', { companyProfile: company, branch: activeBranch?.name || '' });
 
     const handlePrint = async () => {
         try {

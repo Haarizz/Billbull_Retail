@@ -9,8 +9,12 @@ import { getStockOnHandReport } from '../../../api/inventoryReportsApi';
 import { getWarehouses } from '../../../api/warehouseApi';
 import toast from 'react-hot-toast';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '../../../context/CompanyContext';
 
 const StockOnHandReport = () => {
+    const { activeBranch } = useBranch();
+    const { company } = useCompany();
     const [viewMode, setViewMode] = useState('table');
     const [filters, setFilters] = useState({
         dateFrom: '', dateTo: '', warehouse: 'All',
@@ -110,8 +114,8 @@ const StockOnHandReport = () => {
 
     useEffect(() => { loadWarehouses(); generateReport(); }, []);
     const handleFC = (field, value) => setFilters(prev => ({ ...prev, [field]: value }));
-    const handleExportExcel = () => exportToExcel(data, reportColumns, 'SOH_Report');
-    const handleExportPdf = () => exportToPDF(data, reportColumns, 'Stock on Hand (SOH)', 'Stock_On_Hand');
+    const handleExportExcel = () => exportToExcel(data, reportColumns, 'SOH_Report', { companyProfile: company, branch: activeBranch?.name || '' });
+    const handleExportPdf = () => exportToPDF(data, reportColumns, 'Stock on Hand (SOH)', 'Stock_On_Hand', { companyProfile: company, branch: activeBranch?.name || '' });
     const handlePrint = async () => {
         try { const ts = await getPrintTemplates(); const dt = ts.find(t => t.isDefault) || {}; printHtml(generateReportPrintHtml(dt, "Stock on Hand (SOH)", reportColumns, data)); }
         catch { printHtml(generateReportPrintHtml({}, "Stock on Hand (SOH)", reportColumns, data)); }

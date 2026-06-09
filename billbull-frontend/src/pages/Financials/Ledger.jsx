@@ -166,7 +166,7 @@ const CustomSelect = ({ label, placeholder, options = [], value, onChange, searc
 };
 
 const Ledger = () => {
-  const { branches, defaultBranchName } = useBranch();
+  const { branches, defaultBranchName, activeBranch } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
@@ -1148,18 +1148,20 @@ const glAccountOptions = accounts
   });
 
   const handleExportExcel = () => {
+    const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
     if (activeTab === 'chart') {
-      exportToExcel(accounts, COA_COLUMNS, 'Chart_of_Accounts');
+      exportToExcel(accounts, COA_COLUMNS, 'Chart_of_Accounts', branchMeta);
     } else if (activeTab === 'gl') {
-      exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
+      exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger', branchMeta);
     }
   };
 
   const handleExportPdf = () => {
+    const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
     if (activeTab === 'chart') {
-      exportToPDF(accounts, COA_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
+      exportToPDF(accounts, COA_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts', branchMeta);
     } else if (activeTab === 'gl') {
-      exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
+      exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger', branchMeta);
     }
   };
 

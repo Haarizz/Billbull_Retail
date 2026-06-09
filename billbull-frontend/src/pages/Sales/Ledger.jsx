@@ -125,7 +125,7 @@ const COST_CENTER_COLUMNS = [
 const TRANSACTION_COLUMNS = GL_COLUMNS; // Same as GL for now
 
 const Ledger = () => {
-  const { branches, defaultBranchName } = useBranch();
+  const { branches, defaultBranchName, activeBranch } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
@@ -626,16 +626,18 @@ const Ledger = () => {
         <div className="flex gap-2">
           <ExportDropdown
             onExportExcel={() => {
-              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts');
-              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
-              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers');
-              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History');
+              const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
+              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts', branchMeta);
+              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger', branchMeta);
+              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers', branchMeta);
+              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History', branchMeta);
             }}
             onExportPdf={() => {
-              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
-              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
-              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers');
-              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History');
+              const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
+              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts', branchMeta);
+              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger', branchMeta);
+              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers', branchMeta);
+              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History', branchMeta);
             }}
           />
           
