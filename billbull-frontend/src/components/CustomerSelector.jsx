@@ -174,7 +174,8 @@ const CustomerSelector = ({
                 mobile: newCust.mobile.trim(),
                 email: newCust.email.trim(),
                 trn: newCust.trn.trim(),
-                branch: defaultBranchName || '',
+                branch: activeBranch?.name || defaultBranchName || '',
+                allocatedBranches: [activeBranch?.name || defaultBranchName].filter(Boolean),
                 payTerms: 'Cash',
                 creditStatus: 'Good',
                 balance: 0

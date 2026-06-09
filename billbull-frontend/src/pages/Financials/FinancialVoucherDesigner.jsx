@@ -148,6 +148,7 @@ function PaperHeader({ s, title, meta, claimantLabel = "Prepared By", claimantVa
                     {s.showCompanyName && <div style={{ fontWeight: 700, fontSize: `${f + 1}px`, color: "#1a1a2e", marginBottom: 2 }}>{MOCK.company.name}</div>}
                     {s.showCompanyAddress && <div style={{ fontSize: `${f - 1}px`, color: "#666", whiteSpace: "pre-line" }}>{MOCK.company.address}</div>}
                     {s.showCompanyPhone && <div style={{ fontSize: `${f - 1}px`, color: "#666" }}>{MOCK.company.phone}</div>}
+                    {s.showCompanyEmail && <div style={{ fontSize: `${f - 1}px`, color: "#666" }}>{MOCK.company.email}</div>}
                     {s.showTRN && <div style={{ fontSize: `${f - 1}px`, color: "#666" }}>TRN · {MOCK.company.trn}</div>}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 20px", alignSelf: "flex-end", paddingBottom: 2, minWidth: 220 }}>
