@@ -2380,6 +2380,7 @@ const CustomerSOAView = ({ customers = [] }) => {
 
             {/* Table */}
             <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
+                <div className="overflow-x-auto">
                 <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
@@ -2432,6 +2433,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                         </tr>
                     </tfoot>
                 </table>
+                </div>
             </div>
 
             <StatementPrintPreview
