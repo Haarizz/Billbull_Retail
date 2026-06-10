@@ -148,8 +148,13 @@ function renderSignatures(s, slots) {
 }
 
 function renderTerms(s) {
-    if (!s.showTerms || !s.termsText) return '';
-    return `<div class="terms">${escapeHtml(s.termsText)}</div>`;
+    if (!s.showTerms && !s.showPageNumbers) return '';
+    return `
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;font-size:${(s.fontSize||9)-1.5}pt;color:#94a3b8">
+            <div style="flex:1;text-align:${s.showPageNumbers ? 'left' : 'center'};white-space:pre-wrap">${s.showTerms ? escapeHtml(s.termsText) : ''}</div>
+            ${s.showPageNumbers ? `<div style="text-align:right;white-space:nowrap;margin-left:16px">Page <span class="page-num">1</span> of <span class="page-total">1</span></div>` : ''}
+        </div>
+    `;
 }
 
 function wrap(title, s, body) {
@@ -167,6 +172,8 @@ function renderJournal(s, co, jv) {
     const totalDr = lines.reduce((sum, l) => sum + (parseFloat(l.debit) || 0), 0);
     const totalCr = lines.reduce((sum, l) => sum + (parseFloat(l.credit) || 0), 0);
     const voucherNo = jv.jvNumber || jv.entryNumber || jv.voucherNo || jv.reference || '';
+    const totalColSpan = (s.showAccountCode ? 1 : 0) + 2 + (s.showCostCenter ? 1 : 0);
+    const emptyColspan = totalColSpan + 2;
 
     const header = renderHeader(s, co, 'JOURNAL VOUCHER', [
         ['showVoucherNumber', 'Voucher No.', voucherNo],
@@ -182,26 +189,27 @@ function renderJournal(s, co, jv) {
                 ${s.showAccountCode ? `<td style="color:#999">${i + 1}</td>` : ''}
                 <td style="font-weight:600;color:#1a1a2e">${escapeHtml(l.accountCode ? `${l.accountCode} - ${l.account || ''}` : (l.account || ''))}</td>
                 <td style="color:#555">${escapeHtml(l.description || '')}</td>
+                ${s.showCostCenter ? `<td style="color:#4f46e5;font-weight:500">${escapeHtml(l.costCenter || '')}</td>` : ''}
                 <td class="num" style="color:${parseFloat(l.debit) > 0 ? '#166534' : '#aaa'}">${parseFloat(l.debit) > 0 ? fmt(l.debit) : '—'}</td>
                 <td class="num" style="color:${parseFloat(l.credit) > 0 ? '#991b1b' : '#aaa'}">${parseFloat(l.credit) > 0 ? fmt(l.credit) : '—'}</td>
             </tr>`).join('')
-        : `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No journal lines</td></tr>`;
+        : `<tr><td colspan="${emptyColspan}" style="text-align:center;color:#94a3b8;padding:20px;">No journal lines</td></tr>`;
 
     const body = `
         ${header}
         <table>
             <thead><tr>
                 ${s.showAccountCode ? '<th>#</th>' : ''}
-                <th style="width:40%">Account</th>
+                <th style="width:35%">Account</th>
                 <th>Description / Narration</th>
+                ${s.showCostCenter ? '<th>Cost Center</th>' : ''}
                 <th class="num">Debit (${renderCurrencyHtml(jv.currency)})</th>
                 <th class="num">Credit (${renderCurrencyHtml(jv.currency)})</th>
             </tr></thead>
             <tbody>
                 ${rows}
                 <tr class="totals">
-                    ${s.showAccountCode ? '<td></td>' : ''}
-                    <td colspan="2">TOTAL</td>
+                    <td colspan="${totalColSpan}">TOTAL</td>
                     <td class="num" style="color:#166534">${s.showTotalDebit ? fmt(totalDr) : ''}</td>
                     <td class="num" style="color:#991b1b">${s.showTotalCredit ? fmt(totalCr) : ''}</td>
                 </tr>
@@ -209,6 +217,7 @@ function renderJournal(s, co, jv) {
         </table>
         ${s.showNarration && jv.narration ? `<div class="narration"><b>Narration:</b>${escapeHtml(jv.narration)}</div>` : ''}
         ${s.showAmountInWords && jv.amountInWords ? `<div class="words"><b>Amount in Words: </b>${escapeHtml(jv.amountInWords)}</div>` : ''}
+        ${s.showNetAmount ? `<div style="display:flex;justify-content:flex-end;margin-bottom:16px"><div style="text-align:right"><div style="font-size:${(s.fontSize||9)-1}pt;color:#666;margin-bottom:2px">Total Amount</div><div style="font-size:${(s.fontSize||9)+6}pt;font-weight:700;color:#1a1a2e">${renderCurrencyHtml(jv.currency)} ${fmt(totalDr)}</div></div></div>` : ''}
         ${renderSignatures(s, [
             s.showPreparedBySign && 'Prepared By',
             s.showCheckedBySign && 'Checked By',
@@ -224,18 +233,21 @@ function renderExpense(s, co, ev) {
     const items = Array.isArray(ev.items) ? ev.items : [];
     const total = items.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
     const voucherNo = ev.voucherNumber || ev.id || '';
-    const colSpanTotal = 3 + (s.showCostCenter ? 1 : 0);
+    const colSpanTotal = 3 + (s.showCostCenter ? 1 : 0) + (s.showAccountCode ? 1 : 0);
 
     const header = renderHeader(s, co, 'EXPENSE VOUCHER', [
         ['showVoucherNumber', 'Voucher No.', voucherNo],
         ['showVoucherDate', 'Date', ev.date],
+        ['showReference', 'Reference', ev.reference],
         ['showBranch', 'Branch', ev.branch || 'Main'],
+        ['showCurrency', 'Currency', ev.currency || 'AED'],
     ], 'Claimant', ev.claimant || ev.preparedBy);
 
     const rows = items.length
         ? items.map((it, i) => `
             <tr style="background:${i % 2 ? '#fafafa' : '#fff'}">
                 <td style="color:#999">${i + 1}</td>
+                ${s.showAccountCode ? `<td style="color:#666;font-size:${(s.fontSize || 9) - 0.5}pt">${escapeHtml(it.accountCode || '—')}</td>` : ''}
                 <td style="font-weight:500;color:#1a1a2e">${escapeHtml(it.description || '')}</td>
                 <td><span class="badge" style="background:${s.accentColor}22;color:#92400e">${escapeHtml(it.category || '—')}</span></td>
                 ${s.showCostCenter ? `<td style="color:#4f46e5;font-weight:500">${escapeHtml(it.costCenter || '')}</td>` : ''}
@@ -254,6 +266,7 @@ function renderExpense(s, co, ev) {
         <table>
             <thead><tr>
                 <th style="width:24px">#</th>
+                ${s.showAccountCode ? '<th>Account Code</th>' : ''}
                 <th>Expense Description</th>
                 <th>Category</th>
                 ${s.showCostCenter ? '<th>Cost Center</th>' : ''}
@@ -266,11 +279,12 @@ function renderExpense(s, co, ev) {
         </table>
         ${s.showNarration && ev.narration ? `<div class="narration"><b>Narration:</b>${escapeHtml(ev.narration)}</div>` : ''}
         ${s.showAmountInWords && ev.amountInWords ? `<div class="words"><b>Amount in Words: </b>${escapeHtml(ev.amountInWords)}</div>` : ''}
-        ${s.showNetAmount ? `<div class="net-box"><div class="inner"><div class="lbl">Net Amount Claimed</div><div class="amt">${renderCurrencyHtml(ev.currency)} ${fmt(total)}</div></div></div>` : ''}
+        ${s.showNetAmount ? `<div style="display:flex;justify-content:flex-end;margin-bottom:16px"><div style="text-align:right"><div style="font-size:${(s.fontSize||9)-1}pt;color:#666;margin-bottom:2px">Net Amount Claimed</div><div style="font-size:${(s.fontSize||9)+6}pt;font-weight:700;color:#1a1a2e">${renderCurrencyHtml(ev.currency)} ${fmt(total)}</div></div></div>` : ''}
         ${renderSignatures(s, [
             s.showPreparedBySign && 'Claimant',
             s.showCheckedBySign && 'Verified By',
             s.showApprovedBySign && 'Approved By',
+            s.showReceivedBySign && 'Received By',
             s.showCompanyStamp && 'STAMP',
         ])}
         ${renderTerms(s)}
@@ -294,6 +308,7 @@ function renderReceiptPayment(s, co, rv, mode) {
         ['showVoucherDate', 'Date', rv.date],
         ['showReference', 'Reference', rv.reference || rv.chequeRef || ''],
         ['showBranch', 'Branch', rv.branch || 'Main'],
+        ['showCurrency', 'Currency', rv.currency || 'AED'],
     ], 'Prepared By', rv.preparedBy);
 
     const invRows = invoices.length
@@ -317,7 +332,13 @@ function renderReceiptPayment(s, co, rv, mode) {
             <div>
                 <div style="font-size:${(s.fontSize||9)-1.5}pt;color:#999;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Payment Mode</div>
                 <div style="font-weight:600;color:#1a1a2e">${escapeHtml(rv.mode || '—')}</div>
-                ${rv.bank ? `<div style="font-size:${(s.fontSize||9)-1}pt;color:#666">Bank: ${escapeHtml(rv.bank)}</div>` : ''}
+                ${s.showBankDetails && (rv.bank || s.bankName || co.bankName) ? `
+                    <div style="font-size:${(s.fontSize||9)-1}pt;color:#666;margin-top:2px;display:flex;flex-direction:column;gap:1px">
+                        <div>Bank: ${escapeHtml(rv.bank || s.bankName || co.bankName)}</div>
+                        ${(s.bankAccountNumber || co.bankAccountNumber) ? `<div>A/C: ${escapeHtml(s.bankAccountNumber || co.bankAccountNumber)}</div>` : ''}
+                        ${(s.bankIban || co.bankIban) ? `<div>IBAN: ${escapeHtml(s.bankIban || co.bankIban)}</div>` : ''}
+                    </div>
+                ` : ''}
             </div>
         </div>
         ${invRows ? `

@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import {
     FileText,
     Plus,
@@ -44,7 +46,8 @@ import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
+import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
+import { ReceiptPaymentPreview } from './FinancialVoucherDesigner';
 import { printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
@@ -53,6 +56,8 @@ import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { getUsernameFromToken } from '../../api/auth';
+import { formatUserDisplayName } from '../../utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
@@ -197,6 +202,8 @@ const ReceiptVoucher = () => {
     const { print } = usePrintDocument();
     const { branchNames, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
     const { company } = useCompany();
+    const currentUser = getUsernameFromToken() || 'System';
+    const currentUserDisplay = formatUserDisplayName(currentUser) || 'System';
     const currency = resolveCurrencyDisplayCode(company || {});
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const fileInputRef = useRef(null);
@@ -231,15 +238,18 @@ const ReceiptVoucher = () => {
         date: '2026-01-22',
         branch: '',
         member: '',
+        customerCode: null,
         category: '',
         amount: '',
         mode: '',
+        bankAccount: '',
         reference: '',
         notes: '',
         status: 'Completed',
         purpose: 'ADVANCE_RECEIVED',
         salesInvoiceId: null,
         openingInvoiceId: null,
+        preparedBy: currentUserDisplay,
         attachment: null
     });
 
@@ -248,14 +258,20 @@ const ReceiptVoucher = () => {
         setEditingReceipt(null);
         setFormData({
             date: new Date().toISOString().split('T')[0],
-            branch: defaultBranchName,
+            branch: defaultBranchName || '',
             member: '',
+            customerCode: null,
             category: '',
             amount: '',
             mode: '',
+            bankAccount: '',
             reference: '',
             notes: '',
+            status: 'Completed',
             purpose: 'ADVANCE_RECEIVED',
+            preparedBy: currentUserDisplay,
+            salesInvoiceId: null,
+            openingInvoiceId: null,
             attachment: null
         });
         setIsAddModalOpen(true);
@@ -301,15 +317,18 @@ const ReceiptVoucher = () => {
                 source: r.category,
                 sourceSub: r.reference,
                 member: r.memberName,
+                customerCode: r.customerCode || '',
                 memberId: 'EMP-000', // Placeholder
                 amount: r.amount.toLocaleString(),
                 mode: r.paymentMode,
+                bank: r.bankAccount || '',
                 branch: r.branch || '',
                 branchId: r.branchEntityId ?? r.branchEntity?.id ?? null,
                 branchName: r.branchEntityName || r.branchEntity?.name || '',
                 branchCode: r.branchEntityCode || r.branchEntity?.code || '',
                 status: r.status,
                 purpose: r.purpose,
+                preparedBy: r.preparedBy || currentUserDisplay,
                 notes: r.notes || '',
                 salesInvoiceId: r.salesInvoiceId || null,
                 openingInvoiceId: r.openingInvoiceId || null,
@@ -553,6 +572,7 @@ const ReceiptVoucher = () => {
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
             mode: receipt.mode,
+            bankAccount: receipt.bank || '',
             reference: receipt.sourceSub,
             notes: receipt.notes || '',
             status: receipt.status || 'Completed',
@@ -574,6 +594,7 @@ const ReceiptVoucher = () => {
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
             mode: receipt.mode,
+            bankAccount: receipt.bank || '',
             reference: receipt.sourceSub,
             notes: receipt.notes || '',
             status: 'Pending',
@@ -589,15 +610,18 @@ const ReceiptVoucher = () => {
             date: formData.date,
             branch: formData.branch || defaultBranchName,
             memberName: formData.member,
+            customerCode: formData.customerCode || null,
             category: formData.category,
             amount: Number(formData.amount),
             paymentMode: formData.mode,
+            bankAccount: formData.bankAccount || null,
             reference: formData.reference,
             notes: formData.notes,
             status: formData.status,
             purpose: formData.purpose,
             salesInvoiceId: formData.salesInvoiceId || null,
-            openingInvoiceId: formData.openingInvoiceId || null
+            openingInvoiceId: formData.openingInvoiceId || null,
+            preparedBy: formData.preparedBy
         };
 
         const submitData = new FormData();
@@ -631,55 +655,95 @@ const ReceiptVoucher = () => {
             currency
         );
 
-        // Try the new Financials designer template first; fall back to
-        // the legacy window.print() of the on-screen layout if none is
-        // configured.
         try {
-            const templates = await getTemplatesByCategory('Receipt Voucher');
-            const tmpl = templates?.find(t => t.isDefault) || templates?.[0] || null;
-            const hasNewSettings = (() => {
-                if (!tmpl?.displayOptions) return false;
-                try {
-                    const opts = typeof tmpl.displayOptions === 'string'
-                        ? JSON.parse(tmpl.displayOptions)
-                        : tmpl.displayOptions;
-                    return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
-                } catch { return false; }
-            })();
+            let template = null;
+            try {
+                const templates = await getTemplatesByCategory('Receipt Voucher');
+                template = templates?.find(t => t.isDefault) || templates?.[0] || null;
+            } catch { /* use defaults */ }
 
-            if (hasNewSettings) {
-                const branchProfile = buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: receipt.branchId ?? activeBranch?.id,
-                });
-                const html = buildFinancialVoucherPrintHtml('receipt-voucher', {
-                    voucherNumber: receipt.id || receipt.voucherId,
-                    date: receipt.date,
-                    party: receipt.member || receipt.memberName,
-                    partyCode: receipt.customerCode || '',
-                    amount: receipt.amount,
-                    currency,
-                    mode: receipt.mode || receipt.paymentMode,
-                    bank: receipt.bank || '',
-                    reference: receipt.reference,
-                    chequeRef: receipt.chequeNumber || '',
-                    narration: receipt.notes || '',
-                    branch: receipt.branchName || receipt.branch,
-                    preparedBy: receipt.preparedBy || '',
-                    linkedInvoice: receipt.source,
-                    invoiceDate: receipt.date,
-                }, { company: branchProfile, template: tmpl });
-                const titled = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-                printHtml(titled);
-                return;
+            const settings = resolveVoucherSettings('receipt-voucher', template);
+
+            const branchProfile = buildDocumentHeaderProfile({
+                company,
+                branches: availableBranches || [],
+                branchId: receipt.branchId ?? activeBranch?.id,
+            });
+
+            // Parse amount — may be a comma-formatted string
+            const rawAmt = typeof receipt.amount === 'string'
+                ? parseFloat(receipt.amount.replace(/,/g, '')) || 0
+                : (receipt.amount || 0);
+
+            let derivedCode = receipt.customerCode || '';
+            if (!derivedCode && receipt.member) {
+                const cust = customers.find(c => c.name === receipt.member || c.customerName === receipt.member || c.fullName === receipt.member);
+                if (cust) {
+                    derivedCode = cust.code || cust.customerCode || cust.id || '';
+                } else {
+                    const emp = employees.find(e => {
+                        const empName = e.name || e.fullName || `${e.firstName || ''} ${e.lastName || ''}`.trim();
+                        return empName === receipt.member;
+                    });
+                    if (emp) {
+                        derivedCode = emp.employeeCode || emp.employeeId || emp.empId || emp.code || '';
+                    }
+                }
             }
-        } catch (err) {
-            console.warn('Failed to load Receipt Voucher template, falling back to browser print', err);
-        }
 
-        // Legacy fallback — print the on-screen layout.
-        print(title);
+            const rvData = {
+                voucherNumber: receipt.id || receipt.voucherId,
+                date: receipt.date ? formatDisplayDate(receipt.date) : '',
+                branch: receipt.branchName || receipt.branch || activeBranch?.name || '',
+                party: receipt.member || receipt.memberName || '',
+                partyCode: derivedCode,
+                mode: receipt.mode || receipt.paymentMode || '',
+                bank: receipt.bank || '',
+                chequeRef: receipt.chequeNumber || receipt.sourceSub || '',
+                narration: receipt.notes || '',
+                amount: rawAmt,
+                amountInWords: '',
+                preparedBy: receipt.preparedBy || currentUserDisplay,
+                currency,
+                invoices: receipt.source ? [{
+                    ref: receipt.source,
+                    date: receipt.date ? formatDisplayDate(receipt.date) : '',
+                    total: rawAmt,
+                    paid: rawAmt,
+                }] : [],
+            };
+
+            // Render the same React component used in the designer preview
+            const PAPER_PX = { A4: 794, A5: 559, Letter: 816 };
+            const paperWidthPx = PAPER_PX[settings.paperSize] || PAPER_PX.A4;
+            const PAPER_CSS = { A4: '210mm 297mm', A5: '148mm 210mm', Letter: '8.5in 11in' };
+            const paper = PAPER_CSS[settings.paperSize] || PAPER_CSS.A4;
+
+            const container = document.createElement('div');
+            container.style.cssText = `width:${paperWidthPx}px;position:absolute;top:-9999px;left:-9999px;visibility:hidden;`;
+            document.body.appendChild(container);
+            const root = createRoot(container);
+            flushSync(() => {
+                root.render(
+                    <ReceiptPaymentPreview
+                        s={settings}
+                        mode="receipt"
+                        currency={currency}
+                        company={branchProfile}
+                        data={rvData}
+                    />
+                );
+            });
+            const bodyHtml = container.innerHTML;
+            root.unmount();
+            document.body.removeChild(container);
+
+            printHtml(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>${title}</title><style>@page { size: ${paper}; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; } body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }</style></head><body>${bodyHtml}</body></html>`);
+        } catch (err) {
+            console.warn('Failed to render Receipt Voucher template, falling back to browser print', err);
+            // Legacy fallback — print the on-screen layout.
+            print(title);
+        }
     };
 
     const handleDelete = async (id, dbId) => {
@@ -825,13 +889,13 @@ const ReceiptVoucher = () => {
                     <div className="text-[10px] text-slate-400 mt-1">Financials &rarr; <span className="font-semibold text-slate-600">Receipt Voucher</span></div>
                 </div>
                 <div className="flex gap-2">
-                    <button 
+                    <button
                         onClick={handleExportExcel}
                         className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
                     >
                         <FileSpreadsheet size={16} /> Export Excel
                     </button>
-                    <button 
+                    <button
                         onClick={handleExportPdf}
                         className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
                     >
@@ -1158,7 +1222,7 @@ const ReceiptVoucher = () => {
                                                     <div className="text-[10px] text-slate-400">
                                                         {(() => {
                                                             const emp = employees.find(e => {
-                                                                const empName = e.name || e.fullName || (e.firstName && e.lastName ? `${e.firstName} ${e.lastName}` : '');
+                                                                const empName = e.name || e.fullName || `${e.firstName || ''} ${e.lastName || ''}`.trim();
                                                                 return empName === row.member;
                                                             });
                                                             return emp ? (emp.employeeCode || emp.employeeId || emp.empId || emp.code || 'N/A') : row.memberId || 'N/A';
@@ -1346,6 +1410,19 @@ const ReceiptVoucher = () => {
                                     />
                                 </div>
 
+                                {formData.mode === 'Bank Transfer' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">Bank Name <span className="text-red-500">*</span></label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Emirates NBD, Mashreq..."
+                                            value={formData.bankAccount}
+                                            onChange={(e) => setFormData({ ...formData, bankAccount: e.target.value })}
+                                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none text-slate-700 font-medium"
+                                        />
+                                    </div>
+                                )}
+
                                 <div>
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Status</label>
                                     <CustomSelect
@@ -1354,6 +1431,25 @@ const ReceiptVoucher = () => {
                                         value={formData.status}
                                         onChange={(val) => setFormData({ ...formData, status: val })}
                                     />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">Prepared By</label>
+                                    <select
+                                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none text-slate-700 font-medium"
+                                        value={formData.preparedBy || ''}
+                                        onChange={(e) => setFormData({ ...formData, preparedBy: e.target.value })}
+                                    >
+                                        <option value={currentUserDisplay}>{currentUserDisplay} (Admin)</option>
+                                        {employees.map((emp) => {
+                                            const empName = `${emp.firstName || ''} ${emp.lastName || ''}`.trim();
+                                            if (!empName || empName === currentUserDisplay) return null;
+                                            return (
+                                                <option key={emp.id} value={empName}>
+                                                    {empName}
+                                                </option>
+                                            );
+                                        })}
+                                    </select>
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Description / Reference</label>
@@ -1493,7 +1589,7 @@ const ReceiptVoucher = () => {
 
                                                 // Try to find matching employee by name
                                                 const emp = employees.find(e => {
-                                                    const empName = e.name || e.fullName || (e.firstName && e.lastName ? `${e.firstName} ${e.lastName}` : '');
+                                                    const empName = e.name || e.fullName || `${e.firstName || ''} ${e.lastName || ''}`.trim();
                                                     return empName === selectedReceipt.member;
                                                 });
 
@@ -1508,6 +1604,11 @@ const ReceiptVoucher = () => {
                                             {selectedReceipt.mode === 'Card' ? <CreditCard size={12} /> : <DollarSign size={12} />}
                                             {selectedReceipt.mode}
                                         </p>
+                                        {selectedReceipt.bank && (
+                                            <p className="text-xs text-slate-500 mt-0.5">
+                                                Bank: {selectedReceipt.bank}
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Branch</p>
