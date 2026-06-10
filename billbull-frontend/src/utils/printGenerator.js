@@ -388,11 +388,11 @@ const renderReportSectionHtml = (section, companyProfile) => {
     const head = `<thead><tr>${renderReportColumnsHtml(columns, companyProfile)}</tr></thead>`;
     const body = rows.length
         ? rows
-              .map(
-                  (row) =>
-                      `<tr>${columns.map((col) => renderReportCellHtml(col, row[col.key], companyProfile)).join('')}</tr>`
-              )
-              .join('')
+            .map(
+                (row) =>
+                    `<tr>${columns.map((col) => renderReportCellHtml(col, row[col.key], companyProfile)).join('')}</tr>`
+            )
+            .join('')
         : `<tr><td colspan="${columns.length}" style="text-align:center;color:#94a3b8;padding:14px;">No records for the selected filters.</td></tr>`;
 
     let foot = '';
@@ -447,11 +447,11 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
 
     const kpiHtml = kpis.length
         ? `<div class="kpi-strip">${kpis
-              .map(
-                  (k) =>
-                      `<div class="kpi"><div class="k-label">${escapeHtml(k.label)}</div><div class="k-value">${renderTextWithCurrencySymbols(normaliseReportMoney(k.value), companyProfile)}</div>${k.hint ? `<div class="k-hint">${escapeHtml(k.hint)}</div>` : ''}</div>`
-              )
-              .join('')}</div>`
+            .map(
+                (k) =>
+                    `<div class="kpi"><div class="k-label">${escapeHtml(k.label)}</div><div class="k-value">${renderTextWithCurrencySymbols(normaliseReportMoney(k.value), companyProfile)}</div>${k.hint ? `<div class="k-hint">${escapeHtml(k.hint)}</div>` : ''}</div>`
+            )
+            .join('')}</div>`
         : '';
 
     const sectionsHtml = sections.length
@@ -685,11 +685,11 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
     const rows = data.map(row => `
         <tr>
             ${columns.map(col => {
-                const value = row[col.key];
-                const isNum = numericKeys.has(col.key);
-                const display = value !== null && value !== undefined ? renderTextWithCurrencySymbols(String(value), companyProfile) : '—';
-                return `<td class="${isNum ? 'num' : ''}">${display}</td>`;
-            }).join('')}
+        const value = row[col.key];
+        const isNum = numericKeys.has(col.key);
+        const display = value !== null && value !== undefined ? renderTextWithCurrencySymbols(String(value), companyProfile) : '—';
+        return `<td class="${isNum ? 'num' : ''}">${display}</td>`;
+    }).join('')}
         </tr>
     `).join('');
 

@@ -49,6 +49,19 @@ public class VoucherSequenceService {
         return String.format("%s-%s-%d-%06d", type, branch, fiscalYear, seq.getLastNumber());
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public String nextGlobalVoucherNumber(String transactionType, LocalDate date) {
+        String type = (transactionType == null || transactionType.isBlank())
+                ? "JV" : transactionType.trim().toUpperCase();
+        int fiscalYear = date != null ? date.getYear() : Year.now().getValue();
+
+        VoucherSequence seq = lockOrCreate(type, "GLOBAL", fiscalYear);
+        seq.setLastNumber(seq.getLastNumber() + 1);
+        repository.save(seq);
+
+        return String.format("%s-%d-%05d", type, fiscalYear, seq.getLastNumber());
+    }
+
     private VoucherSequence lockOrCreate(String type, String branch, int fiscalYear) {
         return repository.findForUpdate(type, branch, fiscalYear)
                 .orElseGet(() -> createRow(type, branch, fiscalYear));

@@ -17,9 +17,11 @@ import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { printHtml } from '../../utils/printGenerator';
 import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
-import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTemplate';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
+import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
+import { JournalPreview } from './FinancialVoucherDesigner';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import { formatUserDisplayName } from '../../utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
@@ -559,7 +561,9 @@ const JournalVoucher = () => {
             postedBy: journal.postedBy,
             postedAt: journal.postedAt,
             createdAt: journal.createdAt,
-            updatedAt: journal.updatedAt
+            updatedAt: journal.updatedAt,
+            branchId: journal.branchId ?? null,
+            branchName: journal.branchName || '',
         });
         // Use actual lines from the backend
         setJournalLines(journal.lines || []);
@@ -588,7 +592,9 @@ const JournalVoucher = () => {
             reference: journal.reference,
             narration: journal.narration,
             status: journal.status,
-            preparedBy: journal.preparedBy || ''
+            preparedBy: journal.preparedBy || '',
+            branchId: journal.branchId ?? null,
+            branchName: journal.branchName || '',
         });
 
         // Use actual lines from the backend
@@ -687,31 +693,58 @@ const JournalVoucher = () => {
         }
         const lines = (jv.lines || journalLines).filter(l => l.account || l.debit || l.credit);
 
-        // Templates saved by the Financials Print & Email Templates designer
-        // carry the new settings (showLogo, accentColor, signature toggles…)
-        // inside displayOptions. Route those through the new renderer so the
-        // design-time choices actually drive the printout. Templates without
-        // those keys are legacy header/terms/footer-text templates — fall back
-        // to the existing renderer.
-        const hasNewSettings = (() => {
-            if (!template?.displayOptions) return false;
-            try {
-                const opts = typeof template.displayOptions === 'string'
-                    ? JSON.parse(template.displayOptions)
-                    : template.displayOptions;
-                return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
-            } catch { return false; }
-        })();
-
         const branchProfile = buildDocumentHeaderProfile({
             company,
             branches: availableBranches || [],
             branchId: jv?.branchId ?? activeBranch?.id,
         });
-        if (hasNewSettings) {
-            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company: branchProfile, template });
-        }
-        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company: branchProfile, template });
+
+        const settings = resolveVoucherSettings('journal-voucher', template);
+        const voucherCurrency = jv.currency || company?.currency || 'AED';
+
+        // Width must match the paper content area so flex layout behaves the same as the on-screen preview
+        const PAPER_PX = { A4: 794, A5: 559, Letter: 816 };
+        const paperWidthPx = PAPER_PX[settings.paperSize] || PAPER_PX.A4;
+
+        // Render the same React component used in the designer preview
+        const container = document.createElement('div');
+        container.style.cssText = `width:${paperWidthPx}px;position:absolute;top:-9999px;left:-9999px;visibility:hidden;`;
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const resolvedBranch = jv.branchName
+            || (availableBranches?.find(b => b.id === (jv.branchId ?? activeBranch?.id))?.name)
+            || activeBranch?.name
+            || '';
+        flushSync(() => {
+            root.render(
+                <JournalPreview
+                    s={settings}
+                    currency={voucherCurrency}
+                    company={branchProfile}
+                    data={{ ...jv, lines, branch: resolvedBranch }}
+                />
+            );
+        });
+        const bodyHtml = container.innerHTML;
+        root.unmount();
+        document.body.removeChild(container);
+
+        const PAPER = { A4: '210mm 297mm', A5: '148mm 210mm', Letter: '8.5in 11in' };
+        const paper = PAPER[settings.paperSize] || PAPER.A4;
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Journal Voucher ${jv.jvNumber || jv.entryNumber || ''}</title>
+<style>
+@page { size: ${paper}; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
     };
 
     const getCurrentJvPrintPayload = () => {
@@ -728,6 +761,10 @@ const JournalVoucher = () => {
     const handlePrint = async () => {
         const jv = getCurrentJvPrintPayload();
         printHtml(await buildJvPrintHtml(jv));
+    };
+
+    const handleListPrint = async (journal) => {
+        printHtml(await buildJvPrintHtml(journal));
     };
 
     const handleExportPdf = async () => {
@@ -1055,6 +1092,7 @@ const JournalVoucher = () => {
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <button className="p-1 hover:bg-slate-200 rounded text-slate-400" onClick={() => handleView(row)} title="View Detail"><Eye size={14} /></button>
+                                                <button className="p-1 hover:bg-slate-200 rounded text-slate-400 ml-1" onClick={() => handleListPrint(row)} title="Print"><PrintIcon size={14} /></button>
                                                 {row.status !== 'Posted' && (
                                                     <button className="p-1 hover:bg-slate-200 rounded text-slate-400 ml-1" onClick={() => handleEdit(row)} title="Edit/Action"><Edit size={14} /></button>
                                                 )}

@@ -72,6 +72,13 @@ public class BranchAccessService {
         return branch != null ? branch.getId() : null;
     }
 
+    public Branch findBranchByName(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        return branchRepository.findByNameIgnoreCase(name).orElse(null);
+    }
+
     public boolean currentUserHasRole(String roleName) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null) {

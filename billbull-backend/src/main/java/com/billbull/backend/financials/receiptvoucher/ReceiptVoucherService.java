@@ -31,6 +31,7 @@ import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
+import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
@@ -115,7 +116,13 @@ public class ReceiptVoucherService {
     @Transactional
     public ReceiptVoucher createReceipt(ReceiptVoucher receipt, MultipartFile file) {
         receipt.setVoucherId(generateNextVoucherId());
-        receipt.setBranchEntity(branchAccessService.getRequiredCurrentUserBranch());
+
+        // Resolve branch from the form-selected name; fall back to session branch.
+        Branch resolvedBranch = null;
+        if (receipt.getBranch() != null && !receipt.getBranch().isBlank()) {
+            resolvedBranch = branchAccessService.findBranchByName(receipt.getBranch());
+        }
+        receipt.setBranchEntity(resolvedBranch != null ? resolvedBranch : branchAccessService.getRequiredCurrentUserBranch());
 
         if (receipt.getStatus() == null) {
             receipt.setStatus("Completed");
@@ -162,6 +169,7 @@ public class ReceiptVoucherService {
         receipt.setPaymentMode(receiptDetails.getPaymentMode());
         receipt.setReference(receiptDetails.getReference());
         receipt.setNotes(receiptDetails.getNotes());
+        receipt.setPreparedBy(receiptDetails.getPreparedBy());
         receipt.setPurpose(receiptDetails.getPurpose());
         if (receiptDetails.getSalesInvoiceId() != null) {
             receipt.setSalesInvoiceId(receiptDetails.getSalesInvoiceId());

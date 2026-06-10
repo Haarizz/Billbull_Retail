@@ -47,6 +47,7 @@ public class ReceiptVoucher extends BaseEntity {
     private String reference; // Description
     private String notes;
     private String status; // Completed, Pending, etc.
+    private String preparedBy;
 
     // For file upload
     private String attachmentPath;
@@ -188,6 +189,14 @@ public class ReceiptVoucher extends BaseEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getPreparedBy() {
+        return preparedBy;
+    }
+
+    public void setPreparedBy(String preparedBy) {
+        this.preparedBy = preparedBy;
     }
 
     public String getAttachmentPath() {

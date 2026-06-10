@@ -7,6 +7,8 @@
 // "Payment Voucher" print template.
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import {
     Wallet,
     Search,
@@ -44,11 +46,11 @@ import { useBranch } from '../../context/BranchContext';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
-    normalizePurchaseTemplate
 } from '../../utils/purchasePrintUtils';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
-import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
-import billBullLogo from '../../assets/billBullLogo.png';
+import { printHtml } from '../../utils/printGenerator';
+import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { ReceiptPaymentPreview } from './FinancialVoucherDesigner';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
@@ -100,7 +102,7 @@ const expenseVoucherNumber = (exp) => `EXP-${String(exp.id || '').padStart(5, '0
 
 const PaymentVoucher = () => {
     const { company } = useCompany();
-    const { activeBranch } = useBranch();
+    const { activeBranch, branches } = useBranch();
     const currency = resolveCurrencyDisplayCode(company || {});
 
     const [rows, setRows] = useState([]);
@@ -307,73 +309,72 @@ const PaymentVoucher = () => {
     const handlePrint = async (row) => {
         const loadingToast = toast.loading('Preparing print layout...');
         try {
-            const templates = await getTemplatesByCategory('Payment Voucher');
-            if (!templates || templates.length === 0) {
-                toast.error('No Payment Voucher template configured.');
-                return;
-            }
-            const rawTemplate = templates.find((t) => t.isDefault) || templates[0];
+            let template = null;
+            try {
+                const templates = await getTemplatesByCategory('Payment Voucher');
+                template = templates?.find(t => t.isDefault) || templates?.[0] || null;
+            } catch { /* use defaults */ }
 
-            // Detect Financials-designer templates (carry rich settings in
-            // displayOptions). Route those through the new renderer so toggles
-            // like accent colour, signature labels, narration etc. apply.
-            const hasNewSettings = (() => {
-                if (!rawTemplate?.displayOptions) return false;
-                try {
-                    const opts = typeof rawTemplate.displayOptions === 'string'
-                        ? JSON.parse(rawTemplate.displayOptions)
-                        : rawTemplate.displayOptions;
-                    return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
-                } catch { return false; }
-            })();
+            const settings = resolveVoucherSettings('payment-voucher', template);
 
             let printData;
+            let invoices = [];
             if (row.sourceType === 'VENDOR_PAYMENT') {
                 const detail = await getPaymentVoucherById(row.dbId).catch(() => row.raw);
                 const fullVendor = findVendorRecord(vendors, detail, detail?.vendorName);
                 const linkedInvoice = purchaseInvoices.find((inv) => inv.id === detail.invoiceId) || null;
                 printData = buildPaymentVoucherPrintData(detail, fullVendor, company, linkedInvoice);
+                if (printData?.invoice?.number) {
+                    invoices = [{
+                        ref: printData.invoice.number,
+                        date: printData.invoice.date ? formatDisplayDate(printData.invoice.date) : '',
+                        total: row.amount,
+                        paid: row.amount,
+                    }];
+                }
             } else {
                 const shaped = buildExpenseVoucherShape(row);
                 printData = buildPaymentVoucherPrintData(shaped, null, company, null);
             }
 
-            const title = generateDocFilename(
-                'Payment Voucher',
-                row.voucherNumber,
-                row.paidTo,
-                row.date,
-                currency
-            );
+            const coProfile = buildDocumentHeaderProfile({
+                company,
+                branches: branches || [],
+                branchId: row.raw?.branch?.id || null,
+            });
 
-            let html;
-            if (hasNewSettings) {
-                // Map the legacy print payload onto the new renderer's shape.
-                html = buildFinancialVoucherPrintHtml('payment-voucher', {
-                    voucherNumber: row.voucherNumber,
-                    date: row.date,
-                    party: row.paidTo || printData?.vendor?.name,
-                    partyCode: printData?.vendor?.code || '',
-                    amount: row.amount,
-                    currency,
-                    mode: row.mode || printData?.payment?.mode,
-                    bank: printData?.payment?.bank || printData?.payment?.bankAccount,
-                    reference: row.reference,
-                    chequeRef: printData?.payment?.chequeNumber || printData?.payment?.referenceNumber,
-                    narration: printData?.notes || row.notes,
-                    amountInWords: printData?.amountInWords,
-                    preparedBy: printData?.preparedBy || row.preparedBy,
-                    branch: row.branch,
-                    linkedInvoice: printData?.invoice?.number,
-                    invoiceDate: printData?.invoice?.date,
-                }, { company, template: rawTemplate });
-                html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-            } else {
-                const template = normalizePurchaseTemplate(rawTemplate, 'Payment Voucher');
-                html = await generatePrintHtmlAsync(template, printData, { companyProfile: company, billBullLogo });
-                html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-            }
-            printHtml(html);
+            const pvData = {
+                voucherNumber: row.voucherNumber,
+                date: row.date ? formatDisplayDate(row.date) : '',
+                branch: row.raw?.branch?.name || activeBranch?.name || '',
+                party: row.paidTo || printData?.vendor?.name || '',
+                partyCode: printData?.vendor?.code || '',
+                mode: row.mode || printData?.payment?.mode || '',
+                bank: printData?.payment?.bank || printData?.payment?.bankAccount || '',
+                chequeRef: printData?.payment?.chequeNumber || printData?.payment?.referenceNumber || row.reference || '',
+                narration: printData?.notes || row.notes || '',
+                amount: row.amount,
+                amountInWords: printData?.amountInWords || '',
+                currency,
+                invoices,
+            };
+
+            const PAPER_PX = { A4: 794, A5: 559, Letter: 816 };
+            const paperWidthPx = PAPER_PX[settings.paperSize] || PAPER_PX.A4;
+            const PAPER_CSS = { A4: '210mm 297mm', A5: '148mm 210mm', Letter: '8.5in 11in' };
+            const paper = PAPER_CSS[settings.paperSize] || PAPER_CSS.A4;
+
+            const container = document.createElement('div');
+            container.style.cssText = `width:${paperWidthPx}px;position:absolute;top:-9999px;left:-9999px;visibility:hidden;`;
+            document.body.appendChild(container);
+            const root = createRoot(container);
+            flushSync(() => { root.render(<ReceiptPaymentPreview s={settings} mode="payment" currency={currency} company={coProfile} data={pvData} />); });
+            const bodyHtml = container.innerHTML;
+            root.unmount();
+            document.body.removeChild(container);
+
+            const title = generateDocFilename('Payment Voucher', row.voucherNumber, row.paidTo, row.date, currency);
+            printHtml(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>${title}</title><style>@page { size: ${paper}; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; } body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }</style></head><body>${bodyHtml}</body></html>`);
         } catch (err) {
             console.error('Failed to print payment voucher', err);
             toast.error('Failed to generate print layout');
