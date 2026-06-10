@@ -396,435 +396,79 @@ const REPORTS: ReportDef[] = [
 // Backend-provided KPI totals for Sales Summary (authoritative — avoids re-deriving from chart rows)
 let mockSalesSummaryTotals: { grossSales: number; netSales: number; grossProfit: number; tax: number; returns: number } | null = null;
 
-// Mock data for Sales Summary Report
-let mockSalesSummaryData = [
-  { date: "2026-01-10", grossSales: 45230, returns: 1200, discounts: 2150, netSales: 41880, tax: 2094, cogs: 29316, grossProfit: 12564, gp: 30.0 },
-  { date: "2026-01-11", grossSales: 52100, returns: 1450, discounts: 2500, netSales: 48150, tax: 2408, cogs: 33705, grossProfit: 14445, gp: 30.0 },
-  { date: "2026-01-12", grossSales: 48900, returns: 980, discounts: 2200, netSales: 45720, tax: 2286, cogs: 32004, grossProfit: 13716, gp: 30.0 },
-  { date: "2026-01-13", grossSales: 51200, returns: 1100, discounts: 2400, netSales: 47700, tax: 2385, cogs: 33390, grossProfit: 14310, gp: 30.0 },
-  { date: "2026-01-14", grossSales: 53800, returns: 1250, discounts: 2550, netSales: 50000, tax: 2500, cogs: 35000, grossProfit: 15000, gp: 30.0 },
-  { date: "2026-01-15", grossSales: 56200, returns: 1350, discounts: 2700, netSales: 52150, tax: 2608, cogs: 36505, grossProfit: 15645, gp: 30.0 },
-  { date: "2026-01-16", grossSales: 49500, returns: 1050, discounts: 2300, netSales: 46150, tax: 2308, cogs: 32305, grossProfit: 13845, gp: 30.0 },
-];
+let mockSalesSummaryData: { date: string; grossSales: number; returns: number; discounts: number; netSales: number; tax: number; cogs: number; grossProfit: number; gp: number }[] = [];
 
-// Mock data for Channel-wise Sales
-let mockChannelSalesData = [
-  { channel: "POS Sales", transactions: 458, salesValue: 142300, avgBill: 310.70, discountPct: 4.8, returnPct: 2.1 },
-  { channel: "VAN Sales", transactions: 234, salesValue: 98600, avgBill: 421.37, discountPct: 3.2, returnPct: 1.8 },
-  { channel: "Back-Office", transactions: 89, salesValue: 156250, avgBill: 1755.06, discountPct: 5.5, returnPct: 3.4 },
-];
+let mockChannelSalesData: { channel: string; transactions: number; salesValue: number; avgBill: number; discountPct: number; returnPct: number }[] = [];
 
-// Mock data for Daily Sales (Z-style)
 let mockDailySalesData = {
-  date: new Date().toISOString().split("T")[0],
-  branch: "Main Branch",
-  preparedBy: "Ahmed Hassan",
-  approvedBy: "Mgr. Ali Khalid",
-  shift: "Full Day 08:00–22:00",
-
-  // Opening balance per cash account
-  openingBalances: [
-    { account: "Cash in Hand (Main Register)", amount: 5000.00 },
-    { account: "Petty Cash",                   amount: 1200.00 },
-    { account: "Van Cash Float",               amount: 2500.00 },
-  ],
-
-  // Sales
-  posSales:          142300.00,
-  vanSales:           98600.00,
-  backOfficeSales:   156250.00,
-  totalGrossSales:   397150.00,
-  salesReturns:        8450.00,
-  discounts:          18920.00,
-  netSales:          369780.00,
-  vatOnSales:         18489.00,
-
-  // Sales payment breakdown
-  salesPayments: [
-    { mode: "Cash",          amount: 185400.00 },
-    { mode: "Card (Visa)",   amount:  98200.00 },
-    { mode: "Card (MC)",     amount:  66000.00 },
-    { mode: "Apple Pay",     amount:  12100.00 },
-    { mode: "Bank Transfer", amount:   8080.00 },
-  ],
-
-  // Purchases
-  totalPurchases:    214600.00,
-  purchaseReturns:     6200.00,
-  netPurchases:      208400.00,
-  vatOnPurchases:     10420.00,
-  purchasePayments: [
-    { mode: "Cash",          amount:  42000.00 },
-    { mode: "Cheque / PDC",  amount:  98400.00 },
-    { mode: "Bank Transfer", amount:  68000.00 },
-  ],
-
-  // Expenses
-  totalExpenses:      18650.00,
-  expensePayments: [
-    { category: "Staff Meals",         mode: "Cash",          amount:  1800.00 },
-    { category: "Transportation",      mode: "Cash",          amount:  2400.00 },
-    { category: "Packaging Supplies",  mode: "Petty Cash",    amount:   850.00 },
-    { category: "Utilities",           mode: "Bank Transfer", amount:  6200.00 },
-    { category: "Maintenance",         mode: "Cash",          amount:  3800.00 },
-    { category: "Miscellaneous",       mode: "Petty Cash",    amount:   650.00 },
-    { category: "Marketing",           mode: "Bank Transfer", amount:  2950.00 },
-  ],
-
-  // Sales returns
-  salesReturnLines: [
-    { ref: "RET-1041", customer: "Al Khaleej Traders", items: 3, amount: 3200.00, mode: "Cash Refund" },
-    { ref: "RET-1042", customer: "Walk-in",            items: 1, amount: 1650.00, mode: "Card Refund" },
-    { ref: "RET-1043", customer: "Emirates Food Dist.", items: 2, amount: 3600.00, mode: "Credit Note" },
-  ],
-
-  // Purchase returns
-  purchaseReturnLines: [
-    { ref: "GRV-0551", vendor: "GrainCo Suppliers",   items: 2, amount: 2800.00, mode: "Debit Note" },
-    { ref: "GRV-0552", vendor: "DairyHub LLC",         items: 1, amount: 1400.00, mode: "Cash Refund" },
-    { ref: "GRV-0553", vendor: "OilTrade Est.",        items: 1, amount: 2000.00, mode: "Debit Note" },
-  ],
-
-  // Advances
-  soAdvances: [
-    { ref: "ADV-S-0088", customer: "Gulf Supermarket",    mode: "Bank Transfer", amount: 15000.00 },
-    { ref: "ADV-S-0089", customer: "Marina Retail",       mode: "Cash",          amount:  8500.00 },
-  ],
-  lpoAdvances: [
-    { ref: "ADV-P-0031", vendor: "SpiceWorld Trading",    mode: "Cash",          amount:  6000.00 },
-    { ref: "ADV-P-0032", vendor: "FoodPro LLC",           mode: "Bank Transfer", amount:  9000.00 },
-  ],
-  salaryAdvances: [
-    { ref: "ADV-HR-0014", employee: "Mohammed Rashid",    mode: "Cash",          amount:  2000.00 },
-    { ref: "ADV-HR-0015", employee: "Sara Abdullah",      mode: "Cash",          amount:  1500.00 },
-  ],
-
-  // Other receipts & payments
-  otherReceipts: [
-    { ref: "OR-0041", description: "Scrap metal sale",     mode: "Cash",          amount:  1200.00 },
-    { ref: "OR-0042", description: "Rental income",        mode: "Bank Transfer", amount:  5000.00 },
-    { ref: "OR-0043", description: "Insurance claim",      mode: "Cheque",        amount:  8500.00 },
-  ],
-  otherPayments: [
-    { ref: "OP-0055", description: "Municipality fees",   mode: "Bank Transfer", amount:  3200.00 },
-    { ref: "OP-0056", description: "Office supplies",     mode: "Petty Cash",    amount:   480.00 },
-    { ref: "OP-0057", description: "Vehicle service",     mode: "Cash",          amount:  1850.00 },
-  ],
-
-  // Customer receipts (collections)
-  customerReceipts: [
-    { ref: "CR-0881", customer: "Al Khaleej Traders",     mode: "Cheque",        amount:  48000.00 },
-    { ref: "CR-0882", customer: "Emirates Food Dist.",     mode: "Bank Transfer", amount:  62000.00 },
-    { ref: "CR-0883", customer: "Dubai Fresh Markets",     mode: "Cash",          amount:  18500.00 },
-    { ref: "CR-0884", customer: "Gulf Supermarket",        mode: "Bank Transfer", amount: 120000.00 },
-    { ref: "CR-0885", customer: "Marina Retail Outlets",   mode: "Cheque",        amount:  22000.00 },
-  ],
-
-  // Vendor payments
-  vendorPayments: [
-    { ref: "VP-0441", vendor: "GrainCo Suppliers",        mode: "Cheque / PDC",  amount:  55000.00 },
-    { ref: "VP-0442", vendor: "DairyHub LLC",              mode: "Bank Transfer", amount:  38000.00 },
-    { ref: "VP-0443", vendor: "OilTrade Est.",             mode: "Cash",          amount:  12000.00 },
-    { ref: "VP-0444", vendor: "SpiceWorld Trading",        mode: "Bank Transfer", amount:  24000.00 },
-  ],
-
-  // Cash / bank closing balances
-  cashAccounts: [
-    { account: "Cash in Hand (Main Register)", opening: 5000.00,  inflow: 185400.00, outflow: 150000.00, closing: 40400.00, actual: 40350.00 },
-    { account: "Petty Cash",                   opening: 1200.00,  inflow:   2200.00, outflow:   1980.00, closing:  1420.00, actual:  1420.00 },
-    { account: "Van Cash Float",               opening: 2500.00,  inflow:  98600.00, outflow:  96200.00, closing:  4900.00, actual:  4875.00 },
-  ],
-  bankAccounts: [
-    { bank: "Emirates NBD — Current",          opening: 285000.00, receipts: 207000.00, payments: 188200.00, closing: 303800.00 },
-    { bank: "ADCB — Operations",               opening:  98000.00, receipts:  62000.00, payments:  55000.00, closing: 105000.00 },
-  ],
+  date: "",
+  branch: "All Branches",
+  preparedBy: "System",
+  approvedBy: "",
+  shift: "Selected period",
+  openingBalances: [] as { account: string; amount: number }[],
+  posSales: 0,
+  vanSales: 0,
+  backOfficeSales: 0,
+  totalGrossSales: 0,
+  salesReturns: 0,
+  discounts: 0,
+  netSales: 0,
+  vatOnSales: 0,
+  salesPayments: [] as { mode: string; amount: number }[],
+  totalPurchases: 0,
+  purchaseReturns: 0,
+  netPurchases: 0,
+  vatOnPurchases: 0,
+  purchasePayments: [] as { mode: string; amount: number }[],
+  totalExpenses: 0,
+  expensePayments: [] as { category: string; mode: string; amount: number }[],
+  salesReturnLines: [] as { ref: string; customer: string; items: number; amount: number; mode: string }[],
+  purchaseReturnLines: [] as { ref: string; vendor: string; items: number; amount: number; mode: string }[],
+  soAdvances: [] as { ref: string; customer: string; mode: string; amount: number }[],
+  lpoAdvances: [] as { ref: string; vendor: string; mode: string; amount: number }[],
+  salaryAdvances: [] as { ref: string; employee: string; mode: string; amount: number }[],
+  otherReceipts: [] as { ref: string; description: string; mode: string; amount: number }[],
+  otherPayments: [] as { ref: string; description: string; mode: string; amount: number }[],
+  customerReceipts: [] as { ref: string; customer: string; mode: string; amount: number }[],
+  vendorPayments: [] as { ref: string; vendor: string; mode: string; amount: number }[],
+  cashAccounts: [] as { account: string; opening: number; inflow: number; outflow: number; closing: number; actual: number }[],
+  bankAccounts: [] as { bank: string; opening: number; receipts: number; payments: number; closing: number }[],
 };
 
-// Mock data for Customer Sales Summary
-let mockCustomerSalesData = [
-  { customer: "Al Khaleej Traders LLC", totalSales: 124500, returns: 3200, netSales: 121300, outstanding: 24500, creditLimit: 150000, utilization: 16.3 },
-  { customer: "Emirates Food Distributors", totalSales: 98700, returns: 2100, netSales: 96600, outstanding: 18200, creditLimit: 100000, utilization: 18.2 },
-  { customer: "Dubai Fresh Markets", totalSales: 86400, returns: 1850, netSales: 84550, outstanding: 12300, creditLimit: 80000, utilization: 15.4 },
-  { customer: "Gulf Supermarket Chain", totalSales: 156800, returns: 4200, netSales: 152600, outstanding: 0, creditLimit: 200000, utilization: 0 },
-  { customer: "Marina Retail Outlets", totalSales: 72300, returns: 1450, netSales: 70850, outstanding: 8900, creditLimit: 75000, utilization: 11.9 },
-  { customer: "Downtown Corner Stores", totalSales: 54200, returns: 980, netSales: 53220, outstanding: 15600, creditLimit: 50000, utilization: 31.2 },
-];
-
-// Mock data for POS Cashier Performance
-let mockCashierPerformanceData = [
-  { cashier: "Ahmed Hassan", bills: 145, totalSales: 45200, avgBill: 311.72, discountPct: 4.2, voidCount: 3, returnCount: 5, variance: -15 },
-  { cashier: "Fatima Al Zaabi", bills: 132, totalSales: 41800, avgBill: 316.67, discountPct: 3.8, voidCount: 2, returnCount: 4, variance: 0 },
-  { cashier: "Mohammed Rashid", bills: 98, totalSales: 30500, avgBill: 311.22, discountPct: 5.1, voidCount: 5, returnCount: 6, variance: -25 },
-  { cashier: "Sara Abdullah", bills: 83, totalSales: 24800, avgBill: 298.80, discountPct: 4.5, voidCount: 1, returnCount: 3, variance: 10 },
-];
-
-// Mock data for POS Transaction Report
-let mockPOSTransactionData = [
-  { billNo: "POS-2026-4521", date: "2026-01-16", time: "09:14", cashier: "Ahmed Hassan", customer: "Walk-in", items: 4, grossAmt: 420.50, discount: 21.00, tax: 19.98, netAmt: 419.48, payMode: "Cash", status: "Completed" },
-  { billNo: "POS-2026-4522", date: "2026-01-16", time: "09:31", cashier: "Fatima Al Zaabi", customer: "Ali Mohammed", items: 7, grossAmt: 892.00, discount: 44.60, tax: 42.37, netAmt: 889.77, payMode: "Card", status: "Completed" },
-  { billNo: "POS-2026-4523", date: "2026-01-16", time: "09:45", cashier: "Ahmed Hassan", customer: "Walk-in", items: 2, grossAmt: 156.00, discount: 0, tax: 7.80, netAmt: 163.80, payMode: "Wallet", status: "Completed" },
-  { billNo: "POS-2026-4524", date: "2026-01-16", time: "10:02", cashier: "Mohammed Rashid", customer: "Walk-in", items: 5, grossAmt: 312.75, discount: 15.64, tax: 14.86, netAmt: 311.97, payMode: "Cash", status: "Voided" },
-  { billNo: "POS-2026-4525", date: "2026-01-16", time: "10:17", cashier: "Sara Abdullah", customer: "Hessa Al Mansoori", items: 12, grossAmt: 1456.00, discount: 72.80, tax: 69.17, netAmt: 1452.37, payMode: "Split", status: "Completed" },
-  { billNo: "POS-2026-4526", date: "2026-01-16", time: "10:33", cashier: "Fatima Al Zaabi", customer: "Walk-in", items: 3, grossAmt: 245.00, discount: 12.25, tax: 11.64, netAmt: 244.39, payMode: "Card", status: "Completed" },
-  { billNo: "POS-2026-4527", date: "2026-01-16", time: "10:48", cashier: "Ahmed Hassan", customer: "Khalid Rashid", items: 8, grossAmt: 734.00, discount: 36.70, tax: 34.87, netAmt: 732.17, payMode: "Cash", status: "Return" },
-  { billNo: "POS-2026-4528", date: "2026-01-16", time: "11:05", cashier: "Mohammed Rashid", customer: "Walk-in", items: 6, grossAmt: 512.50, discount: 25.63, tax: 24.34, netAmt: 511.21, payMode: "Card", status: "Completed" },
-];
-
-// Mock data for POS Item Sales
-let mockPOSItemSalesData = [
-  { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qtyOrdered: 284, qtySold: 278, returns: 6, grossAmt: 8340.00, discount: 417.00, netAmt: 7923.00, contribution: 12.4 },
-  { itemCode: "ITM-002", itemName: "Fresh Orange Juice 1L", category: "Beverages", qtyOrdered: 512, qtySold: 498, returns: 14, grossAmt: 5976.00, discount: 298.80, netAmt: 5677.20, contribution: 8.9 },
-  { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qtyOrdered: 380, qtySold: 372, returns: 8, grossAmt: 6696.00, discount: 334.80, netAmt: 6361.20, contribution: 10.0 },
-  { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qtyOrdered: 195, qtySold: 190, returns: 5, grossAmt: 7600.00, discount: 380.00, netAmt: 7220.00, contribution: 11.3 },
-  { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qtyOrdered: 142, qtySold: 138, returns: 4, grossAmt: 6348.00, discount: 317.40, netAmt: 6030.60, contribution: 9.5 },
-  { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qtyOrdered: 326, qtySold: 318, returns: 8, grossAmt: 2862.00, discount: 143.10, netAmt: 2718.90, contribution: 4.3 },
-  { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qtyOrdered: 248, qtySold: 241, returns: 7, grossAmt: 4338.00, discount: 216.90, netAmt: 4121.10, contribution: 6.5 },
-  { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qtyOrdered: 410, qtySold: 402, returns: 8, grossAmt: 3618.00, discount: 180.90, netAmt: 3437.10, contribution: 5.4 },
-];
-
-// Mock data for POS Payment Mode
-let mockPOSPaymentData = [
-  { mode: "Cash", transactions: 224, amount: 69520.00, refunds: 1850.00, netAmount: 67670.00, pct: 47.6 },
-  { mode: "Debit Card", transactions: 138, amount: 42800.00, refunds: 920.00, netAmount: 41880.00, pct: 29.5 },
-  { mode: "Credit Card", transactions: 64, amount: 19850.00, refunds: 450.00, netAmount: 19400.00, pct: 13.7 },
-  { mode: "Wallet / App", transactions: 28, amount: 8700.00, refunds: 120.00, netAmount: 8580.00, pct: 6.0 },
-  { mode: "Split Pay", transactions: 12, amount: 4680.00, refunds: 0, netAmount: 4680.00, pct: 3.3 },
-];
-
-// Mock data for POS Void & Cancellation
-let mockVoidData = [
-  { billNo: "POS-2026-4524", date: "2026-01-16", time: "10:02", cashier: "Mohammed Rashid", value: 312.75, reason: "Customer changed mind", approvedBy: "Supervisor Ali", status: "Void" },
-  { billNo: "POS-2026-4418", date: "2026-01-15", time: "14:32", cashier: "Ahmed Hassan", value: 156.00, reason: "Item scan error", approvedBy: "Supervisor Mona", status: "Void" },
-  { billNo: "POS-2026-4390", date: "2026-01-15", time: "11:18", cashier: "Sara Abdullah", value: 89.50, reason: "Payment issue", approvedBy: "Supervisor Ali", status: "Cancelled" },
-  { billNo: "POS-2026-4312", date: "2026-01-14", time: "16:45", cashier: "Fatima Al Zaabi", value: 445.25, reason: "Price discrepancy", approvedBy: "Manager Waleed", status: "Void" },
-  { billNo: "POS-2026-4289", date: "2026-01-14", time: "09:22", cashier: "Mohammed Rashid", value: 234.00, reason: "Duplicate entry", approvedBy: "Supervisor Ali", status: "Cancelled" },
-];
-
-// Mock data for VAN Sales Summary
-let mockVANSalesSummaryData = [
-  { route: "Route A – Deira", salesperson: "Tariq Mansoor", visits: 28, actualVisits: 26, stockIssued: 48500, stockSold: 42800, returns: 1200, netSales: 41600, collection: 38400 },
-  { route: "Route B – Bur Dubai", salesperson: "Khalid Hamdan", visits: 22, actualVisits: 22, stockIssued: 38200, stockSold: 35600, returns: 900, netSales: 34700, collection: 34700 },
-  { route: "Route C – Sharjah", salesperson: "Saeed Al Noor", visits: 31, actualVisits: 29, stockIssued: 52400, stockSold: 44100, returns: 1800, netSales: 42300, collection: 40100 },
-  { route: "Route D – Ajman", salesperson: "Omar Zayed", visits: 18, actualVisits: 16, stockIssued: 28600, stockSold: 21900, returns: 650, netSales: 21250, collection: 18500 },
-];
-
-// Mock data for VAN Route Performance
-let mockVANRouteData = [
-  { route: "Route A – Deira", planned: 28, actual: 26, conversion: 89.3, salesTarget: 45000, salesActual: 41600, collection: 38400, outstanding: 3200 },
-  { route: "Route B – Bur Dubai", planned: 22, actual: 22, conversion: 100, salesTarget: 38000, salesActual: 34700, collection: 34700, outstanding: 0 },
-  { route: "Route C – Sharjah", planned: 31, actual: 29, conversion: 93.5, salesTarget: 50000, salesActual: 42300, collection: 40100, outstanding: 2200 },
-  { route: "Route D – Ajman", planned: 18, actual: 16, conversion: 88.9, salesTarget: 28000, salesActual: 21250, collection: 18500, outstanding: 2750 },
-];
-
-// Mock data for VAN Item Sales
-let mockVANItemData = [
-  { item: "Basmati Rice 5kg", route: "All Routes", qtySold: 1240, qtyReturned: 38, freeIssue: 24, netQty: 1226, value: 36780 },
-  { item: "Full Cream Milk 4L", route: "All Routes", qtySold: 892, qtyReturned: 22, freeIssue: 0, netQty: 870, value: 15660 },
-  { item: "Cooking Oil 5L", route: "All Routes", qtySold: 546, qtyReturned: 14, freeIssue: 12, netQty: 544, value: 19584 },
-  { item: "Tomato Paste 400g", route: "All Routes", qtySold: 1820, qtyReturned: 45, freeIssue: 60, netQty: 1835, value: 16515 },
-  { item: "Chicken Stock 1L", route: "All Routes", qtySold: 634, qtyReturned: 18, freeIssue: 0, netQty: 616, value: 7084 },
-];
-
-// Mock data for VAN Collection
-let mockVANCollectionData = [
-  { salesperson: "Tariq Mansoor", route: "Route A", cashCollected: 22400, cardCollected: 16000, creditSales: 3200, totalCollected: 38400, pending: 3200, variance: 0 },
-  { salesperson: "Khalid Hamdan", route: "Route B", cashCollected: 18200, cardCollected: 16500, creditSales: 0, totalCollected: 34700, pending: 0, variance: 0 },
-  { salesperson: "Saeed Al Noor", route: "Route C", cashCollected: 24600, cardCollected: 15500, creditSales: 2200, totalCollected: 40100, pending: 2200, variance: -50 },
-  { salesperson: "Omar Zayed", route: "Route D", cashCollected: 10500, cardCollected: 8000, creditSales: 2750, totalCollected: 18500, pending: 2750, variance: 120 },
-];
-
-// Mock data for VAN Stock Variance
-let mockVANStockData = [
-  { salesperson: "Tariq Mansoor", route: "Route A", issued: 48500, sold: 42800, returned: 1200, expected: 4500, actual: 4480, variance: -20 },
-  { salesperson: "Khalid Hamdan", route: "Route B", issued: 38200, sold: 35600, returned: 900, expected: 1700, actual: 1700, variance: 0 },
-  { salesperson: "Saeed Al Noor", route: "Route C", issued: 52400, sold: 44100, returned: 1800, expected: 6500, actual: 6350, variance: -150 },
-  { salesperson: "Omar Zayed", route: "Route D", issued: 28600, sold: 21900, returned: 650, expected: 6050, actual: 6180, variance: 130 },
-];
-
-// Mock data for Sales Invoice Register
-let mockInvoiceRegisterData = [
-  { invoiceNo: "INV-2026-1842", date: "2026-01-16", customer: "Gulf Supermarket Chain", salesperson: "Waleed Ibrahim", amount: 24800, tax: 1240, total: 26040, status: "Paid", outstanding: 0, dueDate: "2026-02-15" },
-  { invoiceNo: "INV-2026-1841", date: "2026-01-16", customer: "Marina Retail Outlets", salesperson: "Noura Khalid", amount: 12400, tax: 620, total: 13020, status: "Partial", outstanding: 5000, dueDate: "2026-02-15" },
-  { invoiceNo: "INV-2026-1840", date: "2026-01-15", customer: "Al Khaleej Traders LLC", salesperson: "Waleed Ibrahim", amount: 38600, tax: 1930, total: 40530, status: "Unpaid", outstanding: 40530, dueDate: "2026-02-14" },
-  { invoiceNo: "INV-2026-1839", date: "2026-01-15", customer: "Emirates Food Distributors", salesperson: "Ahmed Faris", amount: 18200, tax: 910, total: 19110, status: "Paid", outstanding: 0, dueDate: "2026-02-14" },
-  { invoiceNo: "INV-2026-1838", date: "2026-01-14", customer: "Downtown Corner Stores", salesperson: "Noura Khalid", amount: 9800, tax: 490, total: 10290, status: "Overdue", outstanding: 10290, dueDate: "2026-01-28" },
-  { invoiceNo: "INV-2026-1837", date: "2026-01-14", customer: "Dubai Fresh Markets", salesperson: "Waleed Ibrahim", amount: 31500, tax: 1575, total: 33075, status: "Partial", outstanding: 15000, dueDate: "2026-02-13" },
-  { invoiceNo: "INV-2026-1836", date: "2026-01-13", customer: "Al Khaleej Traders LLC", salesperson: "Ahmed Faris", amount: 22100, tax: 1105, total: 23205, status: "Paid", outstanding: 0, dueDate: "2026-02-12" },
-];
-
-// Mock data for Sales Order Status
-let mockOrderStatusData = [
-  { orderNo: "SO-2026-0892", date: "2026-01-14", customer: "Gulf Supermarket Chain", orderedQty: 1200, deliveredQty: 1200, pendingQty: 0, orderedValue: 48600, deliveredValue: 48600, status: "Fully Delivered" },
-  { orderNo: "SO-2026-0891", date: "2026-01-14", customer: "Al Khaleej Traders LLC", orderedQty: 850, deliveredQty: 620, pendingQty: 230, orderedValue: 34000, deliveredValue: 24800, status: "Partial" },
-  { orderNo: "SO-2026-0890", date: "2026-01-13", customer: "Marina Retail Outlets", orderedQty: 420, deliveredQty: 420, pendingQty: 0, orderedValue: 16800, deliveredValue: 16800, status: "Fully Delivered" },
-  { orderNo: "SO-2026-0889", date: "2026-01-13", customer: "Emirates Food Distributors", orderedQty: 680, deliveredQty: 0, pendingQty: 680, orderedValue: 27200, deliveredValue: 0, status: "Pending" },
-  { orderNo: "SO-2026-0888", date: "2026-01-12", customer: "Downtown Corner Stores", orderedQty: 310, deliveredQty: 310, pendingQty: 0, orderedValue: 12400, deliveredValue: 12400, status: "Fully Delivered" },
-  { orderNo: "SO-2026-0887", date: "2026-01-11", customer: "Dubai Fresh Markets", orderedQty: 920, deliveredQty: 780, pendingQty: 140, orderedValue: 36800, deliveredValue: 31200, status: "Partial" },
-];
-
-// Mock data for Delivery Dispatch
-let mockDeliveryData = [
-  { dnNo: "DN-2026-0612", date: "2026-01-16", customer: "Gulf Supermarket Chain", driver: "Rashid Hamad", vehicle: "Dubai A 12345", items: 42, weight: "680 kg", status: "Delivered", pod: "Received", deliveredAt: "11:32" },
-  { dnNo: "DN-2026-0611", date: "2026-01-16", customer: "Al Khaleej Traders LLC", driver: "Saif Nasser", vehicle: "Dubai B 67890", items: 28, weight: "420 kg", status: "In Transit", pod: "Pending", deliveredAt: "—" },
-  { dnNo: "DN-2026-0610", date: "2026-01-16", customer: "Marina Retail Outlets", driver: "Hassan Ali", vehicle: "Sharjah C 22222", items: 18, weight: "250 kg", status: "Delivered", pod: "Signed", deliveredAt: "10:15" },
-  { dnNo: "DN-2026-0609", date: "2026-01-15", customer: "Emirates Food Distributors", driver: "Rashid Hamad", vehicle: "Dubai A 12345", items: 54, weight: "820 kg", status: "Delivered", pod: "Received", deliveredAt: "14:48" },
-  { dnNo: "DN-2026-0608", date: "2026-01-15", customer: "Dubai Fresh Markets", driver: "Saif Nasser", vehicle: "Dubai B 67890", items: 36, weight: "540 kg", status: "Failed", pod: "—", deliveredAt: "—" },
-  { dnNo: "DN-2026-0607", date: "2026-01-14", customer: "Downtown Corner Stores", driver: "Hassan Ali", vehicle: "Sharjah C 22222", items: 22, weight: "310 kg", status: "Delivered", pod: "Signed", deliveredAt: "09:50" },
-];
-
-// Mock data for Credit Note & Returns
-let mockCreditNoteData = [
-  { cnNo: "CN-2026-0142", date: "2026-01-16", customer: "Al Khaleej Traders LLC", linkedInvoice: "INV-2026-1820", reason: "Damaged goods", items: 8, returnValue: 2400, tax: 120, total: 2520, status: "Approved" },
-  { cnNo: "CN-2026-0141", date: "2026-01-15", customer: "Gulf Supermarket Chain", linkedInvoice: "INV-2026-1810", reason: "Short expiry", items: 4, returnValue: 1200, tax: 60, total: 1260, status: "Approved" },
-  { cnNo: "CN-2026-0140", date: "2026-01-15", customer: "Marina Retail Outlets", linkedInvoice: "INV-2026-1805", reason: "Wrong item delivered", items: 12, returnValue: 3600, tax: 180, total: 3780, status: "Pending" },
-  { cnNo: "CN-2026-0139", date: "2026-01-14", customer: "Emirates Food Distributors", linkedInvoice: "INV-2026-1798", reason: "Quantity over-billed", items: 2, returnValue: 890, tax: 44.50, total: 934.50, status: "Approved" },
-  { cnNo: "CN-2026-0138", date: "2026-01-13", customer: "Dubai Fresh Markets", linkedInvoice: "INV-2026-1792", reason: "Price adjustment", items: 6, returnValue: 1650, tax: 82.50, total: 1732.50, status: "Rejected" },
-];
-
-// Mock data for Customer Aging
-let mockAgingData = [
-  { customer: "Al Khaleej Traders LLC", creditLimit: 150000, current: 18400, days30: 6100, days60: 0, days90: 0, over90: 0, total: 24500, riskLevel: "Low" },
-  { customer: "Emirates Food Distributors", creditLimit: 100000, current: 10200, days30: 5400, days60: 2600, days90: 0, over90: 0, total: 18200, riskLevel: "Medium" },
-  { customer: "Dubai Fresh Markets", creditLimit: 80000, current: 8900, days30: 3400, days60: 0, days90: 0, over90: 0, total: 12300, riskLevel: "Low" },
-  { customer: "Downtown Corner Stores", creditLimit: 50000, current: 0, days30: 4600, days60: 5600, days90: 4000, over90: 1400, total: 15600, riskLevel: "High" },
-  { customer: "Marina Retail Outlets", creditLimit: 75000, current: 5600, days30: 3300, days60: 0, days90: 0, over90: 0, total: 8900, riskLevel: "Low" },
-  { customer: "Gulf Hypermarket", creditLimit: 200000, current: 0, days30: 0, days60: 0, days90: 0, over90: 0, total: 0, riskLevel: "None" },
-];
-
-// Mock data for Top / Dormant Customers
-let mockTopDormantData = {
-  top: [
-    { rank: 1, customer: "Gulf Supermarket Chain", transactions: 48, netSales: 152600, lastPurchase: "2026-01-16", avgBill: 3179.17, growth: 18.4 },
-    { rank: 2, customer: "Al Khaleej Traders LLC", transactions: 36, netSales: 121300, lastPurchase: "2026-01-14", avgBill: 3369.44, growth: 12.1 },
-    { rank: 3, customer: "Emirates Food Distributors", transactions: 29, netSales: 96600, lastPurchase: "2026-01-15", avgBill: 3331.03, growth: 8.7 },
-    { rank: 4, customer: "Dubai Fresh Markets", transactions: 22, netSales: 84550, lastPurchase: "2026-01-13", avgBill: 3843.18, growth: -2.3 },
-    { rank: 5, customer: "Marina Retail Outlets", transactions: 18, netSales: 70850, lastPurchase: "2026-01-12", avgBill: 3936.11, growth: 5.6 },
-  ],
-  dormant: [
-    { customer: "Jumeirah Bakeries", lastPurchase: "2025-10-12", daysSince: 96, historicalSales: 42300, status: "At Risk" },
-    { customer: "Al Barsha Corner Shop", lastPurchase: "2025-11-04", daysSince: 73, historicalSales: 18600, status: "At Risk" },
-    { customer: "Mirdif Family Store", lastPurchase: "2025-11-22", daysSince: 55, historicalSales: 31800, status: "Watch" },
-    { customer: "Rashidiya Superette", lastPurchase: "2025-12-01", daysSince: 46, historicalSales: 9200, status: "Watch" },
-  ],
-};
-
-// Mock data for Customer Price Level
-let mockPriceLevelData = [
-  { customer: "Gulf Supermarket Chain", priceLevel: "Wholesale A", discountPct: 12.0, creditDays: 30, minOrderValue: 5000, specialItems: 8, marginImpact: -3.2 },
-  { customer: "Al Khaleej Traders LLC", priceLevel: "Distributor B", discountPct: 8.5, creditDays: 45, minOrderValue: 3000, specialItems: 5, marginImpact: -2.1 },
-  { customer: "Emirates Food Distributors", priceLevel: "Distributor B", discountPct: 8.5, creditDays: 30, minOrderValue: 3000, specialItems: 3, marginImpact: -2.1 },
-  { customer: "Dubai Fresh Markets", priceLevel: "Retail A", discountPct: 5.0, creditDays: 15, minOrderValue: 1000, specialItems: 2, marginImpact: -1.2 },
-  { customer: "Marina Retail Outlets", priceLevel: "Retail A", discountPct: 5.0, creditDays: 15, minOrderValue: 1000, specialItems: 0, marginImpact: -1.2 },
-  { customer: "Downtown Corner Stores", priceLevel: "Standard", discountPct: 2.0, creditDays: 7, minOrderValue: 500, specialItems: 0, marginImpact: -0.5 },
-];
-
-// Mock data for Item-wise Sales
-let mockItemWiseSalesData = [
-  { item: "Basmati Rice 5kg", category: "Staples", qtySold: 1520, revenue: 45600, cost: 30096, grossProfit: 15504, gp: 34.0, returnQty: 44, netRevenue: 44280 },
-  { item: "Full Cream Milk 4L", category: "Dairy", qtySold: 1244, revenue: 22392, cost: 15674, grossProfit: 6718, gp: 30.0, returnQty: 30, netRevenue: 21852 },
-  { item: "Chicken Breast 1kg", category: "Meat", qtySold: 985, revenue: 39400, cost: 27580, grossProfit: 11820, gp: 30.0, returnQty: 25, netRevenue: 38400 },
-  { item: "Olive Oil 500ml", category: "Cooking", qtySold: 680, revenue: 31280, cost: 21296, grossProfit: 9984, gp: 31.9, returnQty: 16, netRevenue: 30544 },
-  { item: "Greek Yoghurt 500g", category: "Dairy", qtySold: 1089, revenue: 19602, cost: 13721, grossProfit: 5881, gp: 30.0, returnQty: 28, netRevenue: 19098 },
-  { item: "Whole Wheat Bread", category: "Bakery", qtySold: 1640, revenue: 14760, cost: 9348, grossProfit: 5412, gp: 36.7, returnQty: 42, netRevenue: 14382 },
-  { item: "Tomato Paste 400g", category: "Canned", qtySold: 2210, revenue: 19890, cost: 13523, grossProfit: 6367, gp: 32.0, returnQty: 53, netRevenue: 19413 },
-  { item: "Cooking Oil 5L", category: "Cooking", qtySold: 548, revenue: 19728, cost: 13800, grossProfit: 5928, gp: 30.1, returnQty: 14, netRevenue: 19224 },
-];
-
-// Mock data for Category / Brand Sales
-let mockCategoryData = [
-  { category: "Dairy", brand: "Various", qtySold: 4580, salesValue: 82440, contribution: 18.6, returns: 1240, netSales: 81200, avgGP: 30.8 },
-  { category: "Staples", brand: "Various", qtySold: 3820, salesValue: 114600, contribution: 25.9, returns: 1650, netSales: 112950, avgGP: 33.2 },
-  { category: "Meat & Poultry", brand: "Various", qtySold: 1650, salesValue: 66000, contribution: 14.9, returns: 1000, netSales: 65000, avgGP: 30.5 },
-  { category: "Beverages", brand: "Various", qtySold: 3200, salesValue: 38400, contribution: 8.7, returns: 580, netSales: 37820, avgGP: 28.4 },
-  { category: "Cooking Essentials", brand: "Various", qtySold: 2410, salesValue: 72300, contribution: 16.3, returns: 920, netSales: 71380, avgGP: 31.2 },
-  { category: "Bakery", brand: "Various", qtySold: 2840, salesValue: 25560, contribution: 5.8, returns: 380, netSales: 25180, avgGP: 36.5 },
-  { category: "Canned & Preserved", brand: "Various", qtySold: 4120, salesValue: 37080, contribution: 8.4, returns: 620, netSales: 36460, avgGP: 32.1 },
-  { category: "Snacks & Confectionery", brand: "Various", qtySold: 1850, salesValue: 7400, contribution: 1.7, returns: 140, netSales: 7260, avgGP: 38.0 },
-];
-
-// Mock data for Fast / Slow Moving Items
-let mockFastSlowData = {
-  fast: [
-    { rank: 1, item: "Tomato Paste 400g", category: "Canned", salesFrequency: 2210, turnoverDays: 3.8, revenueContrib: 7.8, trend: "up" },
-    { rank: 2, item: "Whole Wheat Bread", category: "Bakery", salesFrequency: 1640, turnoverDays: 4.2, revenueContrib: 5.6, trend: "up" },
-    { rank: 3, item: "Full Cream Milk 4L", category: "Dairy", salesFrequency: 1244, turnoverDays: 5.1, revenueContrib: 8.5, trend: "stable" },
-    { rank: 4, item: "Basmati Rice 5kg", category: "Staples", salesFrequency: 1520, turnoverDays: 5.6, revenueContrib: 17.7, trend: "up" },
-    { rank: 5, item: "Greek Yoghurt 500g", category: "Dairy", salesFrequency: 1089, turnoverDays: 6.2, revenueContrib: 7.4, trend: "stable" },
-  ],
-  slow: [
-    { rank: 1, item: "Specialty Pasta 500g", category: "Staples", salesFrequency: 28, turnoverDays: 124.5, lastSale: "2026-01-09", stockOnHand: 142, trend: "down" },
-    { rank: 2, item: "Truffle Oil 250ml", category: "Cooking", salesFrequency: 14, turnoverDays: 248.3, lastSale: "2026-01-03", stockOnHand: 86, trend: "down" },
-    { rank: 3, item: "Quinoa 500g", category: "Staples", salesFrequency: 36, turnoverDays: 96.8, lastSale: "2026-01-11", stockOnHand: 192, trend: "stable" },
-    { rank: 4, item: "Organic Almond Milk 1L", category: "Dairy", salesFrequency: 22, turnoverDays: 158.7, lastSale: "2026-01-07", stockOnHand: 78, trend: "down" },
-    { rank: 5, item: "Dried Cranberries 200g", category: "Snacks", salesFrequency: 19, turnoverDays: 184.1, lastSale: "2026-01-05", stockOnHand: 115, trend: "down" },
-  ],
-};
-
-// Mock data for Discount Analysis
-let mockDiscountData = [
-  { cashier: "Ahmed Hassan", bills: 145, discountedBills: 62, discountAmount: 3840, discountPct: 8.5, maxBillDiscount: 225, avgDiscount: 61.9, salesWithDiscount: 42500 },
-  { cashier: "Fatima Al Zaabi", bills: 132, discountedBills: 50, discountAmount: 2980, discountPct: 7.1, maxBillDiscount: 180, avgDiscount: 59.6, salesWithDiscount: 38200 },
-  { cashier: "Mohammed Rashid", bills: 98, discountedBills: 55, discountAmount: 3250, discountPct: 10.7, maxBillDiscount: 342, avgDiscount: 59.1, salesWithDiscount: 28600 },
-  { cashier: "Sara Abdullah", bills: 83, discountedBills: 38, discountAmount: 1840, discountPct: 7.4, maxBillDiscount: 148, avgDiscount: 48.4, salesWithDiscount: 22100 },
-];
-
-// Mock data for Promotion Impact
-let mockPromotionData = [
-  { promotionName: "Weekend Dairy Deal", type: "% Discount", period: "Jan 11-12", salesBefore: 18400, salesDuring: 24600, uplift: 33.7, discountCost: 1230, netMargin: 8.4 },
-  { promotionName: "Buy 2 Get 1 Rice", type: "Free Issue", period: "Jan 10-16", salesBefore: 12800, salesDuring: 19200, uplift: 50.0, discountCost: 4200, netMargin: 12.1 },
-  { promotionName: "Meat Monday", type: "Fixed Discount", period: "Jan 13", salesBefore: 8200, salesDuring: 11800, uplift: 43.9, discountCost: 590, netMargin: 27.4 },
-  { promotionName: "Bakery Fresh 15% Off", type: "% Discount", period: "Jan 15-16", salesBefore: 4100, salesDuring: 5800, uplift: 41.5, discountCost: 870, netMargin: 34.2 },
-];
-
-// Mock data for Free Issue Scheme
-let mockFreeIssueData = [
-  { scheme: "Buy 2 Get 1 Rice", item: "Basmati Rice 5kg", triggerQty: 2, freeQty: 1, activatedTimes: 184, freeQtyIssued: 184, freeIssueCost: 5520, totalSales: 19200 },
-  { scheme: "Dozen Egg Free Yoghurt", item: "Greek Yoghurt 500g", triggerQty: 12, freeQty: 1, activatedTimes: 96, freeQtyIssued: 96, freeIssueCost: 1728, totalSales: 14400 },
-  { scheme: "Oil Bundle Promo", item: "Cooking Oil 5L", triggerQty: 4, freeQty: 1, activatedTimes: 42, freeQtyIssued: 42, freeIssueCost: 1512, totalSales: 8400 },
-  { scheme: "Juice Multipack Deal", item: "Fresh Orange Juice 1L", triggerQty: 6, freeQty: 1, activatedTimes: 118, freeQtyIssued: 118, freeIssueCost: 1416, totalSales: 9440 },
-];
-
-// Mock data for Tax Summary
+let mockCustomerSalesData: { customer: string; totalSales: number; returns: number; netSales: number; outstanding: number; creditLimit: number; utilization: number }[] = [];
+let mockCashierPerformanceData: { cashier: string; bills: number; totalSales: number; avgBill: number; discountPct: number; voidCount: number; returnCount: number; variance: number }[] = [];
+let mockPOSTransactionData: { billNo: string; date: string; time: string; cashier: string; customer: string; items: number; grossAmt: number; discount: number; tax: number; netAmt: number; payMode: string; status: string }[] = [];
+let mockPOSItemSalesData: { itemCode: string; itemName: string; category: string; qtyOrdered: number; qtySold: number; returns: number; grossAmt: number; discount: number; netAmt: number; contribution: number }[] = [];
+let mockPOSPaymentData: { mode: string; transactions: number; amount: number; refunds: number; netAmount: number; pct: number }[] = [];
+let mockVoidData: { billNo: string; date: string; time: string; cashier: string; value: number; reason: string; approvedBy: string; status: string }[] = [];
+let mockVANSalesSummaryData: { route: string; salesperson: string; visits: number; actualVisits: number; stockIssued: number; stockSold: number; returns: number; netSales: number; collection: number }[] = [];
+let mockVANRouteData: { route: string; planned: number; actual: number; conversion: number; salesTarget: number; salesActual: number; collection: number; outstanding: number }[] = [];
+let mockVANItemData: { item: string; route: string; qtySold: number; qtyReturned: number; freeIssue: number; netQty: number; value: number }[] = [];
+let mockVANCollectionData: { salesperson: string; route: string; cashCollected: number; cardCollected: number; creditSales: number; totalCollected: number; pending: number; variance: number }[] = [];
+let mockVANStockData: { salesperson: string; route: string; issued: number; sold: number; returned: number; expected: number; actual: number; variance: number }[] = [];
+let mockInvoiceRegisterData: { invoiceNo: string; date: string; customer: string; salesperson: string; amount: number; tax: number; total: number; status: string; outstanding: number; dueDate: string }[] = [];
+let mockOrderStatusData: { orderNo: string; date: string; customer: string; orderedQty: number; deliveredQty: number; pendingQty: number; orderedValue: number; deliveredValue: number; status: string }[] = [];
+let mockDeliveryData: { dnNo: string; date: string; customer: string; driver: string; vehicle: string; items: number; weight: string; status: string; pod: string; deliveredAt: string }[] = [];
+let mockCreditNoteData: { cnNo: string; date: string; customer: string; linkedInvoice: string; reason: string; items: number; returnValue: number; tax: number; total: number; status: string }[] = [];
+let mockAgingData: { customer: string; creditLimit: number; current: number; days30: number; days60: number; days90: number; over90: number; total: number; riskLevel: string }[] = [];
+let mockTopDormantData: { top: { rank: number; customer: string; transactions: number; netSales: number; lastPurchase: string; avgBill: number; growth: number }[]; dormant: { customer: string; lastPurchase: string; daysSince: number; historicalSales: number; status: string }[] } = { top: [], dormant: [] };
+let mockPriceLevelData: { customer: string; priceLevel: string; discountPct: number; creditDays: number; minOrderValue: number; specialItems: number; marginImpact: number }[] = [];
+let mockItemWiseSalesData: { item: string; category: string; qtySold: number; revenue: number; cost: number; grossProfit: number; gp: number; returnQty: number; netRevenue: number }[] = [];
+let mockCategoryData: { category: string; brand: string; qtySold: number; salesValue: number; contribution: number; returns: number; netSales: number; avgGP: number }[] = [];
+let mockFastSlowData: { fast: { rank: number; item: string; category: string; salesFrequency: number; turnoverDays: number; revenueContrib: number; trend: string }[]; slow: { rank: number; item: string; category: string; salesFrequency: number; turnoverDays: number; lastSale: string; stockOnHand: number; trend: string }[] } = { fast: [], slow: [] };
+let mockDiscountData: { cashier: string; bills: number; discountedBills: number; discountAmount: number; discountPct: number; maxBillDiscount: number; avgDiscount: number; salesWithDiscount: number }[] = [];
+let mockPromotionData: { promotionName: string; type: string; period: string; salesBefore: number; salesDuring: number; uplift: number; discountCost: number; netMargin: number }[] = [];
+let mockFreeIssueData: { scheme: string; item: string; triggerQty: number; freeQty: number; activatedTimes: number; freeQtyIssued: number; freeIssueCost: number; totalSales: number }[] = [];
 let mockTaxData = [
-  { taxRate: "5% VAT Standard", taxableSales: 312400, taxAmount: 15620, exemptSales: 0, zeroRated: 0, netTaxPayable: 15620 },
-  { taxRate: "0% Zero-Rated (Export)", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 28600, netTaxPayable: 0 },
-  { taxRate: "Exempt (Basic Foods)", taxableSales: 0, taxAmount: 0, exemptSales: 56700, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "5% VAT Standard", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "0% Zero-Rated", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "Exempt", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
 ];
-
-let mockVATOutputData = [
-  { invoiceNo: "INV-2026-1842", date: "2026-01-16", customer: "Gulf Supermarket Chain", taxableAmt: 24800, vatRate: "5%", vatAmt: 1240, totalAmt: 26040, trn: "100234567890001" },
-  { invoiceNo: "INV-2026-1841", date: "2026-01-16", customer: "Marina Retail Outlets", taxableAmt: 12400, vatRate: "5%", vatAmt: 620, totalAmt: 13020, trn: "100234567890008" },
-  { invoiceNo: "INV-2026-1840", date: "2026-01-15", customer: "Al Khaleej Traders LLC", taxableAmt: 38600, vatRate: "5%", vatAmt: 1930, totalAmt: 40530, trn: "100234567890003" },
-  { invoiceNo: "INV-2026-1839", date: "2026-01-15", customer: "Emirates Food Distributors", taxableAmt: 18200, vatRate: "5%", vatAmt: 910, totalAmt: 19110, trn: "100234567890005" },
-  { invoiceNo: "INV-2026-1838", date: "2026-01-14", customer: "Downtown Corner Stores", taxableAmt: 9800, vatRate: "5%", vatAmt: 490, totalAmt: 10290, trn: "100234567890012" },
-  { invoiceNo: "INV-2026-1837", date: "2026-01-14", customer: "Dubai Fresh Markets", taxableAmt: 31500, vatRate: "5%", vatAmt: 1575, totalAmt: 33075, trn: "100234567890007" },
-];
-
-// Mock data for Price Override Report
-let mockPriceOverrideData = [
-  { date: "2026-01-16", time: "10:22", item: "Basmati Rice 5kg", originalPrice: 30.00, newPrice: 25.00, change: -16.7, cashier: "Mohammed Rashid", approvedBy: "Manager Waleed", reason: "Customer negotiation", billNo: "POS-2026-4528" },
-  { date: "2026-01-15", time: "14:18", item: "Olive Oil 500ml", originalPrice: 46.00, newPrice: 40.00, change: -13.0, cashier: "Ahmed Hassan", approvedBy: "Supervisor Ali", reason: "Loyalty customer", billNo: "POS-2026-4380" },
-  { date: "2026-01-15", time: "09:44", item: "Chicken Breast 1kg", originalPrice: 40.00, newPrice: 36.00, change: -10.0, cashier: "Fatima Al Zaabi", approvedBy: "Manager Waleed", reason: "Bulk purchase", billNo: "POS-2026-4310" },
-  { date: "2026-01-14", time: "16:30", item: "Full Cream Milk 4L", originalPrice: 18.00, newPrice: 16.50, change: -8.3, cashier: "Mohammed Rashid", approvedBy: "Supervisor Ali", reason: "Near expiry", billNo: "POS-2026-4245" },
-  { date: "2026-01-13", time: "11:05", item: "Cooking Oil 5L", originalPrice: 36.00, newPrice: 32.00, change: -11.1, cashier: "Sara Abdullah", approvedBy: "Manager Waleed", reason: "VIP customer", billNo: "POS-2026-4180" },
-];
-
-// Mock data for Manual / Back-Dated Entries
-let mockManualEntryData = [
-  { entryNo: "ME-2026-0048", entryDate: "2026-01-16", postDate: "2026-01-14", user: "Waleed Ibrahim", type: "Sales Invoice", impact: 12400, reason: "Delayed system upload – offline sale", approvedBy: "CFO Hassan" },
-  { entryNo: "ME-2026-0047", entryDate: "2026-01-15", postDate: "2026-01-12", user: "Noura Khalid", type: "Credit Note", impact: -3200, reason: "Return processed after month-end batch", approvedBy: "CFO Hassan" },
-  { entryNo: "ME-2026-0046", entryDate: "2026-01-14", postDate: "2026-01-11", user: "Ahmed Faris", type: "Sales Invoice", impact: 8900, reason: "Van route offline trip", approvedBy: "Manager Waleed" },
-  { entryNo: "ME-2026-0045", entryDate: "2026-01-13", postDate: "2026-01-10", user: "Waleed Ibrahim", type: "Journal Adjustment", impact: -1250, reason: "Writeoff correction", approvedBy: "CFO Hassan" },
-];
-
-// Mock data for Sales Edit Log
-let mockEditLogData = [
-  { editNo: "EDIT-2026-0128", date: "2026-01-16", time: "15:44", invoiceNo: "INV-2026-1838", user: "Waleed Ibrahim", field: "Payment Terms", before: "Net 30", after: "Net 45", reason: "Customer credit upgrade", approvedBy: "Manager Hassan" },
-  { editNo: "EDIT-2026-0127", date: "2026-01-16", time: "11:22", invoiceNo: "INV-2026-1835", user: "Noura Khalid", field: "Unit Price – Rice 5kg", before: "AED 30.00", after: "AED 28.50", reason: "Agreed price adjustment", approvedBy: "Manager Hassan" },
-  { editNo: "EDIT-2026-0126", date: "2026-01-15", time: "16:05", invoiceNo: "INV-2026-1824", user: "Ahmed Faris", field: "Delivery Date", before: "2026-01-18", after: "2026-01-20", reason: "Customer request", approvedBy: "Self" },
-  { editNo: "EDIT-2026-0125", date: "2026-01-14", time: "10:48", invoiceNo: "INV-2026-1816", user: "Waleed Ibrahim", field: "Customer Name", before: "Jumeirah Store A", after: "Jumeirah Store B", reason: "Billing address correction", approvedBy: "Manager Hassan" },
-  { editNo: "EDIT-2026-0124", date: "2026-01-13", time: "09:12", invoiceNo: "INV-2026-1808", user: "Noura Khalid", field: "Discount %", before: "5%", after: "8%", reason: "Retroactive promo applied", approvedBy: "Manager Hassan" },
-];
+let mockVATOutputData: { invoiceNo: string; date: string; customer: string; taxableAmt: number; vatRate: string; vatAmt: number; totalAmt: number; trn: string }[] = [];
+let mockPriceOverrideData: { date: string; time: string; item: string; originalPrice: number; newPrice: number; change: number; cashier: string; approvedBy: string; reason: string; billNo: string }[] = [];
+let mockManualEntryData: { entryNo: string; entryDate: string; postDate: string; user: string; type: string; impact: number; reason: string; approvedBy: string }[] = [];
+let mockEditLogData: { editNo: string; date: string; time: string; invoiceNo: string; user: string; field: string; before: string; after: string; reason: string; approvedBy: string }[] = [];
 
 // ── Valuation Method ────────────────────────────────────────────────────────
 
@@ -1134,6 +778,7 @@ function invoiceStatus(value: any): string {
   if (raw === "OVERDUE") return "Overdue";
   if (raw === "UNPAID") return "Unpaid";
   if (raw === "CANCELLED") return "Cancelled";
+  if (raw === "DRAFT") return "Draft";
   return titleCaseStatus(value, "Unpaid");
 }
 
@@ -1185,18 +830,21 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
     case "sales_summary": {
       // Extract authoritative totals from backend cards (Gross Sales, Net Sales, Gross Profit, VAT Collected)
       const cardMap: Record<string, number> = {};
-      if (Array.isArray(data.cards)) {
+      if (Array.isArray(data.cards) && data.cards.length > 0) {
         for (const c of data.cards as any[]) {
           if (c?.label) cardMap[String(c.label).toLowerCase().replace(/\s+/g, "_")] = n(c.value);
         }
+        mockSalesSummaryTotals = {
+          grossSales: cardMap["gross_sales"] ?? 0,
+          netSales: cardMap["net_sales"] ?? 0,
+          grossProfit: cardMap["gross_profit"] ?? 0,
+          tax: cardMap["vat_collected"] ?? 0,
+          returns: 0, // derived below from row data
+        };
+      } else {
+        // clearFirst path — no card data yet; set null so row-derived totals are used
+        mockSalesSummaryTotals = null;
       }
-      mockSalesSummaryTotals = {
-        grossSales: cardMap["gross_sales"] ?? 0,
-        netSales: cardMap["net_sales"] ?? 0,
-        grossProfit: cardMap["gross_profit"] ?? 0,
-        tax: cardMap["vat_collected"] ?? 0,
-        returns: 0, // derived below from row data
-      };
 
       const source = chartRows(data, "Daily").length ? chartRows(data, "Daily") : rows;
       mockSalesSummaryData = source.map((row) => {
@@ -1216,10 +864,18 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         };
       });
       // Populate returns from row data since cards don't expose it separately
-      mockSalesSummaryTotals.returns = mockSalesSummaryData.reduce((s, d) => s + d.returns, 0);
+      if (mockSalesSummaryTotals) {
+        mockSalesSummaryTotals.returns = mockSalesSummaryData.reduce((s, d) => s + d.returns, 0);
+      }
       break;
     }
     case "daily_sales": {
+      const posSales = sumRows(rows.filter((r) => asText(r.channel).toUpperCase().includes("POS")), "grossSales");
+      const vanSales = sumRows(rows.filter((r) => asText(r.channel).toUpperCase().includes("VAN")), "grossSales");
+      const backOfficeSales = sumRows(rows.filter((r) => {
+        const ch = asText(r.channel).toUpperCase();
+        return !ch.includes("POS") && !ch.includes("VAN");
+      }), "grossSales");
       const gross = sumRows(rows, "grossSales");
       const returns = sumRows(rows, "returns");
       const discounts = sumRows(rows, "discount");
@@ -1246,9 +902,9 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         approvedBy: "",
         shift: "Selected period",
         openingBalances: [],
-        posSales: 0,
-        vanSales: 0,
-        backOfficeSales: gross,
+        posSales,
+        vanSales,
+        backOfficeSales,
         totalGrossSales: gross,
         salesReturns: returns,
         discounts,
@@ -1288,8 +944,8 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         transactions: n(row.transactions),
         salesValue: n(row.salesValue),
         avgBill: n(row.avgBill),
-        discountPct: pct(n(row.discount), n(row.salesValue)),
-        returnPct: 0,
+        discountPct: n(row.discountPct) || pct(n(row.discount), n(row.salesValue)),
+        returnPct: n(row.returnPct) || pct(n(row.returns), n(row.salesValue)),
       }));
       break;
     case "customer_sales_summary":
@@ -1317,9 +973,10 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
       break;
     case "pos_transaction":
       mockPOSTransactionData = rows.map((row) => {
-        const amount = n(row.amount);
+        const netAmt = n(row.amount ?? row.netAmount);
         const tax = n(row.tax);
         const discount = n(row.discount);
+        const grossAmt = n(row.grossAmount ?? row.grossAmt) || Math.max(0, netAmt + tax);
         return {
           billNo: asText(row.billNo, "N/A"),
           date: dateOnly(row.date),
@@ -1327,19 +984,21 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
           cashier: asText(row.cashier, "Unassigned"),
           customer: asText(row.customer, "Walk-in"),
           items: n(row.items),
-          grossAmt: Math.max(0, amount + discount - tax),
+          grossAmt,
           discount,
           tax,
-          netAmt: amount,
-          payMode: asText(row.paymentMode, "Unspecified"),
+          netAmt,
+          payMode: asText(row.paymentMode ?? row.mode, "Unspecified"),
           status: posStatus(row.status),
         };
       });
       break;
     case "pos_item_sales":
       mockPOSItemSalesData = rows.map((row) => {
-        const net = n(row.netRevenue);
+        const netAmt = n(row.netRevenue ?? row.netAmount);
+        const discount = n(row.discount);
         const returns = n(row.returns);
+        const grossAmt = n(row.grossAmount ?? row.grossRevenue) || Math.max(0, netAmt + discount);
         return {
           itemCode: asText(row.itemCode ?? row.sku ?? row.item, "N/A"),
           itemName: asText(row.item, "N/A"),
@@ -1347,10 +1006,10 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
           qtyOrdered: n(row.qtySold) + returns,
           qtySold: n(row.qtySold),
           returns,
-          grossAmt: net,
-          discount: n(row.discount),
-          netAmt: net,
-          contribution: n(row.gpPercent) || pct(n(row.grossProfit), net),
+          grossAmt,
+          discount,
+          netAmt,
+          contribution: n(row.gpPercent) || pct(n(row.grossProfit), netAmt),
         };
       });
       break;
@@ -1398,7 +1057,7 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         qtySold: n(row.qtySold),
         qtyReturned: n(row.returns),
         freeIssue: n(row.freeIssue),
-        netQty: n(row.netQty) || n(row.qtySold) - n(row.returns) + n(row.freeIssue),
+        netQty: n(row.netQty) || Math.max(0, n(row.qtySold) - n(row.returns)),
         value: n(row.netRevenue),
       }));
       break;
@@ -1509,24 +1168,25 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
     case "top_dormant_customers": {
       const top = rows
         .filter((row) => asText(row.status).toLowerCase() !== "dormant")
-        .slice(0, 5)
+        .sort((a, b) => n(b.netSales) - n(a.netSales))
+        .slice(0, 10)
         .map((row, index) => ({
           rank: index + 1,
           customer: asText(row.customer, "Walk-in"),
           transactions: n(row.transactions) || 0,
           netSales: n(row.netSales),
           lastPurchase: dateOnly(row.lastPurchase),
-          avgBill: n(row.avgBill) || n(row.netSales),
+          avgBill: n(row.avgBill) || (n(row.transactions) > 0 ? n(row.netSales) / n(row.transactions) : 0),
           growth: n(row.growth),
         }));
       const dormant = rows
-        .filter((row) => asText(row.status).toLowerCase() !== "active")
+        .filter((row) => asText(row.status).toLowerCase() === "dormant")
         .map((row) => ({
           customer: asText(row.customer, "Walk-in"),
           lastPurchase: dateOnly(row.lastPurchase),
           daysSince: n(row.daysSince),
           historicalSales: n(row.netSales),
-          status: asText(row.status, "Watch") === "Dormant" ? "At Risk" : asText(row.status, "Watch"),
+          status: asText(row.status, "Watch"),
         }));
       mockTopDormantData = { top, dormant };
       break;
@@ -1616,14 +1276,14 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
     }
     case "promotion_impact":
       mockPromotionData = rows.map((row) => ({
-        promotionName: asText(row.item ?? row.promotionName, "Promotion"),
-        type: "Discount",
-        period: asText(row.invoiceNo ?? row.period, dateOnly(row.date)),
-        salesBefore: 0,
-        salesDuring: n(row.netSales),
-        uplift: 0,
-        discountCost: n(row.discount),
-        netMargin: n(row.gpPercent),
+        promotionName: asText(row.promotionName ?? row.item, "Promotion"),
+        type: asText(row.type ?? row.promotionType, "Discount"),
+        period: asText(row.period, dateOnly(row.date)),
+        salesBefore: n(row.salesBefore),
+        salesDuring: n(row.salesDuring ?? row.netSales),
+        uplift: n(row.uplift) || (n(row.salesBefore) > 0 ? pct(n(row.salesDuring ?? row.netSales) - n(row.salesBefore), n(row.salesBefore)) : 0),
+        discountCost: n(row.discountCost ?? row.discount),
+        netMargin: n(row.netMargin ?? row.gpPercent),
       }));
       break;
     case "free_issue_scheme":
@@ -1876,7 +1536,9 @@ function downloadCsv(title: string, rows: ReportPayloadRow[]) {
 
 function toBackendSalesChannel(channel: string): string {
   if (channel === "POS") return "POS Sale";
+  if (channel === "VAN") return "VAN";
   if (channel === "Back-Office") return "Back-Office";
+  if (channel === "Online") return "Online";
   return "All";
 }
 
@@ -1891,6 +1553,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [searchText, setSearchText] = useState("");
   const [dataRevision, setDataRevision] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
     summary: true,
     pos: true,
@@ -1921,14 +1584,22 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [cashierOpen, setCashierOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Tracks the filter values that were actually sent to the backend on the last Generate.
+  // Applied Filters chips read from here so they always match what's in the rendered data.
+  const [committedFilters, setCommittedFilters] = useState<{
+    dateFrom: string; dateTo: string; branchLabel: string; channel: string; cashier: string; searchText: string;
+  } | null>(null);
+
   useEffect(() => {
-    getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+    getCompanyProfile()
+      .then((res) => setCompanyProfile(res.data))
+      .catch((err) => console.warn("Could not load company profile", err));
     getBranches()
       .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
-      .catch(() => {});
+      .catch((err) => console.warn("Could not load branches", err));
     getSalesReportSalespersons()
       .then((data: string[]) => setSalespersons(data))
-      .catch(() => {});
+      .catch((err) => console.warn("Could not load salespersons", err));
   }, []);
 
   // Sync branch filter when the sidebar branch selector changes
@@ -1985,27 +1656,44 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     return byGroup;
   }, [filteredReports]);
 
-  async function loadReport(signal?: AbortSignal, clearFirst = false) {
+  async function loadReport(signal?: AbortSignal, clearFirst = false, overrides: { cashier?: string; channel?: string; searchText?: string } = {}) {
+    const effectiveCashier = overrides.cashier !== undefined ? overrides.cashier : cashier;
+    const effectiveChannel = overrides.channel !== undefined ? overrides.channel : channel;
+    const effectiveSearch = overrides.searchText !== undefined ? overrides.searchText : searchText;
+    const effectiveBranchLabel = branchLabel;
+
+    const filterSnapshot = {
+      dateFrom,
+      dateTo,
+      branchId: branch,
+      salesChannel: toBackendSalesChannel(effectiveChannel),
+      salesperson: effectiveCashier,
+      valuationMethod: "average_cost",
+      searchQuery: effectiveSearch,
+    };
     if (clearFirst) {
       applyLiveReportData(activeReport, { rows: [], charts: [] });
       setDataRevision((value) => value + 1);
     }
     setIsLoading(true);
+    setLoadError(null);
+    setCommittedFilters({
+      dateFrom,
+      dateTo,
+      branchLabel: effectiveBranchLabel,
+      channel: effectiveChannel,
+      cashier: effectiveCashier,
+      searchText: effectiveSearch,
+    });
     try {
-      const data = await getSalesReportData(activeReport, {
-        dateFrom,
-        dateTo,
-        branchId: branch,
-        salesChannel: toBackendSalesChannel(channel),
-        salesperson: cashier,
-        valuationMethod: "average_cost",
-        searchQuery: searchText,
-      }, signal);
+      const data = await getSalesReportData(activeReport, filterSnapshot, signal);
       if (!data) return;
       applyLiveReportData(activeReport, data);
       setDataRevision((value) => value + 1);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === "CanceledError" || error?.name === "AbortError") return;
       console.error("Unable to load sales report data", error);
+      setLoadError("Failed to load report data. Please check your connection and try again.");
     } finally {
       setIsLoading(false);
     }
@@ -2025,17 +1713,28 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     return match ? match.name : "All";
   }, [branch, branches]);
 
-  // Filters actually applied — shown in report header + passed to every export.
+  // Filters actually applied to the current data — reads committed state so chips match what was sent
   function appliedFilters() {
+    if (!committedFilters) return [];
     return [
-      { label: "Date From", value: dateFrom },
-      { label: "Date To", value: dateTo },
-      { label: "Branch", value: branchLabel },
-      { label: "Sales Channel", value: channel },
-      { label: "Cashier / Salesperson", value: cashier },
-      { label: "Search", value: searchText },
+      { label: "Date From", value: committedFilters.dateFrom },
+      { label: "Date To", value: committedFilters.dateTo },
+      { label: "Branch", value: committedFilters.branchLabel },
+      { label: "Sales Channel", value: committedFilters.channel },
+      { label: "Cashier / Salesperson", value: committedFilters.cashier },
+      { label: "Search", value: committedFilters.searchText },
     ].filter((f) => f.value && f.value !== "All");
   }
+
+  // True when the user has changed filters since the last Generate
+  const hasUncommittedFilters = committedFilters !== null && (
+    committedFilters.dateFrom !== dateFrom ||
+    committedFilters.dateTo !== dateTo ||
+    committedFilters.branchLabel !== branchLabel ||
+    committedFilters.channel !== channel ||
+    committedFilters.cashier !== cashier ||
+    committedFilters.searchText !== searchText
+  );
 
   // Single source of truth for exports: the exact view-model the screen rendered.
   // Falls back to the raw row dump only if a report has not registered a VM.
@@ -2057,9 +1756,9 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   function exportMeta() {
     return {
       reportTitle: activeDef.label,
-      dateFrom,
-      dateTo,
-      branch: branchLabel,
+      dateFrom: committedFilters?.dateFrom ?? dateFrom,
+      dateTo: committedFilters?.dateTo ?? dateTo,
+      branch: committedFilters?.branchLabel ?? branchLabel,
       filters: appliedFilters(),
       companyProfile,
     };
@@ -2450,9 +2149,9 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                 <div className={`flex items-end gap-2 ${!showAdvanced ? "xl:col-start-4" : ""}`}>
                   <Button
                     onClick={() => loadReport()}
-                    className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900"
+                    className={`flex-1 h-8 text-[11px] text-slate-900 transition-colors ${hasUncommittedFilters ? "bg-[#e4b82e] ring-2 ring-[#F5C742] ring-offset-1 animate-pulse" : "bg-[#F5C742] hover:bg-[#e4b82e]"}`}
                   >
-                    Generate
+                    {hasUncommittedFilters ? "Apply Filters" : "Generate"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -2467,24 +2166,72 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
             </CardContent>
           </Card>
 
-          {/* Applied filters — shown on screen for auditability; mirrored into print/PDF/Excel headers */}
+          {/* Applied filters — reflects what was actually sent to the backend on last Generate */}
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mr-1">Applied Filters</span>
             {appliedFilters().map((f) => (
               <span
                 key={f.label}
-                className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[#7c5e00]"
+                className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[#7c5e00] flex items-center gap-1"
               >
                 <b className="text-[#5b4500]">{f.label}:</b> {f.value}
+                {(f.label === "Cashier / Salesperson" || f.label === "Sales Channel" || f.label === "Search") && (
+                  <button
+                    onClick={() => {
+                      const ov: { cashier?: string; channel?: string; searchText?: string } = {};
+                      if (f.label === "Cashier / Salesperson") { setCashier("All"); setCashierSearch(""); ov.cashier = "All"; }
+                      if (f.label === "Sales Channel") { setChannel("All"); ov.channel = "All"; }
+                      if (f.label === "Search") { setSearchText(""); ov.searchText = ""; }
+                      loadReport(undefined, false, ov);
+                    }}
+                    className="ml-0.5 text-[#7c5e00] hover:text-red-600 font-bold leading-none"
+                    title={`Clear ${f.label}`}
+                  >×</button>
+                )}
               </span>
             ))}
-            {appliedFilters().length === 0 && (
-              <span className="text-[10px] text-slate-400">None — showing all records</span>
+            {appliedFilters().length === 0 && !committedFilters && (
+              <span className="text-[10px] text-slate-400">Click Generate to load report data</span>
+            )}
+            {appliedFilters().length === 0 && committedFilters && (
+              <span className="text-[10px] text-slate-400">No active filters — showing all records</span>
+            )}
+            {appliedFilters().length > 0 && (
+              <button
+                onClick={() => {
+                  setCashier("All");
+                  setCashierSearch("");
+                  setChannel("All");
+                  setSearchText("");
+                  loadReport(undefined, false, { cashier: "All", channel: "All", searchText: "" });
+                }}
+                className="text-[10px] text-slate-400 hover:text-red-500 underline ml-1"
+              >
+                Clear all
+              </button>
+            )}
+            {hasUncommittedFilters && (
+              <span className="text-[10px] text-amber-600 font-medium ml-1">
+                ⚠ Filter changed — click Apply Filters to refresh
+              </span>
             )}
           </div>
 
           {/* Results — wrapped in DataRevisionContext so child report components
               re-render whenever the parent fetches fresh data */}
+          {loadError && (
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-[11px] text-red-700">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+              <span>{loadError}</span>
+              <button
+                className="ml-auto text-[10px] underline hover:no-underline"
+                onClick={() => { setLoadError(null); loadReport(); }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
           <DataRevisionContext.Provider value={dataRevision}>
             <div className="relative">
               {isLoading && (
@@ -2509,7 +2256,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
 
 // Sales Summary Report Component
 function SalesSummaryReport() {
-  useDataRevision(); // subscribe to data fetches so this component re-renders when mock data changes
+  const revision = useDataRevision(); // subscribe to data fetches so this component re-renders when mock data changes
   const [valuation, setValuation] = React.useState<ValuationMethod>("average_cost");
 
   const rows = mockSalesSummaryData.map((d) => {
@@ -2517,20 +2264,13 @@ function SalesSummaryReport() {
     return { ...d, cogs: cost, grossProfit: gp, gp: d.netSales > 0 ? parseFloat(((gp / d.netSales) * 100).toFixed(1)) : 0 };
   });
 
-  const rowGrossSales = rows.reduce((sum, d) => sum + d.grossSales, 0);
-  const rowReturns = rows.reduce((sum, d) => sum + d.returns, 0);
+  const totalGrossSales = rows.reduce((sum, d) => sum + d.grossSales, 0);
+  const totalReturns = rows.reduce((sum, d) => sum + d.returns, 0);
   const totalDiscounts = rows.reduce((sum, d) => sum + d.discounts, 0);
-  const rowNetSales = rows.reduce((sum, d) => sum + d.netSales, 0);
-  const rowTax = rows.reduce((sum, d) => sum + d.tax, 0);
+  const totalNetSales = rows.reduce((sum, d) => sum + d.netSales, 0);
+  const totalTax = rows.reduce((sum, d) => sum + d.tax, 0);
   const totalCOGS = rows.reduce((sum, d) => sum + d.cogs, 0);
-  const rowGrossProfit = rows.reduce((sum, d) => sum + d.grossProfit, 0);
-
-  // Use backend-provided card totals when available (authoritative); fall back to row sums
-  const totalGrossSales = mockSalesSummaryTotals?.grossSales ?? rowGrossSales;
-  const totalReturns = mockSalesSummaryTotals?.returns ?? rowReturns;
-  const totalNetSales = mockSalesSummaryTotals?.netSales ?? rowNetSales;
-  const totalTax = mockSalesSummaryTotals?.tax ?? rowTax;
-  const totalGrossProfit = mockSalesSummaryTotals?.grossProfit ?? rowGrossProfit;
+  const totalGrossProfit = rows.reduce((sum, d) => sum + d.grossProfit, 0);
 
   const avgGP = totalNetSales > 0 ? (totalGrossProfit / totalNetSales * 100) : 0;
   const returnsPct = totalGrossSales > 0 ? ((totalReturns / totalGrossSales) * 100).toFixed(1) : "0.0";
@@ -6475,309 +6215,8 @@ interface ProfitCustomer {
   bills: ProfitBill[];
 }
 
-let mockProfitDrilldownData: ProfitCustomer[] = [
-  {
-    customerId: "CUS-001",
-    customerName: "Gulf Supermarket Chain",
-    priceLevel: "Wholesale A",
-    totalBills: 3,
-    grossSales: 42800,
-    totalDiscount: 5136,
-    netSales: 37664,
-    totalCost: 24982,
-    grossProfit: 12682,
-    gpPct: 33.7,
-    bills: [
-      {
-        billNo: "INV-2026-1842",
-        date: "2026-01-16",
-        channel: "Back-Office",
-        salesperson: "Waleed Ibrahim",
-        grossTotal: 24800,
-        discount: 2976,
-        netTotal: 21824,
-        totalCost: 14440,
-        grossProfit: 7384,
-        gpPct: 33.8,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 120, unitPrice: 30.00, unitCost: 19.50, discount: 360, lineTotal: 3240, lineCost: 2340, lineGP: 900, gpPct: 27.8 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 200, unitPrice: 18.00, unitCost: 12.20, discount: 432, lineTotal: 3168, lineCost: 2440, lineGP: 728, gpPct: 23.0 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 150, unitPrice: 40.00, unitCost: 28.00, discount: 720, lineTotal: 5280, lineCost: 4200, lineGP: 1080, gpPct: 20.5 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 80, unitPrice: 46.00, unitCost: 30.00, discount: 442, lineTotal: 3238, lineCost: 2400, lineGP: 838, gpPct: 25.9 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 300, unitPrice: 9.00, unitCost: 5.80, discount: 324, lineTotal: 2376, lineCost: 1740, lineGP: 636, gpPct: 26.8 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 100, unitPrice: 18.00, unitCost: 12.00, discount: 216, lineTotal: 1584, lineCost: 1200, lineGP: 384, gpPct: 24.2 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 120, unitPrice: 9.00, unitCost: 5.20, discount: 130, lineTotal: 950, lineCost: 624, lineGP: 326, gpPct: 34.3 },
-          { itemCode: "ITM-002", itemName: "Fresh OJ 1L", category: "Beverages", qty: 80, unitPrice: 12.00, unitCost: 7.80, discount: 115, lineTotal: 845, lineCost: 624, lineGP: 221, gpPct: 26.2 },
-        ],
-      },
-      {
-        billNo: "INV-2026-1820",
-        date: "2026-01-10",
-        channel: "Back-Office",
-        salesperson: "Ahmed Faris",
-        grossTotal: 12000,
-        discount: 1440,
-        netTotal: 10560,
-        totalCost: 6890,
-        grossProfit: 3670,
-        gpPct: 34.7,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 60, unitPrice: 30.00, unitCost: 19.50, discount: 216, lineTotal: 1584, lineCost: 1170, lineGP: 414, gpPct: 26.1 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 100, unitPrice: 40.00, unitCost: 28.00, discount: 480, lineTotal: 3520, lineCost: 2800, lineGP: 720, gpPct: 20.5 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 60, unitPrice: 46.00, unitCost: 30.00, discount: 331, lineTotal: 2429, lineCost: 1800, lineGP: 629, gpPct: 25.9 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 200, unitPrice: 9.00, unitCost: 5.80, discount: 216, lineTotal: 1584, lineCost: 1160, lineGP: 424, gpPct: 26.8 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 80, unitPrice: 18.00, unitCost: 12.20, discount: 173, lineTotal: 1267, lineCost: 976, lineGP: 291, gpPct: 23.0 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 60, unitPrice: 9.00, unitCost: 5.20, discount: 65, lineTotal: 475, lineCost: 312, lineGP: 163, gpPct: 34.3 },
-        ],
-      },
-      {
-        billNo: "INV-2026-1798",
-        date: "2026-01-05",
-        channel: "Back-Office",
-        salesperson: "Waleed Ibrahim",
-        grossTotal: 6000,
-        discount: 720,
-        netTotal: 5280,
-        totalCost: 3652,
-        grossProfit: 1628,
-        gpPct: 30.8,
-        items: [
-          { itemCode: "ITM-002", itemName: "Fresh OJ 1L", category: "Beverages", qty: 100, unitPrice: 12.00, unitCost: 7.80, discount: 144, lineTotal: 1056, lineCost: 780, lineGP: 276, gpPct: 26.1 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 80, unitPrice: 18.00, unitCost: 12.00, discount: 173, lineTotal: 1267, lineCost: 960, lineGP: 307, gpPct: 24.2 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 180, unitPrice: 9.00, unitCost: 5.80, discount: 194, lineTotal: 1426, lineCost: 1044, lineGP: 382, gpPct: 26.8 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 80, unitPrice: 9.00, unitCost: 5.20, discount: 86, lineTotal: 634, lineCost: 416, lineGP: 218, gpPct: 34.4 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 50, unitPrice: 18.00, unitCost: 12.20, discount: 108, lineTotal: 792, lineCost: 610, lineGP: 182, gpPct: 23.0 },
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 10, unitPrice: 30.00, unitCost: 19.50, discount: 36, lineTotal: 264, lineCost: 195, lineGP: 69, gpPct: 26.1 },
-        ],
-      },
-    ],
-  },
-  {
-    customerId: "CUS-002",
-    customerName: "Al Khaleej Traders LLC",
-    priceLevel: "Distributor B",
-    totalBills: 2,
-    grossSales: 31800,
-    totalDiscount: 2703,
-    netSales: 29097,
-    totalCost: 19400,
-    grossProfit: 9697,
-    gpPct: 33.3,
-    bills: [
-      {
-        billNo: "INV-2026-1840",
-        date: "2026-01-15",
-        channel: "Back-Office",
-        salesperson: "Waleed Ibrahim",
-        grossTotal: 20000,
-        discount: 1700,
-        netTotal: 18300,
-        totalCost: 12100,
-        grossProfit: 6200,
-        gpPct: 33.9,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 200, unitPrice: 30.00, unitCost: 19.50, discount: 510, lineTotal: 5490, lineCost: 3900, lineGP: 1590, gpPct: 29.0 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 120, unitPrice: 40.00, unitCost: 28.00, discount: 408, lineTotal: 4392, lineCost: 3360, lineGP: 1032, gpPct: 23.5 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 100, unitPrice: 46.00, unitCost: 30.00, discount: 391, lineTotal: 4209, lineCost: 3000, lineGP: 1209, gpPct: 28.7 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 120, unitPrice: 18.00, unitCost: 12.20, discount: 184, lineTotal: 1976, lineCost: 1464, lineGP: 512, gpPct: 25.9 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 240, unitPrice: 9.00, unitCost: 5.80, discount: 184, lineTotal: 1976, lineCost: 1392, lineGP: 584, gpPct: 29.6 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 100, unitPrice: 9.00, unitCost: 5.20, discount: 108, lineTotal: 792, lineCost: 520, lineGP: 272, gpPct: 34.3 },
-        ],
-      },
-      {
-        billNo: "INV-2026-1836",
-        date: "2026-01-13",
-        channel: "Back-Office",
-        salesperson: "Ahmed Faris",
-        grossTotal: 11800,
-        discount: 1003,
-        netTotal: 10797,
-        totalCost: 7300,
-        grossProfit: 3497,
-        gpPct: 32.4,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 100, unitPrice: 30.00, unitCost: 19.50, discount: 255, lineTotal: 2745, lineCost: 1950, lineGP: 795, gpPct: 29.0 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 80, unitPrice: 40.00, unitCost: 28.00, discount: 272, lineTotal: 2928, lineCost: 2240, lineGP: 688, gpPct: 23.5 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 120, unitPrice: 18.00, unitCost: 12.00, discount: 259, lineTotal: 2101, lineCost: 1440, lineGP: 661, gpPct: 31.5 },
-          { itemCode: "ITM-002", itemName: "Fresh OJ 1L", category: "Beverages", qty: 120, unitPrice: 12.00, unitCost: 7.80, discount: 173, lineTotal: 1267, lineCost: 936, lineGP: 331, gpPct: 26.1 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 100, unitPrice: 9.00, unitCost: 5.80, discount: 77, lineTotal: 823, lineCost: 580, lineGP: 243, gpPct: 29.5 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 60, unitPrice: 9.00, unitCost: 5.20, discount: 65, lineTotal: 475, lineCost: 312, lineGP: 163, gpPct: 34.3 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 8, unitPrice: 46.00, unitCost: 30.00, discount: 31, lineTotal: 337, lineCost: 240, lineGP: 97, gpPct: 28.8 },
-        ],
-      },
-    ],
-  },
-  {
-    customerId: "CUS-003",
-    customerName: "Emirates Food Distributors",
-    priceLevel: "Distributor B",
-    totalBills: 2,
-    grossSales: 24800,
-    totalDiscount: 2108,
-    netSales: 22692,
-    totalCost: 15140,
-    grossProfit: 7552,
-    gpPct: 33.3,
-    bills: [
-      {
-        billNo: "INV-2026-1839",
-        date: "2026-01-15",
-        channel: "VAN",
-        salesperson: "Tariq Mansoor",
-        grossTotal: 15200,
-        discount: 1292,
-        netTotal: 13908,
-        totalCost: 9200,
-        grossProfit: 4708,
-        gpPct: 33.9,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 80, unitPrice: 30.00, unitCost: 19.50, discount: 204, lineTotal: 2196, lineCost: 1560, lineGP: 636, gpPct: 29.0 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 150, unitPrice: 18.00, unitCost: 12.20, discount: 230, lineTotal: 2470, lineCost: 1830, lineGP: 640, gpPct: 25.9 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 90, unitPrice: 40.00, unitCost: 28.00, discount: 306, lineTotal: 3294, lineCost: 2520, lineGP: 774, gpPct: 23.5 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 300, unitPrice: 9.00, unitCost: 5.80, discount: 230, lineTotal: 2470, lineCost: 1740, lineGP: 730, gpPct: 29.6 },
-          { itemCode: "ITM-002", itemName: "Fresh OJ 1L", category: "Beverages", qty: 100, unitPrice: 12.00, unitCost: 7.80, discount: 144, lineTotal: 1056, lineCost: 780, lineGP: 276, gpPct: 26.1 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 80, unitPrice: 9.00, unitCost: 5.20, discount: 86, lineTotal: 634, lineCost: 416, lineGP: 218, gpPct: 34.4 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 20, unitPrice: 46.00, unitCost: 30.00, discount: 98, lineTotal: 822, lineCost: 600, lineGP: 222, gpPct: 27.0 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 30, unitPrice: 18.00, unitCost: 12.00, discount: 65, lineTotal: 475, lineCost: 360, lineGP: 115, gpPct: 24.2 },
-        ],
-      },
-      {
-        billNo: "INV-2026-1812",
-        date: "2026-01-08",
-        channel: "VAN",
-        salesperson: "Tariq Mansoor",
-        grossTotal: 9600,
-        discount: 816,
-        netTotal: 8784,
-        totalCost: 5940,
-        grossProfit: 2844,
-        gpPct: 32.4,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 60, unitPrice: 30.00, unitCost: 19.50, discount: 153, lineTotal: 1647, lineCost: 1170, lineGP: 477, gpPct: 29.0 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 80, unitPrice: 18.00, unitCost: 12.20, discount: 123, lineTotal: 1317, lineCost: 976, lineGP: 341, gpPct: 25.9 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 50, unitPrice: 46.00, unitCost: 30.00, discount: 245, lineTotal: 2055, lineCost: 1500, lineGP: 555, gpPct: 27.0 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 60, unitPrice: 40.00, unitCost: 28.00, discount: 204, lineTotal: 2196, lineCost: 1680, lineGP: 516, gpPct: 23.5 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 50, unitPrice: 18.00, unitCost: 12.00, discount: 108, lineTotal: 792, lineCost: 600, lineGP: 192, gpPct: 24.2 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 100, unitPrice: 9.00, unitCost: 5.80, discount: 77, lineTotal: 823, lineCost: 580, lineGP: 243, gpPct: 29.5 },
-        ],
-      },
-    ],
-  },
-  {
-    customerId: "CUS-004",
-    customerName: "Dubai Fresh Markets",
-    priceLevel: "Retail A",
-    totalBills: 1,
-    grossSales: 14400,
-    totalDiscount: 864,
-    netSales: 13536,
-    totalCost: 9200,
-    grossProfit: 4336,
-    gpPct: 32.0,
-    bills: [
-      {
-        billNo: "INV-2026-1837",
-        date: "2026-01-14",
-        channel: "Back-Office",
-        salesperson: "Waleed Ibrahim",
-        grossTotal: 14400,
-        discount: 864,
-        netTotal: 13536,
-        totalCost: 9200,
-        grossProfit: 4336,
-        gpPct: 32.0,
-        items: [
-          { itemCode: "ITM-001", itemName: "Basmati Rice 5kg", category: "Staples", qty: 60, unitPrice: 30.00, unitCost: 19.50, discount: 90, lineTotal: 1710, lineCost: 1170, lineGP: 540, gpPct: 31.6 },
-          { itemCode: "ITM-004", itemName: "Chicken Breast 1kg", category: "Meat", qty: 80, unitPrice: 40.00, unitCost: 28.00, discount: 192, lineTotal: 2808, lineCost: 2240, lineGP: 568, gpPct: 20.2 },
-          { itemCode: "ITM-005", itemName: "Olive Oil 500ml", category: "Cooking", qty: 60, unitPrice: 46.00, unitCost: 30.00, discount: 138, lineTotal: 2622, lineCost: 1800, lineGP: 822, gpPct: 31.4 },
-          { itemCode: "ITM-003", itemName: "Full Cream Milk 4L", category: "Dairy", qty: 80, unitPrice: 18.00, unitCost: 12.20, discount: 86, lineTotal: 1354, lineCost: 976, lineGP: 378, gpPct: 27.9 },
-          { itemCode: "ITM-002", itemName: "Fresh OJ 1L", category: "Beverages", qty: 120, unitPrice: 12.00, unitCost: 7.80, discount: 144, lineTotal: 1296, lineCost: 936, lineGP: 360, gpPct: 27.8 },
-          { itemCode: "ITM-007", itemName: "Greek Yoghurt 500g", category: "Dairy", qty: 80, unitPrice: 18.00, unitCost: 12.00, discount: 86, lineTotal: 1354, lineCost: 960, lineGP: 394, gpPct: 29.1 },
-          { itemCode: "ITM-008", itemName: "Tomato Paste 400g", category: "Canned", qty: 200, unitPrice: 9.00, unitCost: 5.80, discount: 108, lineTotal: 1692, lineCost: 1160, lineGP: 532, gpPct: 31.4 },
-          { itemCode: "ITM-006", itemName: "Whole Wheat Bread", category: "Bakery", qty: 80, unitPrice: 9.00, unitCost: 5.20, discount: 86, lineTotal: 634, lineCost: 416, lineGP: 218, gpPct: 34.4 },
-          { itemCode: "ITM-006b", itemName: "Sourdough Loaf", category: "Bakery", qty: 10, unitPrice: 16.00, unitCost: 10.00, discount: 19, lineTotal: 141, lineCost: 100, lineGP: 41, gpPct: 29.1 },
-          { itemCode: "ITM-002b", itemName: "Mango Juice 1L", category: "Beverages", qty: 20, unitPrice: 14.00, unitCost: 9.50, discount: 17, lineTotal: 263, lineCost: 190, lineGP: 73, gpPct: 27.8 },
-        ],
-      },
-    ],
-  },
-];
+let mockProfitDrilldownData: ProfitCustomer[] = [];
 
-function clearInitialSalesReportData() {
-  mockSalesSummaryData = [];
-  mockChannelSalesData = [];
-  mockDailySalesData = {
-    date: "",
-    branch: "All Branches",
-    preparedBy: "System",
-    approvedBy: "",
-    shift: "Selected period",
-    openingBalances: [],
-    posSales: 0,
-    vanSales: 0,
-    backOfficeSales: 0,
-    totalGrossSales: 0,
-    salesReturns: 0,
-    discounts: 0,
-    netSales: 0,
-    vatOnSales: 0,
-    salesPayments: [],
-    totalPurchases: 0,
-    purchaseReturns: 0,
-    netPurchases: 0,
-    vatOnPurchases: 0,
-    purchasePayments: [],
-    totalExpenses: 0,
-    expensePayments: [],
-    salesReturnLines: [],
-    purchaseReturnLines: [],
-    soAdvances: [],
-    lpoAdvances: [],
-    salaryAdvances: [],
-    otherReceipts: [],
-    otherPayments: [],
-    customerReceipts: [],
-    vendorPayments: [],
-    cashAccounts: [],
-    bankAccounts: [],
-  };
-  mockCustomerSalesData = [];
-  mockCashierPerformanceData = [];
-  mockPOSTransactionData = [];
-  mockPOSItemSalesData = [];
-  mockPOSPaymentData = [];
-  mockVoidData = [];
-  mockVANSalesSummaryData = [];
-  mockVANRouteData = [];
-  mockVANItemData = [];
-  mockVANCollectionData = [];
-  mockVANStockData = [];
-  mockInvoiceRegisterData = [];
-  mockOrderStatusData = [];
-  mockDeliveryData = [];
-  mockCreditNoteData = [];
-  mockAgingData = [];
-  mockTopDormantData = { top: [], dormant: [] };
-  mockPriceLevelData = [];
-  mockItemWiseSalesData = [];
-  mockCategoryData = [];
-  mockFastSlowData = { fast: [], slow: [] };
-  mockDiscountData = [];
-  mockPromotionData = [];
-  mockFreeIssueData = [];
-  mockTaxData = [
-    { taxRate: "5% VAT Standard", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
-    { taxRate: "0% Zero-Rated", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
-    { taxRate: "Exempt", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
-  ];
-  mockVATOutputData = [];
-  mockPriceOverrideData = [];
-  mockManualEntryData = [];
-  mockEditLogData = [];
-  mockProfitDrilldownData = [];
-}
-
-clearInitialSalesReportData();
 
 const CHANNEL_COLORS: Record<string, string> = {
   "POS": "text-purple-700 bg-purple-50 border-purple-200",

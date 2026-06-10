@@ -29,49 +29,57 @@ public class FinancialReportController {
     @GetMapping("/trial-balance")
     public TrialBalanceDTO getTrialBalance(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateTrialBalance(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateTrialBalance(startDate, endDate, branchId);
     }
 
     @GetMapping("/profit-loss")
     public ProfitLossDTO getProfitLoss(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateProfitLoss(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId,
+            @RequestParam(required = false) String costCenter) {
+        return reportService.generateProfitLoss(startDate, endDate, branchId, costCenter);
     }
 
     @GetMapping("/balance-sheet")
     public BalanceSheetDTO getBalanceSheet(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate) {
-        return reportService.generateBalanceSheet(asOfDate != null ? asOfDate : LocalDate.now());
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateBalanceSheet(asOfDate != null ? asOfDate : LocalDate.now(), branchId);
     }
 
     @GetMapping("/cash-flow")
     public CashFlowDTO getCashFlow(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateCashFlow(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateCashFlow(startDate, endDate, branchId);
     }
 
     @GetMapping("/expense-analysis")
     public ExpenseAnalysisDTO getExpenseAnalysis(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateExpenseAnalysis(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateExpenseAnalysis(startDate, endDate, branchId);
     }
 
     @GetMapping("/tax-dashboard")
     public TaxDashboardDTO getTaxDashboard(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateTaxDashboard(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateTaxDashboard(startDate, endDate, branchId);
     }
 
     @GetMapping("/tax-reconciliation")
     public TaxReconciliationDTO getTaxReconciliation(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return reportService.generateTaxReconciliation(startDate, endDate);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateTaxReconciliation(startDate, endDate, branchId);
     }
 
     @GetMapping("/ar-aging")

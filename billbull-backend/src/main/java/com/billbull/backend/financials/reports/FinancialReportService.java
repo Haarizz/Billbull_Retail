@@ -60,6 +60,26 @@ public class FinancialReportService {
         this.customerRepository = customerRepository;
     }
 
+    // ==================== BRANCH FILTER HELPER ====================
+
+    private List<LedgerEntry> fetchEntries(Long branchId, LocalDate start, LocalDate end) {
+        if (branchId != null) {
+            return ledgerEntryRepository
+                    .findByBranchIdAndTransactionDateBetweenOrderByTransactionDateAsc(branchId, start, end);
+        }
+        return ledgerEntryRepository
+                .findByTransactionDateBetweenOrderByTransactionDateAsc(start, end);
+    }
+
+    private List<LedgerEntry> fetchEntriesBefore(Long branchId, LocalDate before) {
+        List<LedgerEntry> all = ledgerEntryRepository.findByTransactionDateBefore(before);
+        if (branchId != null) {
+            return all.stream().filter(e -> e.getBranch() != null && branchId.equals(e.getBranch().getId()))
+                    .collect(Collectors.toList());
+        }
+        return all;
+    }
+
     // ==================== TRIAL BALANCE ====================
 
     /**
@@ -67,13 +87,16 @@ public class FinancialReportService {
      * Groups debit/credit totals by account.
      */
     public TrialBalanceDTO generateTrialBalance(LocalDate startDate, LocalDate endDate) {
+        return generateTrialBalance(startDate, endDate, null);
+    }
+
+    public TrialBalanceDTO generateTrialBalance(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         Map<String, BigDecimal> debitMap = new LinkedHashMap<>();
         Map<String, BigDecimal> creditMap = new LinkedHashMap<>();
@@ -141,13 +164,23 @@ public class FinancialReportService {
     // ==================== PROFIT & LOSS ====================
 
     public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate) {
+        return generateProfitLoss(startDate, endDate, null, null);
+    }
+
+    public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate, Long branchId) {
+        return generateProfitLoss(startDate, endDate, branchId, null);
+    }
+
+    public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate, Long branchId, String costCenter) {
         if (startDate == null)
             startDate = LocalDate.now().withDayOfMonth(1); // Default to this month start
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> allEntries = fetchEntries(branchId, startDate, endDate);
+        List<LedgerEntry> entries = (costCenter != null && !costCenter.isBlank())
+                ? allEntries.stream().filter(e -> costCenter.equals(e.getCostCenter())).collect(Collectors.toList())
+                : allEntries;
 
         Map<String, BigDecimal> accountBalances = new LinkedHashMap<>();
         Map<String, String> accountNames = new HashMap<>();
@@ -246,13 +279,17 @@ public class FinancialReportService {
     // ==================== BALANCE SHEET ====================
 
     public BalanceSheetDTO generateBalanceSheet(LocalDate asOfDate) {
+        return generateBalanceSheet(asOfDate, null);
+    }
+
+    public BalanceSheetDTO generateBalanceSheet(LocalDate asOfDate, Long branchId) {
         if (asOfDate == null)
             asOfDate = LocalDate.now();
 
         BalanceSheetDTO dto = new BalanceSheetDTO();
         dto.setAsOfDate(asOfDate.toString());
 
-        List<LedgerEntry> entries = ledgerEntryRepository.findByTransactionDateBefore(asOfDate.plusDays(1));
+        List<LedgerEntry> entries = fetchEntriesBefore(branchId, asOfDate.plusDays(1));
         Map<String, BigDecimal> computedBalances = new HashMap<>();
 
         for (LedgerEntry entry : entries) {
@@ -306,7 +343,7 @@ public class FinancialReportService {
             }
         }
 
-        ProfitLossDTO pl = generateProfitLoss(LocalDate.of(1970, 1, 1), asOfDate);
+        ProfitLossDTO pl = generateProfitLoss(LocalDate.of(1970, 1, 1), asOfDate, branchId);
         if (pl.getNetProfit() != null && pl.getNetProfit().compareTo(BigDecimal.ZERO) != 0) {
             BigDecimal displayRetained = pl.getNetProfit();
             equityItems.add(new ReportLineDTO("3999", "Retained Earnings", "Retained Earnings", displayRetained));
@@ -327,13 +364,16 @@ public class FinancialReportService {
     // ==================== CASH FLOW ====================
 
     public CashFlowDTO generateCashFlow(LocalDate startDate, LocalDate endDate) {
+        return generateCashFlow(startDate, endDate, null);
+    }
+
+    public CashFlowDTO generateCashFlow(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         List<ReportLineDTO> operatingItems = new ArrayList<>();
         List<ReportLineDTO> investingItems = new ArrayList<>();
@@ -402,13 +442,16 @@ public class FinancialReportService {
     // ==================== EXPENSE ANALYSIS ====================
 
     public ExpenseAnalysisDTO generateExpenseAnalysis(LocalDate startDate, LocalDate endDate) {
+        return generateExpenseAnalysis(startDate, endDate, null);
+    }
+
+    public ExpenseAnalysisDTO generateExpenseAnalysis(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         Map<String, BigDecimal> byCategoryMap = new LinkedHashMap<>();
         Map<String, Integer> byCategoryCount = new LinkedHashMap<>();
@@ -474,13 +517,16 @@ public class FinancialReportService {
     // ==================== TAX DASHBOARD ====================
 
     public TaxDashboardDTO generateTaxDashboard(LocalDate startDate, LocalDate endDate) {
+        return generateTaxDashboard(startDate, endDate, null);
+    }
+
+    public TaxDashboardDTO generateTaxDashboard(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         BigDecimal outputTax = BigDecimal.ZERO;
         BigDecimal inputTax = BigDecimal.ZERO;
@@ -519,13 +565,16 @@ public class FinancialReportService {
     }
 
     public TaxReconciliationDTO generateTaxReconciliation(LocalDate startDate, LocalDate endDate) {
+        return generateTaxReconciliation(startDate, endDate, null);
+    }
+
+    public TaxReconciliationDTO generateTaxReconciliation(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
         List<Account> allAccounts = accountRepository.findAll();
         Map<String, String> taxRoleMap = allAccounts.stream()
                 .filter(a -> a.getTaxRole() != null)

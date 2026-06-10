@@ -23,7 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -481,7 +483,7 @@ public class PurchaseReportDataService {
                         "vendor", invoice.getVendorName(),
                         "value", n(invoice.getGrandTotal()),
                         "postedBy", fallback(invoice.getCreatedBy(), fallback(invoice.getSubmittedBy(), "-")),
-                        "period", invoice.getInvoiceDate().getMonth() + "-" + invoice.getInvoiceDate().getYear(),
+                        "period", periodLabel(invoice.getInvoiceDate()),
                         "status", "Backdated"))
                 .collect(Collectors.toList());
     }
@@ -545,7 +547,7 @@ public class PurchaseReportDataService {
                             "vatAmt", n(invoice.getTaxTotal()),
                             "totalAmt", n(invoice.getGrandTotal()),
                             "vatRate", "5%",
-                            "period", invoice.getInvoiceDate() == null ? "" : invoice.getInvoiceDate().getMonth() + "-" + invoice.getInvoiceDate().getYear());
+                            "period", periodLabel(invoice.getInvoiceDate()));
                 })
                 .collect(Collectors.toList());
     }
@@ -555,17 +557,17 @@ public class PurchaseReportDataService {
         data.invoices.stream()
                 .filter(i -> i.getCreatedAt() != null && i.getInvoiceDate() != null && i.getCreatedAt().toLocalDate().isAfter(i.getInvoiceDate()))
                 .forEach(i -> rows.add(row("refNo", i.getInvoiceNumber(), "type", "Purchase Invoice", "txDate", i.getInvoiceDate(),
-                        "postDate", i.getCreatedAt().toLocalDate(), "lockedPeriod", i.getInvoiceDate().getMonth() + "-" + i.getInvoiceDate().getYear(),
+                        "postDate", i.getCreatedAt().toLocalDate(), "lockedPeriod", periodLabel(i.getInvoiceDate()),
                         "user", fallback(i.getCreatedBy(), "-"), "reason", "Posted after document date")));
         data.grns.stream()
                 .filter(g -> g.getCreatedAt() != null && g.getGrnDate() != null && g.getCreatedAt().toLocalDate().isAfter(g.getGrnDate()))
                 .forEach(g -> rows.add(row("refNo", g.getGrnNo(), "type", "GRN", "txDate", g.getGrnDate(),
-                        "postDate", g.getCreatedAt().toLocalDate(), "lockedPeriod", g.getGrnDate().getMonth() + "-" + g.getGrnDate().getYear(),
+                        "postDate", g.getCreatedAt().toLocalDate(), "lockedPeriod", periodLabel(g.getGrnDate()),
                         "user", fallback(g.getCreatedBy(), "-"), "reason", "Posted after document date")));
         data.lpos.stream()
                 .filter(l -> l.getCreatedAt() != null && l.getLpoDate() != null && l.getCreatedAt().toLocalDate().isAfter(l.getLpoDate()))
                 .forEach(l -> rows.add(row("refNo", l.getLpoNumber(), "type", "LPO", "txDate", l.getLpoDate(),
-                        "postDate", l.getCreatedAt().toLocalDate(), "lockedPeriod", l.getLpoDate().getMonth() + "-" + l.getLpoDate().getYear(),
+                        "postDate", l.getCreatedAt().toLocalDate(), "lockedPeriod", periodLabel(l.getLpoDate()),
                         "user", fallback(l.getCreatedBy(), "-"), "reason", "Posted after document date")));
         return rows;
     }
@@ -779,6 +781,11 @@ public class PurchaseReportDataService {
             if (normalize(value).contains(term)) return true;
         }
         return false;
+    }
+
+    private String periodLabel(LocalDate date) {
+        if (date == null) return "";
+        return date.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) + "-" + date.getYear();
     }
 
     private boolean isAll(String value) {
