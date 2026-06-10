@@ -332,7 +332,7 @@ function statusBadge(status: string) {
     Settled: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Issued: "bg-amber-100 text-amber-700 border-amber-300",
     Rejected: "bg-red-100 text-red-700 border-red-300",
-    Cleared: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Cleared: "bg-emerald-100 text-emerald-700 border-emerald-600",
     "In-Transit": "bg-blue-100 text-blue-700 border-blue-300",
     Posted: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Draft: "bg-slate-100 text-slate-600 border-slate-300",
@@ -340,6 +340,13 @@ function statusBadge(status: string) {
     Unpaid: "bg-red-100 text-red-700 border-red-300",
     Pass: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Fail: "bg-red-100 text-red-700 border-red-300",
+    Breached: "bg-red-100 text-red-700 border-red-300",
+    Variance: "bg-amber-100 text-amber-700 border-amber-300",
+    Backdated: "bg-orange-100 text-orange-700 border-orange-300",
+    Matched: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Warning: "bg-amber-100 text-amber-700 border-amber-300",
+    Critical: "bg-red-100 text-red-700 border-red-300",
+    "On Hold": "bg-amber-100 text-amber-700 border-amber-300",
   };
   const cls = map[status] ?? "bg-slate-100 text-slate-600 border-slate-300";
   return (
@@ -1387,7 +1394,7 @@ function VendorContractComplianceReport() {
               <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "—"}</Td>
               <Td right><span className={r.variancePct > 0 ? "text-red-600 font-semibold" : r.variancePct < 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>{r.variancePct > 0 ? "+" : ""}{r.variancePct.toFixed(2)}%</span></Td>
               <Td>{r.penaltyApplied ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Applied</Badge> : <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]">None</Badge>}</Td>
-              <Td>{statusBadge(r.status === "Breached" ? "Overdue" : "Active")}</Td>
+              <Td>{statusBadge(r.status)}</Td>
             </tr>
           ))}
         </tbody>
@@ -1877,7 +1884,7 @@ function GrnBatchExpiryReport() {
       <ReportHeader title="Batch & Expiry Report" subtitle="Batch tracking with expiry monitoring" count={mockBatchExpiry.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Batches" value={String(mockBatchExpiry.length)} sub="Active batches" accent />
-        <KpiCard label="Near Expiry (â‰¤30d)" value={String(nearExpiry)} sub="Requires action" />
+        <KpiCard label="Near Expiry (≤30d)" value={String(nearExpiry)} sub="Requires action" />
         <KpiCard label="Active Batches" value={String(mockBatchExpiry.filter((r) => r.status === "Active").length)} sub="Good standing" />
       </div>
       <Tbl>
@@ -2412,7 +2419,7 @@ function InvoiceGrnVarianceReport() {
                 <Td right>{r.invRate.toFixed(2)}</Td>
                 <Td right>{r.grnRate.toFixed(2)}</Td>
                 <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "—"}</Td>
-                <Td>{statusBadge(r.status === "Variance" ? "Overdue" : "Active")}</Td>
+                <Td>{statusBadge(r.status)}</Td>
               </tr>
             ))}
           </tbody>
@@ -2590,7 +2597,7 @@ function InvoiceBackdatedReport() {
               <Td right bold>{r.value.toLocaleString()}</Td>
               <Td>{r.postedBy}</Td>
               <Td muted>{r.period}</Td>
-              <Td>{statusBadge("Overdue")}</Td>
+              <Td>{statusBadge(r.status)}</Td>
             </tr>
           ))}
         </tbody>
@@ -3450,7 +3457,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const [vendor, setVendor] = useState("All");
   const [branch, setBranch] = useState("All");
   const [searchText, setSearchText] = useState("");
-  const [, setDataRevision] = useState(0);
+  const [dataRevision, setDataRevision] = useState(0);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [vendorList, setVendorList] = useState<{ id: number; name: string }[]>([]);
@@ -3498,7 +3505,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const exportMeta = () => ({
     dateFrom,
     dateTo,
-    branch: branch === 'All' ? 'All' : branches.find((b: any) => String(b.id) === String(branch))?.name || branch,
+    branch,
     companyProfile,
   });
 
@@ -3873,7 +3880,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                   >
                     <option value="All">All</option>
                     {branches.map((b) => (
-                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                      <option key={b.id} value={b.name}>{b.name}</option>
                     ))}
                   </select>
                 </div>
@@ -3906,7 +3913,9 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
           </Card>
 
           {/* Results */}
-          {renderResults()}
+          <DataRevisionContext.Provider value={dataRevision}>
+            {renderResults()}
+          </DataRevisionContext.Provider>
         </motion.div>
       </div>
     </div>

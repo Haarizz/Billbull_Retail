@@ -337,129 +337,17 @@ const REPORTS: ReportDef[] = [
   },
 ];
 
-// Mock result sets (for UI wiring)
-let mockRowsSOH = [
-  { sku: "SKU-1001", item: "Basmati Rice 5kg", warehouse: "Main WH", qty: 124, uom: "Bag", cost: 62.5, value: 7750 },
-  { sku: "SKU-2033", item: "Olive Oil 1L", warehouse: "Main WH", qty: 48, uom: "Bottle", cost: 18.0, value: 864 },
-  { sku: "SKU-3102", item: "Paper Cup 8oz", warehouse: "Outlet WH", qty: 980, uom: "Pc", cost: 0.22, value: 215.6 },
-];
+let mockRowsSOH: any[] = [];
+let mockRowsLowStock: any[] = [];
 
-let mockRowsLowStock = [
-  { sku: "SKU-4410", item: "Cheddar Slice 1kg", warehouse: "Main WH", onHand: 6, min: 20, suggested: 30, vendor: "DairyHub" },
-  { sku: "SKU-5522", item: "Tomato Ketchup 5kg", warehouse: "Outlet WH", onHand: 2, min: 10, suggested: 18, vendor: "FoodPro" },
-];
-
-// Mock data for Stock Valuation report
-let mockRowsValuation = [
-  // Grocery Category
-  { sku: "SKU-1001", item: "Basmati Rice 5kg", category: "Grocery", department: "Grains", warehouse: "Main WH", qty: 124, avgCost: 62.5, fifoCost: 63.2, lastCost: 64.0, avgValue: 7750.00, fifoValue: 7836.80, lastValue: 7936.00 },
-  { sku: "SKU-1002", item: "Brown Rice 2kg", category: "Grocery", department: "Grains", warehouse: "Main WH", qty: 86, avgCost: 45.0, fifoCost: 44.5, lastCost: 46.0, avgValue: 3870.00, fifoValue: 3827.00, lastValue: 3956.00 },
-  { sku: "SKU-1003", item: "Quinoa 1kg", category: "Grocery", department: "Grains", warehouse: "Outlet WH", qty: 42, avgCost: 85.0, fifoCost: 84.0, lastCost: 86.0, avgValue: 3570.00, fifoValue: 3528.00, lastValue: 3612.00 },
-  
-  // FMCG Category
-  { sku: "SKU-2033", item: "Olive Oil 1L", category: "FMCG", department: "Oils", warehouse: "Main WH", qty: 48, avgCost: 18.0, fifoCost: 17.5, lastCost: 18.5, avgValue: 864.00, fifoValue: 840.00, lastValue: 888.00 },
-  { sku: "SKU-2034", item: "Sunflower Oil 5L", category: "FMCG", department: "Oils", warehouse: "Main WH", qty: 156, avgCost: 42.0, fifoCost: 41.0, lastCost: 43.0, avgValue: 6552.00, fifoValue: 6396.00, lastValue: 6708.00 },
-  { sku: "SKU-2035", item: "Coconut Oil 500ml", category: "FMCG", department: "Oils", warehouse: "Outlet WH", qty: 78, avgCost: 22.5, fifoCost: 22.0, lastCost: 23.0, avgValue: 1755.00, fifoValue: 1716.00, lastValue: 1794.00 },
-  
-  // Dairy Category
-  { sku: "SKU-3001", item: "Fresh Milk 1L", category: "Dairy", department: "Beverages", warehouse: "Main WH", qty: 245, avgCost: 8.5, fifoCost: 8.3, lastCost: 8.7, avgValue: 2082.50, fifoValue: 2033.50, lastValue: 2131.50 },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g", category: "Dairy", department: "Cheese", warehouse: "Main WH", qty: 134, avgCost: 15.5, fifoCost: 15.0, lastCost: 16.0, avgValue: 2077.00, fifoValue: 2010.00, lastValue: 2144.00 },
-  { sku: "SKU-3003", item: "Greek Yogurt 500g", category: "Dairy", department: "Yogurt", warehouse: "Outlet WH", qty: 98, avgCost: 12.0, fifoCost: 11.8, lastCost: 12.2, avgValue: 1176.00, fifoValue: 1156.40, lastValue: 1195.60 },
-  
-  // Beverages Category
-  { sku: "SKU-4001", item: "Orange Juice 1L", category: "Beverages", department: "Juices", warehouse: "Main WH", qty: 189, avgCost: 9.5, fifoCost: 9.3, lastCost: 9.7, avgValue: 1795.50, fifoValue: 1757.70, lastValue: 1833.30 },
-  { sku: "SKU-4002", item: "Sparkling Water 500ml", category: "Beverages", department: "Water", warehouse: "Main WH", qty: 567, avgCost: 2.5, fifoCost: 2.4, lastCost: 2.6, avgValue: 1417.50, fifoValue: 1360.80, lastValue: 1474.20 },
-  { sku: "SKU-4003", item: "Energy Drink 250ml", category: "Beverages", department: "Energy", warehouse: "Outlet WH", qty: 234, avgCost: 6.0, fifoCost: 5.8, lastCost: 6.2, avgValue: 1404.00, fifoValue: 1357.20, lastValue: 1450.80 },
-  
-  // Packaged Foods
-  { sku: "SKU-5001", item: "Pasta Penne 500g", category: "Packaged Foods", department: "Pasta", warehouse: "Main WH", qty: 178, avgCost: 7.5, fifoCost: 7.3, lastCost: 7.7, avgValue: 1335.00, fifoValue: 1299.40, lastValue: 1370.60 },
-  { sku: "SKU-5002", item: "Tomato Sauce 400g", category: "Packaged Foods", department: "Sauces", warehouse: "Main WH", qty: 298, avgCost: 5.5, fifoCost: 5.4, lastCost: 5.6, avgValue: 1639.00, fifoValue: 1609.20, lastValue: 1668.80 },
-  { sku: "SKU-5003", item: "Instant Noodles Pack", category: "Packaged Foods", department: "Noodles", warehouse: "Outlet WH", qty: 456, avgCost: 3.2, fifoCost: 3.1, lastCost: 3.3, avgValue: 1459.20, fifoValue: 1413.60, lastValue: 1504.80 },
-  
-  // Disposables
-  { sku: "SKU-3102", item: "Paper Cup 8oz", category: "Disposables", department: "Cups", warehouse: "Outlet WH", qty: 980, avgCost: 0.22, fifoCost: 0.21, lastCost: 0.23, avgValue: 215.60, fifoValue: 205.80, lastValue: 225.40 },
-  { sku: "SKU-6001", item: "Plastic Fork Box", category: "Disposables", department: "Cutlery", warehouse: "Main WH", qty: 1245, avgCost: 0.15, fifoCost: 0.14, lastCost: 0.16, avgValue: 186.75, fifoValue: 174.30, lastValue: 199.20 },
-  { sku: "SKU-6002", item: "Food Container 500ml", category: "Disposables", department: "Containers", warehouse: "Outlet WH", qty: 567, avgCost: 0.45, fifoCost: 0.44, lastCost: 0.46, avgValue: 255.15, fifoValue: 249.48, lastValue: 260.82 },
-];
-
-// Valuation summary by category
-let mockValuationByCategory = [
-  { category: "Grocery", items: 3, qty: 252, avgValue: 15190.00, fifoValue: 15191.80, lastValue: 15504.00, percentage: 24.8 },
-  { category: "FMCG", items: 3, qty: 282, avgValue: 9171.00, fifoValue: 8952.00, lastValue: 9390.00, percentage: 15.0 },
-  { category: "Dairy", items: 3, qty: 477, avgValue: 5335.50, fifoValue: 5199.90, lastValue: 5471.10, percentage: 8.7 },
-  { category: "Beverages", items: 3, qty: 990, avgValue: 4617.00, fifoValue: 4475.70, lastValue: 4758.30, percentage: 7.5 },
-  { category: "Packaged Foods", items: 3, qty: 932, avgValue: 4433.20, fifoValue: 4322.20, lastValue: 4544.20, percentage: 7.2 },
-  { category: "Disposables", items: 3, qty: 2792, avgValue: 657.50, fifoValue: 629.58, lastValue: 685.42, percentage: 1.1 },
-];
-
-// Valuation summary by warehouse
-let mockValuationByWarehouse = [
-  { warehouse: "Main WH", items: 12, qty: 3472, avgValue: 32774.35, fifoValue: 31952.80, lastValue: 33456.90, percentage: 64.2 },
-  { warehouse: "Outlet WH", items: 6, qty: 2253, avgValue: 8629.85, fifoValue: 8418.76, lastValue: 8896.62, percentage: 35.8 },
-];
-
-// ── Stock & Availability mock data ──────────────────────────────────────────
-
-let mockSOH = [
-  { sku: "SKU-1001", item: "Basmati Rice 5kg",      category: "Grocery",        warehouse: "Main WH",   qty: 124, minQty: 50,  reorder: 80,  uom: "Bag",    cost: 62.50, value: 7750.00 },
-  { sku: "SKU-1002", item: "Brown Rice 2kg",         category: "Grocery",        warehouse: "Main WH",   qty: 86,  minQty: 30,  reorder: 50,  uom: "Bag",    cost: 45.00, value: 3870.00 },
-  { sku: "SKU-1003", item: "Quinoa 1kg",             category: "Grocery",        warehouse: "Outlet WH", qty: 42,  minQty: 20,  reorder: 35,  uom: "Pack",   cost: 85.00, value: 3570.00 },
-  { sku: "SKU-2033", item: "Olive Oil 1L",           category: "FMCG",           warehouse: "Main WH",   qty: 48,  minQty: 30,  reorder: 60,  uom: "Bottle", cost: 18.00, value:  864.00 },
-  { sku: "SKU-2034", item: "Sunflower Oil 5L",       category: "FMCG",           warehouse: "Main WH",   qty: 156, minQty: 40,  reorder: 80,  uom: "Can",    cost: 42.00, value: 6552.00 },
-  { sku: "SKU-2035", item: "Coconut Oil 500ml",      category: "FMCG",           warehouse: "Outlet WH", qty: 78,  minQty: 25,  reorder: 50,  uom: "Bottle", cost: 22.50, value: 1755.00 },
-  { sku: "SKU-3001", item: "Fresh Milk 1L",          category: "Dairy",          warehouse: "Main WH",   qty: 245, minQty: 100, reorder: 150, uom: "Carton", cost:  8.50, value: 2082.50 },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g",    category: "Dairy",          warehouse: "Main WH",   qty: 134, minQty: 50,  reorder: 80,  uom: "Pcs",   cost: 15.50, value: 2077.00 },
-  { sku: "SKU-3003", item: "Greek Yogurt 500g",      category: "Dairy",          warehouse: "Outlet WH", qty: 98,  minQty: 40,  reorder: 60,  uom: "Cup",    cost: 12.00, value: 1176.00 },
-  { sku: "SKU-4001", item: "Orange Juice 1L",        category: "Beverages",      warehouse: "Main WH",   qty: 189, minQty: 60,  reorder: 100, uom: "Bottle", cost:  9.50, value: 1795.50 },
-  { sku: "SKU-4002", item: "Sparkling Water 500ml",  category: "Beverages",      warehouse: "Main WH",   qty: 567, minQty: 200, reorder: 300, uom: "Bottle", cost:  2.50, value: 1417.50 },
-  { sku: "SKU-4003", item: "Energy Drink 250ml",     category: "Beverages",      warehouse: "Outlet WH", qty: 234, minQty: 80,  reorder: 120, uom: "Can",    cost:  6.00, value: 1404.00 },
-  { sku: "SKU-5001", item: "Pasta Penne 500g",       category: "Packaged Foods", warehouse: "Main WH",   qty: 178, minQty: 60,  reorder: 100, uom: "Pack",   cost:  7.50, value: 1335.00 },
-  { sku: "SKU-5002", item: "Tomato Sauce 400g",      category: "Packaged Foods", warehouse: "Main WH",   qty: 298, minQty: 100, reorder: 150, uom: "Can",    cost:  5.50, value: 1639.00 },
-  { sku: "SKU-5003", item: "Instant Noodles Pack",   category: "Packaged Foods", warehouse: "Outlet WH", qty: 456, minQty: 150, reorder: 200, uom: "Pack",   cost:  3.20, value: 1459.20 },
-  { sku: "SKU-3102", item: "Paper Cup 8oz",          category: "Disposables",    warehouse: "Outlet WH", qty: 980, minQty: 400, reorder: 600, uom: "Pcs",    cost:  0.22, value:  215.60 },
-  { sku: "SKU-6001", item: "Plastic Fork Box",       category: "Disposables",    warehouse: "Main WH",   qty:1245, minQty: 400, reorder: 700, uom: "Box",    cost:  0.15, value:  186.75 },
-  { sku: "SKU-6002", item: "Food Container 500ml",   category: "Disposables",    warehouse: "Outlet WH", qty: 567, minQty: 200, reorder: 350, uom: "Pcs",    cost:  0.45, value:  255.15 },
-];
-
-let mockSOHByCategory = [
-  { category: "Grocery",        items: 3, qty: 252,  value: 15190.00 },
-  { category: "FMCG",           items: 3, qty: 282,  value:  9171.00 },
-  { category: "Dairy",          items: 3, qty: 477,  value:  5335.50 },
-  { category: "Beverages",      items: 3, qty: 990,  value:  4617.00 },
-  { category: "Packaged Foods", items: 3, qty: 932,  value:  4433.20 },
-  { category: "Disposables",    items: 3, qty: 2792, value:   657.50 },
-];
-
-let mockLowStock = [
-  { sku: "SKU-4410", item: "Cheddar Slice 1kg",     category: "Dairy",    warehouse: "Main WH",   onHand:  6, minQty: 20, reorderQty: 30, suggested: 24, vendor: "DairyHub",   lastPO: "2026-01-10", urgency: "Critical" },
-  { sku: "SKU-5522", item: "Tomato Ketchup 5kg",    category: "Sauces",   warehouse: "Outlet WH", onHand:  2, minQty: 10, reorderQty: 18, suggested: 16, vendor: "FoodPro",    lastPO: "2026-01-08", urgency: "Critical" },
-  { sku: "SKU-7810", item: "Butter 250g",           category: "Dairy",    warehouse: "Main WH",   onHand:  9, minQty: 25, reorderQty: 40, suggested: 31, vendor: "DairyHub",   lastPO: "2026-01-12", urgency: "High" },
-  { sku: "SKU-2088", item: "Corn Flour 1kg",        category: "Grocery",  warehouse: "Main WH",   onHand: 14, minQty: 30, reorderQty: 50, suggested: 36, vendor: "GrainCo",    lastPO: "2026-01-05", urgency: "High" },
-  { sku: "SKU-9910", item: "Cream Cheese 180g",     category: "Dairy",    warehouse: "Outlet WH", onHand: 11, minQty: 20, reorderQty: 30, suggested: 19, vendor: "DairyHub",   lastPO: "2026-01-09", urgency: "Medium" },
-  { sku: "SKU-3388", item: "Sesame Oil 250ml",      category: "FMCG",     warehouse: "Main WH",   onHand: 18, minQty: 25, reorderQty: 40, suggested: 22, vendor: "OilTrade",   lastPO: "2026-01-07", urgency: "Medium" },
-  { sku: "SKU-4512", item: "Dried Chilli Flakes",   category: "Spices",   warehouse: "Main WH",   onHand: 22, minQty: 30, reorderQty: 50, suggested: 28, vendor: "SpiceWorld", lastPO: "2026-01-11", urgency: "Medium" },
-  { sku: "SKU-8801", item: "Washing-Up Liquid 1L",  category: "Cleaning", warehouse: "Outlet WH", onHand: 19, minQty: 24, reorderQty: 36, suggested: 17, vendor: "CleanPro",   lastPO: "2025-12-28", urgency: "Low" },
-];
-
-let mockOutOfStock = [
-  { sku: "SKU-7001", item: "Mozzarella Block 500g",  category: "Dairy",    warehouse: "Main WH",   lastSold: "2026-01-14", lastReceived: "2025-12-20", avgDailySales: 12, daysSinceStock: 27, suggestedPO: 180 },
-  { sku: "SKU-7002", item: "Peanut Butter 340g",     category: "Grocery",  warehouse: "Main WH",   lastSold: "2026-01-15", lastReceived: "2025-12-18", avgDailySales:  8, daysSinceStock: 29, suggestedPO: 120 },
-  { sku: "SKU-7003", item: "Almond Milk 1L",         category: "Dairy",    warehouse: "Outlet WH", lastSold: "2026-01-13", lastReceived: "2025-12-15", avgDailySales:  5, daysSinceStock: 32, suggestedPO:  75 },
-  { sku: "SKU-7004", item: "Protein Bar 60g",        category: "Snacks",   warehouse: "Main WH",   lastSold: "2026-01-16", lastReceived: "2026-01-02", avgDailySales: 22, daysSinceStock: 14, suggestedPO: 220 },
-  { sku: "SKU-7005", item: "Coconut Milk 400ml",     category: "Grocery",  warehouse: "Main WH",   lastSold: "2026-01-10", lastReceived: "2025-12-22", avgDailySales:  6, daysSinceStock: 25, suggestedPO:  90 },
-  { sku: "SKU-7006", item: "Black Pepper Grinder",   category: "Spices",   warehouse: "Outlet WH", lastSold: "2026-01-08", lastReceived: "2025-12-10", avgDailySales:  3, daysSinceStock: 37, suggestedPO:  45 },
-  { sku: "SKU-7007", item: "Tahini Paste 300g",      category: "Sauces",   warehouse: "Main WH",   lastSold: "2026-01-12", lastReceived: "2025-12-28", avgDailySales:  4, daysSinceStock: 19, suggestedPO:  60 },
-];
-
-let mockNegativeStock = [
-  { sku: "SKU-8101", item: "Fresh Cream 200ml",      category: "Dairy",    warehouse: "Main WH",   qty: -4,  issue: "GRN not posted",         lastTxn: "2026-01-15", impact: -220.00,  severity: "High" },
-  { sku: "SKU-8102", item: "Mango Pulp 850g",        category: "Grocery",  warehouse: "Outlet WH", qty: -2,  issue: "Return processed twice",  lastTxn: "2026-01-14", impact:  -96.00,  severity: "High" },
-  { sku: "SKU-8103", item: "Vanilla Extract 50ml",   category: "FMCG",     warehouse: "Main WH",   qty: -1,  issue: "Unit of measure mismatch",lastTxn: "2026-01-13", impact:  -38.00,  severity: "Medium" },
-  { sku: "SKU-8104", item: "Chili Sauce 500ml",      category: "Sauces",   warehouse: "Main WH",   qty: -6,  issue: "Opening balance error",   lastTxn: "2026-01-12", impact: -186.00,  severity: "High" },
-  { sku: "SKU-8105", item: "Mixed Nuts 500g",        category: "Snacks",   warehouse: "Outlet WH", qty: -3,  issue: "Missing batch receipt",   lastTxn: "2026-01-11", impact: -285.00,  severity: "Critical" },
-  { sku: "SKU-8106", item: "Soy Sauce 150ml",        category: "Sauces",   warehouse: "Main WH",   qty: -8,  issue: "Transfer qty mismatch",   lastTxn: "2026-01-10", impact: -112.00,  severity: "Medium" },
-  { sku: "SKU-8107", item: "Garlic Paste 300g",      category: "Grocery",  warehouse: "Main WH",   qty: -2,  issue: "POS sale without receipt", lastTxn: "2026-01-09", impact:  -64.00,  severity: "Medium" },
-];
+let mockRowsValuation: any[] = [];
+let mockValuationByCategory: any[] = [];
+let mockValuationByWarehouse: any[] = [];
+let mockSOH: any[] = [];
+let mockSOHByCategory: any[] = [];
+let mockLowStock: any[] = [];
+let mockOutOfStock: any[] = [];
+let mockNegativeStock: any[] = [];
 
 interface ExpiryBatch {
   batchNo: string;
@@ -478,67 +366,7 @@ interface ExpiryItem {
   batches: ExpiryBatch[];
 }
 
-let mockExpiry: ExpiryItem[] = [
-  {
-    sku: "SKU-3001", item: "Fresh Milk 1L", category: "Dairy",
-    batches: [
-      { batchNo: "BCH-240118", warehouse: "Main WH",   qty: 48,  expiryDate: "2026-01-19", daysLeft:  3, cost: 8.50, value:  408.00, status: "Critical" },
-      { batchNo: "BCH-240102", warehouse: "Main WH",   qty: 120, expiryDate: "2026-01-24", daysLeft:  8, cost: 8.50, value: 1020.00, status: "High" },
-      { batchNo: "BCH-240088", warehouse: "Outlet WH", qty: 60,  expiryDate: "2026-02-01", daysLeft: 16, cost: 8.50, value:  510.00, status: "Warning" },
-    ],
-  },
-  {
-    sku: "SKU-3002", item: "Cheddar Cheese 200g", category: "Dairy",
-    batches: [
-      { batchNo: "BCH-240112", warehouse: "Main WH",   qty: 22,  expiryDate: "2026-01-22", daysLeft:  6, cost: 15.50, value:  341.00, status: "Critical" },
-      { batchNo: "BCH-240085", warehouse: "Main WH",   qty: 40,  expiryDate: "2026-02-05", daysLeft: 20, cost: 15.50, value:  620.00, status: "Warning" },
-      { batchNo: "BCH-240060", warehouse: "Outlet WH", qty: 35,  expiryDate: "2026-02-20", daysLeft: 35, cost: 15.50, value:  542.50, status: "Watch" },
-    ],
-  },
-  {
-    sku: "SKU-4001", item: "Orange Juice 1L", category: "Beverages",
-    batches: [
-      { batchNo: "BCH-240095", warehouse: "Outlet WH", qty: 36,  expiryDate: "2026-01-26", daysLeft: 10, cost: 9.50, value:  342.00, status: "High" },
-      { batchNo: "BCH-240078", warehouse: "Main WH",   qty: 80,  expiryDate: "2026-02-08", daysLeft: 23, cost: 9.50, value:  760.00, status: "Warning" },
-    ],
-  },
-  {
-    sku: "SKU-3003", item: "Greek Yogurt 500g", category: "Dairy",
-    batches: [
-      { batchNo: "BCH-240101", warehouse: "Outlet WH", qty: 55,  expiryDate: "2026-01-28", daysLeft: 12, cost: 12.00, value:  660.00, status: "High" },
-      { batchNo: "BCH-240080", warehouse: "Main WH",   qty: 90,  expiryDate: "2026-02-12", daysLeft: 27, cost: 12.00, value: 1080.00, status: "Watch" },
-      { batchNo: "BCH-240055", warehouse: "Outlet WH", qty: 40,  expiryDate: "2026-03-05", daysLeft: 49, cost: 12.00, value:  480.00, status: "OK" },
-    ],
-  },
-  {
-    sku: "SKU-5002", item: "Tomato Sauce 400g", category: "Packaged Foods",
-    batches: [
-      { batchNo: "BCH-239088", warehouse: "Main WH",   qty: 120, expiryDate: "2026-02-04", daysLeft: 19, cost: 5.50, value:  660.00, status: "Warning" },
-      { batchNo: "BCH-239044", warehouse: "Main WH",   qty: 200, expiryDate: "2026-04-10", daysLeft: 84, cost: 5.50, value: 1100.00, status: "OK" },
-    ],
-  },
-  {
-    sku: "SKU-2033", item: "Olive Oil 1L", category: "FMCG",
-    batches: [
-      { batchNo: "BCH-238044", warehouse: "Main WH",   qty: 24,  expiryDate: "2026-02-10", daysLeft: 25, cost: 18.00, value:  432.00, status: "Warning" },
-      { batchNo: "BCH-238012", warehouse: "Main WH",   qty: 48,  expiryDate: "2026-05-20", daysLeft: 124, cost: 18.00, value:  864.00, status: "OK" },
-    ],
-  },
-  {
-    sku: "SKU-4003", item: "Energy Drink 250ml", category: "Beverages",
-    batches: [
-      { batchNo: "BCH-238019", warehouse: "Outlet WH", qty: 80,  expiryDate: "2026-02-18", daysLeft: 33, cost: 6.00, value:  480.00, status: "Watch" },
-      { batchNo: "BCH-237990", warehouse: "Main WH",   qty: 150, expiryDate: "2026-06-01", daysLeft: 136, cost: 6.00, value:  900.00, status: "OK" },
-    ],
-  },
-  {
-    sku: "SKU-1001", item: "Basmati Rice 5kg", category: "Grocery",
-    batches: [
-      { batchNo: "BCH-235010", warehouse: "Main WH",   qty: 30,  expiryDate: "2026-04-15", daysLeft: 89, cost: 62.50, value: 1875.00, status: "OK" },
-      { batchNo: "BCH-233880", warehouse: "Main WH",   qty: 94,  expiryDate: "2026-08-20", daysLeft: 216, cost: 62.50, value: 5875.00, status: "OK" },
-    ],
-  },
-];
+let mockExpiry: ExpiryItem[] = [];
 
 function n(value: any): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -1038,25 +866,77 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const _today = new Date();
   const _firstOfMonth = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split("T")[0];
   const _todayStr = _today.toISOString().split("T")[0];
-  const [dateFrom, setDateFrom] = useState(_firstOfMonth);
-  const [dateTo, setDateTo] = useState(_todayStr);
-  const [warehouse, setWarehouse] = useState("All");
+  const defaultFilters = {
+    dateFrom: _firstOfMonth,
+    dateTo: _todayStr,
+    warehouse: "All",
+    department: "All",
+    brand: "All",
+    stockCondition: "Positive only",
+    itemSearch: "",
+  };
+
+  // Pending (input) state — what the user is editing
+  const [dateFrom, setDateFrom] = useState(defaultFilters.dateFrom);
+  const [dateTo, setDateTo] = useState(defaultFilters.dateTo);
+  const [warehouse, setWarehouse] = useState(defaultFilters.warehouse);
+  const [department, setDepartment] = useState(defaultFilters.department);
+  const [brand, setBrand] = useState(defaultFilters.brand);
+  const [stockCondition, setStockCondition] = useState(defaultFilters.stockCondition);
+  const [itemSearch, setItemSearch] = useState(defaultFilters.itemSearch);
+
+  // Applied (committed) state — what actually fires the query
+  const [appliedFilters, setAppliedFilters] = useState(defaultFilters);
+
+  // Dropdown UI state
   const [warehouseSearch, setWarehouseSearch] = useState("");
   const [warehouseOpen, setWarehouseOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [department, setDepartment] = useState("All");
   const [departmentSearch, setDepartmentSearch] = useState("");
   const [departmentOpen, setDepartmentOpen] = useState(false);
-  const [brand, setBrand] = useState("All");
   const [brandSearch, setBrandSearch] = useState("");
   const [brandOpen, setBrandOpen] = useState(false);
-  const [stockCondition, setStockCondition] = useState("Positive only");
   const [stockConditionSearch, setStockConditionSearch] = useState("");
   const [stockConditionOpen, setStockConditionOpen] = useState(false);
-  const stockConditionOptions = ["All", "Positive only", "Zero stock", "Negative"];
-  const [itemSearch, setItemSearch] = useState("");
-  const [onlyPositiveStock, setOnlyPositiveStock] = useState(true);
+  const stockConditionOptions = ["All", "Positive only", "Zero only", "Negative only"];
+
   const [, setDataRevision] = useState(0);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const isDirty =
+    dateFrom !== appliedFilters.dateFrom ||
+    dateTo !== appliedFilters.dateTo ||
+    warehouse !== appliedFilters.warehouse ||
+    department !== appliedFilters.department ||
+    brand !== appliedFilters.brand ||
+    stockCondition !== appliedFilters.stockCondition ||
+    itemSearch !== appliedFilters.itemSearch;
+
+  const hasNonDefaultApplied =
+    appliedFilters.warehouse !== defaultFilters.warehouse ||
+    appliedFilters.department !== defaultFilters.department ||
+    appliedFilters.brand !== defaultFilters.brand ||
+    appliedFilters.stockCondition !== defaultFilters.stockCondition ||
+    appliedFilters.itemSearch !== defaultFilters.itemSearch ||
+    appliedFilters.dateFrom !== defaultFilters.dateFrom ||
+    appliedFilters.dateTo !== defaultFilters.dateTo;
+
+  function applyFilters() {
+    const f = { dateFrom, dateTo, warehouse, department, brand, stockCondition, itemSearch };
+    setAppliedFilters(f);
+  }
+
+  function clearFilters() {
+    setDateFrom(defaultFilters.dateFrom);
+    setDateTo(defaultFilters.dateTo);
+    setWarehouse(defaultFilters.warehouse);
+    setDepartment(defaultFilters.department);
+    setBrand(defaultFilters.brand);
+    setStockCondition(defaultFilters.stockCondition);
+    setItemSearch(defaultFilters.itemSearch);
+    setAppliedFilters(defaultFilters);
+  }
   const [companyProfile, setCompanyProfile] = useState<any>(null);
   const [departmentOptions, setDepartmentOptions] = useState<{ id: string; name: string }[]>([]);
   const [brandOptions, setBrandOptions] = useState<{ id: string; name: string }[]>([]);
@@ -1075,33 +955,39 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
       .catch(() => {});
   }, []);
 
-  async function loadReport(signal?: AbortSignal) {
+  async function loadReport(signal?: AbortSignal, filters = appliedFilters) {
     clearLiveReportData(activeReport);
+    setReportError(null);
+    setReportLoading(true);
     setDataRevision((value) => value + 1);
     try {
       const data = await getInventoryReportData(activeReport, {
-        dateFrom,
-        dateTo,
-        warehouseId: warehouse,
-        department,
-        brand,
-        searchQuery: itemSearch,
-        stockCondition
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
+        warehouseId: filters.warehouse,
+        branchId: (activeBranch as any)?.id,
+        department: filters.department,
+        brand: filters.brand,
+        searchQuery: filters.itemSearch,
+        stockCondition: filters.stockCondition,
       }, signal);
       if (!data) return;
       applyLiveReportData(activeReport, data);
       setDataRevision((value) => value + 1);
     } catch (error) {
       console.error("Unable to load inventory report data", error);
+      setReportError("Failed to load report data. Please try again.");
+    } finally {
+      setReportLoading(false);
     }
   }
 
   React.useEffect(() => {
     const controller = new AbortController();
     setReportView(activeReport, null);
-    loadReport(controller.signal);
+    loadReport(controller.signal, appliedFilters);
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, warehouse, department, brand, itemSearch, stockCondition]);
+  }, [activeReport, appliedFilters, activeBranch]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1130,7 +1016,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     [activeReport]
   );
 
-  const exportMeta = () => ({ dateFrom, dateTo, branch: activeBranch?.name || 'All', companyProfile });
+  const exportMeta = () => ({ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo, branch: (activeBranch as any)?.name || 'All', companyProfile });
 
   function getActiveViewModel(): { reportTitle: string } & ReportViewModel {
     const vm = getReportView(activeReport);
@@ -1419,12 +1305,19 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
           className="space-y-3"
         >
           {/* Filters */}
-          <Card className="border border-slate-200 bg-white">
+          <Card className={`border bg-white transition-colors ${isDirty ? "border-[#F5C742]" : "border-slate-200"}`}>
             <CardHeader className="py-3 px-3 flex flex-row items-center justify-between">
               <div className="flex flex-col gap-0.5">
-                <CardTitle className="text-xs font-semibold text-slate-800">
-                  Filters
-                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-xs font-semibold text-slate-800">
+                    Filters
+                  </CardTitle>
+                  {isDirty && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[#FFF6D8] border border-[#F5C742] text-amber-700 font-medium">
+                      Unapplied changes
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] text-slate-500">
                   Applied to the selected report: <b>{activeDef.label}</b>
                 </span>
@@ -1623,7 +1516,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                                 <button
                                   key={o}
                                   type="button"
-                                  onMouseDown={() => { setStockCondition(o); setOnlyPositiveStock(o === "Positive only"); setStockConditionOpen(false); setStockConditionSearch(""); }}
+                                  onMouseDown={() => { setStockCondition(o); setStockConditionOpen(false); setStockConditionSearch(""); }}
                                   className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${stockCondition === o ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
                                 >
                                   {o}
@@ -1640,11 +1533,35 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => loadReport()}
-                    className="flex-1 h-8 min-w-[132px] rounded-md !bg-[#F5C742] !text-slate-900 shadow-sm hover:!bg-[#e4b82e] focus-visible:ring-2 focus-visible:ring-[#F5C742]/40 text-[11px] font-semibold"
+                    onClick={applyFilters}
+                    disabled={reportLoading}
+                    className={`flex-1 h-8 min-w-[132px] rounded-md shadow-sm focus-visible:ring-2 focus-visible:ring-[#F5C742]/40 text-[11px] font-semibold transition-colors ${
+                      isDirty
+                        ? "!bg-[#F5C742] !text-slate-900 hover:!bg-[#e4b82e]"
+                        : "!bg-[#f0f0f0] !text-slate-500 cursor-default"
+                    }`}
                   >
-                    Generate
+                    {reportLoading ? (
+                      <span className="flex items-center gap-1.5">
+                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                        </svg>
+                        Loading…
+                      </span>
+                    ) : isDirty ? "Apply Filters" : "Generate"}
                   </Button>
+                  {hasNonDefaultApplied && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={clearFilters}
+                      disabled={reportLoading}
+                      className="h-8 px-3 text-[11px] text-slate-500 border border-slate-200 rounded-md hover:bg-slate-50 hover:text-red-500 flex items-center gap-1"
+                    >
+                      ✕ Clear
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     onClick={handleExportExcel}
@@ -1659,7 +1576,25 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
           </Card>
 
           {/* Results */}
-          {renderResults()}
+          {reportError && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[12px] text-red-700">
+              {reportError}
+            </div>
+          )}
+          {reportLoading ? (
+            <div className="flex items-center justify-center py-20 text-slate-400 text-[12px] gap-2">
+              <svg className="animate-spin h-4 w-4 text-[#F5C742]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Loading report data…
+            </div>
+          ) : getInventoryExportRows(activeReport).length === 0 && !reportError ? (
+            <div className="flex flex-col items-center justify-center py-20 text-slate-400 text-[12px] gap-2">
+              <FileText className="h-8 w-8 text-slate-300" />
+              <span>No data found for the selected filters.</span>
+            </div>
+          ) : renderResults()}
         </motion.div>
       </div>
     </div>
@@ -1727,12 +1662,8 @@ function ResultsTable({
           </table>
         </div>
 
-        <div className="mt-2 text-[10px] text-slate-500 flex items-center justify-between">
+        <div className="mt-2 text-[10px] text-slate-500">
           <span>Total rows: {rows.length}</span>
-          <span className="inline-flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-            Ready for API wiring
-          </span>
         </div>
       </CardContent>
     </Card>
@@ -1828,8 +1759,7 @@ function StockValuationReport() {
                   outerRadius={60}
                   fill="#8884d8"
                   dataKey={costingMethod === 'avg' ? 'avgValue' : costingMethod === 'fifo' ? 'fifoValue' : 'lastValue'}
-                  label={({ warehouse, percentage }) => `${warehouse} (${percentage}%)`}
-                  labelStyle={{ fontSize: '9px' }}
+                  label={({ warehouse, percentage }: any) => `${warehouse} (${percentage}%)`}
                 >
                   {mockValuationByWarehouse.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1923,189 +1853,25 @@ function StockValuationReport() {
     </div>
   );
 }
-// ── Additional mock data ─────────────────────────────────────────────────────
-
-let mockMovementLedger = [
-  { date: "2026-01-16", txnType: "GRN",      ref: "GRN-10245", item: "Basmati Rice 5kg",     sku: "SKU-1001", in: 50,  out: 0,  balance: 124, cost: 62.50, warehouse: "Main WH" },
-  { date: "2026-01-16", txnType: "Sale",     ref: "INV-88321", item: "Basmati Rice 5kg",     sku: "SKU-1001", in: 0,   out: 8,  balance: 116, cost: 62.50, warehouse: "Main WH" },
-  { date: "2026-01-15", txnType: "Sale",     ref: "INV-88290", item: "Olive Oil 1L",         sku: "SKU-2033", in: 0,   out: 5,  balance: 48,  cost: 18.00, warehouse: "Main WH" },
-  { date: "2026-01-15", txnType: "GRN",      ref: "GRN-10241", item: "Fresh Milk 1L",        sku: "SKU-3001", in: 100, out: 0,  balance: 245, cost: 8.50,  warehouse: "Main WH" },
-  { date: "2026-01-14", txnType: "Transfer", ref: "TRF-5502",  item: "Energy Drink 250ml",   sku: "SKU-4003", in: 0,   out: 30, balance: 234, cost: 6.00,  warehouse: "Outlet WH" },
-  { date: "2026-01-14", txnType: "Sale",     ref: "INV-88201", item: "Sparkling Water 500ml", sku: "SKU-4002", in: 0,   out: 24, balance: 567, cost: 2.50,  warehouse: "Main WH" },
-  { date: "2026-01-13", txnType: "Return",   ref: "RET-1102",  item: "Greek Yogurt 500g",    sku: "SKU-3003", in: 6,   out: 0,  balance: 98,  cost: 12.00, warehouse: "Outlet WH" },
-  { date: "2026-01-13", txnType: "Wastage",  ref: "WST-0301",  item: "Fresh Milk 1L",        sku: "SKU-3001", in: 0,   out: 12, balance: 233, cost: 8.50,  warehouse: "Main WH" },
-  { date: "2026-01-12", txnType: "GRN",      ref: "GRN-10235", item: "Sunflower Oil 5L",     sku: "SKU-2034", in: 60,  out: 0,  balance: 156, cost: 42.00, warehouse: "Main WH" },
-  { date: "2026-01-12", txnType: "Sale",     ref: "INV-88155", item: "Pasta Penne 500g",     sku: "SKU-5001", in: 0,   out: 18, balance: 178, cost: 7.50,  warehouse: "Main WH" },
-  { date: "2026-01-11", txnType: "Adj+",     ref: "ADJ-0088",  item: "Tomato Sauce 400g",    sku: "SKU-5002", in: 20,  out: 0,  balance: 298, cost: 5.50,  warehouse: "Main WH" },
-  { date: "2026-01-11", txnType: "Sale",     ref: "INV-88112", item: "Orange Juice 1L",      sku: "SKU-4001", in: 0,   out: 15, balance: 189, cost: 9.50,  warehouse: "Main WH" },
-];
-
-let mockTransfers = [
-  { ref: "TRF-5510", date: "2026-01-16", from: "Main WH",   to: "Outlet WH", item: "Cheddar Cheese 200g", sku: "SKU-3002", qty: 24, cost: 15.50, value: 372.00,  status: "Completed", approver: "Ahmed K." },
-  { ref: "TRF-5508", date: "2026-01-15", from: "Main WH",   to: "Outlet WH", item: "Olive Oil 1L",        sku: "SKU-2033", qty: 12, cost: 18.00, value: 216.00,  status: "Completed", approver: "Sara M." },
-  { ref: "TRF-5505", date: "2026-01-14", from: "Outlet WH", to: "Main WH",   item: "Instant Noodles",     sku: "SKU-5003", qty: 50, cost: 3.20,  value: 160.00,  status: "In-Transit", approver: "Ahmed K." },
-  { ref: "TRF-5503", date: "2026-01-13", from: "Main WH",   to: "Outlet WH", item: "Sparkling Water 500ml",sku: "SKU-4002",qty: 100, cost: 2.50,  value: 250.00,  status: "Completed", approver: "Fatima J." },
-  { ref: "TRF-5501", date: "2026-01-12", from: "Main WH",   to: "Outlet WH", item: "Paper Cup 8oz",       sku: "SKU-3102", qty: 200, cost: 0.22,  value:  44.00,  status: "Pending",   approver: "—" },
-  { ref: "TRF-5498", date: "2026-01-11", from: "Outlet WH", to: "Main WH",   item: "Energy Drink 250ml",  sku: "SKU-4003", qty: 30, cost: 6.00,  value: 180.00,  status: "Completed", approver: "Sara M." },
-  { ref: "TRF-5494", date: "2026-01-10", from: "Main WH",   to: "Outlet WH", item: "Greek Yogurt 500g",   sku: "SKU-3003", qty: 40, cost: 12.00, value: 480.00,  status: "Variance",  approver: "Ahmed K." },
-];
-
-let mockReconciliation = [
-  { date: "2026-01-15", ref: "ADJ-0095", item: "Fresh Milk 1L",       sku: "SKU-3001", before: 257, after: 245, diff: -12, reason: "Expiry write-off",       approver: "Mgr. Ali",   costImpact: -102.00 },
-  { date: "2026-01-14", ref: "ADJ-0094", item: "Tomato Sauce 400g",   sku: "SKU-5002", before: 278, after: 298, diff: +20, reason: "Recount — bin error",    approver: "Mgr. Sara",  costImpact:  +110.00 },
-  { date: "2026-01-13", ref: "ADJ-0092", item: "Sunflower Oil 5L",    sku: "SKU-2034", before: 160, after: 156, diff:  -4, reason: "Damaged stock write-off", approver: "Mgr. Ali",   costImpact:  -168.00 },
-  { date: "2026-01-12", ref: "ADJ-0090", item: "Paper Cup 8oz",       sku: "SKU-3102", before: 965, after: 980, diff: +15, reason: "Opening balance fix",    approver: "Mgr. Fatima",costImpact:    +3.30 },
-  { date: "2026-01-11", ref: "ADJ-0088", item: "Orange Juice 1L",     sku: "SKU-4001", before: 192, after: 189, diff:  -3, reason: "QC rejection",           approver: "Mgr. Sara",  costImpact:   -28.50 },
-  { date: "2026-01-10", ref: "ADJ-0086", item: "Greek Yogurt 500g",   sku: "SKU-3003", before:  90, after:  98, diff:  +8, reason: "GRN backdate correction", approver: "Mgr. Ali",   costImpact:   +96.00 },
-];
-
-let mockWastage = [
-  { date: "2026-01-16", ref: "WST-0310", item: "Fresh Milk 1L",      sku: "SKU-3001", qty: 18, reason: "Expired",         cost: 8.50,  impact: 153.00, warehouse: "Main WH" },
-  { date: "2026-01-15", ref: "WST-0308", item: "Greek Yogurt 500g",  sku: "SKU-3003", qty: 12, reason: "Damaged package",  cost: 12.00, impact: 144.00, warehouse: "Outlet WH" },
-  { date: "2026-01-14", ref: "WST-0306", item: "Orange Juice 1L",    sku: "SKU-4001", qty:  8, reason: "Expired",         cost: 9.50,  impact:  76.00, warehouse: "Outlet WH" },
-  { date: "2026-01-13", ref: "WST-0304", item: "Cheddar Cheese 200g",sku: "SKU-3002", qty:  5, reason: "Mould — rejected", cost: 15.50, impact:  77.50, warehouse: "Main WH" },
-  { date: "2026-01-13", ref: "IC-0041",  item: "Olive Oil 1L",       sku: "SKU-2033", qty:  4, reason: "Internal use",    cost: 18.00, impact:  72.00, warehouse: "Main WH" },
-  { date: "2026-01-12", ref: "WST-0301", item: "Basmati Rice 5kg",   sku: "SKU-1001", qty:  2, reason: "Pest damage",     cost: 62.50, impact: 125.00, warehouse: "Main WH" },
-  { date: "2026-01-11", ref: "IC-0039",  item: "Sunflower Oil 5L",   sku: "SKU-2034", qty:  3, reason: "Internal use",    cost: 42.00, impact: 126.00, warehouse: "Main WH" },
-];
-
-let mockWastageByCategory = [
-  { category: "Dairy",          value: 450.50, qty: 35 },
-  { category: "Beverages",      value: 76.00,  qty: 8 },
-  { category: "FMCG",           value: 198.00, qty: 7 },
-  { category: "Grocery",        value: 125.00, qty: 2 },
-  { category: "Packaged Foods", value: 44.00,  qty: 8 },
-];
-
-let mockInflowOutflow = [
-  { period: "Jan W1", inflow: 42500, outflow: 38200, net: 4300 },
-  { period: "Jan W2", inflow: 38900, outflow: 41100, net: -2200 },
-  { period: "Jan W3", inflow: 51200, outflow: 44800, net: 6400 },
-  { period: "Jan W4", inflow: 47800, outflow: 49200, net: -1400 },
-  { period: "Dec W4", inflow: 63400, outflow: 58900, net: 4500 },
-  { period: "Dec W3", inflow: 55200, outflow: 52100, net: 3100 },
-];
-
-let mockInflowOutflowByCategory = [
-  { category: "Grocery",        inflow: 22400, outflow: 19800 },
-  { category: "FMCG",           inflow: 18600, outflow: 16200 },
-  { category: "Dairy",          inflow: 14200, outflow: 15800 },
-  { category: "Beverages",      inflow: 9800,  outflow: 10400 },
-  { category: "Packaged Foods", inflow: 12100, outflow: 11600 },
-  { category: "Disposables",    inflow: 3200,  outflow: 2900 },
-];
-
-let mockPriceAudit = [
-  { date: "2026-01-15", item: "Basmati Rice 5kg",    sku: "SKU-1001", priceLevel: "Retail",    oldPrice: 95.00,  newPrice: 99.00,  pct: "+4.2%",  changedBy: "Ahmed K.",  approved: "Mgr. Ali" },
-  { date: "2026-01-14", item: "Olive Oil 1L",        sku: "SKU-2033", priceLevel: "Wholesale", oldPrice: 22.50,  newPrice: 24.00,  pct: "+6.7%",  changedBy: "Sara M.",   approved: "Mgr. Ali" },
-  { date: "2026-01-14", item: "Energy Drink 250ml",  sku: "SKU-4003", priceLevel: "Retail",    oldPrice: 10.50,  newPrice: 9.75,   pct: "-7.1%",  changedBy: "Ahmed K.",  approved: "Mgr. Fatima" },
-  { date: "2026-01-13", item: "Cheddar Cheese 200g", sku: "SKU-3002", priceLevel: "Retail",    oldPrice: 26.00,  newPrice: 28.00,  pct: "+7.7%",  changedBy: "Fatima J.", approved: "Mgr. Ali" },
-  { date: "2026-01-12", item: "Sparkling Water 500ml",sku: "SKU-4002",priceLevel: "Retail",    oldPrice: 4.50,   newPrice: 4.75,   pct: "+5.6%",  changedBy: "Sara M.",   approved: "Mgr. Sara" },
-  { date: "2026-01-11", item: "Greek Yogurt 500g",   sku: "SKU-3003", priceLevel: "Wholesale", oldPrice: 17.00,  newPrice: 18.50,  pct: "+8.8%",  changedBy: "Ahmed K.",  approved: "Mgr. Ali" },
-  { date: "2026-01-10", item: "Pasta Penne 500g",    sku: "SKU-5001", priceLevel: "Retail",    oldPrice: 12.50,  newPrice: 12.50,  pct: "0.0%",   changedBy: "Fatima J.", approved: "Auto" },
-];
-
-let mockCostVariance = [
-  { grnRef: "GRN-10245", invRef: "INV-SUP-8812", item: "Basmati Rice 5kg",   sku: "SKU-1001", qty: 50,  grnCost: 62.50, invCost: 63.80, variance: 1.30, totalVar: 65.00,  status: "Over" },
-  { grnRef: "GRN-10241", invRef: "INV-SUP-8805", item: "Fresh Milk 1L",      sku: "SKU-3001", qty: 100, grnCost: 8.50,  invCost: 8.50,  variance: 0.00, totalVar:  0.00,  status: "Match" },
-  { grnRef: "GRN-10235", invRef: "INV-SUP-8798", item: "Sunflower Oil 5L",   sku: "SKU-2034", qty: 60,  grnCost: 42.00, invCost: 41.20, variance:-0.80, totalVar:-48.00,  status: "Under" },
-  { grnRef: "GRN-10228", invRef: "INV-SUP-8790", item: "Orange Juice 1L",    sku: "SKU-4001", qty: 80,  grnCost: 9.50,  invCost: 9.75,  variance: 0.25, totalVar: 20.00,  status: "Over" },
-  { grnRef: "GRN-10221", invRef: "INV-SUP-8783", item: "Greek Yogurt 500g",  sku: "SKU-3003", qty: 60,  grnCost: 12.00, invCost: 12.00, variance: 0.00, totalVar:  0.00,  status: "Match" },
-  { grnRef: "GRN-10214", invRef: "INV-SUP-8775", item: "Pasta Penne 500g",   sku: "SKU-5001", qty: 100, grnCost: 7.50,  invCost: 7.80,  variance: 0.30, totalVar: 30.00,  status: "Over" },
-  { grnRef: "GRN-10208", invRef: "INV-SUP-8769", item: "Coconut Oil 500ml",  sku: "SKU-2035", qty: 40,  grnCost: 22.50, invCost: 22.10, variance:-0.40, totalVar:-16.00,  status: "Under" },
-];
-
-let mockItemMargin = [
-  { item: "Basmati Rice 5kg",   sku: "SKU-1001", category: "Grocery",       salesQty: 480, revenue: 47520, cost: 30000, gp: 17520, gpPct: 36.9 },
-  { item: "Olive Oil 1L",       sku: "SKU-2033", category: "FMCG",          salesQty: 210, revenue: 18900, cost: 10500, gp:  8400, gpPct: 44.4 },
-  { item: "Fresh Milk 1L",      sku: "SKU-3001", category: "Dairy",         salesQty: 900, revenue: 13500, cost:  7650, gp:  5850, gpPct: 43.3 },
-  { item: "Cheddar Cheese 200g",sku: "SKU-3002", category: "Dairy",         salesQty: 350, revenue: 12250, cost:  6825, gp:  5425, gpPct: 44.3 },
-  { item: "Energy Drink 250ml", sku: "SKU-4003", category: "Beverages",     salesQty: 620, revenue: 12090, cost:  8680, gp:  3410, gpPct: 28.2 },
-  { item: "Sparkling Water 500ml",sku:"SKU-4002", category: "Beverages",    salesQty:1100, revenue: 10450, cost:  6600, gp:  3850, gpPct: 36.8 },
-  { item: "Sunflower Oil 5L",   sku: "SKU-2034", category: "FMCG",          salesQty: 180, revenue:  9720, cost:  7560, gp:  2160, gpPct: 22.2 },
-  { item: "Greek Yogurt 500g",  sku: "SKU-3003", category: "Dairy",         salesQty: 280, revenue:  9800, cost:  5600, gp:  4200, gpPct: 42.9 },
-  { item: "Orange Juice 1L",    sku: "SKU-4001", category: "Beverages",     salesQty: 420, revenue:  9660, cost:  6930, gp:  2730, gpPct: 28.3 },
-  { item: "Pasta Penne 500g",   sku: "SKU-5001", category: "Packaged Foods",salesQty: 600, revenue:  9000, cost:  5700, gp:  3300, gpPct: 36.7 },
-];
-
-let mockItemMarginByCategory = [
-  { category: "Grocery",        revenue: 47520, gp: 17520, gpPct: 36.9 },
-  { category: "FMCG",           revenue: 28620, gp: 10560, gpPct: 36.9 },
-  { category: "Dairy",          revenue: 35550, gp: 15475, gpPct: 43.5 },
-  { category: "Beverages",      revenue: 32200, gp:  9990, gpPct: 31.0 },
-  { category: "Packaged Foods", revenue:  9000, gp:  3300, gpPct: 36.7 },
-];
-
-let mockMasterCompleteness = [
-  { sku: "SKU-1001", item: "Basmati Rice 5kg",   hasBarcode: true,  hasCost: true,  hasCategory: true,  hasImage: true,  hasVendor: true,  score: 100, status: "Complete" },
-  { sku: "SKU-2033", item: "Olive Oil 1L",        hasBarcode: true,  hasCost: true,  hasCategory: true,  hasImage: false, hasVendor: true,  score:  80, status: "Missing Image" },
-  { sku: "SKU-3001", item: "Fresh Milk 1L",       hasBarcode: true,  hasCost: true,  hasCategory: true,  hasImage: true,  hasVendor: true,  score: 100, status: "Complete" },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g", hasBarcode: false, hasCost: true,  hasCategory: true,  hasImage: false, hasVendor: true,  score:  60, status: "Missing Barcode" },
-  { sku: "SKU-4001", item: "Orange Juice 1L",     hasBarcode: true,  hasCost: false, hasCategory: true,  hasImage: true,  hasVendor: false, score:  60, status: "Missing Cost" },
-  { sku: "SKU-4002", item: "Sparkling Water 500ml",hasBarcode:true,  hasCost: true,  hasCategory: true,  hasImage: true,  hasVendor: true,  score: 100, status: "Complete" },
-  { sku: "SKU-5001", item: "Pasta Penne 500g",    hasBarcode: true,  hasCost: true,  hasCategory: false, hasImage: false, hasVendor: true,  score:  60, status: "Missing Category" },
-  { sku: "SKU-5003", item: "Instant Noodles Pack",hasBarcode: true,  hasCost: true,  hasCategory: true,  hasImage: false, hasVendor: false, score:  60, status: "Missing Vendor" },
-  { sku: "SKU-6001", item: "Plastic Fork Box",    hasBarcode: false, hasCost: false, hasCategory: true,  hasImage: false, hasVendor: false, score:  20, status: "Incomplete" },
-  { sku: "SKU-6002", item: "Food Container 500ml",hasBarcode: true,  hasCost: true,  hasCategory: true,  hasImage: true,  hasVendor: true,  score: 100, status: "Complete" },
-];
-
-let mockBarcodeAudit = [
-  { sku: "SKU-1001", item: "Basmati Rice 5kg",   barcode: "6281006123456", template: "Standard A4", lastPrinted: "2026-01-10", printedBy: "Ahmed K.", queueStatus: "—",      status: "OK" },
-  { sku: "SKU-2033", item: "Olive Oil 1L",        barcode: "6281008234567", template: "Standard A4", lastPrinted: "2026-01-08", printedBy: "Sara M.",  queueStatus: "—",      status: "OK" },
-  { sku: "SKU-3001", item: "Fresh Milk 1L",       barcode: "6281003345678", template: "Shelf Label", lastPrinted: "2026-01-12", printedBy: "Ahmed K.", queueStatus: "—",      status: "OK" },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g", barcode: "—",             template: "—",           lastPrinted: "Never",      printedBy: "—",        queueStatus: "Pending",status: "No Barcode" },
-  { sku: "SKU-4001", item: "Orange Juice 1L",     barcode: "6281007456789", template: "Standard A4", lastPrinted: "2025-12-20", printedBy: "Fatima J.",queueStatus: "—",      status: "Outdated" },
-  { sku: "SKU-5001", item: "Pasta Penne 500g",    barcode: "6281009567890", template: "Standard A4", lastPrinted: "2026-01-05", printedBy: "Sara M.",  queueStatus: "—",      status: "OK" },
-  { sku: "SKU-6001", item: "Plastic Fork Box",    barcode: "—",             template: "—",           lastPrinted: "Never",      printedBy: "—",        queueStatus: "Failed", status: "No Barcode" },
-];
-
-let mockScaleExport = [
-  { sku: "SKU-1001", item: "Basmati Rice 5kg",   scale: "Scale-01", lastSync: "2026-01-16 08:00", price: 99.00, status: "Synced" },
-  { sku: "SKU-3001", item: "Fresh Milk 1L",       scale: "Scale-01", lastSync: "2026-01-16 08:00", price: 15.00, status: "Synced" },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g", scale: "Scale-02", lastSync: "2026-01-15 08:00", price: 28.00, status: "Pending" },
-  { sku: "SKU-2033", item: "Olive Oil 1L",        scale: "Scale-01", lastSync: "2026-01-14 08:00", price: 24.00, status: "Synced" },
-  { sku: "SKU-4001", item: "Orange Juice 1L",     scale: "Scale-02", lastSync: "—",                price: 21.00, status: "Failed" },
-  { sku: "SKU-5001", item: "Pasta Penne 500g",    scale: "Scale-01", lastSync: "2026-01-13 08:00", price: 12.50, status: "Synced" },
-  { sku: "SKU-3003", item: "Greek Yogurt 500g",   scale: "Scale-02", lastSync: "2026-01-12 08:00", price: 18.50, status: "Pending" },
-];
-
-let mockDeadStock = [
-  { sku: "SKU-6001", item: "Plastic Fork Box",   category: "Disposables",    warehouse: "Main WH",   qty:1245, lastSoldDate: "2025-11-08", daysSinceSale: 69, avgMonthlySales: 80,  value: 186.75, bucket: "60-90 days" },
-  { sku: "SKU-1003", item: "Quinoa 1kg",         category: "Grocery",        warehouse: "Outlet WH", qty: 42,  lastSoldDate: "2025-11-22", daysSinceSale: 55, avgMonthlySales: 15,  value: 3570.00, bucket: "45-60 days" },
-  { sku: "SKU-2035", item: "Coconut Oil 500ml",  category: "FMCG",           warehouse: "Outlet WH", qty: 78,  lastSoldDate: "2025-12-01", daysSinceSale: 46, avgMonthlySales: 22,  value: 1755.00, bucket: "45-60 days" },
-  { sku: "SKU-5002", item: "Tomato Sauce 400g",  category: "Packaged Foods", warehouse: "Main WH",   qty: 298, lastSoldDate: "2025-12-10", daysSinceSale: 37, avgMonthlySales: 55,  value: 1639.00, bucket: "30-45 days" },
-  { sku: "SKU-6002", item: "Food Container 500ml",category:"Disposables",    warehouse: "Outlet WH", qty: 567, lastSoldDate: "2025-12-18", daysSinceSale: 29, avgMonthlySales: 120, value:  255.15, bucket: "30-45 days" },
-  { sku: "SKU-4002", item: "Sparkling Water 500ml",category:"Beverages",     warehouse: "Main WH",   qty: 567, lastSoldDate: "2026-01-01", daysSinceSale: 15, avgMonthlySales: 600, value: 1417.50, bucket: "15-30 days" },
-];
-
-let mockFastMoving = [
-  { sku: "SKU-3001", item: "Fresh Milk 1L",       category: "Dairy",      warehouse: "Main WH",   qtySold: 900, revenue: 13500, avgDailySales: 30.0, turnover: 12.2, trend: "+8%" },
-  { sku: "SKU-4002", item: "Sparkling Water 500ml",category:"Beverages",   warehouse: "Main WH",   qtySold: 1100,revenue: 10450, avgDailySales: 36.7, turnover: 23.2, trend: "+12%" },
-  { sku: "SKU-5003", item: "Instant Noodles Pack", category:"Packaged Foods",warehouse:"Outlet WH", qtySold: 680, revenue:  5440, avgDailySales: 22.7, turnover:  4.5, trend: "+3%" },
-  { sku: "SKU-1001", item: "Basmati Rice 5kg",    category: "Grocery",    warehouse: "Main WH",   qtySold: 480, revenue: 47520, avgDailySales: 16.0, turnover: 11.6, trend: "+5%" },
-  { sku: "SKU-3002", item: "Cheddar Cheese 200g", category: "Dairy",      warehouse: "Main WH",   qtySold: 350, revenue: 12250, avgDailySales: 11.7, turnover: 7.8,  trend: "+15%" },
-  { sku: "SKU-4003", item: "Energy Drink 250ml",  category: "Beverages",  warehouse: "Outlet WH", qtySold: 620, revenue: 12090, avgDailySales: 20.7, turnover: 7.9,  trend: "-2%" },
-  { sku: "SKU-4001", item: "Orange Juice 1L",     category: "Beverages",  warehouse: "Main WH",   qtySold: 420, revenue:  9660, avgDailySales: 14.0, turnover: 6.7,  trend: "+9%" },
-];
-
-let mockBinStock = [
-  { bin: "A1-01", zone: "Dry Goods",  item: "Basmati Rice 5kg",    sku: "SKU-1001", qty: 60,  uom: "Bag",    warehouse: "Main WH" },
-  { bin: "A1-02", zone: "Dry Goods",  item: "Brown Rice 2kg",      sku: "SKU-1002", qty: 40,  uom: "Bag",    warehouse: "Main WH" },
-  { bin: "A2-01", zone: "Oils",       item: "Olive Oil 1L",        sku: "SKU-2033", qty: 48,  uom: "Bottle", warehouse: "Main WH" },
-  { bin: "A2-02", zone: "Oils",       item: "Sunflower Oil 5L",    sku: "SKU-2034", qty: 80,  uom: "Can",    warehouse: "Main WH" },
-  { bin: "B1-01", zone: "Dairy Cold", item: "Fresh Milk 1L",       sku: "SKU-3001", qty: 120, uom: "Carton", warehouse: "Main WH" },
-  { bin: "B1-02", zone: "Dairy Cold", item: "Cheddar Cheese 200g", sku: "SKU-3002", qty: 80,  uom: "Pcs",    warehouse: "Main WH" },
-  { bin: "B2-01", zone: "Dairy Cold", item: "Greek Yogurt 500g",   sku: "SKU-3003", qty: 55,  uom: "Cup",    warehouse: "Outlet WH" },
-  { bin: "C1-01", zone: "Beverages",  item: "Orange Juice 1L",     sku: "SKU-4001", qty: 100, uom: "Bottle", warehouse: "Main WH" },
-  { bin: "C1-02", zone: "Beverages",  item: "Sparkling Water 500ml",sku:"SKU-4002", qty: 300, uom: "Bottle", warehouse: "Main WH" },
-  { bin: "D1-01", zone: "Dry Goods",  item: "Pasta Penne 500g",    sku: "SKU-5001", qty: 100, uom: "Pack",   warehouse: "Main WH" },
-  { bin: "D1-02", zone: "Dry Goods",  item: "Tomato Sauce 400g",   sku: "SKU-5002", qty: 150, uom: "Can",    warehouse: "Main WH" },
-  { bin: "E1-01", zone: "Disposables",item: "Paper Cup 8oz",       sku: "SKU-3102", qty: 500, uom: "Pcs",    warehouse: "Outlet WH" },
-];
+let mockMovementLedger: any[] = [];
+let mockTransfers: any[] = [];
+let mockReconciliation: any[] = [];
+let mockWastage: any[] = [];
+let mockWastageByCategory: any[] = [];
+let mockInflowOutflow: any[] = [];
+let mockInflowOutflowByCategory: any[] = [];
+let mockPriceAudit: any[] = [];
+let mockCostVariance: any[] = [];
+let mockItemMargin: any[] = [];
+let mockItemMarginByCategory: any[] = [];
+let mockMasterCompleteness: any[] = [];
+let mockBarcodeAudit: any[] = [];
+let mockScaleExport: any[] = [];
+let mockDeadStock: any[] = [];
+let mockFastMoving: any[] = [];
+let mockBinStock: any[] = [];
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
-
-clearLiveReportData();
 
 const INV_COLORS = ["#F5C742", "#3b82f6", "#8b5cf6", "#10b981", "#f97316", "#ef4444", "#06b6d4"];
 
@@ -2208,9 +1974,8 @@ function StockOnHandReport() {
           { label: "Total SKUs", value: mockSOH.length.toString(), sub: "across all warehouses" },
           { label: "Total Units", value: mockSOH.reduce((s, r) => s + r.qty, 0).toLocaleString(), sub: "on hand now" },
           { label: "Total Value", value: `AED ${mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 0 })}`, sub: "at avg cost" },
-          { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses", live: true },
-          { label: "Warehouses", value: "2", sub: "Main WH · Outlet WH" },
-        ].filter((c: any) => c.label !== "Warehouses" || c.live).map((c) => (
+          { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses" },
+        ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
               <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
@@ -2280,9 +2045,8 @@ function StockOnHandReport() {
               ))}
             </tbody>
           </Tbl>
-          <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500">
+          <div className="mt-3 text-[10px] text-slate-500">
             <span>Total value: <b className="text-slate-800">AED {mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b></span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Live-ready</span>
           </div>
         </CardContent>
       </Card>

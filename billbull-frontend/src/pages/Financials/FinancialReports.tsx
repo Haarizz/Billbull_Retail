@@ -33,7 +33,7 @@ import {
   Clock,
   Activity,
 } from "lucide-react";
-import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport } from "../../api/financialReportsBackendApi";
+import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport, getLedgerStatement } from "../../api/financialReportsBackendApi";
 import { exportToExcel } from "../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../utils/printGenerator";
 import { getCompanyProfile } from "../../api/companyProfileApi";
@@ -41,142 +41,156 @@ import { getBranches } from "../../api/branchApi";
 import { getAccounts, getCostCenters } from "../../api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
 
-let mockProfitLossSections: any = null;
-let mockGrossProfitRows: any = null;
-let mockBalanceSheetAssets: any = null;
-let mockBalanceSheetEqLiab: any = null;
-let mockTrialBalanceRows: any = null;
-let mockCashFlowSections: any = null;
-let mockCashFlowData: any = null;
-let mockCustomerAgingRows: any = null;
-let mockVendorAgingRows: any = null;
-let mockVatDashboard: any = null;
-let mockVatOutputLines: any = null;
-let mockVatInputLines: any = null;
+// ─── Report data types ────────────────────────────────────────────────────────
 
-function applyLiveReportData(reportId: ReportId, data: any) {
-  if (!data) return;
+interface PLSection { label: string; isRevenue?: boolean; rows: { name: string; cur: number; prior: number }[] }
+interface BSSection { section: string; rows: { name: string; amount: number }[] }
+interface TBRow { code: string; name: string; debit: number; credit: number }
+interface CFData { ops: { name: string; amount: number }[]; inv: { name: string; amount: number }[]; fin: { name: string; amount: number }[]; totalOperating: number; totalInvesting: number; totalFinancing: number; netCashFlow: number; openingCash?: number; closingCash?: number }
+interface AgingRow { customer?: string; vendor?: string; current: number; d30: number; d60: number; d90: number; d90plus: number; total: number }
+interface VatDashboard { outputTax?: number; inputTax?: number; netTaxPayable?: number; taxableSalesBase?: number; taxablePurchaseBase?: number; trn?: string }
+interface VatLine { documentNumber?: string; accountName?: string; baseAmount?: number; taxAmount?: number }
+interface LedgerStatementRow { date: string; ref: string; narration: string; debit: number; credit: number; balance: number }
 
-  switch (reportId) {
-    case "profit_loss": {
-      if (data.revenueItems || data.cogsItems || data.operatingExpenseItems) {
-        const toRow = (r: any) => ({ name: r.accountName || r.category, cur: Number(r.amount || 0), prior: Number(r.priorAmount || 0) });
-        mockProfitLossSections = [
-          { label: "Revenue", isRevenue: true, rows: (data.revenueItems || []).map(toRow) },
-          { label: "Cost of Sales", rows: (data.cogsItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
-          { label: "Operating Expenses", rows: (data.operatingExpenseItems || data.expenseItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
-          { label: "Other Income", rows: (data.otherIncomeItems || []).map((r: any) => ({ ...toRow(r), cur: Math.abs(Number(r.amount || 0)), prior: Math.abs(Number(r.priorAmount || 0)) })) },
-        ];
-      }
-      break;
-    }
-    case "balance_sheet": {
-      if (data.assetItems) {
-        const groupByCategory = (items: any[]) => {
-          const map: Record<string, { name: string; amount: number }[]> = {};
-          for (const r of items) {
-            const sec = r.category || "Assets";
-            if (!map[sec]) map[sec] = [];
-            map[sec].push({ name: r.accountName || r.category, amount: Number(r.amount || 0) });
-          }
-          return map;
-        };
+interface ReportStore {
+  plSections: PLSection[] | null;
+  bsAssets: BSSection[] | null;
+  bsEqLiab: BSSection[] | null;
+  tbRows: TBRow[] | null;
+  cfData: CFData | null;
+  customerAgingRows: AgingRow[] | null;
+  vendorAgingRows: AgingRow[] | null;
+  vatDashboard: VatDashboard | null;
+  vatOutputLines: VatLine[] | null;
+  vatInputLines: VatLine[] | null;
+  ledgerRows: LedgerStatementRow[] | null;
+  // display context passed from filter state
+  period: string;
+  branchLabel: string;
+}
 
-        const assetMap = groupByCategory(data.assetItems || []);
-        const ASSET_ORDER = ["Non-Current Assets", "Current Assets", "Cash & Cash Equivalents"];
-        const assetKeys = ASSET_ORDER.filter(k => assetMap[k]).concat(Object.keys(assetMap).filter(k => !ASSET_ORDER.includes(k)));
-        mockBalanceSheetAssets = assetKeys.map(sec => ({ section: sec, rows: assetMap[sec] }));
+function buildReportStore(): ReportStore {
+  return { plSections: null, bsAssets: null, bsEqLiab: null, tbRows: null, cfData: null, customerAgingRows: null, vendorAgingRows: null, vatDashboard: null, vatOutputLines: null, vatInputLines: null, ledgerRows: null, period: "", branchLabel: "All Branches" };
+}
 
-        const liabMap = groupByCategory(data.liabilityItems || []);
-        const LIAB_ORDER = ["Non-Current Liabilities", "Current Liabilities"];
-        const liabKeys = LIAB_ORDER.filter(k => liabMap[k]).concat(Object.keys(liabMap).filter(k => !LIAB_ORDER.includes(k)));
-        const equityRows = (data.equityItems || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
+function parsePLData(data: any): PLSection[] | null {
+  if (!data || (!data.revenueItems && !data.cogsItems && !data.operatingExpenseItems)) return null;
+  const toRow = (r: any) => ({ name: r.accountName || r.category, cur: Number(r.amount || 0), prior: Number(r.priorAmount || 0) });
+  return [
+    { label: "Revenue", isRevenue: true, rows: (data.revenueItems || []).map(toRow) },
+    { label: "Cost of Sales", rows: (data.cogsItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
+    { label: "Operating Expenses", rows: (data.operatingExpenseItems || data.expenseItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
+    { label: "Other Income", rows: (data.otherIncomeItems || []).map((r: any) => ({ ...toRow(r), cur: Math.abs(Number(r.amount || 0)), prior: Math.abs(Number(r.priorAmount || 0)) })) },
+  ];
+}
 
-        mockBalanceSheetEqLiab = [
-          ...(equityRows.length > 0 ? [{ section: "Equity", rows: equityRows }] : []),
-          ...liabKeys.map(sec => ({ section: sec, rows: liabMap[sec] })),
-        ];
-      }
-      break;
+function parseBSData(data: any): { assets: BSSection[] | null; eqLiab: BSSection[] | null } {
+  if (!data?.assetItems) return { assets: null, eqLiab: null };
+  const groupByCategory = (items: any[]) => {
+    const map: Record<string, { name: string; amount: number }[]> = {};
+    for (const r of items) {
+      const sec = r.category || "Assets";
+      if (!map[sec]) map[sec] = [];
+      map[sec].push({ name: r.accountName || r.category, amount: Number(r.amount || 0) });
     }
-    case "trial_balance": {
-      const rows = data.lines || data.data;
-      if (rows) {
-        mockTrialBalanceRows = rows.map((r: any) => ({
-          code: r.accountCode || r.code || "",
-          name: r.accountName || r.name || "Unknown",
-          debit: Number(r.debitBalance ?? r.debit ?? 0),
-          credit: Number(r.creditBalance ?? r.credit ?? 0),
-        }));
-      }
-      break;
+    return map;
+  };
+  const assetMap = groupByCategory(data.assetItems || []);
+  const ASSET_ORDER = ["Non-Current Assets", "Current Assets", "Cash & Cash Equivalents"];
+  const assetKeys = ASSET_ORDER.filter(k => assetMap[k]).concat(Object.keys(assetMap).filter(k => !ASSET_ORDER.includes(k)));
+  const assets = assetKeys.map(sec => ({ section: sec, rows: assetMap[sec] }));
+
+  const liabMap = groupByCategory(data.liabilityItems || []);
+  const LIAB_ORDER = ["Non-Current Liabilities", "Current Liabilities"];
+  const liabKeys = LIAB_ORDER.filter(k => liabMap[k]).concat(Object.keys(liabMap).filter(k => !LIAB_ORDER.includes(k)));
+  const equityRows = (data.equityItems || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
+  const eqLiab = [
+    ...(equityRows.length > 0 ? [{ section: "Equity", rows: equityRows }] : []),
+    ...liabKeys.map(sec => ({ section: sec, rows: liabMap[sec] })),
+  ];
+  return { assets, eqLiab };
+}
+
+function parseTBData(data: any): TBRow[] | null {
+  const rows = data?.lines || data?.data;
+  if (!rows) return null;
+  return rows.map((r: any) => ({
+    code: r.accountCode || r.code || "",
+    name: r.accountName || r.name || "Unknown",
+    debit: Number(r.debitBalance ?? r.debit ?? 0),
+    credit: Number(r.creditBalance ?? r.credit ?? 0),
+  }));
+}
+
+function parseCFData(data: any): CFData | null {
+  if (!data || (data.operatingActivities === undefined && data.investingActivities === undefined)) return null;
+  const toRows = (items: any[]) => (items || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
+  return {
+    ops: toRows(data.operatingActivities),
+    inv: toRows(data.investingActivities),
+    fin: toRows(data.financingActivities),
+    totalOperating: Number(data.totalOperating || 0),
+    totalInvesting: Number(data.totalInvesting || 0),
+    totalFinancing: Number(data.totalFinancing || 0),
+    netCashFlow: Number(data.netCashFlow || 0),
+    openingCash: data.openingCash != null ? Number(data.openingCash) : undefined,
+    closingCash: data.closingCash != null ? Number(data.closingCash) : undefined,
+  };
+}
+
+function parseAgingData(data: any, nameKey: "customer" | "vendor"): AgingRow[] | null {
+  const arr: any[] = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+  if (!arr.length) return null;
+  return arr.map((r: any) => ({
+    [nameKey]: r.partnerName || r[`${nameKey}Name`] || "Unknown",
+    current: Number(r.amount0to30 || 0),
+    d30: Number(r.amount31to60 || 0),
+    d60: Number(r.amount61to90 || 0),
+    d90: Number(r.amount61to90 || 0),
+    d90plus: Number(r.amount90Plus || r.amount90plus || 0),
+    total: Number(r.total || 0),
+  } as AgingRow));
+}
+
+function parseLedgerData(data: any): LedgerStatementRow[] | null {
+  const lines = data?.lines || data?.entries || (Array.isArray(data) ? data : null);
+  if (!lines || !lines.length) return null;
+  let running = 0;
+  return lines.map((r: any, i: number) => {
+    const debit = Number(r.debitAmount ?? r.debit ?? 0);
+    const credit = Number(r.creditAmount ?? r.credit ?? 0);
+    if (i === 0 && r.balance != null) {
+      running = Number(r.balance);
+    } else {
+      running = running + debit - credit;
     }
-    case "cash_flow_statement": {
-      const toRows = (items: any[]) => (items || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
-      if (data.operatingActivities !== undefined || data.investingActivities !== undefined) {
-        mockCashFlowData = {
-          ops: toRows(data.operatingActivities),
-          inv: toRows(data.investingActivities),
-          fin: toRows(data.financingActivities),
-          totalOperating: Number(data.totalOperating || 0),
-          totalInvesting: Number(data.totalInvesting || 0),
-          totalFinancing: Number(data.totalFinancing || 0),
-          netCashFlow: Number(data.netCashFlow || 0),
-        };
-      }
-      break;
-    }
-    case "customer_aging": {
-      const arr = Array.isArray(data) ? data : (data ? Object.values(data) : []);
-      if (arr.length > 0) {
-        mockCustomerAgingRows = arr.map((r: any) => ({
-          customer: r.partnerName || r.customerName || "Unknown",
-          current: Number(r.amount0to30 || 0),
-          d30: Number(r.amount31to60 || 0),
-          d60: Number(r.amount61to90 || 0),
-          d90: 0,
-          d90plus: Number(r.amount90Plus || r.amount90plus || 0),
-          total: Number(r.total || 0),
-        }));
-      }
-      break;
-    }
-    case "vendor_aging": {
-      const arr = Array.isArray(data) ? data : (data ? Object.values(data) : []);
-      if (arr.length > 0) {
-        mockVendorAgingRows = arr.map((r: any) => ({
-          vendor: r.partnerName || r.vendorName || "Unknown",
-          current: Number(r.amount0to30 || 0),
-          d30: Number(r.amount31to60 || 0),
-          d60: Number(r.amount61to90 || 0),
-          d90: 0,
-          d90plus: Number(r.amount90Plus || r.amount90plus || 0),
-          total: Number(r.total || 0),
-        }));
-      }
-      break;
-    }
-    default:
-      break;
-  }
+    return {
+      date: r.transactionDate || r.date || "",
+      ref: r.referenceNumber || r.ref || "",
+      narration: r.description || r.narration || "",
+      debit,
+      credit,
+      balance: r.balance != null ? Number(r.balance) : running,
+    };
+  });
 }
 
 
 // ─── Export helpers ───────────────────────────────────────────────────────────
 
-function flattenSections(sections: any[] | null, labelKey = "name", amtKey = "cur", priorKey = "prior"): any[] {
+function flattenSections(sections: PLSection[] | null): any[] {
   if (!sections) return [];
   const rows: any[] = [];
   for (const sec of sections) {
     rows.push({ account: `— ${sec.label} —`, amount: "", prior: "" });
     for (const row of sec.rows || []) {
-      rows.push({ account: row[labelKey] || row.name, amount: row[amtKey] ?? row.amount ?? "", prior: row[priorKey] ?? "" });
+      rows.push({ account: row.name, amount: row.cur, prior: row.prior });
     }
   }
   return rows;
 }
 
-function flattenBalanceSheet(sections: any[] | null): any[] {
+function flattenBalanceSheet(sections: BSSection[] | null): any[] {
   if (!sections) return [];
   const rows: any[] = [];
   for (const sec of sections) {
@@ -188,13 +202,12 @@ function flattenBalanceSheet(sections: any[] | null): any[] {
   return rows;
 }
 
-function getFinancialExportData(reportId: ReportId): { title: string; cols: any[]; rows: any[] } {
+function getFinancialExportData(reportId: ReportId, store: ReportStore): { title: string; cols: any[]; rows: any[] } {
   switch (reportId) {
     case "profit_loss":
     case "gross_profit":
     case "departmental_pl":
     case "comparative_pl": {
-      const rows = flattenSections(mockProfitLossSections);
       return {
         title: "Statement of Profit or Loss",
         cols: [
@@ -202,25 +215,20 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "Current Period (AED)", key: "amount", width: 22 },
           { header: "Prior Period (AED)", key: "prior", width: 22 },
         ],
-        rows,
+        rows: flattenSections(store.plSections),
       };
     }
     case "balance_sheet": {
-      const rows = [
-        ...flattenBalanceSheet(mockBalanceSheetAssets),
-        ...flattenBalanceSheet(mockBalanceSheetEqLiab),
-      ];
       return {
         title: "Statement of Financial Position",
         cols: [
           { header: "Account", key: "account", width: 40 },
           { header: "Amount (AED)", key: "amount", width: 22 },
         ],
-        rows,
+        rows: [...flattenBalanceSheet(store.bsAssets), ...flattenBalanceSheet(store.bsEqLiab)],
       };
     }
     case "trial_balance": {
-      const rows = mockTrialBalanceRows || [];
       return {
         title: "Trial Balance",
         cols: [
@@ -229,21 +237,21 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "Debit (AED)", key: "debit", width: 20 },
           { header: "Credit (AED)", key: "credit", width: 20 },
         ],
-        rows,
+        rows: store.tbRows || [],
       };
     }
     case "cash_flow_statement": {
-      const d = mockCashFlowData;
+      const d = store.cfData;
       const rows: any[] = [];
       if (d) {
         rows.push({ activity: "— Operating Activities —", amount: "" });
-        (d.ops || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        (d.ops || []).forEach((r) => rows.push({ activity: r.name, amount: r.amount }));
         rows.push({ activity: "Net Operating", amount: d.totalOperating });
         rows.push({ activity: "— Investing Activities —", amount: "" });
-        (d.inv || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        (d.inv || []).forEach((r) => rows.push({ activity: r.name, amount: r.amount }));
         rows.push({ activity: "Net Investing", amount: d.totalInvesting });
         rows.push({ activity: "— Financing Activities —", amount: "" });
-        (d.fin || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        (d.fin || []).forEach((r) => rows.push({ activity: r.name, amount: r.amount }));
         rows.push({ activity: "Net Financing", amount: d.totalFinancing });
         rows.push({ activity: "Net Cash Flow", amount: d.netCashFlow });
       }
@@ -268,7 +276,7 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "90+ Days", key: "d90plus", width: 16 },
           { header: "Total (AED)", key: "total", width: 18 },
         ],
-        rows: mockCustomerAgingRows || [],
+        rows: store.customerAgingRows || [],
       };
     }
     case "vendor_aging": {
@@ -283,7 +291,7 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "90+ Days", key: "d90plus", width: 16 },
           { header: "Total (AED)", key: "total", width: 18 },
         ],
-        rows: mockVendorAgingRows || [],
+        rows: store.vendorAgingRows || [],
       };
     }
     case "vat_return_summary":
@@ -299,7 +307,7 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "VAT (AED)", key: "vatAmt", width: 16 },
           { header: "Total (AED)", key: "totalAmt", width: 16 },
         ],
-        rows: mockVatOutputLines || [],
+        rows: store.vatOutputLines || [],
       };
     }
     case "vat_input_register": {
@@ -314,7 +322,7 @@ function getFinancialExportData(reportId: ReportId): { title: string; cols: any[
           { header: "VAT (AED)", key: "vatAmt", width: 16 },
           { header: "Total (AED)", key: "totalAmt", width: 16 },
         ],
-        rows: mockVatInputLines || [],
+        rows: store.vatInputLines || [],
       };
     }
     default:
@@ -804,8 +812,8 @@ function MiniBarChart({
 
 // ─── Report Components ────────────────────────────────────────────────────────
 
-function ProfitLossReport() {
-  const sections: any[] = mockProfitLossSections || [];
+function ProfitLossReport({ store }: { store: ReportStore }) {
+  const sections: PLSection[] = store.plSections || [];
 
   const revSection = sections.find((s: any) => s.isRevenue) ?? { rows: [] };
   const totalRevCur = revSection.rows.reduce((s: number, r: any) => s + r.cur, 0);
@@ -816,10 +824,10 @@ function ProfitLossReport() {
   const netCur = totalRevCur + totalCostsCur;
   const netPrior = totalRevPrior + totalCostsPrior;
 
-  const cogsSec = sections.find((s: any) => s.label === "Cost of Sales") ?? { rows: [] };
+  const cogsSec = sections.find((s) => s.label === "Cost of Sales") ?? { rows: [] };
   const chartData = [
     { label: "Revenue", value: totalRevCur },
-    { label: "Gross Profit", value: totalRevCur + cogsSec.rows.reduce((a: number, r: any) => a + r.cur, 0) },
+    { label: "Gross Profit", value: totalRevCur + cogsSec.rows.reduce((a: number, r) => a + r.cur, 0) },
     { label: "Net Profit", value: netCur },
   ];
 
@@ -829,8 +837,8 @@ function ProfitLossReport() {
         <ReportHeader
           title="Statement of Profit or Loss (P&L)"
           subtitle="IFRS-compliant income statement"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
 
         <MiniBarChart data={chartData} />
@@ -916,11 +924,22 @@ function ProfitLossReport() {
   );
 }
 
-function GrossProfitReport() {
-  const rows: any[] = [];
+function GrossProfitReport({ store }: { store: ReportStore }) {
+  // Derive gross profit rows from P&L sections data
+  const sections = store.plSections || [];
+  const revSec = sections.find((s) => s.isRevenue) ?? { rows: [] };
+  const cogsSec = sections.find((s) => s.label === "Cost of Sales") ?? { rows: [] };
+  const rows = revSec.rows.map((rev) => {
+    const cogs = cogsSec.rows.find((c) => c.name === rev.name);
+    const revenue = rev.cur;
+    const cogsAmt = Math.abs(cogs?.cur ?? 0);
+    const gp = revenue - cogsAmt;
+    const gpPct = revenue !== 0 ? (gp / revenue) * 100 : 0;
+    return { category: rev.name, revenue, cogs: cogsAmt, gp, gpPct };
+  });
   const totRev = rows.reduce((a, r) => a + r.revenue, 0);
   const totGP = rows.reduce((a, r) => a + r.gp, 0);
-  const totGPPct = ((totGP / totRev) * 100).toFixed(1);
+  const totGPPct = totRev !== 0 ? ((totGP / totRev) * 100).toFixed(1) : "—";
 
   return (
     <Card className="border border-slate-200 bg-white">
@@ -928,8 +947,8 @@ function GrossProfitReport() {
         <ReportHeader
           title="Gross Profit Analysis"
           subtitle="Revenue vs cost of sales with GP% by category"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <MiniBarChart data={rows.map((r) => ({ label: r.category.split(" ")[0], value: r.gpPct }))} color="#34d399" />
         <div className="mt-4">
@@ -962,7 +981,7 @@ function GrossProfitReport() {
                 <Td right bold>{aed(totRev)}</Td>
                 <Td right bold>{aed(totRev - totGP)}</Td>
                 <Td right bold>{aed(totGP)}</Td>
-                <Td right bold>{totGPPct}%</Td>
+                <Td right bold>{totGPPct === "—" ? "—" : `${totGPPct}%`}</Td>
               </tr>
             </tbody>
           </Tbl>
@@ -972,16 +991,23 @@ function GrossProfitReport() {
   );
 }
 
-function DepartmentalPLReport() {
-  const rows: any[] = [];
+function DepartmentalPLReport({ store }: { store: ReportStore }) {
+  // Flatten P&L sections into line items for comparative view by section
+  const sections = store.plSections || [];
+  const rows = sections.map((s) => {
+    const revenue = s.isRevenue ? s.rows.reduce((a, r) => a + r.cur, 0) : 0;
+    const expenses = !s.isRevenue ? Math.abs(s.rows.reduce((a, r) => a + r.cur, 0)) : 0;
+    const profit = revenue - expenses;
+    return { dept: s.label, revenue, expenses, profit };
+  });
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
         <ReportHeader
           title="Departmental P&L"
           subtitle="Profit & Loss split by cost centre / department"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <Tbl>
           <thead>
@@ -1018,16 +1044,20 @@ function DepartmentalPLReport() {
   );
 }
 
-function ComparativePLReport() {
-  const rows: any[] = [];
+function ComparativePLReport({ store }: { store: ReportStore }) {
+  // Build comparative rows from P&L sections: current vs prior (budget not available from backend)
+  const sections = store.plSections || [];
+  const rows = sections.flatMap((s) =>
+    s.rows.map((r) => ({ line: r.name, cur: r.cur, prior: r.prior, budget: 0 }))
+  );
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
         <ReportHeader
           title="Comparative P&L"
-          subtitle="Current period vs prior period vs budget"
-          period="Jan 2026"
-          branch="All Branches"
+          subtitle="Current period vs prior period"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <Tbl>
           <thead>
@@ -1035,30 +1065,20 @@ function ComparativePLReport() {
               <Th>Line Item</Th>
               <Th right>Current (AED)</Th>
               <Th right>Prior (AED)</Th>
-              <Th right>Budget (AED)</Th>
-              <Th right>vs Budget</Th>
               <Th right>vs Prior %</Th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
-              const vsBudget = r.cur - r.budget;
               const vsPrior =
                 r.prior !== 0
                   ? (((r.cur - r.prior) / Math.abs(r.prior)) * 100).toFixed(1)
                   : "—";
-              const isTotal = ["Gross Profit", "EBITDA", "Net Profit"].includes(r.line);
               return (
-                <tr key={r.line} className={isTotal ? "bg-slate-50" : ""}>
-                  <Td bold={isTotal}>{r.line}</Td>
-                  <Td right bold={isTotal}>{aed(r.cur)}</Td>
+                <tr key={r.line}>
+                  <Td>{r.line}</Td>
+                  <Td right bold>{aed(r.cur)}</Td>
                   <Td right>{aed(r.prior)}</Td>
-                  <Td right>{aed(r.budget)}</Td>
-                  <Td right>
-                    <span className={vsBudget >= 0 ? "text-emerald-600" : "text-red-600"}>
-                      {vsBudget >= 0 ? "+" : ""}{aed(vsBudget)}
-                    </span>
-                  </Td>
                   <Td right>
                     <span className={vsPrior !== "—" && parseFloat(vsPrior) >= 0 ? "text-emerald-600" : "text-red-500"}>
                       {vsPrior !== "—" ? `${vsPrior}%` : vsPrior}
@@ -1074,9 +1094,9 @@ function ComparativePLReport() {
   );
 }
 
-function BalanceSheetReport() {
-  const assets: any[] = mockBalanceSheetAssets || [];
-  const eqLiab: any[] = mockBalanceSheetEqLiab || [];
+function BalanceSheetReport({ store }: { store: ReportStore }) {
+  const assets: BSSection[] = store.bsAssets || [];
+  const eqLiab: BSSection[] = store.bsEqLiab || [];
   const totalAssets = assets.flatMap((s) => s.rows).reduce((a, r) => a + r.amount, 0);
   const totalEqLiab = eqLiab.flatMap((s) => s.rows).reduce((a, r) => a + r.amount, 0);
 
@@ -1086,8 +1106,8 @@ function BalanceSheetReport() {
         <ReportHeader
           title="Statement of Financial Position"
           subtitle="Balance Sheet as at period end — IFRS compliant"
-          period="31 Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
           <div>
@@ -1182,8 +1202,8 @@ function BalanceSheetReport() {
   );
 }
 
-function TrialBalanceReport() {
-  const rows = mockTrialBalanceRows || [];
+function TrialBalanceReport({ store }: { store: ReportStore }) {
+  const rows: TBRow[] = store.tbRows || [];
   const totDebit = rows.reduce((a, r) => a + r.debit, 0);
   const totCredit = rows.reduce((a, r) => a + r.credit, 0);
 
@@ -1193,8 +1213,8 @@ function TrialBalanceReport() {
         <ReportHeader
           title="Trial Balance"
           subtitle="All account balances — must balance"
-          period="31 Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <Tbl>
           <thead>
@@ -1239,11 +1259,11 @@ function TrialBalanceReport() {
   );
 }
 
-function CashFlowReport() {
-  const live = mockCashFlowData;
-  const ops: any[] = live?.ops ?? [];
-  const inv: any[] = live?.inv ?? [];
-  const fin: any[] = live?.fin ?? [];
+function CashFlowReport({ store }: { store: ReportStore }) {
+  const live = store.cfData;
+  const ops = live?.ops ?? [];
+  const inv = live?.inv ?? [];
+  const fin = live?.fin ?? [];
   const totOps: number = live?.totalOperating ?? 0;
   const totInv: number = live?.totalInvesting ?? 0;
   const totFin: number = live?.totalFinancing ?? 0;
@@ -1283,8 +1303,8 @@ function CashFlowReport() {
         <ReportHeader
           title="Statement of Cash Flows"
           subtitle="Indirect method — Operating, Investing & Financing"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <MiniBarChart data={chartData} />
         <div className="mt-4">
@@ -1323,7 +1343,7 @@ function CashFlowReport() {
   );
 }
 
-function BankReconciliationReport() {
+function BankReconciliationReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1331,8 +1351,8 @@ function BankReconciliationReport() {
         <ReportHeader
           title="Bank Reconciliation"
           subtitle="Book balance vs bank statement — Emirates NBD"
-          period="Jan 2026"
-          branch="Main Branch"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <div className="grid grid-cols-3 gap-3 mb-4">
           {[
@@ -1375,7 +1395,7 @@ function BankReconciliationReport() {
   );
 }
 
-function PettyCashReport() {
+function PettyCashReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   let running = 0;
   const withBalance = rows.map((r) => { running += r.amount; return { ...r, balance: running }; });
@@ -1384,9 +1404,9 @@ function PettyCashReport() {
       <CardContent className="pt-4 px-4 pb-4">
         <ReportHeader
           title="Petty Cash Statement"
-          subtitle="Imprest fund movements — Main Branch"
-          period="Jan 2026"
-          branch="Main Branch"
+          subtitle="Imprest fund movements"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <Tbl>
           <thead>
@@ -1426,9 +1446,9 @@ function PettyCashReport() {
   );
 }
 
-function CustomerAgingReport() {
-  const rows = mockCustomerAgingRows || [];
-  const tot = (key: keyof typeof rows[0]) => rows.reduce((a, r) => a + (r[key] as number), 0);
+function CustomerAgingReport({ store }: { store: ReportStore }) {
+  const rows: AgingRow[] = store.customerAgingRows || [];
+  const tot = (key: keyof AgingRow) => rows.reduce((a, r) => a + (r[key] as number), 0);
   const chartData = [
     { label: "Current", value: tot("current") },
     { label: "1-30d", value: tot("d30") },
@@ -1442,8 +1462,8 @@ function CustomerAgingReport() {
         <ReportHeader
           title="Customer Aging Report"
           subtitle="Outstanding receivables by age bucket"
-          period="31 Jan 2026"
-          branch="All Branches"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <MiniBarChart data={chartData} color="#F5C742" />
         <div className="mt-4">
@@ -1488,16 +1508,16 @@ function CustomerAgingReport() {
   );
 }
 
-function CollectionEfficiencyReport() {
+function CollectionEfficiencyReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
         <ReportHeader
           title="Collection Efficiency Report"
-          subtitle="DSO and collection rate by customer — Jan 2026"
-          period="Jan 2026"
-          branch="All Branches"
+          subtitle="DSO and collection rate by customer"
+          period={store.period}
+          branch={store.branchLabel}
         />
         <Tbl>
           <thead>
@@ -1534,7 +1554,7 @@ function CollectionEfficiencyReport() {
   );
 }
 
-function CreditUtilizationReport() {
+function CreditUtilizationReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1587,9 +1607,9 @@ function CreditUtilizationReport() {
   );
 }
 
-function VendorAgingReport() {
-  const rows = mockVendorAgingRows || [];
-  const tot = (key: keyof typeof rows[0]) => rows.reduce((a, r) => a + (r[key] as number), 0);
+function VendorAgingReport({ store }: { store: ReportStore }) {
+  const rows: AgingRow[] = store.vendorAgingRows || [];
+  const tot = (key: keyof AgingRow) => rows.reduce((a, r) => a + (r[key] as number), 0);
   const chartData = [
     { label: "Current", value: tot("current") },
     { label: "1-30d", value: tot("d30") },
@@ -1649,7 +1669,7 @@ function VendorAgingReport() {
   );
 }
 
-function PaymentScheduleReport() {
+function PaymentScheduleReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1657,8 +1677,8 @@ function PaymentScheduleReport() {
         <ReportHeader
           title="Payment Schedule"
           subtitle="Upcoming vendor payments with method and status"
-          period="Jan–Feb 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -1694,7 +1714,7 @@ function PaymentScheduleReport() {
   );
 }
 
-function OutstandingPayablesReport() {
+function OutstandingPayablesReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1702,8 +1722,8 @@ function OutstandingPayablesReport() {
         <ReportHeader
           title="Outstanding Payables"
           subtitle="All unpaid and partially paid vendor invoices"
-          period="31 Jan 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -1745,8 +1765,8 @@ function OutstandingPayablesReport() {
   );
 }
 
-function VATReturnSummaryReport() {
-  const vd = mockVatDashboard;
+function VATReturnSummaryReport({ store, companyProfile }: { store: ReportStore; companyProfile: any }) {
+  const vd = store.vatDashboard;
   const outputTax = vd ? Number(vd.outputTax || 0) : 0;
   const inputTax = vd ? Number(vd.inputTax || 0) : 0;
   const netPayable = vd ? Number(vd.netTaxPayable || 0) : 0;
@@ -1767,8 +1787,8 @@ function VATReturnSummaryReport() {
         <ReportHeader
           title="VAT Return Summary"
           subtitle="UAE FTA VAT Return — Standard format (Box 1–7)"
-          period="Selected Period"
-          branch="All Branches"
+          period={store.period || "Selected Period"}
+          branch={store.branchLabel || "All Branches"}
         />
         <div className="mb-3 flex gap-3">
           {[
@@ -1810,15 +1830,15 @@ function VATReturnSummaryReport() {
           </tbody>
         </Tbl>
         <p className="mt-3 text-[10px] text-slate-500">
-          UAE VAT rate: 5% | TRN: 100-3456-7890-003 | Filing deadline: 28 Jan 2026
+          UAE VAT rate: 5% | TRN: {companyProfile?.trn || "—"} | Filing deadline: 28 days after period end
         </p>
       </CardContent>
     </Card>
   );
 }
 
-function VATOutputRegisterReport() {
-  const liveRows = mockVatOutputLines;
+function VATOutputRegisterReport({ store }: { store: ReportStore }) {
+  const liveRows = store.vatOutputLines;
   const rows = liveRows?.length
     ? liveRows.map((l: any) => ({
         date: "—",
@@ -1836,8 +1856,8 @@ function VATOutputRegisterReport() {
         <ReportHeader
           title="Output Tax Register"
           subtitle="All taxable supplies with output VAT detail"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -1879,8 +1899,8 @@ function VATOutputRegisterReport() {
   );
 }
 
-function VATInputRegisterReport() {
-  const liveRows = mockVatInputLines;
+function VATInputRegisterReport({ store }: { store: ReportStore }) {
+  const liveRows = store.vatInputLines;
   const rows = liveRows?.length
     ? liveRows.map((l: any) => ({
         date: "—",
@@ -1897,8 +1917,8 @@ function VATInputRegisterReport() {
         <ReportHeader
           title="Input Tax Register"
           subtitle="Eligible input VAT for recovery — purchases & expenses"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -1939,7 +1959,7 @@ function VATInputRegisterReport() {
   );
 }
 
-function JournalAuditReport() {
+function JournalAuditReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1947,8 +1967,8 @@ function JournalAuditReport() {
         <ReportHeader
           title="Journal Audit Log"
           subtitle="All manual journal entries with user, reason and approver"
-          period="Jan 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -1983,7 +2003,7 @@ function JournalAuditReport() {
   );
 }
 
-function PeriodCloseReport() {
+function PeriodCloseReport({ store }: { store: ReportStore }) {
   const tasks: any[] = [];
   const done = tasks.filter((t) => t.status === "Done").length;
   return (
@@ -1991,9 +2011,9 @@ function PeriodCloseReport() {
       <CardContent className="pt-4 px-4 pb-4">
         <ReportHeader
           title="Period Close Checklist"
-          subtitle="Month-end close tasks and sign-off status — Jan 2026"
-          period="Jan 2026"
-          branch="All Branches"
+          subtitle="Month-end close tasks and sign-off status"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <div className="flex items-center gap-3 mb-4">
           <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
@@ -2031,7 +2051,7 @@ function PeriodCloseReport() {
   );
 }
 
-function UserActivityReport() {
+function UserActivityReport({ store }: { store: ReportStore }) {
   const rows: any[] = [];
   const riskColor: Record<string, string> = {
     Low: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -2044,8 +2064,8 @@ function UserActivityReport() {
         <ReportHeader
           title="User Activity Report"
           subtitle="Login, posting and deletion events with risk level"
-          period="22 Jan 2026"
-          branch="All Branches"
+          period={store.period || "—"}
+          branch={store.branchLabel || "All Branches"}
         />
         <Tbl>
           <thead>
@@ -2086,7 +2106,7 @@ const BANK_ACCOUNTS: string[] = [];
 
 let mockBankBook: any[] = [];
 
-function BankBookReport() {
+function BankBookReport({ store }: { store: ReportStore }) {
   const [account, setAccount] = useState(BANK_ACCOUNTS[0]);
   const typeColors: Record<string, string> = {
     "Receipt": "text-emerald-700",
@@ -2103,7 +2123,7 @@ function BankBookReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="Bank Book" subtitle="Transaction ledger with running balance" period="Jan 2026" />
+        <ReportHeader title="Bank Book" subtitle="Transaction ledger with running balance" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="flex flex-wrap gap-2 mb-3">
           {BANK_ACCOUNTS.map(a => (
             <button key={a} onClick={() => setAccount(a)}
@@ -2157,7 +2177,7 @@ function BankBookReport() {
 
 let mockPDCReceived: any[] = [];
 
-function PDCReceivedReport() {
+function PDCReceivedReport({ store }: { store: ReportStore }) {
   const statusCls: Record<string, string> = {
     Pending: "bg-blue-50 text-blue-700 border-blue-200",
     Cleared: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -2171,7 +2191,7 @@ function PDCReceivedReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="PDC Received" subtitle="Post-dated cheques received from customers" period="Jan–Mar 2026" />
+        <ReportHeader title="PDC Received" subtitle="Post-dated cheques received from customers" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="grid grid-cols-4 gap-2 mb-3">
           {[
             { label: "Total PDCs", val: aed(total), color: "text-slate-800" },
@@ -2224,7 +2244,7 @@ function PDCReceivedReport() {
 
 let mockPDCIssued: any[] = [];
 
-function PDCIssuedReport() {
+function PDCIssuedReport({ store }: { store: ReportStore }) {
   const statusCls: Record<string, string> = {
     Pending: "bg-blue-50 text-blue-700 border-blue-200",
     Cleared: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -2236,7 +2256,7 @@ function PDCIssuedReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="PDC Issued" subtitle="Post-dated cheques issued to vendors" period="Jan–Mar 2026" />
+        <ReportHeader title="PDC Issued" subtitle="Post-dated cheques issued to vendors" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="grid grid-cols-3 gap-2 mb-3">
           {[
             { label: "Total Issued", val: aed(total), color: "text-slate-800" },
@@ -2286,7 +2306,7 @@ function PDCIssuedReport() {
 
 let mockTransfers: any[] = [];
 
-function BankTransferLogReport() {
+function BankTransferLogReport({ store }: { store: ReportStore }) {
   const statusCls: Record<string, string> = {
     Completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
     Pending: "bg-amber-50 text-amber-700 border-amber-200",
@@ -2300,7 +2320,7 @@ function BankTransferLogReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="Bank Transfer Log" subtitle="Inter-bank & intra-company fund transfers" period="Jan 2026" />
+        <ReportHeader title="Bank Transfer Log" subtitle="Inter-bank & intra-company fund transfers" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <Tbl>
           <thead>
             <tr>
@@ -2344,7 +2364,7 @@ function BankTransferLogReport() {
 
 let mockCheques: any[] = [];
 
-function ChequeRegisterReport() {
+function ChequeRegisterReport({ store }: { store: ReportStore }) {
   const statusCls: Record<string, string> = {
     Cleared: "bg-emerald-50 text-emerald-700 border-emerald-200",
     Outstanding: "bg-blue-50 text-blue-700 border-blue-200",
@@ -2356,7 +2376,7 @@ function ChequeRegisterReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="Cheque Register" subtitle="All cheques issued with clearance status" period="Jan 2026" />
+        <ReportHeader title="Cheque Register" subtitle="All cheques issued with clearance status" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="grid grid-cols-4 gap-2 mb-3">
           {[
             { label: "Total Issued", val: `${mockCheques.length} cheques` },
@@ -2407,7 +2427,7 @@ function ChequeRegisterReport() {
 
 let mockCharges: any[] = [];
 
-function BankChargesSummaryReport() {
+function BankChargesSummaryReport({ store }: { store: ReportStore }) {
   const total = mockCharges.reduce((s, r) => s + r.amount, 0);
   const totalVat = mockCharges.reduce((s, r) => s + r.vatAmt, 0);
   const byAccount = BANK_ACCOUNTS.map(a => ({
@@ -2417,7 +2437,7 @@ function BankChargesSummaryReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="Bank Charges Summary" subtitle="Fees, commissions and interest by account" period="Jan 2026" />
+        <ReportHeader title="Bank Charges Summary" subtitle="Fees, commissions and interest by account" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="grid grid-cols-3 gap-2 mb-3">
           {[
             { label: "Total Charges", val: aed(total), color: "text-red-600" },
@@ -2472,7 +2492,7 @@ function BankChargesSummaryReport() {
 
 let mockBankPositions: any[] = [];
 
-function BankPositionSummaryReport() {
+function BankPositionSummaryReport({ store }: { store: ReportStore }) {
   const totalOpening = mockBankPositions.reduce((s, r) => s + r.opening, 0);
   const totalClosing = mockBankPositions.reduce((s, r) => s + r.closing, 0);
   const totalReceipts = mockBankPositions.reduce((s, r) => s + r.receipts, 0);
@@ -2481,7 +2501,7 @@ function BankPositionSummaryReport() {
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
-        <ReportHeader title="Bank Position Summary" subtitle="Consolidated balances across all accounts" period="Jan 2026" />
+        <ReportHeader title="Bank Position Summary" subtitle="Consolidated balances across all accounts" period={store.period || "—"} branch={store.branchLabel || "All Branches"} />
         <div className="grid grid-cols-4 gap-2 mb-3">
           {[
             { label: "Opening Position", val: aed(totalOpening), color: "text-slate-700" },
@@ -2545,7 +2565,7 @@ let SOA_CUSTOMERS: any[] = [];
 
 let mockCustomerSOA: Record<string, any[]> = {};
 
-function SOACustomerReport() {
+function SOACustomerReport({ store }: { store: ReportStore }) {
   const firstId = SOA_CUSTOMERS[0]?.id ?? "";
   const [selectedId, setSelectedId] = useState(firstId);
   const [search, setSearch] = useState("");
@@ -2568,13 +2588,16 @@ function SOACustomerReport() {
     "Balance C/F": "text-slate-500",
   };
 
-  const aging = [
-    { bucket: "Current", amount: Math.round(closingBalance * 0.45) },
-    { bucket: "1–30 days", amount: Math.round(closingBalance * 0.30) },
-    { bucket: "31–60 days", amount: Math.round(closingBalance * 0.15) },
-    { bucket: "61–90 days", amount: Math.round(closingBalance * 0.07) },
-    { bucket: "90+ days", amount: Math.round(closingBalance * 0.03) },
-  ];
+  const agingRow = store.customerAgingRows?.find(r => r.customer === customer?.name) ?? null;
+  const aging = agingRow
+    ? [
+        { bucket: "Current", amount: agingRow.current },
+        { bucket: "1–30 days", amount: agingRow.d30 },
+        { bucket: "31–60 days", amount: agingRow.d60 },
+        { bucket: "61–90 days", amount: agingRow.d90 },
+        { bucket: "90+ days", amount: agingRow.d90plus },
+      ]
+    : [];
 
   return (
     <Card className="border border-slate-200 bg-white">
@@ -2720,7 +2743,7 @@ function SOACustomerReport() {
 let SOA_VENDORS: any[] = [];
 let mockVendorSOA: Record<string, any[]> = {};
 
-function SOAVendorReport() {
+function SOAVendorReport({ store: _store }: { store: ReportStore }) {
   const firstVId = SOA_VENDORS[0]?.id ?? "";
   const [selectedId, setSelectedId] = useState(firstVId);
   const [search, setSearch] = useState("");
@@ -2862,7 +2885,7 @@ let SOA_EMPLOYEES: any[] = [];
 type EmpRow = { date: string; ref: string; type: string; narration: string; earning: number; deduction: number; balance: number };
 let mockEmployeeSOA: Record<string, EmpRow[]> = {};
 
-function SOAEmployeeReport() {
+function SOAEmployeeReport({ store: _store }: { store: ReportStore }) {
   const firstEId = SOA_EMPLOYEES[0]?.id ?? "";
   const [selectedId, setSelectedId] = useState(firstEId);
   const [search, setSearch] = useState("");
@@ -2992,11 +3015,7 @@ let GL_ACCOUNTS: any[] = [];
 
 type LedgerRow = { date: string; ref: string; narration: string; debit: number; credit: number; balance: number };
 
-function makeLedgerRows(_opening: number): LedgerRow[] {
-  return [];
-}
-
-function SOALedgerReport() {
+function SOALedgerReport({ store }: { store: ReportStore }) {
   const firstGlCode = GL_ACCOUNTS[0]?.code ?? "";
   const [selectedCode, setSelectedCode] = useState(firstGlCode);
   const [search, setSearch] = useState("");
@@ -3005,7 +3024,7 @@ function SOALedgerReport() {
   const filtered = GL_ACCOUNTS.filter(a =>
     `${a.code} ${a.name} ${a.type}`.toLowerCase().includes(search.toLowerCase())
   );
-  const rows = makeLedgerRows(0);
+  const rows: LedgerRow[] = (store.ledgerRows as LedgerRow[] | null) ?? [];
   const totalDebit = rows.filter(r => r.debit > 0).reduce((s, r) => s + r.debit, 0);
   const totalCredit = rows.filter(r => r.credit > 0).reduce((s, r) => s + r.credit, 0);
   const closingBalance = rows[rows.length - 1]?.balance ?? 0;
@@ -3051,7 +3070,6 @@ function SOALedgerReport() {
               {filtered.length === 0 ? (
                 <p className="px-3 py-3 text-[11px] text-slate-400">No accounts match "{search}"</p>
               ) : filtered.map(a => {
-                const typeCls: Record<string, string> = { Asset: "text-blue-700 bg-blue-50", Liability: "text-red-700 bg-red-50", Equity: "text-purple-700 bg-purple-50", Income: "text-emerald-700 bg-emerald-50", Expense: "text-amber-700 bg-amber-50" };
                 return (
                   <button key={a.code} onClick={() => { setSelectedCode(a.code); setSearch(""); setOpen(false); }}
                     className={`w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-slate-50 border-b border-slate-100 last:border-0 ${selectedCode === a.code ? "bg-[#FFF6D8]" : ""}`}>
@@ -3059,7 +3077,7 @@ function SOALedgerReport() {
                       <span className="font-mono text-[11px] font-bold text-slate-700 w-10 shrink-0">{a.code}</span>
                       <span className="text-[11px] text-slate-800">{a.name}</span>
                     </div>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${typeCls[a.type]}`}>{a.type}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${typeColors[a.type]}`}>{a.type}</span>
                   </button>
                 );
               })}
@@ -3124,7 +3142,7 @@ function SOALedgerReport() {
 
 let ALL_ACCOUNTS_DATA: any[] = [];
 
-function SOAAllAccountsReport() {
+function SOAAllAccountsReport({ store: _store }: { store: ReportStore }) {
   const [typeFilter, setTypeFilter] = useState<string>("All");
   const types = ["All", "Asset", "Liability", "Equity", "Income", "Expense"];
   const typeCls: Record<string, string> = { Asset: "text-blue-700", Liability: "text-red-600", Equity: "text-purple-700", Income: "text-emerald-700", Expense: "text-amber-700" };
@@ -3197,7 +3215,7 @@ function SOAAllAccountsReport() {
 const IC_ENTITIES: string[] = [];
 let mockIntercompany: any[] = [];
 
-function SOAIntercompanyReport() {
+function SOAIntercompanyReport({ store: _store }: { store: ReportStore }) {
   const [entity, setEntity] = useState<string>("All");
   const statusCls: Record<string, string> = {
     Confirmed: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -3360,13 +3378,22 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [accountOpen, setAccountOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState("All");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [, setDataRevision] = useState(0);
+  // advancedFilterMode: "account" = GL account picker (soa_ledger), "costcentre" = cost centre picker (P&L group), null = hidden
+  const advancedFilterMode: "account" | "costcentre" | null = (() => {
+    if (activeReport === "soa_ledger") return "account";
+    if (activeReport === "profit_loss" || activeReport === "gross_profit" || activeReport === "departmental_pl" || activeReport === "comparative_pl") return "costcentre";
+    return null;
+  })();
+  const [store, setStore] = useState<ReportStore>(buildReportStore());
   const [fetchKey, setFetchKey] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
-  const [accountOptions, setAccountOptions] = useState<{ value: string; label: string }[]>([]);
+  const [glAccountOptions, setGlAccountOptions] = useState<{ value: string; label: string }[]>([]);
+  const [costCentreOptions, setCostCentreOptions] = useState<{ value: string; label: string }[]>([]);
+  // Combined for backward compatibility with appliedFilters label lookup
+  const accountOptions = advancedFilterMode === "costcentre" ? costCentreOptions : glAccountOptions;
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
@@ -3380,49 +3407,78 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
           .map((a: any) => ({ value: a.code, label: `${a.code} – ${a.name}` }));
         const ccOpts = (ccs || [])
           .filter((c: any) => c.status !== "archived")
-          .map((c: any) => ({ value: c.code, label: `CC: ${c.code} – ${c.name}` }));
-        setAccountOptions([...accOpts, ...ccOpts]);
+          .map((c: any) => ({ value: c.code, label: `${c.code} – ${c.name}` }));
+        setGlAccountOptions(accOpts);
+        setCostCentreOptions(ccOpts);
       })
       .catch(() => {});
   }, []);
 
+  // When the selected report changes, trigger a fresh fetch automatically.
+  // Filter changes (date/branch/account) require pressing Generate to avoid
+  // firing a request on every keystroke.
   useEffect(() => {
+    setFetchKey(k => k + 1);
+  }, [activeReport]);
+
+  useEffect(() => {
+    if (fetchKey === 0) return; // skip double-fire on mount before activeReport effect runs
     const controller = new AbortController();
+    const periodLabel = dateFrom && dateTo ? `${dateFrom} – ${dateTo}` : dateTo || dateFrom || "";
+    const branchLabel = branch === "All" ? "All Branches" : branches.find((b) => String(b.id) === String(branch))?.name || branch;
+
     async function fetchReport() {
       setFetching(true);
       setFetchError(null);
       try {
+        const branchParam = branch !== "All" ? branch : undefined;
         if (activeReport === "profit_loss" || activeReport === "gross_profit" || activeReport === "departmental_pl" || activeReport === "comparative_pl") {
-          const data = await getProfitLoss(dateFrom, dateTo);
-          if (data) { applyLiveReportData("profit_loss", data); setDataRevision(r => r + 1); }
+          const costCenterParam = selectedAccount !== "All" ? selectedAccount : undefined;
+          const data = await getProfitLoss(dateFrom, dateTo, branchParam, costCenterParam);
+          if (data) setStore(prev => ({ ...prev, plSections: parsePLData(data), period: periodLabel, branchLabel }));
         } else if (activeReport === "balance_sheet") {
-          const data = await getBalanceSheet(dateTo || new Date().toISOString().split("T")[0]);
-          if (data) { applyLiveReportData("balance_sheet", data); setDataRevision(r => r + 1); }
+          const data = await getBalanceSheet(dateTo || new Date().toISOString().split("T")[0], branchParam);
+          if (data) {
+            const { assets, eqLiab } = parseBSData(data);
+            setStore(prev => ({ ...prev, bsAssets: assets, bsEqLiab: eqLiab, period: periodLabel, branchLabel }));
+          }
         } else if (activeReport === "trial_balance") {
-          const data = await getTrialBalance(dateFrom, dateTo);
-          if (data) { applyLiveReportData("trial_balance", data); setDataRevision(r => r + 1); }
+          const data = await getTrialBalance(dateFrom, dateTo, branchParam);
+          if (data) setStore(prev => ({ ...prev, tbRows: parseTBData(data), period: periodLabel, branchLabel }));
         } else if (activeReport === "cash_flow_statement") {
-          const data = await getCashFlow(dateFrom, dateTo);
-          if (data) { applyLiveReportData("cash_flow_statement", data); setDataRevision(r => r + 1); }
-        } else if (activeReport === "customer_aging") {
+          const data = await getCashFlow(dateFrom, dateTo, branchParam);
+          if (data) setStore(prev => ({ ...prev, cfData: parseCFData(data), period: periodLabel, branchLabel }));
+        } else if (activeReport === "customer_aging" || activeReport === "collection_efficiency" || activeReport === "credit_utilization") {
           const data = await getARAgingReport(dateTo);
-          if (data) { applyLiveReportData("customer_aging", data); setDataRevision(r => r + 1); }
+          if (data) setStore(prev => ({ ...prev, customerAgingRows: parseAgingData(data, "customer"), period: periodLabel, branchLabel }));
         } else if (activeReport === "vendor_aging") {
           const data = await getAPAgingReport(dateTo);
-          if (data) { applyLiveReportData("vendor_aging", data); setDataRevision(r => r + 1); }
+          if (data) setStore(prev => ({ ...prev, vendorAgingRows: parseAgingData(data, "vendor"), period: periodLabel, branchLabel }));
         } else if (activeReport === "vat_return_summary" || activeReport === "vat_output_register" || activeReport === "vat_input_register") {
           const [dashData, reconData] = await Promise.all([
-            getTaxDashboard(dateFrom, dateTo),
-            getTaxReconciliation(dateFrom, dateTo),
+            getTaxDashboard(dateFrom, dateTo, branchParam),
+            getTaxReconciliation(dateFrom, dateTo, branchParam),
           ]);
-          if (dashData) { mockVatDashboard = dashData; }
-          if (reconData?.lines) {
-            mockVatOutputLines = reconData.lines.filter((l: any) => l.type === "SALES");
-            mockVatInputLines = reconData.lines.filter((l: any) => l.type === "PURCHASE");
+          setStore(prev => ({
+            ...prev,
+            vatDashboard: dashData ?? prev.vatDashboard,
+            vatOutputLines: reconData?.lines ? reconData.lines.filter((l: any) => l.type === "SALES") : prev.vatOutputLines,
+            vatInputLines: reconData?.lines ? reconData.lines.filter((l: any) => l.type === "PURCHASE") : prev.vatInputLines,
+            period: periodLabel,
+            branchLabel,
+          }));
+        } else if (activeReport === "soa_ledger") {
+          if (selectedAccount && selectedAccount !== "All") {
+            const data = await getLedgerStatement(selectedAccount, dateFrom, dateTo);
+            if (data) setStore(prev => ({ ...prev, ledgerRows: parseLedgerData(data), period: periodLabel, branchLabel }));
+          } else {
+            setStore(prev => ({ ...prev, ledgerRows: null, period: periodLabel, branchLabel }));
           }
-          if (dashData || reconData) setDataRevision(r => r + 1);
+        } else {
+          setStore(prev => ({ ...prev, period: periodLabel, branchLabel }));
         }
       } catch (err: any) {
+        if (controller.signal.aborted) return;
         const status = err?.response?.status;
         if (status === 401 || status === 403) {
           setFetchError("Access denied. Your account does not have permission to view financial reports.");
@@ -3433,12 +3489,12 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
         }
         console.error("Failed to load financial report:", err);
       } finally {
-        setFetching(false);
+        if (!controller.signal.aborted) setFetching(false);
       }
     }
     fetchReport();
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, branch, fetchKey]);
+  }, [fetchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -3464,7 +3520,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   });
 
   function getActiveViewModel() {
-    const { title, cols, rows } = getFinancialExportData(activeReport);
+    const { title, cols, rows } = getFinancialExportData(activeReport, store);
     const columns = cols.map((c: any) => ({
       ...c,
       align: c.align || (rows.length && typeof rows[0][c.key] === "number" ? "right" : "left")
@@ -3476,7 +3532,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   }
 
   function fileBase() {
-    const { title } = getFinancialExportData(activeReport);
+    const { title } = getFinancialExportData(activeReport, store);
     return title.replace(/\s+/g, "_");
   }
 
@@ -3488,7 +3544,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   }
 
   function handleExportExcel() {
-    const { title, cols, rows } = getFinancialExportData(activeReport);
+    const { title, cols, rows } = getFinancialExportData(activeReport, store);
     exportToExcel(rows, cols, title.replace(/\s+/g, "_"), exportMeta());
   }
 
@@ -3499,14 +3555,14 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   }
 
   function handleDownloadCsv() {
-    const { title, cols, rows } = getFinancialExportData(activeReport);
+    const { cols, rows } = getFinancialExportData(activeReport, store);
     if (!rows.length) return;
     const keys = cols.map((c: any) => c.key);
     const headers = cols.map((c: any) => c.header);
     const csv = [headers.join(","), ...rows.map((r: any) => keys.map((k: string) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `${title.replace(/\s+/g, "_")}.csv`;
+    const a = document.createElement("a"); a.href = url; a.download = `${fileBase()}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   }
 
@@ -3538,73 +3594,73 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   function renderResults() {
     switch (activeReport) {
       case "profit_loss":
-        return <ProfitLossReport />;
+        return <ProfitLossReport store={store} />;
       case "gross_profit":
-        return <GrossProfitReport />;
+        return <GrossProfitReport store={store} />;
       case "departmental_pl":
-        return <DepartmentalPLReport />;
+        return <DepartmentalPLReport store={store} />;
       case "comparative_pl":
-        return <ComparativePLReport />;
+        return <ComparativePLReport store={store} />;
       case "balance_sheet":
-        return <BalanceSheetReport />;
+        return <BalanceSheetReport store={store} />;
       case "trial_balance":
-        return <TrialBalanceReport />;
+        return <TrialBalanceReport store={store} />;
       case "cash_flow_statement":
-        return <CashFlowReport />;
+        return <CashFlowReport store={store} />;
       case "bank_reconciliation":
-        return <BankReconciliationReport />;
+        return <BankReconciliationReport store={store} />;
       case "petty_cash":
-        return <PettyCashReport />;
+        return <PettyCashReport store={store} />;
       case "customer_aging":
-        return <CustomerAgingReport />;
+        return <CustomerAgingReport store={store} />;
       case "collection_efficiency":
-        return <CollectionEfficiencyReport />;
+        return <CollectionEfficiencyReport store={store} />;
       case "credit_utilization":
-        return <CreditUtilizationReport />;
+        return <CreditUtilizationReport store={store} />;
       case "vendor_aging":
-        return <VendorAgingReport />;
+        return <VendorAgingReport store={store} />;
       case "payment_schedule":
-        return <PaymentScheduleReport />;
+        return <PaymentScheduleReport store={store} />;
       case "outstanding_payables":
-        return <OutstandingPayablesReport />;
+        return <OutstandingPayablesReport store={store} />;
       case "vat_return_summary":
-        return <VATReturnSummaryReport />;
+        return <VATReturnSummaryReport store={store} companyProfile={companyProfile} />;
       case "vat_output_register":
-        return <VATOutputRegisterReport />;
+        return <VATOutputRegisterReport store={store} />;
       case "vat_input_register":
-        return <VATInputRegisterReport />;
+        return <VATInputRegisterReport store={store} />;
       case "journal_audit":
-        return <JournalAuditReport />;
+        return <JournalAuditReport store={store} />;
       case "period_close":
-        return <PeriodCloseReport />;
+        return <PeriodCloseReport store={store} />;
       case "user_activity":
-        return <UserActivityReport />;
+        return <UserActivityReport store={store} />;
       case "bank_book":
-        return <BankBookReport />;
+        return <BankBookReport store={store} />;
       case "pdc_received":
-        return <PDCReceivedReport />;
+        return <PDCReceivedReport store={store} />;
       case "pdc_issued":
-        return <PDCIssuedReport />;
+        return <PDCIssuedReport store={store} />;
       case "bank_transfer_log":
-        return <BankTransferLogReport />;
+        return <BankTransferLogReport store={store} />;
       case "cheque_register":
-        return <ChequeRegisterReport />;
+        return <ChequeRegisterReport store={store} />;
       case "bank_charges_summary":
-        return <BankChargesSummaryReport />;
+        return <BankChargesSummaryReport store={store} />;
       case "bank_position_summary":
-        return <BankPositionSummaryReport />;
+        return <BankPositionSummaryReport store={store} />;
       case "soa_customer":
-        return <SOACustomerReport />;
+        return <SOACustomerReport store={store} />;
       case "soa_vendor":
-        return <SOAVendorReport />;
+        return <SOAVendorReport store={store} />;
       case "soa_employee":
-        return <SOAEmployeeReport />;
+        return <SOAEmployeeReport store={store} />;
       case "soa_ledger":
-        return <SOALedgerReport />;
+        return <SOALedgerReport store={store} />;
       case "soa_all_accounts":
-        return <SOAAllAccountsReport />;
+        return <SOAAllAccountsReport store={store} />;
       case "soa_intercompany":
-        return <SOAIntercompanyReport />;
+        return <SOAIntercompanyReport store={store} />;
       default:
         return null;
     }
@@ -3859,7 +3915,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                 </div>
 
                 {showAdvanced && (
-                  <div className="space-y-1.5 relative xl:col-start-1">
+                  <div className="space-y-1.5 relative">
                     <label className="text-[11px] text-slate-600 flex items-center gap-1">
                       <Activity className="h-3.5 w-3.5" />
                       Account / Cost Centre
@@ -3867,8 +3923,12 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                     <div className="relative">
                       <input
                         type="text"
-                        value={accountOpen ? accountSearch : (selectedAccount === "All" ? "" : selectedAccount)}
-                        placeholder={selectedAccount === "All" ? "All accounts" : selectedAccount}
+                        value={accountOpen
+                          ? accountSearch
+                          : selectedAccount === "All"
+                            ? ""
+                            : accountOptions.find(o => o.value === selectedAccount)?.label || selectedAccount}
+                        placeholder="All accounts"
                         onFocus={() => { setAccountOpen(true); setAccountSearch(""); }}
                         onChange={(e) => { setAccountSearch(e.target.value); setAccountOpen(true); }}
                         onBlur={() => setTimeout(() => setAccountOpen(false), 150)}
@@ -3889,8 +3949,8 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                                 {o.label}
                               </button>
                             ))}
-                          {accountOptions.filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase())).length === 0 && accountSearch && (
-                            <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                          {[{ value: "All", label: "All accounts" }, ...accountOptions].filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase())).length === 0 && (
+                            <div className="px-3 py-2 text-[11px] text-slate-400">No matches for "{accountSearch}"</div>
                           )}
                         </div>
                       )}
@@ -3898,8 +3958,8 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                   </div>
                 )}
 
-                <div className={`flex items-end gap-2 md:col-span-2 xl:col-span-4 ${!showAdvanced ? "xl:col-start-4 md:col-start-2" : "xl:col-start-4"}`}>
-                  <Button className="h-8 px-6 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900" onClick={() => setFetchKey(k => k + 1)}>
+                <div className="flex items-end gap-2 col-span-full xl:col-span-1 xl:col-start-4 xl:justify-end">
+                  <Button className="h-8 px-6 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900 font-semibold" onClick={() => setFetchKey(k => k + 1)}>
                     Generate
                   </Button>
                   <Button
@@ -3915,8 +3975,20 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
             </CardContent>
           </Card>
 
+          {/* Applied filter chips */}
+          {appliedFilters().length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {appliedFilters().map((f) => (
+                <span key={f.label} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-[#FFF6D8] border border-[#F5C742]/60 text-slate-700">
+                  <span className="text-slate-400">{f.label}:</span>
+                  <span className="font-medium">{f.value}</span>
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Report Results */}
-          <div key={activeReport}>
+          <div>
             {fetchError ? (
               <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />

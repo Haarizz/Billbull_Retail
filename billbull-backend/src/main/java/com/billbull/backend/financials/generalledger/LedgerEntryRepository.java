@@ -17,6 +17,9 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
     List<LedgerEntry> findByTransactionDateBetweenOrderByTransactionDateAsc(java.time.LocalDate start,
             java.time.LocalDate end);
 
+    List<LedgerEntry> findByBranchIdAndTransactionDateBetweenOrderByTransactionDateAsc(Long branchId,
+            java.time.LocalDate start, java.time.LocalDate end);
+
     List<LedgerEntry> findByTransactionDateBefore(java.time.LocalDate date);
 
     boolean existsByAccountCode(String accountCode);
