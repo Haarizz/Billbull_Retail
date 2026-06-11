@@ -1071,13 +1071,15 @@ const BinDetail = ({ bin, onEdit }) => {
               { key: 'expiry', label: 'Expiry' },
               { key: 'reserved', label: 'Reserved' },
               { key: 'available', label: 'Available' },
+              { key: 'status', label: 'Status' },
             ]}
             rows={binStock.map((s, idx) => {
               const onHand   = s.quantity || 0;
               const res      = s.reservedQuantity || 0;
               const avail    = onHand - res;
+              const isNeg    = onHand < 0;
               return (
-                <tr key={s.stockIdentityKey || `${s.id}-${idx}`} className="hover:bg-amber-50/20 transition-colors">
+                <tr key={s.stockIdentityKey || `${s.id}-${idx}`} className={`transition-colors ${isNeg ? 'bg-red-50/40 hover:bg-red-50/60' : 'hover:bg-amber-50/20'}`}>
                   <td className="px-4 py-3 text-center text-slate-400 text-[11px] font-mono">{idx + 1}</td>
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs font-bold text-slate-800">{s.productCode || '—'}</span>
@@ -1089,11 +1091,25 @@ const BinDetail = ({ bin, onEdit }) => {
                       : <span className="text-slate-400 text-xs">—</span>
                     }
                   </td>
-                  <td className="px-4 py-3 text-sm font-bold text-slate-900">{onHand}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-sm font-bold ${isNeg ? 'text-red-600' : 'text-slate-900'}`}>{onHand}</span>
+                  </td>
                   <td className="px-4 py-3 text-xs text-slate-500">{s.expiryDate || '—'}</td>
                   <td className="px-4 py-3 text-xs text-purple-600 font-semibold">{res}</td>
                   <td className="px-4 py-3">
                     <span className={`text-sm font-bold ${avail < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{avail}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {s.negativeOverride
+                      ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 border border-orange-300 text-orange-700 text-[10px] rounded-full font-semibold">
+                          <AlertTriangle className="h-3 w-3" /> Neg. Override
+                        </span>
+                      : isNeg
+                        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 border border-red-300 text-red-700 text-[10px] rounded-full font-semibold">
+                            <AlertTriangle className="h-3 w-3" /> Negative
+                          </span>
+                        : <span className="text-slate-400 text-xs">—</span>
+                    }
                   </td>
                 </tr>
               );

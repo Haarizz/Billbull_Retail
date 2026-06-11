@@ -450,4 +450,12 @@ public interface StockMovementRepository
                 GROUP BY p.id, p.code, p.name
                 """, nativeQuery = true)
         List<Object[]> findActiveProductStockSummary();
+
+        /** All distinct (productId, warehouseId) pairs that have at least one movement. */
+        @Query("""
+                    SELECT DISTINCT sm.productId, sm.warehouseId
+                    FROM StockMovement sm
+                    WHERE sm.productId IS NOT NULL AND sm.warehouseId IS NOT NULL
+                """)
+        List<Object[]> findAllDistinctProductWarehousePairs();
 }

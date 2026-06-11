@@ -12,6 +12,7 @@ public class BinStockResponse {
     private Integer quantity;
     private Integer reservedQuantity;
     private LocalDate expiryDate;
+    private boolean negativeOverride;
 
     public BinStockResponse() {
     }
@@ -90,5 +91,13 @@ public class BinStockResponse {
 
     public void setExpiryDate(LocalDate expiryDate) {
         this.expiryDate = expiryDate;
+    }
+
+    public boolean isNegativeOverride() {
+        return negativeOverride;
+    }
+
+    public void setNegativeOverride(boolean negativeOverride) {
+        this.negativeOverride = negativeOverride;
     }
 }

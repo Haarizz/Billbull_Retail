@@ -159,13 +159,22 @@ public class BinStockService {
                     allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
         }
 
+        // Build a set of "productId|batchNumber" identities that have at least one
+        // negative-override outbound movement in this bin — used to flag rows in the snapshot.
+        java.util.Set<String> overrideIdentities = stockMovementRepository.findByBinId(binId).stream()
+                .filter(StockMovement::isNegativeOverride)
+                .map(m -> m.getProductId() + "|" + (m.getBatchNumber() != null ? m.getBatchNumber() : "-"))
+                .collect(Collectors.toSet());
+
         List<BinStockResponse> resultList = new ArrayList<>();
         for (Object[] row : stockRows) {
             Long productId = ((Number) row[0]).longValue();
             String batchNumber = row[1] != null ? row[1].toString() : "-";
             java.time.LocalDate expiryDate = (java.time.LocalDate) row[2];
             int binOnHand = row[3] != null ? ((Number) row[3]).intValue() : 0;
-            if (binOnHand <= 0) continue;
+
+            // Include negative-stock rows (override allowed) — skip only truly zero rows
+            if (binOnHand == 0) continue;
 
             Product product = productDetails.get(productId);
             BinStockResponse response = new BinStockResponse();
@@ -174,6 +183,7 @@ public class BinStockService {
             response.setQuantity(binOnHand);
             response.setBatchNumber(batchNumber);
             response.setExpiryDate(expiryDate);
+            response.setNegativeOverride(overrideIdentities.contains(productId + "|" + batchNumber));
             if (product != null) {
                 response.setProductCode(product.getCode());
                 response.setProductName(product.getName());

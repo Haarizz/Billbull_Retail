@@ -107,4 +107,29 @@ public class FinancialReportController {
     public SubLedgerReconciliationService.ReconciliationReport getReconciliation() {
         return reconciliationService.reconcileAll();
     }
+
+    /** VAT Return Report — Output vs. Input for the period (F-16 / RPTGAP-008). */
+    @GetMapping("/vat-return")
+    public Object getVatReturn(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateVatReturnReport(startDate, endDate, branchId);
+    }
+
+    /** Detailed Trial Balance — one row per journal line (F-15 / RPTGAP-010). */
+    @GetMapping("/detailed-trial-balance")
+    public Object getDetailedTrialBalance(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateDetailedTrialBalance(startDate, endDate, branchId);
+    }
+
+    /** Commitment Report — open LPO obligations not yet received (F-14 / RPTGAP-009). */
+    @GetMapping("/commitment")
+    public Object getCommitmentReport(
+            @RequestParam(required = false) Long branchId) {
+        return reportService.generateCommitmentReport(branchId);
+    }
 }

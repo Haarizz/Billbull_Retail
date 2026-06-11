@@ -89,6 +89,9 @@ public enum Permission {
     FOLLOWUP_CREATE,
     MESSAGING_ACCESS,
 
+    // Inventory — sensitive overrides
+    PRODUCT_ALLOW_NEGATIVE_STOCK,
+
     // Dashboard & Reports
     DASHBOARD_VIEW,
     TALLY_SYNC,

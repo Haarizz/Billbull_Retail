@@ -14,3 +14,6 @@ export const updateExpenseVoucher = (id, data) =>
 
 export const deleteExpenseVoucher = (id) =>
     axios.delete(`/api/expense-vouchers/${id}`).then(r => r.data);
+
+export const approveExpenseVoucher = (id) =>
+    axios.post(`/api/expense-vouchers/${id}/approve`).then(r => r.data);

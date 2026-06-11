@@ -89,6 +89,65 @@ export const getLedgerStatement = async (accountCode, startDate, endDate) => {
     return res.data;
 };
 
+export const getVatReturnReport = async (startDate, endDate, branchId) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (branchId && branchId !== "All") params.branchId = branchId;
+    const res = await api.get("/api/financials/reports/vat-return", { params });
+    return res.data;
+};
+
+export const getDetailedTrialBalance = async (startDate, endDate, branchId) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (branchId && branchId !== "All") params.branchId = branchId;
+    const res = await api.get("/api/financials/reports/detailed-trial-balance", { params });
+    return res.data;
+};
+
+export const getCommitmentReport = async (branchId) => {
+    const params = {};
+    if (branchId && branchId !== "All") params.branchId = branchId;
+    const res = await api.get("/api/financials/reports/commitment", { params });
+    return res.data;
+};
+
+export const getSubLedgerReconciliation = async () => {
+    const res = await api.get("/api/financials/reports/reconciliation");
+    return res.data;
+};
+
+// ==================== GL SPECIAL VOUCHERS ====================
+
+export const postVatSettlement = async (payload) => {
+    const res = await api.post("/api/ledger/vat-settlement", payload);
+    return res.data;
+};
+
+export const postVatPayment = async (payload) => {
+    const res = await api.post("/api/ledger/vat-payment", payload);
+    return res.data;
+};
+
+export const postContraVoucher = async (payload) => {
+    const res = await api.post("/api/ledger/contra-voucher", payload);
+    return res.data;
+};
+
+export const postEquityInjection = async (payload) => {
+    const res = await api.post("/api/ledger/equity-injection", payload);
+    return res.data;
+};
+
+export const saveOpeningBalances = async (payload, asOfDate) => {
+    const params = {};
+    if (asOfDate) params.asOfDate = asOfDate;
+    const res = await api.post("/api/ledger/accounts/opening-balance", payload, { params });
+    return res.data;
+};
+
 // ==================== COA TREE ====================
 
 export const getAccountTree = async () => {

@@ -1,32 +1,46 @@
 package com.billbull.backend.financials.expensevoucher;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.financials.chartofaccounts.Account;
+import com.billbull.backend.financials.chartofaccounts.AccountRepository;
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.financials.generalledger.voucher.VoucherSequenceService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
+import lombok.extern.slf4j.Slf4j;
+
 @Service
+@Slf4j
 public class ExpenseVoucherService {
 
     private final ExpenseVoucherRepository repo;
     private final BranchAccessService branchAccessService;
     private final BranchRepository branchRepository;
     private final VoucherSequenceService voucherSequenceService;
+    private final PostingEngineService postingEngineService;
+    private final AccountRepository accountRepository;
 
     public ExpenseVoucherService(ExpenseVoucherRepository repo,
                                  BranchAccessService branchAccessService,
                                  BranchRepository branchRepository,
-                                 VoucherSequenceService voucherSequenceService) {
+                                 VoucherSequenceService voucherSequenceService,
+                                 PostingEngineService postingEngineService,
+                                 AccountRepository accountRepository) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.branchRepository = branchRepository;
         this.voucherSequenceService = voucherSequenceService;
+        this.postingEngineService = postingEngineService;
+        this.accountRepository = accountRepository;
     }
 
     public List<ExpenseVoucher> getAll() {
@@ -97,11 +111,65 @@ public class ExpenseVoucherService {
         return repo.save(voucher);
     }
 
+    /**
+     * Approves and pays an expense voucher, triggering the GL posting.
+     * Idempotent — if already Paid the posting engine silently skips the duplicate.
+     */
+    @Transactional
+    public ExpenseVoucher approve(Long id) {
+        ExpenseVoucher voucher = getById(id);
+        voucher.setStatus("Paid");
+        ExpenseVoucher saved = repo.save(voucher);
+        postGlForVoucher(saved);
+        return saved;
+    }
+
     @Transactional
     public void delete(Long id) {
         ExpenseVoucher voucher = getById(id);
         voucher.setActive(false);
         repo.save(voucher);
+    }
+
+    private void postGlForVoucher(ExpenseVoucher voucher) {
+        if (voucher.getLines() == null || voucher.getLines().isEmpty()) return;
+
+        List<PostingEngineService.ExpenseVoucherLine> postingLines = voucher.getLines().stream()
+                .filter(l -> l.getAmount() != null && l.getAmount().compareTo(BigDecimal.ZERO) > 0)
+                .map(l -> {
+                    // Resolve the GL account code from the stored account id
+                    String accCode = null;
+                    String accName = l.getGlAccountName();
+                    if (l.getGlAccountId() != null && !l.getGlAccountId().isBlank()) {
+                        Account acct = accountRepository.findById(l.getGlAccountId()).orElse(null);
+                        if (acct != null) {
+                            accCode = acct.getCode();
+                            if (accName == null) accName = acct.getName();
+                        }
+                    }
+                    return new PostingEngineService.ExpenseVoucherLine(
+                            l.getAmount(),
+                            accCode,
+                            accName,
+                            l.getDescription(),
+                            l.getCostCenter());
+                })
+                .collect(Collectors.toList());
+
+        try {
+            postingEngineService.createJournalFromExpenseVoucher(
+                    voucher.getVoucherNumber(),
+                    voucher.getDate(),
+                    voucher.getVendor(),
+                    postingLines,
+                    voucher.getTotalTax(),
+                    voucher.getGrandTotal(),
+                    voucher.getPaymentMode(),
+                    voucher.getBranch());
+        } catch (Exception ex) {
+            log.error("[ExpenseVoucherService] GL posting failed for voucher {}: {}", voucher.getVoucherNumber(), ex.getMessage(), ex);
+            throw ex;
+        }
     }
 
     private Branch resolveBranch(Long branchId) {

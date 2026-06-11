@@ -1264,9 +1264,18 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     <input type="number" value={formData.maxStock} onChange={(e) => handleInputChange('maxStock', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
                   </div>
                   <div className="pt-2">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
-                      <input type="checkbox" checked={formData.allowNegative} onChange={(e) => handleInputChange('allowNegative', e.target.checked)} className="rounded text-[#F5C742] focus:ring-[#F5C742]" />
+                    <label className={`flex items-center gap-2 text-sm ${canSetNegativeStock ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-400'}`}>
+                      <input
+                        type="checkbox"
+                        checked={formData.allowNegative}
+                        onChange={(e) => canSetNegativeStock && handleInputChange('allowNegative', e.target.checked)}
+                        disabled={!canSetNegativeStock}
+                        className="rounded text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
                       Allow Negative Stock (Role Based)
+                      {!canSetNegativeStock && (
+                        <span className="text-xs text-slate-400">(Requires Inventory Approve permission)</span>
+                      )}
                     </label>
                   </div>
                 </div>
@@ -2160,9 +2169,10 @@ const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose
 const Products = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { hasAnyRole } = usePermissions();
+  const { hasAnyRole, canApprove } = usePermissions();
   const { activeBranchId, activeBranch } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
+  const canSetNegativeStock = canApprove('inventory');
   const [currentView, setCurrentView] = useState('list');
   const [companyProfile, setCompanyProfile] = useState(null);
   const [products, setProducts] = useState([]);
