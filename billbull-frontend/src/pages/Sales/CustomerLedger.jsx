@@ -2795,7 +2795,8 @@ const CustomerLedger = () => {
             handleCloseModal();
         } catch (error) {
             console.error("Failed to save customer", error);
-            alert("Customer not saved to database");
+            const msg = error?.response?.data?.message || error?.response?.data || error?.message || "Customer not saved to database";
+            toast.error(msg, { duration: 5000 });
         }
     };
 

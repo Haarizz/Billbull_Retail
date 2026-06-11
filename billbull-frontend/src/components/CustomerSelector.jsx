@@ -86,6 +86,9 @@ const CustomerSelector = ({
             }, ...list];
         }
 
+        // Exclude inactive customers (Walk-in has no status so it's always kept)
+        list = list.filter(c => c.code === 'WALKIN' || !c.status || c.status === 'Active');
+
         // Branch filtering: hide customers that belong to a specific branch when a different branch is active
         if (!isAllBranches && activeBranch?.name) {
             list = list.filter(c => c.code === 'WALKIN' || !c.branch || c.branch === activeBranch.name);

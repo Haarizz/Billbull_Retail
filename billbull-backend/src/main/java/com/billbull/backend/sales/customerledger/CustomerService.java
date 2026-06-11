@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.EntityManager;
+
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
@@ -46,6 +48,9 @@ public class CustomerService {
 
     @Autowired
     private OpeningInvoiceRepository openingInvoiceRepository;
+
+    @Autowired
+    private EntityManager entityManager;
 
     // =========================
     // GET ALL CUSTOMERS
@@ -240,6 +245,19 @@ public class CustomerService {
         }
 
         // -------------------------
+        // DUPLICATE MOBILE CHECK
+        // -------------------------
+        if (dto.getMobile() != null && !dto.getMobile().isBlank()) {
+            boolean duplicate = dto.getId() == null
+                    ? repository.existsByMobile(dto.getMobile())
+                    : repository.existsByMobileAndIdNot(dto.getMobile(), dto.getId());
+            if (duplicate) {
+                throw new IllegalArgumentException(
+                        "A customer with this phone number already exists.");
+            }
+        }
+
+        // -------------------------
         // COPY SIMPLE FIELDS
         // -------------------------
         BeanUtils.copyProperties(
@@ -408,6 +426,7 @@ public class CustomerService {
         if (dto.getBranch() != null || dto.getAllocatedBranches() != null) {
             customer.getBranchAllocations().size(); // force-init before clear
             customer.getBranchAllocations().clear();
+            entityManager.flush(); // flush DELETEs before INSERTs to avoid unique-key violation
             Set<String> names = new LinkedHashSet<>();
             if (dto.getBranch() != null && !dto.getBranch().isBlank()) names.add(dto.getBranch());
             if (dto.getAllocatedBranches() != null) names.addAll(dto.getAllocatedBranches());
