@@ -21,6 +21,10 @@ public class FiscalYear {
     @Column(nullable = false)
     private LocalDate endDate;
 
+    public static final String STATUS_OPEN    = "Open";
+    public static final String STATUS_CLOSING = "Closing";
+    public static final String STATUS_CLOSED  = "Closed";
+
     /** Open | Closing | Closed */
     @Column(nullable = false)
     private String status;

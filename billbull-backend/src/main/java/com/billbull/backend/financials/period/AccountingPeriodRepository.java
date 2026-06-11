@@ -8,6 +8,8 @@ import java.util.List;
 
 public interface AccountingPeriodRepository extends JpaRepository<AccountingPeriod, Long> {
 
+    boolean existsByStartDate(LocalDate startDate);
+
     List<AccountingPeriod> findByStatusOrderByStartDateDesc(String status);
 
     List<AccountingPeriod> findAllByOrderByStartDateDesc();

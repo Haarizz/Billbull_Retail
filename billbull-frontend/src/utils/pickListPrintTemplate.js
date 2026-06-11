@@ -127,9 +127,10 @@ export const generatePickListHtml = (template, data, options = {}) => {
     const pickRoute = Array.from(new Set(rows.map((r) => r.zone).filter((z) => z && z !== '-')));
     pickRoute.push('Packing Area');
 
+    const resolvedLogoUrl = s.logoUrl || company.logoUrl || '';
     const logoHtml = s.showLogo
-        ? (company.logoUrl
-            ? `<img src="${escapeHtml(company.logoUrl)}" alt="logo" style="height:72px;object-fit:contain;" />`
+        ? (resolvedLogoUrl
+            ? `<img src="${escapeHtml(resolvedLogoUrl)}" alt="logo" style="height:72px;object-fit:contain;" />`
             : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;">
                   <span style="font-size:32px;font-weight:900;color:${gold};">${escapeHtml((company.companyName || 'C').charAt(0))}</span>
                </div>`)
@@ -336,8 +337,8 @@ export const generatePickListHtml = (template, data, options = {}) => {
 
     const pickRouteAndBarcode = (s.showPickRoute || s.showBarcodeSection) ? `
         <div style="display:grid;grid-template-columns:${s.showPickRoute && s.showBarcodeSection ? '1fr 1fr' : '1fr'};gap:12px;margin-bottom:14px;">
-          ${pickRouteHtml}
-          ${barcodeSection}
+          ${s.showPickRoute ? pickRouteHtml : ''}
+          ${s.showBarcodeSection ? barcodeSection : ''}
         </div>
     ` : '';
 
@@ -403,7 +404,7 @@ export const generatePickListHtml = (template, data, options = {}) => {
     const pageW = paper === 'Letter' ? '816px' : '794px';
     const styles = `
         @page { size: ${paper} portrait; margin: 12mm; }
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         body {
             margin: 0;
             padding: 20px 0 40px;

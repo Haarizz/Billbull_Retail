@@ -29,8 +29,11 @@ public class AccountingPeriod {
     @Column(nullable = false)
     private LocalDate endDate;
 
+    public static final String STATUS_OPEN   = "Open";
+    public static final String STATUS_CLOSED = "Closed";
+
     @Column(nullable = false)
-    private String status; // "Open" or "Closed"
+    private String status;
 
     private String closedBy;
     private LocalDateTime closedAt;

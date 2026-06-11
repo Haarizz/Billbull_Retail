@@ -48,7 +48,8 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new GroupSeed("SYS-GRP-4200", "4200", "Other Income",         "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-5100", "5100", "Cost of Goods Sold",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
             new GroupSeed("SYS-GRP-5400", "5400", "Operating Expenses",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
-            new GroupSeed("SYS-GRP-1300", "1300", "Fixed Assets",         "Assets",      "Asset",     "Dr", "BS", "1000", 2)
+            new GroupSeed("SYS-GRP-1300", "1300", "Fixed Assets",         "Assets",      "Asset",     "Dr", "BS", "1000", 2),
+            new GroupSeed("SYS-GRP-2500", "2500", "Long-term Liabilities","Liabilities", "Liability", "Cr", "BS", "2000", 2)
         );
 
         for (GroupSeed g : rootGroups) seedGroup(g);
@@ -103,7 +104,7 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-6001", "6001", "Rent Expense",                   "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-6002", "6002", "Utility Expense",                "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-7502B","7503", "Accrued Liabilities",            "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
-            new AccountSeed("SYS-5101B","5999B","Interest Expense",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6009", "6009", "Interest Expense",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
 
             // ── Additional accounts required by complete financial flow ────────────
             // Equity
@@ -127,10 +128,11 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-6008", "6008", "Office Supplies",                "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
             // Inventory adjustments
             new AccountSeed("SYS-5105", "5105", "Inventory Adjustment",           "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
-            // Long-term liabilities sub-group
-            new AccountSeed("SYS-GRP-2500", "2500", "Long-term Liabilities",    "Liabilities", "Liability", "Cr", "BS", false, "2000", "NON_CURRENT_LIABILITIES"),
             // Bank-related
-            new AccountSeed("SYS-1108", "1108", "Petty Cash - Branch",            "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK")
+            new AccountSeed("SYS-1108", "1108", "Petty Cash - Branch",            "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK"),
+            // Asset disposal gain/loss — distinct from Interest Income (7002) and Bank Charges (7501)
+            new AccountSeed("SYS-4302", "4302", "Gain on Disposal",               "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
+            new AccountSeed("SYS-6040", "6040", "Loss on Disposal",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES")
         );
 
         int seeded = 0;

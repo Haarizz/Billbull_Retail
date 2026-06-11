@@ -37,6 +37,7 @@ public class RBACInitializer {
         return args -> {
             // 1. Core roles
             createRoleIfNotExists(roleRepository, "ADMIN");
+            createRoleIfNotExists(roleRepository, "MANAGER");
             createRoleIfNotExists(roleRepository, "SALES");
             createRoleIfNotExists(roleRepository, "INVENTORY_MANAGER");
             createRoleIfNotExists(roleRepository, "ACCOUNTANT");
