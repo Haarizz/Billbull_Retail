@@ -47,7 +47,8 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new GroupSeed("SYS-GRP-4100", "4100", "Sales",                "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-4200", "4200", "Other Income",         "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-5100", "5100", "Cost of Goods Sold",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
-            new GroupSeed("SYS-GRP-5400", "5400", "Operating Expenses",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2)
+            new GroupSeed("SYS-GRP-5400", "5400", "Operating Expenses",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
+            new GroupSeed("SYS-GRP-1300", "1300", "Fixed Assets",         "Assets",      "Asset",     "Dr", "BS", "1000", 2)
         );
 
         for (GroupSeed g : rootGroups) seedGroup(g);
@@ -71,6 +72,7 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-2103", "2103", "GRN Clearing",        "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2104", "2104", "Customer Advance",    "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2107", "2107", "Deferred Revenue",    "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-2108", "2108", "VAT Payable",         "Liabilities", "Liability", "Cr", "BS", false, "2100", "TAX_LIABILITIES"),
             new AccountSeed("SYS-2200", "2200", "Salary Payable",      "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2201", "2201", "Other Deductions Payable","Liabilities","Liability","Cr","BS",false, "2100", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-3100", "3100", "Retained Earnings",   "Equity",      "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
@@ -84,9 +86,51 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-6050", "6050", "Discount Allowed",    "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-7001", "7001", "Discount Received",   "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
             new AccountSeed("SYS-7002", "7002", "Interest Income",     "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
-            new AccountSeed("SYS-7501", "7501", "Bank Charges",        "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
-            new AccountSeed("SYS-5403", "5403", "General Expense",     "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
-            new AccountSeed("SYS-5999", "5999", "Rounding Adjustment", "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES")
+            new AccountSeed("SYS-7501", "7501", "Bank Charges",                   "Expenses", "Expense", "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-7502", "7502", "Inventory Write-off/Shrinkage", "Expenses", "Expense", "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-5403", "5403", "General Expense",               "Expenses", "Expense", "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-5999", "5999", "Rounding Adjustment",           "Expenses", "Expense", "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+
+            // ── Missing accounts per PDF §03 COA spec ─────────────────────────────
+            new AccountSeed("SYS-1201", "1201", "Inventory – In Transit",         "Assets",      "Asset",     "Dr", "BS", false, "1100", "INVENTORY"),
+            new AccountSeed("SYS-1320", "1320", "Prepaid Expenses",               "Assets",      "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            new AccountSeed("SYS-1400", "1400", "Fixed Assets – Equipment",       "Assets",      "Asset",     "Dr", "BS", false, "1300", "FIXED_ASSETS"),
+            new AccountSeed("SYS-1450", "1450", "Accumulated Depreciation",       "Assets",      "Asset",     "Cr", "BS", false, "1300", "FIXED_ASSETS"),
+            new AccountSeed("SYS-3001", "3001", "Share Capital / Owner Equity",   "Equity",      "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
+            new AccountSeed("SYS-4002", "4002", "Sales Returns",                  "Income",      "Income",    "Dr", "PL", false, "4100", "REVENUE"),
+            new AccountSeed("SYS-5002", "5002", "Purchase Returns",               "Expenses",    "Expense",   "Cr", "PL", false, "5100", "COGS"),
+            new AccountSeed("SYS-6030", "6030", "Depreciation Expense",           "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6001", "6001", "Rent Expense",                   "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6002", "6002", "Utility Expense",                "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-7502B","7503", "Accrued Liabilities",            "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-5101B","5999B","Interest Expense",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+
+            // ── Additional accounts required by complete financial flow ────────────
+            // Equity
+            new AccountSeed("SYS-3000", "3000", "Retained Earnings",              "Equity",      "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
+            // Purchase Price Variance (distinct from 5103 used in GRN/PI flow — alias safe)
+            new AccountSeed("SYS-5110", "5110", "Purchase Price Variance - Returns","Expenses",  "Expense",   "Dr", "PL", false, "5100", "COGS"),
+            // PDC sub-ledger clearing
+            new AccountSeed("SYS-2150", "2150", "AP - Post-Dated Cheques",        "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-1150", "1150", "AR - Post-Dated Cheques",        "Assets",      "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            // HR — Gratuity (End of Service Benefit per UAE Labour Law)
+            new AccountSeed("SYS-6020", "6020", "Gratuity Expense",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-2210", "2210", "Gratuity Payable",               "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            // Discount / settlement income
+            new AccountSeed("SYS-4301", "4301", "Trade Discount Income",          "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
+            // Additional operating expense accounts
+            new AccountSeed("SYS-6003", "6003", "Repairs & Maintenance",          "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6004", "6004", "Insurance Expense",              "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6005", "6005", "Advertising & Marketing",        "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6006", "6006", "Transportation Expense",         "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6007", "6007", "Communication Expense",          "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6008", "6008", "Office Supplies",                "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            // Inventory adjustments
+            new AccountSeed("SYS-5105", "5105", "Inventory Adjustment",           "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
+            // Long-term liabilities sub-group
+            new AccountSeed("SYS-GRP-2500", "2500", "Long-term Liabilities",    "Liabilities", "Liability", "Cr", "BS", false, "2000", "NON_CURRENT_LIABILITIES"),
+            // Bank-related
+            new AccountSeed("SYS-1108", "1108", "Petty Cash - Branch",            "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK")
         );
 
         int seeded = 0;
@@ -179,6 +223,7 @@ public class SystemAccountSeeder implements ApplicationRunner {
     private static String deriveCashFlowSection(String accountType, String reportGroup) {
         if ("Equity".equalsIgnoreCase(accountType)) return "FINANCING";
         if ("EQUITY".equals(reportGroup)) return "FINANCING";
+        if ("FIXED_ASSETS".equals(reportGroup)) return "INVESTING";
         if ("Asset".equalsIgnoreCase(accountType) || "Liability".equalsIgnoreCase(accountType)) return "OPERATING";
         if ("Income".equalsIgnoreCase(accountType) || "Expense".equalsIgnoreCase(accountType)) return "OPERATING";
         return "NONE";

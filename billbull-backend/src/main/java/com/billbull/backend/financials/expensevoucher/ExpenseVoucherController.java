@@ -37,6 +37,12 @@ public class ExpenseVoucherController {
         return ResponseEntity.ok(service.update(id, req));
     }
 
+    /** POST /api/expense-vouchers/{id}/approve — marks Paid and posts GL journal. */
+    @PostMapping("/{id}/approve")
+    public ResponseEntity<ExpenseVoucher> approve(@PathVariable Long id) {
+        return ResponseEntity.ok(service.approve(id));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);

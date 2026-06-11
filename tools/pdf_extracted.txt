@@ -1,0 +1,387 @@
+
+
+=== PAGE 1 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference BillBull Retail OS Financial Flow Architecture Developer Reference Document Version 1.0 | Confidential Sales & Tax • Procurement & Inventory • Financial Reports Confidential — Internal Use OnlyPage 
+
+=== PAGE 2 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference 01 Financial Architecture Principles BillBull Retail OS is built on a double-entry accounting engine where every financial event creates a
+balanced pair of debit and credit postings. Before any module is built, the team must internalize these
+foundational rules because every screen, every API endpoint, and every background job ultimately traces
+back to them. The Double-Entry Foundation At its core, BillBull enforces that for every transaction: Total Debits = Total Credits. There are no
+exceptions. A Sales Invoice simultaneously debits the customer receivable and credits the revenue and
+VAT payable accounts. A Purchase Invoice simultaneously credits the supplier payable and debits the
+inventory and input VAT accounts. The system must never allow a posting that leaves these totals
+unbalanced. The Accounting Equation Assets = Liabilities + Equity. Every transaction in BillBull must respect this equation. When a sale is made
+on credit, Assets    Receivables) go up and Equity    Retained Earnings via Revenue) goes up equally. When
+stock is purchased, Assets    Inventory) go up and Liabilities    Payables) go up equally. The balance sheet
+must always balance. Multi-Dimensional Posting BillBull operates across branches, outlets, cost centers, and item batches. Every journal entry carries
+dimensional tags — branch code, outlet ID, cost center code — that allow the same transaction to
+simultaneously update the consolidated company books and the branch-level P&L and balance sheet. This
+is not optional; dimensions must be enforced at the posting engine level, not left to individual developers. The Posting Engine Contract The Posting Engine is the single gateway through which all accounting entries pass. No module should
+write directly to the ledger tables. The Posting Engine validates balance, assigns voucher numbers,
+attaches dimensions, records timestamps and user IDs, and then writes to both the transaction ledger and
+the general ledger summary. This ensures auditability and consistency across all flows. Period Control and Locking Financial periods must be lockable. Once a month-end close is performed, no entry should be permitted in
+that period. The system must enforce period status checks at the Posting Engine level. All backdated
+entries must be restricted by user permission level. A period lock effectively protects the integrity of all
+financial reports for that period. Key Architecture Rules • Every module routes postings through the central Posting Engine — no exceptions Confidential — Internal Use OnlyPage 
+
+=== PAGE 3 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference • Dimensions    Branch, Outlet, Cost Center) are mandatory on every journal line • Period lock is enforced before writing any entry • A unique, sequential voucher number is assigned per transaction type per branch • All postings are soft-deletable with reversal entries — no hard deletes of accounting records • Tax entries    VAT input/output) are tracked in dedicated sub-ledger accounts • Foreign currency transactions maintain both local and foreign currency amounts in the ledger 02 Core Accounting Masters Masters are the configuration backbone of the financial engine. Getting them right from the start prevents
+structural problems that are very costly to fix later. Developers must build the master data module before
+any transactional module. Fiscal Year Master Each fiscal year defines the start date, end date, and period structure (monthly, quarterly). The system
+must support overlapping fiscal year setup for year-end transition. A fiscal year can have a status of Open,
+Closing, or Closed. Postings are only allowed in Open periods. Developers must enforce a date-range
+check against the active fiscal year before allowing any posting. Currency Master BillBull supports multi-currency operations. The Currency Master defines the base/functional currency
+(typically AED or OMR  , each foreign currency code, and exchange rate history. Exchange rates must be
+dated — the rate effective on the transaction date must be used for conversion. The system stores both
+the foreign currency amount and the base currency equivalent on every transaction line. Tax Master    VAT  The Tax Master stores each tax code, the tax rate (e.g. 5%  , the applicable input tax account, and the
+output tax account. For UAE VAT, the standard rate is 5% but zero-rated and exempt categories must also
+be configured. The tax code is linked to the item master and the customer/vendor master to determine the
+default VAT treatment on each transaction line. Payment Terms Master Payment terms define how due dates are calculated on invoices (e.g. Net 30, 2/10 Net 30 for early
+payment discount). These are linked to customer and vendor masters and drive the aging reports. The
+early payment discount percentage is also stored here and referenced by the receipts and payments
+module. Customer Master Each customer record carries a linked accounts receivable sub-ledger account, default payment terms,
+default VAT category, credit limit, and currency. The customer master is the anchor point for all sales Confidential — Internal Use OnlyPage 
+
+=== PAGE 4 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference transactions. The AR sub-ledger balance must always reconcile to the AR control account in the general
+ledger. Vendor Master Each vendor record mirrors the customer master but for the payables side. It carries the linked AP
+sub-ledger account, default payment terms, default VAT category (for input tax), bank details for payment
+processing, and currency. The AP sub-ledger must reconcile to the AP control account. Employee Master The Employee Master stores salary structure (basic pay, allowances, deductions), the linked salary
+payable account, advance ledger account, and bank details for WPS payments. This is referenced by the
+payroll module to generate salary journals and by HR for leave and loan tracking. 03 Chart of Accounts Structure The Chart of Accounts    COA    is the numbering scheme for all accounts. BillBull uses a structured
+five-group hierarchy. Account numbers must be designed to allow future expansion without restructuring. Account Group   Number Range   Nature   Balance Sheet / P&L Assets   1000 – 1999   Debit Normal   Balance Sheet Current Assets   1000 – 1299   Debit Normal   Balance Sheet Fixed Assets   1300 – 1599   Debit Normal   Balance Sheet Liabilities   2000 – 2999   Credit Normal   Balance Sheet Current Liabilities   2000 – 2399   Credit Normal   Balance Sheet Long Term Liabilities   2400 – 2999   Credit Normal   Balance Sheet Equity   3000 – 3999   Credit Normal   Balance Sheet Revenue   4000 – 4999   Credit Normal   P&L Cost of Goods Sold   5000 – 5999   Debit Normal   P&L Operating Expenses   6000 – 6999   Debit Normal   P&L Other Income   7000 – 7499   Credit Normal   P&L Other Expenses   7500 – 7999   Debit Normal   P&L Key Account Codes — BillBull Standard Account Name   Code   Type Cash in Hand   1001   Asset – Current Bank Account    Main    1010   Asset – Current Bank Account    Collection)   1011   Asset – Current Confidential — Internal Use OnlyPage 
+
+=== PAGE 5 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Accounts Receivable Control   1100   Asset – Current Customer Advances Received   2050   Liability – Current Inventory – Raw / Retail   1200   Asset – Current Inventory – In Transit   1201   Asset – Current VAT Input Tax   1310   Asset – Current Prepaid Expenses   1320   Asset – Current Fixed Assets – Equipment   1400   Asset – Fixed Accumulated Depreciation   1450   Asset – Contra Accounts Payable Control   2001   Liability – Current Vendor Advances Paid   1105   Asset – Current VAT Output Tax   2100   Liability – Current VAT Payable    Net    2101   Liability – Current Salary Payable   2200   Liability – Current Salary Advances – Employees   1106   Asset – Current Owner's Equity / Share Capital   3001   Equity Retained Earnings   3100   Equity Sales Revenue   4001   Revenue Sales Returns   4002   Revenue – Contra Trade Discounts Given   4003   Revenue – Contra Purchase / COGS   5001   COGS Purchase Returns   5002   COGS – Contra Rent Expense   6001   Operating Expense Utility Expense   6002   Operating Expense Salary Expense   6010   Operating Expense Discount Allowed    Sales    6050   Operating Expense Discount Received    Purchase)   7001   Other Income Bank Charges   7501   Other Expense 04 Posting Engine Workflow The Posting Engine is the most critical component in BillBull's financial architecture. Every transaction —
+whether it originates from the POS screen, a purchase order, a salary run, or a manual journal — must pass
+through this engine before any accounting record is written. Think of it as the financial gatekeeper. Step-by-Step Flow of the Posting Engine Step 1 — Transaction Initiation Confidential — Internal Use OnlyPage 
+
+=== PAGE 6 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference A user action or a system trigger (e.g. confirming a Sales Order, approving a Purchase Invoice, running
+payroll) generates a posting request. This request is a structured object containing: transaction type code,
+document reference number, transaction date, line items with account codes, amounts in both debit and
+credit columns, dimensional tags (branch, outlet, cost center), and the user ID and timestamp. Step 2 — Pre-Validation The engine validates: (a) the fiscal period is open for the transaction date, (b) all account codes exist and
+are active, (c) all mandatory dimensions are present, (d) foreign currency amounts have a valid exchange
+rate for the transaction date, and (e) credit limits have not been breached for customer transactions. If any
+check fails, the transaction is rejected with a descriptive error code and no entry is written. Step 3 — Balance Check The engine sums all debit amounts and all credit amounts across all lines of the transaction. If Total Debits
+≠ Total Credits, the transaction is rejected. This check is absolute and cannot be bypassed. Even rounding
+differences (e.g. from currency conversion) must be absorbed into a designated rounding account before
+the entry is submitted. Step 4 — Voucher Number Assignment The engine assigns a unique, sequential voucher number using a per-branch, per-transaction-type
+sequence. For example: SI  DXB  2024  000123 for Sales Invoice number 123 at the Dubai branch in 2024.
+This number is locked and never reused, even if the transaction is later reversed. Sequence tables must be
+row-locked during assignment to prevent duplicates in concurrent environments. Step 5 — Ledger Write The engine writes two sets of records simultaneously within a database transaction. First, the transaction
+ledger (detailed entries with all line-level data, dimensions, and source document reference). Second, it
+updates the general ledger running balance table by account, period, and dimension combination. Both
+writes must succeed atomically — if either fails, the entire database transaction is rolled back. Step 6 — Sub-Ledger Update For transactions affecting customers or vendors, the engine also writes to the respective AR or AP
+sub-ledger. For inventory transactions, it writes to the inventory movement ledger. These sub-ledgers feed
+the aging reports and stock valuation reports without requiring full ledger recalculation. Step 7 — Notification and Status Update On success, the engine updates the source document status (e.g. Sales Order status changes from
+'Confirmed' to 'Posted'), triggers any downstream workflow (e.g. dispatch queue), and logs the posting in
+the audit trail. The audit trail records: voucher number, source document, posting user, posting timestamp,
+and system IP/session. Posting Engine: What It MUST NOT Do • It must never partially post — all lines or no lines (atomicity is non-negotiable) • It must never allow posting to a locked period, even for system-generated entries Confidential — Internal Use OnlyPage 
+
+=== PAGE 7 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference • It must never generate duplicate voucher numbers — use database-level sequence locking • It must never bypass dimension validation — incomplete dimensions corrupt reports • It must never allow a manual override of the balance check 05 Sales Flow — Sales Order    SO  The Sales Order flow is the primary revenue-generating process in BillBull. A sale can originate from the
+POS terminal (retail walk-in), a counter sale, or a business-to-business credit sale. The flow moves from
+order creation through invoicing to payment collection, with each step generating precise accounting
+entries. Phase 1 — Sales Order Creation The salesperson or cashier creates a Sales Order by selecting a customer (or the default walk-in customer
+for cash sales), adding line items with quantities and unit prices. At this stage, no accounting entry is
+posted. The SO is a commercial document. However, the system must check the customer's credit limit
+and alert if the limit will be breached. The system also pre-calculates VAT on each line based on the item's
+tax code. Phase 2 — Sales Invoice Generation When the SO is confirmed and goods are ready to dispatch (or in the case of a POS sale, at checkout), the
+system generates a Sales Invoice    SI  . This is the trigger for the accounting Posting Engine. The invoice
+carries the customer name, invoice date, payment terms, line items with quantities, unit prices, line
+discounts, line VAT amounts, and the invoice totals. Posting: Credit Sale Invoice Account   Debit    Dr    Credit    Cr    Report Impact Accounts Receivable    Customer)   Invoice Total   BS – Asset ↑ Sales Revenue   Net Sales Amount   P&L – Revenue ↑ VAT Output Tax   VAT Amount   BS – Liability ↑ Posting: Cash Sale Invoice    POS  Account   Debit    Dr    Credit    Cr    Report Impact Cash in Hand / Card Collection
+Account Invoice Total   BS – Asset ↑ Sales Revenue   Net Sales Amount   P&L – Revenue ↑ VAT Output Tax   VAT Amount   BS – Liability ↑ Simultaneous Inventory Posting    COGS  Confidential — Internal Use OnlyPage 
+
+=== PAGE 8 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference At the same moment the Sales Invoice is posted, the system also posts the Cost of Goods Sold entry. The
+item's weighted average cost (or batch cost) is fetched from the inventory ledger, and the following entry
+is made: Account   Debit    Dr    Credit    Cr    Report Impact Cost of Goods Sold    COGS    Cost Amount   P&L – Expense ↑ Inventory Account   Cost Amount   BS – Asset ↓ Report Impacts — Sales Invoice Financial Report   Impact Balance Sheet   Receivables (or Cash) increases by invoice total; Inventory decreases
+by cost; VAT Output Liability increases Profit & Loss   Revenue increases by net sales amount; COGS increases by item
+cost; Gross Profit margin is created Trial Balance   AR Dr, Revenue Cr, VAT Output Cr, COGS Dr, Inventory Cr — all
+balanced Cash Flow    Indirect)   No direct cash impact for credit sales; Cash collected appears in
+Operating Activities when received VAT Return   Output VAT accumulates in the VAT Output account for the tax return
+period Customer Ledger   Customer's outstanding balance increases; feeds AR Aging report 06 Customer Advance Against SO When a customer pays an advance before the Sales Order is fully delivered or invoiced, BillBull must
+handle this as a liability (unearned revenue) — not as income. The advance is held in the Customer
+Advances account until the invoice is raised and the advance is applied. Step 1 — Receiving the Advance The customer pays a deposit or partial payment against a future order. The cashier records this as a
+Customer Advance Receipt. At this point, no revenue is recognized — the money received is a liability
+because the goods/services have not yet been delivered. Account   Debit    Dr    Credit    Cr    Report Impact Cash / Bank / Card Account   Advance Amount   BS – Asset ↑ Customer Advances    Liability)   Advance Amount   BS – Liability ↑ Step 2 — Applying Advance to Invoice When the Sales Invoice is raised and the advance is applied as full or partial payment, the Customer
+Advance liability is cleared against the Accounts Receivable. If the advance fully covers the invoice, no
+outstanding receivable remains. If it partially covers it, the remaining balance stays in AR. Confidential — Internal Use OnlyPage 
+
+=== PAGE 9 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Account   Debit    Dr    Credit    Cr    Report Impact Customer Advances    Liability)   Advance Applied   BS – Liability ↓ Accounts Receivable   Advance Applied   BS – Asset ↓ ▶   At the time the Sales Invoice is posted, the full AR entry is created first    DR Receivables, CR
+Revenue, CR VAT Output). The advance application entry then separately reduces the AR balance. Net
+AR = Invoice Total – Advance Applied. Step 3 — Advance Refund (if order is cancelled) If the order is cancelled before delivery and the advance must be refunded, the liability is cleared and
+cash is paid out: Account   Debit    Dr    Credit    Cr    Report Impact Customer Advances    Liability)   Refund Amount   BS – Liability ↓ Cash / Bank Account   Refund Amount   BS – Asset ↓ Important: Advance vs Revenue • Customer Advances are NEVER posted to Revenue at the time of receipt • Revenue is only recognized when the invoice is raised (goods/services delivered) • The advance sits in a current liability account until matched to an invoice • The Customer Ledger must show both the advance and the invoice separately until matched • Unmatched advances on the balance sheet date must be disclosed as current liabilities 07 Discounts and VAT Discounts and VAT are two of the most frequently mishandled areas in retail accounting systems. BillBull
+must calculate VAT on the net amount after trade discounts but must handle settlement discounts
+differently. Understanding the distinction is critical. Trade Discounts    Line Discounts) A trade discount is a reduction in the selling price given at the time of sale — for example, 10% off the list
+price. VAT is calculated on the price AFTER the trade discount is applied. The discount itself is not a
+separate accounting entry; it simply reduces the net sale amount on the invoice line. Example: Item list price = AED 100, Trade Discount = 10%, Net Price = AED 90, VAT 5% = AED 4.50,
+Invoice Total = AED 94.50 Account   Debit    Dr    Credit    Cr    Report Impact Accounts Receivable / Cash   AED 94.50   BS – Asset ↑ Sales Revenue   AED 90.00   P&L – Revenue (net) VAT Output Tax   AED 4.50   BS – Liability ↑ ▶   For trade discounts, no separate Discount Allowed expense account is used. Revenue is simply
+recorded net of the discount. Confidential — Internal Use OnlyPage 
+
+=== PAGE 10 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Settlement / Cash Discounts    On Receipt) A settlement discount is offered to a customer for early payment (e.g. 2% if paid within 10 days). This is
+recorded as an expense    Discount Allowed) at the time of payment, not at the time of invoicing. The
+original invoice is posted at full value. See Section 12 for full treatment under Receipts and Payments. VAT Calculation Rules Scenario   VAT Base   Treatment Standard rated item with no discount   Full selling price   5% on full price Standard rated item with trade
+discount Price after discount   5% on net price Zero-rated item (e.g. basic food)   N/A   0% — still needs VAT line with zero
+amount for reporting Exempt item   N/A   No VAT charged, no input VAT
+recovery on related costs Mixed invoice (standard + zero rated)   Per line   Calculate VAT per line; sum totals Settlement discount (not yet taken)   Full invoice amount   VAT on full amount; adjust only if
+discount is actually taken VAT Posting Detail The VAT Output account    2100    accumulates all VAT collected from customers during the period. The VAT
+Input account    1310    accumulates all VAT paid to vendors on purchases. At the time of the VAT return
+filing, the net VAT payable    Output VAT minus Input VAT    is transferred to the VAT Payable account    2101  and subsequently paid to the tax authority. Account   Debit    Dr    Credit    Cr    Report Impact VAT Output Tax    2100    Output VAT Total   Clears output account VAT Input Tax    1310    Input VAT Total   Clears input account VAT Payable    2101    Net VAT Due   BS – Liability (net
+payable) 08 Sales Return / Credit Note When a customer returns goods, BillBull creates a Credit Note    CN    against the original Sales Invoice. The
+Credit Note reverses the revenue, reverses the VAT output, and increases the inventory back to stock. The
+CN must always reference the original invoice for audit trail purposes. Step 1 — Goods Return to Stock Before the financial entry, the warehouse confirms goods are received back and inspected. The inventory
+module creates a Goods Return Note which triggers the inventory entry and the COGS reversal. Confidential — Internal Use OnlyPage 
+
+=== PAGE 11 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Step 2 — Credit Note Posting Account   Debit    Dr    Credit    Cr    Report Impact Sales Returns    Contra Revenue) /
+Revenue Net Return
+Amount P&L – Revenue ↓ VAT Output Tax   VAT on Return   BS – Liability ↓ Accounts Receivable / Cash   Total Returned
+Amount BS – Asset ↓ Inventory Reversal    COGS Reversal) Account   Debit    Dr    Credit    Cr    Report Impact Inventory Account   Original Cost of
+Returned Goods BS – Asset ↑ Cost of Goods Sold   Original Cost of
+Returned Goods P&L – COGS ↓ ▶   The cost used for the COGS reversal must be the original cost at which the item was sold, not the
+current average cost. This prevents inventory valuation distortions. Applying Credit Note to Outstanding Balance Once the CN is raised, it can be applied against the customer's open invoices. The application entry
+simply reduces both the AR balance and the CN balance simultaneously, without any further P&L impact. If
+cash is refunded instead, a payment entry is made. Account   Debit    Dr    Credit    Cr    Report Impact Accounts Receivable    CN applied to
+invoice) CN Amount   Reduces open AR Accounts Receivable (original invoice)   CN Amount
+applied Clears invoice balance Report Impacts — Credit Note Report   Impact P&L   Net Revenue decreases; COGS decreases proportionally Balance Sheet   AR decreases (or Cash decreases if cash refund); Inventory increases; VAT
+Output Liability decreases VAT Return   Output VAT is reduced — must be reported in the relevant VAT return period Customer Ledger   CN offsets open invoice balance; reduces customer outstanding Inventory   Stock quantity and value both increase at original cost Confidential — Internal Use OnlyPage 
+
+=== PAGE 12 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference 09 Purchase Flow — LPO to Invoice The purchase flow starts with a Local Purchase Order    LPO    and flows through goods receipt to vendor
+invoice posting. The key principle is that the accounting entry for the purchase liability is triggered by
+receipt of goods or the vendor invoice (whichever is the policy), not by the LPO. Phase 1 — Local Purchase Order    LPO  The LPO is a commitment document sent to the vendor. At the time of LPO creation, NO accounting entry
+is posted. The LPO is a commercial commitment only. However, the system must track open LPOs for the
+Commitment Report, which shows outstanding purchase commitments for cash flow forecasting. Phase 2 — Goods Receipt Note    GRN  When goods arrive at the warehouse, the storekeeper creates a Goods Receipt Note    GRN    against the
+LPO. At this point, the inventory enters the system. If BillBull follows the 3-way matching approach    LPO +
+GRN + Invoice), the liability is provisionally recorded when the GRN is created. This is called an Accrued
+Liability or Goods Received Not Invoiced    GRNI    entry: Account   Debit    Dr    Credit    Cr    Report Impact Inventory Account   GRN Value (at PO
+cost) BS – Asset ↑ Goods Received Not Invoiced    GRNI    —
+Accrual GRN Value   BS – Liability (temp) Phase 3 — Vendor Invoice    Purchase Invoice) When the vendor invoice arrives and is matched to the GRN, the GRNI accrual is reversed and the actual
+vendor payable is recorded: Account   Debit    Dr    Credit    Cr    Report Impact Goods Received Not Invoiced    GRNI    GRN Value   BS – Liability clears VAT Input Tax   VAT Amount on
+Invoice BS – Asset ↑
+(recoverable) Accounts Payable    Vendor    Invoice Total (incl.
+VAT  BS – Liability ↑ ▶   If price differences exist between the GRN cost and the invoice cost, the variance is posted to a
+Purchase Price Variance account and investigated. Report Impacts — Purchase Invoice Report   Impact Balance Sheet   AP Liability increases; Inventory already on BS from GRN; Input VAT Asset
+increases Confidential — Internal Use OnlyPage 
+
+=== PAGE 13 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference P&L   No immediate P&L impact — COGS is recorded when goods are sold, not
+when purchased Cash Flow   Payable created — cash outflow occurs when vendor is paid
+(financing/operating activity) VAT Return   Input VAT is claimable — reduces net VAT payable Inventory   Stock value and quantity confirmed at invoice cost Vendor Ledger   Vendor outstanding balance increases; feeds AP Aging report 10 Vendor Advance Against LPO Sometimes vendors require a partial or full advance payment before shipping goods. This advance must
+be tracked as a prepaid asset (money owed to the business in the form of goods yet to be delivered) and
+applied against the vendor invoice when goods are received. Step 1 — Paying the Vendor Advance Account   Debit    Dr    Credit    Cr    Report Impact Vendor Advances Paid    Asset    Advance Amount   BS – Asset ↑ Bank / Cash Account   Advance Amount   BS – Asset ↓ Step 2 — Applying Advance to Purchase Invoice When the vendor invoice is posted and the advance is applied, the advance asset is cleared against the
+accounts payable: Account   Debit    Dr    Credit    Cr    Report Impact Accounts Payable    Vendor    Advance Applied   BS – Liability ↓ Vendor Advances Paid    Asset    Advance Applied   BS – Asset ↓ Step 3 — Advance Refund (if order cancelled) Account   Debit    Dr    Credit    Cr    Report Impact Bank / Cash Account   Refund Amount   BS – Asset ↑ Vendor Advances Paid    Asset    Refund Amount   BS – Asset ↓ Advance Management Rules • Vendor Advances must NEVER be posted directly to Purchases/Expenses • Each advance must reference a specific LPO number for traceability • Advances outstanding at period-end appear on the Balance Sheet as a current asset (amounts owed by
+vendors) Confidential — Internal Use OnlyPage 
+
+=== PAGE 14 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference • The AP sub-ledger must show advance amounts separately from invoice amounts • VAT on advances (where applicable) must follow local tax authority rules on when input VAT can be
+claimed 11 Purchase Return / Debit Note When goods are returned to a vendor (due to defects, wrong delivery, or over-shipment), BillBull raises a
+Debit Note    DN    which reduces the vendor payable, reverses the inventory, and reverses the input VAT
+that was previously claimed. Purchase Return Posting Account   Debit    Dr    Credit    Cr    Report Impact Accounts Payable    Vendor    Return Amount
+(incl. VAT  BS – Liability ↓ Inventory Account   Return Cost   BS – Asset ↓ VAT Input Tax   VAT on Return   BS – Asset ↓ (claim
+reversed) Applying the Debit Note The Debit Note reduces the vendor's outstanding balance and can be either (a) applied against a future
+invoice from the same vendor, or (b) received as a cash refund. If received as cash: Account   Debit    Dr    Credit    Cr    Report Impact Bank / Cash Account   Refund Amount   BS – Asset ↑ Accounts Payable    Vendor    Refund Amount   Clears DN balance ▶   Inventory adjustments for returns must use the original GRN cost, not the current average cost, to
+prevent distortion of the weighted average cost calculation. 12 Receipts and Payments Receipts and Payments represent the cash and bank movement layer of the financial system. Every time
+money moves — whether collecting from a customer or paying a vendor — the system must create a
+precise accounting entry. Settlement discounts offered at the time of receipt or payment require special
+handling. Customer Receipt — Full Payment Account   Debit    Dr    Credit    Cr    Report Impact Confidential — Internal Use OnlyPage 
+
+=== PAGE 15 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Bank / Cash Account   Amount Received   BS – Asset ↑ Accounts Receivable   Amount Received   BS – Asset ↓ Customer Receipt — With Settlement Discount When a customer pays early and takes the offered early payment discount, the invoice is fully settled even
+though less cash was received. The discount amount is recognized as an expense    Discount Allowed): Account   Debit    Dr    Credit    Cr    Report Impact Bank / Cash Account   Cash Received
+(net) BS – Asset ↑ Discount Allowed    Expense)   Discount Amount   P&L – Expense ↑ Accounts Receivable   Full Invoice
+Amount BS – AR fully cleared ▶   VAT Note: In some jurisdictions (including UAE  , if a settlement discount is granted, the output VAT
+must be adjusted to reflect the reduced consideration. BillBull must support a VAT adjustment entry
+linked to the receipt if local tax rules require it. Vendor Payment — Full Payment Account   Debit    Dr    Credit    Cr    Report Impact Accounts Payable    Vendor    Amount Paid   BS – Liability ↓ Bank / Cash Account   Amount Paid   BS – Asset ↓ Vendor Payment — With Settlement Discount When BillBull takes advantage of a vendor's early payment discount, the discount is recognized as income  Discount Received): Account   Debit    Dr    Credit    Cr    Report Impact Accounts Payable    Vendor    Full Invoice
+Amount BS – Liability fully
+cleared Bank / Cash Account   Cash Paid (net)   BS – Asset ↓ Discount Received    Income    Discount Amount   P&L – Other Income ↑ Post-Dated Cheque Receipt When a customer gives a post-dated cheque, it must not be deposited into the Bank account immediately.
+It goes into a Cheques Under Collection    CUC    account until the clearing date: Account   Debit    Dr    Credit    Cr    Report Impact Cheques Under Collection    CUC    Cheque Amount   BS – Asset (interim) Accounts Receivable   Cheque Amount   BS – AR ↓ Confidential — Internal Use OnlyPage 
+
+=== PAGE 16 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference On the clearing date when the bank confirms credit: Account   Debit    Dr    Credit    Cr    Report Impact Bank Account   Cheque Amount   BS – Bank ↑ Cheques Under Collection    CUC    Cheque Amount   BS – CUC ↓ 13 Salary Payments, Advances & Deductions The payroll module handles monthly salary processing, advance payments during the month, and
+end-of-month deductions. All flows must maintain linkage between the salary journal and the individual
+employee sub-ledger. Salary Advance During the Month When an employee requests a salary advance, the system pays out cash and records a receivable from
+the employee (tracked in the Salary Advances account): Account   Debit    Dr    Credit    Cr    Report Impact Salary Advances — Employee    Asset    Advance Amount   BS – Asset ↑ Cash / Bank Account   Advance Amount   BS – Asset ↓ Monthly Salary Journal    End of Month) At month-end, the payroll run creates a salary expense journal for the total salary obligation. This includes
+basic salary, all allowances, and employer social insurance contributions. Gross salary is the total before
+deductions: Account   Debit    Dr    Credit    Cr    Report Impact Salary Expense    Operating Expense)   Gross Salary
+Amount P&L – Expense ↑ Salary Payable    Liability)   Net Payable to
+Employee BS – Liability ↑ Salary Advances — Employee   Advance
+Deducted BS – Asset ↓ (cleared) Other Deductions Payable   Other Deductions   BS – Liability ↑ WPS Payment    Salary Disbursement) When the bank transfer is made to employee accounts via the Wage Protection System: Account   Debit    Dr    Credit    Cr    Report Impact Salary Payable    Liability)   Net Salary
+Transferred BS – Liability ↓ Confidential — Internal Use OnlyPage 
+
+=== PAGE 17 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Bank Account   Net Salary
+Transferred BS – Asset ↓ Report Impacts — Payroll Report   Impact P&L   Salary Expense increases by gross payroll amount each month Balance Sheet   Salary Payable appears as current liability from month-end until payment
+date; Advances appear as current asset until deducted Cash Flow   Salary payment is an operating cash outflow; recorded in the period of
+payment Cost Center Report   Each employee's salary must be tagged to their department/cost center
+for departmental P&L 14 Journal, Contra & Expenses Manual Journal Voucher A Manual Journal is used for accounting entries that do not originate from a business transaction module
+— for example, depreciation, accruals, prepayments, and corrections. Every manual journal must have: a
+date, a narration, at least two lines, balanced debits and credits, a cost center tag, and an approver. The
+system must enforce maker-checker approval for manual journals above a defined threshold. Depreciation Journal    Monthly) Account   Debit    Dr    Credit    Cr    Report Impact Depreciation Expense   Monthly
+Depreciation P&L – Expense ↑ Accumulated Depreciation   Monthly
+Depreciation BS – Contra Asset ↑ Prepaid Expense Amortization Account   Debit    Dr    Credit    Cr    Report Impact Expense Account (e.g. Rent Expense)   Period Portion   P&L – Expense
+recognized Prepaid Expenses    Asset    Period Portion   BS – Prepaid Asset ↓ Accrued Expense    Month-End) Account   Debit    Dr    Credit    Cr    Report Impact Expense Account   Accrued Amount   P&L – Expense ↑ Confidential — Internal Use OnlyPage 
+
+=== PAGE 18 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Accrued Liabilities   Accrued Amount   BS – Liability ↑ Contra Voucher A Contra Voucher is used for cash-to-bank or bank-to-cash transfers within the same company. It is a
+balanced entry within the asset accounts and has no P&L impact. Common uses: depositing daily cash
+sales into the bank, or withdrawing petty cash from the bank. Account   Debit    Dr    Credit    Cr    Report Impact Bank Account   Transfer Amount   BS – Bank ↑ Cash in Hand   Transfer Amount   BS – Cash ↓ Direct Expense Voucher For cash expenses paid directly from petty cash (e.g. office supplies, courier fees): Account   Debit    Dr    Credit    Cr    Report Impact Expense Account (e.g. Office Supplies)   Expense Amount   P&L – Expense ↑ Cash in Hand / Bank Account   Expense Amount   BS – Asset ↓ 15 Bank, Card, Cheque and Reconciliation BillBull handles multiple payment methods — cash, card    POS terminal), bank transfer, and cheques. Each
+method has its own clearing cycle and must be tracked through to bank statement reconciliation. Card Payment    POS Terminal) When a customer pays by debit or credit card, the money does not immediately reach the bank account —
+it goes through a payment gateway and clears within 1  3 business days. The interim account is the Card
+Settlement Receivable: Account   Debit    Dr    Credit    Cr    Report Impact Card Settlement Receivable   Card Sale Amount   BS – Asset (pending) Sales Revenue   Net Sales Amount   P&L – Revenue ↑ VAT Output Tax   VAT Amount   BS – Liability ↑ When the payment gateway settles to the bank (net of merchant fees): Account   Debit    Dr    Credit    Cr    Report Impact Bank Account   Net Settlement
+Amount BS – Bank ↑ Bank Charges / Merchant Fee Expense   Merchant Fee   P&L – Expense ↑ Card Settlement Receivable   Gross Card
+Amount BS – Clears receivable Confidential — Internal Use OnlyPage 
+
+=== PAGE 19 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Bank Reconciliation Process The bank reconciliation matches the bank account balance in BillBull's books against the bank's official
+statement. Differences arise from timing (deposits in transit, outstanding cheques) or errors. The
+reconciliation must be performed monthly at minimum. Reconciling Item   Book Treatment   Action Required Deposit in transit   In books, not on statement   No action — will appear on next statement Outstanding cheque issued   In books, not on statement   Monitor — void if stale Bank charge not in books   On statement, not in books   Post a Bank Charges expense journal Interest credited by bank   On statement, not in books   Post an Interest Income journal Returned cheque (bounced)   On statement, not in books   Reverse receipt entry, notify customer Error in books   Incorrect amount posted   Post a correcting journal with narration ▶   BillBull should provide a Bank Reconciliation screen where the accountant marks each bank
+statement line as matched or unmatched, and the system shows the reconciled balance vs. book
+balance automatically. 16 Inventory, Batch, Expiry and COGS Inventory is one of the most complex areas in retail accounting. BillBull supports batch tracking and expiry
+date management, and must use a consistent cost flow method    Weighted Average Cost is recommended
+for retail) to calculate COGS accurately. Inventory Valuation Method — Weighted Average Cost    WAC  WAC recalculates the average cost per unit every time a new purchase receipt is posted. The formula is:
+New Average Cost =    Existing Stock Value + New Receipt Value) /    Existing Quantity + New Quantity). All
+subsequent sales are costed at this new average until the next receipt changes it. Batch and Expiry Tracking Each GRN line creates a batch record with: batch number, manufacture date, expiry date, received
+quantity, received cost, and current remaining quantity. When a sale is made for a batched item, the
+system must allocate from batches using FEFO    First Expiry First Out) to minimize wastage. The COGS
+entry uses the cost of the specific batch(es) consumed. Inventory Movement Types and Postings Movement Type   Inventory Account   Counter Account   P&L Impact Purchase Receipt  GRN  Dr Inventory   Cr GRNI / AP   None — cost stored as asset Confidential — Internal Use OnlyPage 
+
+=== PAGE 20 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Sale    Dispatch)   Cr Inventory   Dr COGS   COGS recognized on P&L Purchase Return   Cr Inventory   Dr AP    Debit Note)   None — cost reversal Sales Return   Dr Inventory   Cr COGS   COGS reduction Stock Adjustment  Gain  Dr Inventory   Cr Inventory Gain   Other Income ↑ Stock Adjustment  Loss  Cr Inventory   Dr Inventory Loss   Other Expense ↑ Stock Transfer  Branch  Dr Inventory –
+Receiving Cr Inventory – Sending   None — internal Expired / Written Off   Cr Inventory   Dr Inventory Write-off   Expense ↑ Expiry Management Postings When stock is written off due to expiry: Account   Debit    Dr    Credit    Cr    Report Impact Inventory Write-off / Shrinkage
+Expense Cost of Expired
+Goods P&L – Expense ↑ Inventory Account   Cost of Expired
+Goods BS – Inventory ↓ COGS and Gross Profit Flow Gross Profit = Net Sales Revenue – Cost of Goods Sold. In BillBull, every sale posting simultaneously
+records both the revenue and the COGS. This means the Gross Profit figure on the P&L is always real-time
+and accurate. Developers must ensure that the inventory cost fetch    WAC or batch cost) and the revenue
+posting happen atomically in the same database transaction. If the inventory cost cannot be determined,
+the sale must not be permitted to post. 17 Financial Reports Mapping All financial reports in BillBull are derived from the general ledger and sub-ledgers. Understanding which
+accounts feed which report is critical for developers building report modules. The following mapping
+defines the source accounts for each major report. Balance Sheet Mapping Balance Sheet Section   Accounts Included   Normal Balance Current Assets   Cash    1001  , Banks    1010  1019  , Card Settlement
+Receivable, Cheques Under Collection, AR    1100  ,
+Inventory    1200  , Prepaid    1320  , Vendor
+Advances    1105  , Employee Advances    1106  , VAT
+Input    1310  Debit Confidential — Internal Use OnlyPage 
+
+=== PAGE 21 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Fixed Assets   Equipment    1400  , less Accumulated Depreciation  1450  Debit (net) Current Liabilities   AP    2001  , Customer Advances    2050  , Salary
+Payable    2200  , VAT Output    2100  , VAT Payable  2101  , Accrued Liabilities Credit Equity   Share Capital    3001  , Retained Earnings    3100  ,
+Current Year Net Profit Credit Profit & Loss Mapping P&L Section   Accounts   Sign Convention Gross Revenue   Sales Revenue    4001  , less Sales Returns    4002    Credit is positive Cost of Goods Sold   COGS    5001  , less Purchase Returns    5002    Debit is cost Gross Profit   Revenue minus COGS   Calculated Operating Expenses   Salaries    6010  , Rent    6001  , Utilities    6002  ,
+Depreciation    6030  , Discounts Allowed    6050  , All
+6xxx accounts Debit is expense EBITDA   Gross Profit minus Op. Expenses (before
+depreciation/interest) Calculated Other Income   Discount Received    7001  , Interest Income    7002    Credit is income Other Expenses   Bank Charges    7501  , Interest Expense    7502  ,
+Inventory Write-off Debit is expense Net Profit /    Loss    All P&L accounts net   Calculated Cash Flow Statement Mapping BillBull generates the Cash Flow using the Indirect Method starting from Net Profit. Developers must
+maintain a classification flag on every account indicating whether it belongs to Operating, Investing, or
+Financing activities. Cash Flow Section   Key Components Operating Activities   Net Profit, add back Depreciation, changes in Working Capital    AR,
+Inventory, AP, Advances, Accruals), VAT net movements Investing Activities   Purchase of Fixed Assets, disposal proceeds Financing Activities   Owner capital injections, loan drawdowns, loan repayments, dividends
+paid Net Change in Cash   Sum of all three sections — must reconcile to movement in Bank +
+Cash accounts Trial Balance The Trial Balance pulls every account's debit total and credit total for the selected period. The grand total
+of all debits must equal the grand total of all credits — this is the first-level validation of accounting
+integrity. BillBull must support both the summarized TB (one line per account) and the detailed TB (one line
+per journal entry). The TB is the source from which the Balance Sheet and P&L are compiled. Confidential — Internal Use OnlyPage 
+
+=== PAGE 22 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference 18 Branch, Outlet and Cost Center Dimensions Dimensions allow BillBull to generate financial reports at multiple levels of granularity without maintaining
+separate chart of accounts for each location. Every transaction carries dimensional tags that enable
+multi-level reporting. Dimension Hierarchy Level   Entity   Purpose Level 1 —
+Company BillBull Retail LLC (or parent
+entity) Consolidated financial statements Level 2 —
+Branch Dubai, Abu Dhabi, Sharjah, etc.   Branch P&L and Balance Sheet Level 3 —
+Outlet Mall outlet, standalone store
+within branch Outlet-level Revenue and Expense Level 4 — Cost
+Center Sales, Operations, Admin,
+Warehouse Departmental expense allocation Level 5 — Item
+/ Project For specific project costing (if
+applicable) Project-level profitability How Dimensions Work in Postings When the Dubai outlet raises a Sales Invoice, the posting engine tags all journal lines with Branch=DXB,
+Outlet=DXB  MALL  01, CostCenter=SALES. The general ledger stores this alongside the account code.
+This means the system can generate a P&L showing: All Companies → Dubai Branch → Mall Outlet →
+Sales Department, each level being a drill-down of the previous. Inter-Branch Transactions When inventory is transferred from one branch to another, or when head office costs are allocated to
+branches, the system uses Inter-Company/Inter-Branch accounts to keep each entity's books balanced.
+The sending branch credits its Inventory account and debits an Inter-Branch Receivable. The receiving
+branch debits its Inventory and credits an Inter-Branch Payable. These must offset each other at
+consolidation. Dimension Enforcement Rules • All posting lines must carry at minimum a Branch code — this is mandatory • Outlet is mandatory for revenue and COGS lines • Cost Center is mandatory for expense lines • Missing dimensions are a data quality failure — reject the transaction, do not default silently • Dimension combinations must be validated against a dimension matrix (not all combinations are valid) • Reports must support filtering and grouping by any dimension or combination of dimensions Confidential — Internal Use OnlyPage 
+
+=== PAGE 23 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference 19 Developer Data Flow This section describes the data flow architecture that developers must implement to ensure all
+transactions are correctly captured, validated, and posted to the general ledger. Understanding the data
+flow is essential before writing any transactional code. Transaction Lifecycle States State   Description   Can Post? Draft   Transaction being entered by user — data
+incomplete or unconfirmed No Pending Approval   Submitted for manager/accountant approval —
+data locked No Approved   Approved and ready for posting — triggers Posting
+Engine Yes Posted   Accounting entries written to ledger — document
+locked No (only reversal) Partially Applied   Invoice partially paid or partially applied   No Fully Applied / Settled   All balances cleared   No Reversed   Original entries reversed by a reversal voucher   No Cancelled   Document voided before posting — no accounting
+impact No Data Flow: Sales Invoice Example User creates SO → System saves SO in Draft state → User confirms SO → System validates credit limit,
+stock availability, tax codes → SO moves to Approved state → System calls Posting Engine → Posting
+Engine validates period, balances, dimensions → Assigns voucher number → Writes to:    1    Transaction
+Ledger,    2    GL Summary,    3    AR Sub-ledger,    4    Inventory Movement Ledger,    5    VAT Sub-ledger →
+Updates SO status to Posted → Triggers dispatch queue → Returns success response to UI. Table Architecture    Logical) Table Name   Purpose   Key Columns gl_transaction_header   One row per voucher   voucher_no, transaction_type, date, period_id,
+branch_id, ref_doc_no, status gl_transaction_lines   One row per debit/credit
+line header_id, account_id, debit_amt, credit_amt,
+branch_id, outlet_id, cost_center_id, currency,
+fx_rate, base_amt gl_account_balances   Running balance per
+account+period+dimensi
+on account_id, period_id, branch_id, outlet_id,
+debit_total, credit_total, closing_balance Confidential — Internal Use OnlyPage 
+
+=== PAGE 24 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference ar_ledger   Customer open items   customer_id, voucher_no, doc_type, original_amt,
+applied_amt, outstanding_amt, due_date ap_ledger   Vendor open items   vendor_id, voucher_no, doc_type, original_amt,
+applied_amt, outstanding_amt, due_date inventory_movements   Stock movements with
+cost item_id, batch_id, movement_type, quantity,
+unit_cost, total_cost, branch_id, posting_date inventory_balances   Running stock balance   item_id, batch_id, branch_id, on_hand_qty,
+avg_cost, total_value 20 Indexing and Performance Financial databases are read-heavy for reporting and write-heavy during business hours for transactions.
+Getting indexing right from day one prevents performance problems that become very hard to fix in
+production. These are the critical indexes and best practices for BillBull's accounting tables. Critical Indexes Table   Index   Reason gl_transaction_header   Composite: (branch_id,
+transaction_date) Date-range queries by branch for all reports gl_transaction_header   Unique: voucher_no   Prevents duplicates, fast lookup by voucher gl_transaction_header   Index: (ref_doc_no,
+transaction_type) Trace from source document to journal gl_transaction_lines   Composite: (account_id,
+period_id) Account-level ledger queries gl_transaction_lines   Composite: (header_id,
+line_no) Join from header to lines gl_transaction_lines   Composite: (branch_id,
+cost_center_id) Dimension-filtered reports gl_account_balances   Composite: (account_id,
+period_id, branch_id) Fast running balance fetch ar_ledger   Composite: (customer_id,
+due_date) AR Aging report — most-queried ar_ledger   Index: (outstanding_amt)
+WHERE outstanding_amt >
+0 Partial index — open items only ap_ledger   Composite: (vendor_id,
+due_date) AP Aging report inventory_movements   Composite: (item_id,
+branch_id, posting_date) Stock history queries inventory_balances   Composite: (item_id,
+batch_id, branch_id) Real-time stock lookup inventory_balances   Index: (expiry_date)
+WHERE expiry_date IS NOT
+NULL Expiry-approaching alerts Confidential — Internal Use OnlyPage 
+
+=== PAGE 25 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Performance Best Practices 1. Pre-aggregate Balance Tables Do not compute account balances by summing all transaction lines on every report request. The
+gl_account_balances table must be maintained as a real-time summary updated atomically with each
+posting. Reports read from this table, not from transaction lines. Transaction lines are only queried for
+drill-down detail. 2. Partition Large Tables by Period The gl_transaction_lines table will grow very large in multi-branch retail environments. Partition it by fiscal
+year or by financial period. This ensures that a year-end report query scans only the current year's
+partition rather than all historical data. 3. Separate OLTP and OLAP Loads Heavy financial reports (like detailed Trial Balance, full AR Aging, or Inventory Valuation Reports) should be
+run against a read replica of the database, not the primary transaction database. Schedule nightly or
+on-demand replication for the reporting replica. 4. Voucher Number Sequences Use database-level sequences (not application-level counters with SELECT MAX  1  . Application-level
+counters under concurrent load create duplicate voucher numbers. The sequence must be per-branch
+and per-transaction-type to keep numbers meaningful and compact. 5. Soft Delete Only Never hard-delete accounting records. Use a status flag (is_reversed, is_cancelled) and reversal vouchers.
+This preserves the audit trail, prevents gap in voucher sequences, and allows forensic reconstruction of
+any balance at any point in time. 6. Period-End Lock at Database Level Period locking must be enforced not just at the application layer but also optionally at the database layer
+using trigger-based controls. This prevents any batch script, ETL job, or direct SQL update from writing to
+a locked period. 7. Index Maintenance Schedule Financial databases have high insert rates during business hours and high read rates during month-end
+reporting. Schedule index rebuilding and statistics updates during off-peak hours (early morning).
+Fragmented indexes on the AR Aging query can make a report that should take 2 seconds take 2 minutes. Confidential — Internal Use OnlyPage 
+
+=== PAGE 26 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference 21 QA Checklist Before any financial module is released to production, the following test cases must pass. This checklist
+must be executed by a QA engineer who understands accounting principles, not just software testing. A. Posting Engine •   Every posted transaction has Total Debits = Total Credits — verified by automated tests on every
+posting. •   Posting to a locked period is rejected with the correct error code. •   A transaction with a missing Branch dimension is rejected. •   Concurrent posting of two transactions does not produce duplicate voucher numbers. •   A database failure mid-write results in full rollback — no partial entries in the ledger. B. Sales Flow •   Sales Invoice posting creates AR debit, Revenue credit, VAT Output credit — all correct amounts. •   COGS entry is created simultaneously with the invoice — Inventory credit equals COGS debit. •   A credit sale that exceeds the customer credit limit is blocked before posting. •   VAT is calculated on the net amount after trade discounts, not the list price. •   Cash sale at POS correctly debits Cash/Card and not AR. C. Customer Advance •   Advance receipt does not post to Revenue — only to Customer Advances    Liability) and Cash/Bank. •   When advance is applied to an invoice, both AR and Customer Advances are reduced correctly. •   Advance refund correctly reduces both Cash and the Liability account. D. Purchase Flow •   GRN creates inventory entry — no immediate P&L impact. •   Purchase Invoice clears GRNI and creates AP — input VAT is recorded as an asset. •   Price variance between GRN and Invoice is posted to the PPV account, not silently absorbed into
+inventory. E. Returns •   Sales Credit Note reduces AR, reduces Revenue, reduces VAT Output, and restores Inventory at
+original cost. •   Purchase Debit Note reduces AP, reduces Inventory, and reduces VAT Input. •   Return entries reference the original invoice number in the audit trail. Confidential — Internal Use OnlyPage 
+
+=== PAGE 27 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference F. Receipts / Payments with Discounts •   Receipt with settlement discount correctly debits Cash (net), debits Discount Allowed (expense), and
+credits AR (full invoice amount). •   Payment with settlement discount correctly credits Cash (net), credits Discount Received (income),
+and debits AP (full amount). G. Payroll •   Salary journal Total Debit    Gross Salary Expense) = Total Credit    Net Payable + Advance Deducted +
+Other Deductions). •   WPS payment entry reduces Salary Payable to zero and reduces Bank by the net amount paid. •   Employee advance is visible on the Balance Sheet as a current asset until deducted. H. Bank Reconciliation •   Bank account book balance matches sum of all bank account postings. •   Unreconciled items are clearly listed with aging. •   Bounced cheque reversal correctly re-opens the AR balance. I. Inventory and COGS •   Weighted Average Cost recalculates correctly after every GRN. •   FEFO batch allocation correctly selects the earliest-expiring batch for sale. •   Inventory write-off for expired goods debits the write-off expense and credits inventory at correct
+cost. •   Stock transfer between branches keeps total company inventory value unchanged. J. Financial Reports •   Balance Sheet total Assets = total Liabilities + Equity for any date. •   Trial Balance total Debits = total Credits for any period. •   P&L Net Profit equals the movement in Retained Earnings on the Balance Sheet. •   Cash Flow closing balance reconciles to Cash + Bank account balances on the Balance Sheet. •   AR Aging total equals AR Control Account balance on Balance Sheet. •   AP Aging total equals AP Control Account balance on Balance Sheet. •   Inventory Report total value equals Inventory account balance on Balance Sheet. Confidential — Internal Use OnlyPage 
+
+=== PAGE 28 ===
+BillBull Retail OS | Financial Flow Architecture | Developer Reference Final Note to the Development Team Every item on this QA checklist represents a real-world accounting integrity failure mode. These are not hypothetical — they are based on actual bugs found in retail accounting systems. The goal of BillBull is to give every retailer — regardless of accounting knowledge — a system that produces financial statements they can trust and submit to auditors, banks, and tax authorities with confidence. The accounting engine is not a feature — it is the foundation. Build it right. Test it thoroughly. Never compromise on the double-entry balance check. Confidential — Internal Use OnlyPage 

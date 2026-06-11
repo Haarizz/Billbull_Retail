@@ -11,6 +11,8 @@ public interface PurchaseInvoiceRepository
 
         List<PurchaseInvoice> findByStatus(InvoiceStatus status);
 
+        java.util.Optional<PurchaseInvoice> findByInvoiceNumber(String invoiceNumber);
+
         /** QA-018: batch lookup used by StatementService to populate description/reference. */
         List<PurchaseInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
 

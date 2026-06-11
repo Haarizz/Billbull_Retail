@@ -268,6 +268,7 @@ public class SalesInvoiceService {
         if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
             billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
                     .setScale(2, RoundingMode.HALF_UP).doubleValue();
+            invoice.setBillDiscountAmount(billDiscAmt);
         }
 
         // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
@@ -862,7 +863,11 @@ public class SalesInvoiceService {
             // For Before-Sale invoices (DN already delivered before invoice raised),
             // recognition is triggered by linkDeliveryNotesToInvoice() called in save().
             // This unified approach ensures all revenue flows through the same DN path.
-            if (isNewlyPosted) {
+            // F-13: FAST_SALE skips the Deferred Revenue invoice journal.
+            // The single combined entry (Dr Cash/AR / Cr Revenue / Cr VAT / Dr COGS / Cr Inventory)
+            // is posted by PostingEngineService.createJournalFromFastSaleDelivered() inside
+            // DeliveryNoteService.recognizeRevenueForDeliveredDn() when the auto-DN is delivered.
+            if (isNewlyPosted && !invoice.isFastSale()) {
                 postingEngineService.createJournalFromInvoicePosting(invoice);
             }
 
@@ -997,6 +1002,11 @@ public class SalesInvoiceService {
                 continue;
             // QA-001: service products have no physical inventory — never validate stock.
             if (product.isService())
+                continue;
+
+            // Per-product negative-stock override: if the product is explicitly configured to
+            // allow negative stock, skip the shortage check for this line only.
+            if (product.getInventory() != null && product.getInventory().isAllowNegative())
                 continue;
 
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)

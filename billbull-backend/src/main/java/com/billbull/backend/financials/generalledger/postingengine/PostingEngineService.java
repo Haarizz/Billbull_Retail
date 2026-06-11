@@ -85,6 +85,8 @@ public class PostingEngineService {
         public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other deductions payable
         public static final String ACC_BANK_CHARGES        = "7501";  // Bank service charges (expense)
         public static final String ACC_INTEREST_INCOME     = "7002";  // Bank interest income
+        public static final String ACC_INVENTORY_WRITEOFF  = "7502";  // Inventory write-off / shrinkage expense (Other Expenses)
+        public static final String ACC_VAT_PAYABLE         = "2108";  // Net VAT payable to FTA (VAT settlement account)
 
         /** Max |Σdebit − Σcredit| absorbed into the rounding account instead of rejected. */
         private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
@@ -106,6 +108,8 @@ public class PostingEngineService {
         private final com.billbull.backend.purchase.grn.GrnRepository grnRepository;
         private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
         private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+        private final com.billbull.backend.financials.currency.CurrencyService currencyService;
+        private final com.billbull.backend.settings.outlet.OutletRepository outletRepository;
 
         public PostingEngineService(
                         JournalEntryRepository  journalEntryRepository,
@@ -117,7 +121,9 @@ public class PostingEngineService {
                         com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService,
                         com.billbull.backend.purchase.grn.GrnRepository grnRepository,
                         com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository,
-                        com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService) {
+                        com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
+                        com.billbull.backend.financials.currency.CurrencyService currencyService,
+                        com.billbull.backend.settings.outlet.OutletRepository outletRepository) {
                 this.journalEntryRepository  = journalEntryRepository;
                 this.journalEntryService     = journalEntryService;
                 this.accountRepository       = accountRepository;
@@ -128,6 +134,8 @@ public class PostingEngineService {
                 this.grnRepository           = grnRepository;
                 this.glBalanceRepository     = glBalanceRepository;
                 this.salesSettingsService    = salesSettingsService;
+                this.currencyService         = currencyService;
+                this.outletRepository        = outletRepository;
         }
 
         // Transaction-type prefixes for voucher numbering (PDF §1).
@@ -147,6 +155,8 @@ public class PostingEngineService {
         private static final String TX_VENDOR_ADVANCE   = "VADV";  // vendor advance pay/apply/refund
         private static final String TX_PAYROLL          = "PAY";   // salary journal / WPS
         private static final String TX_SALARY_ADVANCE   = "SADV";  // employee salary advance
+        private static final String TX_VAT_SETTLEMENT   = "VATS";  // VAT return settlement
+        private static final String TX_CONTRA           = "CONT";  // contra voucher (cash↔bank)
 
         // =========================================================
         // PURCHASE INVOICE
@@ -171,7 +181,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
-                                "Purchase Invoice " + ref, TX_PURCHASE_INVOICE);
+                                "Purchase Invoice " + ref, TX_PURCHASE_INVOICE, invoice.getBranchEntity());
 
                 BigDecimal taxTotal   = nvl(invoice.getTaxTotal());
                 BigDecimal landedCost = nvl(invoice.getLandedCost());
@@ -248,9 +258,11 @@ public class PostingEngineService {
 
         /**
          * Dr Accounts Receivable (1110) [invoiceTotal]
-         * Cr Deferred Revenue (2107)    [subTotal]
+         * Cr Deferred Revenue (2107)    [subTotal - billDiscountAmount]
          * Cr VAT Output (2102)          [taxTotal]  (if > 0)
          *
+         * Deferred Revenue is posted net of footer/bill discount so it exactly matches
+         * the sum of item netAmounts that DeliveryNoteService recognises into Sales Revenue.
          * Revenue is recognized only upon physical delivery.
          */
         @Transactional
@@ -271,14 +283,45 @@ public class PostingEngineService {
                 }
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
-                                "Sales Invoice " + ref, TX_SALES_INVOICE);
+                                "Sales Invoice " + ref, TX_SALES_INVOICE, invoice.getBranchEntity());
 
-                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                // Deferred Revenue is posted net of footer/bill discount so it matches the
+                // item netAmounts that DeliveryNoteService will recognise into Sales Revenue.
+                // Trade discounts reduce the transaction price (IFRS 15 §47) — no separate
+                // Discount Allowed account is needed; the revenue is simply measured net.
+                BigDecimal billDiscAmt = nz(invoice.getBillDiscountAmount());
+                BigDecimal subTotalBD = BigDecimal.valueOf(invoice.getSubTotal());
+                BigDecimal deferredRevenue = subTotalBD.subtract(billDiscAmt);
+
+                // For POS cash sales, debit Cash directly instead of AR (PDF §05 / GAP-002).
+                // Card POS goes through Merchant Clearing (ACC_MERCHANT_CLEARING).
+                // All other flows (credit sales, workflow-driven) use AR.
+                String debitAccount;
+                String debitAccountName;
+                String payMode = invoice.getPaymentMode() != null
+                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
+                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
+                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
+                boolean isPosCash = "CASH".equals(payMode)
+                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
+
+                if (isPosCash) {
+                        debitAccount = ACC_CASH;
+                        debitAccountName = "Cash";
+                } else if (isPosCard) {
+                        debitAccount = ACC_MERCHANT_CLEARING;
+                        debitAccountName = "Merchant Clearing";
+                } else {
+                        debitAccount = ACC_ACCOUNTS_RECEIVABLE;
+                        debitAccountName = "Accounts Receivable";
+                }
+
+                addLine(entry, debitAccountName, debitAccount,
                                 "Sales - " + ref,
                                 BigDecimal.valueOf(invoice.getInvoiceTotal()), BigDecimal.ZERO);
                 addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
                                 "Deferred - " + ref,
-                                BigDecimal.ZERO, BigDecimal.valueOf(invoice.getSubTotal()));
+                                BigDecimal.ZERO, deferredRevenue);
                 if (invoice.getTaxTotal() != null && invoice.getTaxTotal() > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + ref,
                                         BigDecimal.ZERO, BigDecimal.valueOf(invoice.getTaxTotal()));
@@ -295,6 +338,102 @@ public class PostingEngineService {
                 // Manual/auto round-off lands in the Rounding Adjustment account so the
                 // invoice total stays a clean figure without distorting revenue.
                 addRoundOffLine(entry, nz(invoice.getRoundOff()), "Round off - " + ref, false);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // FAST SALE — single combined entry (F-13 / PDF §05 / GAP-001)
+        // =========================================================
+
+        /**
+         * Posts a single combined journal for a Fast Sale (POS FAST_SALE mode).
+         *
+         * Instead of the normal two-step sequence:
+         *   Invoice:   Dr Cash / Cr Deferred Revenue / Cr VAT Output
+         *   DN:        Dr Deferred Revenue / Cr Sales Revenue  +  Dr COGS / Cr Inventory
+         *
+         * This collapses into one balanced entry:
+         *   Dr Cash / Merchant Clearing / AR  [invoiceTotal]
+         *   Cr Sales Revenue (4101)            [netRevenue]
+         *   Cr VAT Output (2102)               [taxTotal]   (if > 0)
+         *   Cr Delivery Income (4103)          [deliveryCharge] (if > 0)
+         *   Rounding line                      (if roundOff ≠ 0)
+         *   Dr COGS (5101)                     [cogs]       (if > 0)
+         *   Cr Inventory (1120)                [cogs]       (if > 0)
+         *
+         * Idempotent: reference = "FS-{invoiceNumber}".
+         *
+         * @param invoice   the FAST_SALE invoice (provides totals + payment mode)
+         * @param cogs      total COGS computed by DeliveryNoteService at delivery
+         * @param branch    branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromFastSaleDelivered(
+                        SalesInvoice invoice,
+                        BigDecimal cogs,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "FS-" + invoice.getInvoiceNumber();
+                if (isDuplicate(ref)) {
+                        log.warn("[PostingEngine] Fast Sale journal {} already posted — skipping.", ref);
+                        return null;
+                }
+
+                LocalDate date = invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Fast Sale - " + invoice.getInvoiceNumber(), TX_SALES_INVOICE, branch);
+
+                // Resolve debit account from payment mode (same logic as createJournalFromInvoicePosting)
+                String payMode = invoice.getPaymentMode() != null
+                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
+                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
+                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
+                boolean isPosCash = "CASH".equals(payMode)
+                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
+
+                String debitAccount     = isPosCard ? ACC_MERCHANT_CLEARING
+                                        : isPosCash ? ACC_CASH
+                                        : ACC_ACCOUNTS_RECEIVABLE;
+                String debitAccountName = isPosCard ? "Merchant Clearing"
+                                        : isPosCash ? "Cash"
+                                        : "Accounts Receivable";
+
+                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null
+                                ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
+                BigDecimal taxTotal     = invoice.getTaxTotal() != null
+                                ? BigDecimal.valueOf(invoice.getTaxTotal()) : BigDecimal.ZERO;
+                BigDecimal delivery     = nz(invoice.getDeliveryCharge());
+                BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
+                BigDecimal subTotal     = invoice.getSubTotal() != null
+                                ? BigDecimal.valueOf(invoice.getSubTotal()) : BigDecimal.ZERO;
+                BigDecimal netRevenue   = subTotal.subtract(billDisc);
+
+                // Debit: cash / card / AR
+                addLine(entry, debitAccountName, debitAccount,
+                                "Fast Sale - " + ref, invoiceTotal, BigDecimal.ZERO);
+
+                // Credits: revenue, VAT, delivery, rounding
+                addLine(entry, "Sales Revenue", ACC_SALES_REVENUE,
+                                "Revenue - " + ref, BigDecimal.ZERO, netRevenue);
+                if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT,
+                                        "VAT - " + ref, BigDecimal.ZERO, taxTotal);
+                }
+                if (delivery.signum() != 0) {
+                        addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME,
+                                        "Delivery - " + ref, BigDecimal.ZERO, delivery);
+                }
+                addRoundOffLine(entry, nz(invoice.getRoundOff()), "Round off - " + ref, false);
+
+                // COGS + Inventory (if stock items present)
+                BigDecimal cogsAmt = cogs != null ? cogs : BigDecimal.ZERO;
+                if (cogsAmt.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "COGS", ACC_COGS,
+                                        "COGS - " + ref, cogsAmt, BigDecimal.ZERO);
+                        addLine(entry, "Inventory", ACC_INVENTORY,
+                                        "Stock reduction - " + ref, BigDecimal.ZERO, cogsAmt);
+                }
 
                 return post(entry);
         }
@@ -324,6 +463,17 @@ public class PostingEngineService {
                         String narration,
                         BigDecimal recognizedRevenue,
                         BigDecimal cogs) {
+                createJournalFromDeliveryNoteDelivered(referenceKey, date, narration, recognizedRevenue, cogs, null);
+        }
+
+        @Transactional
+        public void createJournalFromDeliveryNoteDelivered(
+                        String referenceKey,
+                        LocalDate date,
+                        String narration,
+                        BigDecimal recognizedRevenue,
+                        BigDecimal cogs,
+                        com.billbull.backend.settings.branch.Branch branch) {
 
                 if (journalEntryRepository.existsByReference(referenceKey)) {
                         log.warn("[PostingEngine] Duplicate DN posting blocked — reference '{}' already exists. " +
@@ -333,7 +483,7 @@ public class PostingEngineService {
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry revenueEntry = createBaseEntry(date, referenceKey,
-                                        "Revenue recognition - " + narration, TX_DELIVERY_NOTE);
+                                        "Revenue recognition - " + narration, TX_DELIVERY_NOTE, branch);
                         addLine(revenueEntry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
                                         "Recognize deferred - " + narration,
                                         recognizedRevenue, BigDecimal.ZERO);
@@ -345,7 +495,7 @@ public class PostingEngineService {
 
                 if (cogs != null && cogs.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry cogsEntry = createBaseEntry(date, referenceKey + "-COGS",
-                                        "COGS - " + narration, TX_DELIVERY_NOTE);
+                                        "COGS - " + narration, TX_DELIVERY_NOTE, branch);
                         addLine(cogsEntry, "COGS", ACC_COGS, "COGS - " + narration,
                                         cogs, BigDecimal.ZERO);
                         addLine(cogsEntry, "Inventory", ACC_INVENTORY, "Inventory reduction - " + narration,
@@ -362,46 +512,91 @@ public class PostingEngineService {
         // =========================================================
 
         /**
-         * Reverses the invoice posting journal when an invoice is cancelled
-         * before delivery (Deferred Revenue outstanding).
+         * Reverses the invoice posting journal when an invoice is cancelled.
          *
-         * Dr Deferred Revenue (2107) [subTotal]
-         * Dr VAT Output (2102)       [taxTotal] (if > 0)
-         * Cr Accounts Receivable (1110) [invoiceTotal]
+         * For FAST_SALE (already delivered, FS- journal exists): reverses the combined entry.
+         *   Dr Sales Revenue (4101) / Dr VAT Output / Dr COGS / Cr Inventory / Cr Cash/AR
+         *
+         * For normal invoices cancelled before delivery (Deferred Revenue outstanding):
+         *   Dr Deferred Revenue (2107) / Dr VAT Output / Cr AR
+         *
+         * For normal invoices cancelled after delivery (revenue already recognized):
+         *   handled via reverseJournalFromDeliveryNoteCancellation on the DN side.
          */
         @Transactional
         public void reverseJournalFromInvoiceCancellation(SalesInvoice invoice) {
                 String refKey = "CANCEL-" + invoice.getInvoiceNumber();
                 if (isDuplicate(refKey)) return;
 
-                JournalEntry entry = createBaseEntry(LocalDate.now(), refKey,
-                                "Cancellation reversal - " + invoice.getInvoiceNumber(), TX_MANUAL_JOURNAL);
-
-                BigDecimal subTotal    = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
-                BigDecimal taxTotal    = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
+                BigDecimal subTotal     = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
+                BigDecimal taxTotal     = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
                 BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
+                BigDecimal delivery     = nz(invoice.getDeliveryCharge());
+                BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
+                BigDecimal netRevenue   = subTotal.subtract(billDisc);
 
-                if (subTotal.compareTo(BigDecimal.ZERO) > 0) {
-                        addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
-                                        "Cancel deferred - " + invoice.getInvoiceNumber(),
-                                        subTotal, BigDecimal.ZERO);
+                JournalEntry entry = createBaseEntry(LocalDate.now(), refKey,
+                                "Cancellation reversal - " + invoice.getInvoiceNumber(),
+                                TX_MANUAL_JOURNAL, invoice.getBranchEntity());
+
+                boolean fastSalePosted = invoice.isFastSale()
+                                && journalEntryRepository.existsByReference("FS-" + invoice.getInvoiceNumber());
+
+                if (fastSalePosted) {
+                        // Reverse the combined Fast Sale entry
+                        String payMode   = invoice.getPaymentMode() != null
+                                        ? invoice.getPaymentMode().trim().toUpperCase() : "";
+                        com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
+                        boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
+                        boolean isPosCash = "CASH".equals(payMode)
+                                        || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
+                        String creditAccount = isPosCard ? ACC_MERCHANT_CLEARING
+                                        : isPosCash ? ACC_CASH : ACC_ACCOUNTS_RECEIVABLE;
+                        String creditName    = isPosCard ? "Merchant Clearing"
+                                        : isPosCash ? "Cash" : "Accounts Receivable";
+
+                        addLine(entry, "Sales Revenue", ACC_SALES_REVENUE,
+                                        "Cancel revenue - " + invoice.getInvoiceNumber(),
+                                        netRevenue, BigDecimal.ZERO);
+                        if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "VAT Output", ACC_VAT_OUTPUT,
+                                                "Cancel VAT - " + invoice.getInvoiceNumber(),
+                                                taxTotal, BigDecimal.ZERO);
+                        }
+                        if (delivery.signum() != 0) {
+                                addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME,
+                                                "Cancel delivery - " + invoice.getInvoiceNumber(),
+                                                delivery, BigDecimal.ZERO);
+                        }
+                        addRoundOffLine(entry, nz(invoice.getRoundOff()),
+                                        "Cancel round off - " + invoice.getInvoiceNumber(), true);
+                        // COGS reversal is handled via the DN cancellation path (stock is restored there)
+                        addLine(entry, creditName, creditAccount,
+                                        "Cancel settlement - " + invoice.getInvoiceNumber(),
+                                        BigDecimal.ZERO, invoiceTotal);
+                } else {
+                        // Normal path: invoice was posted via Deferred Revenue
+                        if (netRevenue.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
+                                                "Cancel deferred - " + invoice.getInvoiceNumber(),
+                                                netRevenue, BigDecimal.ZERO);
+                        }
+                        if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "VAT Output", ACC_VAT_OUTPUT,
+                                                "Cancel VAT - " + invoice.getInvoiceNumber(),
+                                                taxTotal, BigDecimal.ZERO);
+                        }
+                        if (delivery.signum() != 0) {
+                                addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME,
+                                                "Cancel delivery - " + invoice.getInvoiceNumber(),
+                                                delivery, BigDecimal.ZERO);
+                        }
+                        addRoundOffLine(entry, nz(invoice.getRoundOff()),
+                                        "Cancel round off - " + invoice.getInvoiceNumber(), true);
+                        addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                        "Cancel AR - " + invoice.getInvoiceNumber(),
+                                        BigDecimal.ZERO, invoiceTotal);
                 }
-                if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
-                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT,
-                                        "Cancel VAT - " + invoice.getInvoiceNumber(),
-                                        taxTotal, BigDecimal.ZERO);
-                }
-                BigDecimal delivery = nz(invoice.getDeliveryCharge());
-                if (delivery.signum() != 0) {
-                        addLine(entry, "Delivery Income", ACC_DELIVERY_INCOME,
-                                        "Cancel delivery - " + invoice.getInvoiceNumber(),
-                                        delivery, BigDecimal.ZERO);
-                }
-                addRoundOffLine(entry, nz(invoice.getRoundOff()),
-                                "Cancel round off - " + invoice.getInvoiceNumber(), true);
-                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
-                                "Cancel AR - " + invoice.getInvoiceNumber(),
-                                BigDecimal.ZERO, invoiceTotal);
 
                 if (!entry.getLines().isEmpty()) {
                         post(entry);
@@ -469,14 +664,23 @@ public class PostingEngineService {
                 String ref = grn.getGrnNo();
                 if (isDuplicate(ref)) return null;
 
-                BigDecimal amount = grn.getGrandTotal() != null ? grn.getGrandTotal() : grn.getSubtotal();
-                if (amount == null || amount.compareTo(BigDecimal.ZERO) == 0) {
+                // Use subtotal (ex-VAT) for inventory; separate VAT Input line if tax is present.
+                // grandTotal includes VAT — using it would overstate inventory (PDF §09 / GAP-006).
+                BigDecimal subAmt  = grn.getSubtotal()   != null ? grn.getSubtotal()   : BigDecimal.ZERO;
+                BigDecimal taxAmt  = grn.getTaxAmount()  != null ? grn.getTaxAmount()  : BigDecimal.ZERO;
+                BigDecimal amount  = subAmt.add(taxAmt); // total cleared = grandTotal equivalent
+
+                if (subAmt.compareTo(BigDecimal.ZERO) == 0 && taxAmt.compareTo(BigDecimal.ZERO) == 0) {
                         log.warn("[PostingEngine] GRN {} has zero/null amount — no journal created.", ref);
                         return null;
                 }
 
-                JournalEntry entry = createBaseEntry(grn.getGrnDate(), ref, "GRN Receipt " + ref, TX_GRN);
-                addLine(entry, "Inventory",    ACC_INVENTORY,    "GRN Receipt - "  + ref, amount,        BigDecimal.ZERO);
+                JournalEntry entry = createBaseEntry(grn.getGrnDate(), ref, "GRN Receipt " + ref, TX_GRN,
+                                grn.getBranchEntity());
+                addLine(entry, "Inventory",    ACC_INVENTORY,    "GRN Receipt - "  + ref, subAmt, BigDecimal.ZERO);
+                if (taxAmt.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Input", ACC_VAT_INPUT, "GRN VAT Input - " + ref, taxAmt, BigDecimal.ZERO);
+                }
                 addLine(entry, "GRN Clearing", ACC_GRN_CLEARING, "GRN Clearing - " + ref, BigDecimal.ZERO, amount);
 
                 return post(entry);
@@ -611,7 +815,7 @@ public class PostingEngineService {
                 }
 
                 JournalEntry entry = createBaseEntry(expense.getDate(), ref,
-                                "Expense - " + expense.getCategory(), TX_EXPENSE);
+                                "Expense - " + expense.getCategory(), TX_EXPENSE, expense.getBranch());
                 addLine(entry, expenseAccountName, expenseAccountCode,
                                 expense.getNotes() != null ? expense.getNotes() : "",
                                 BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
@@ -676,7 +880,7 @@ public class PostingEngineService {
                 AccountSelection settlementAccount = resolveOutgoingPaymentAccount(
                                 voucher.getPaymentMode() != null ? voucher.getPaymentMode().name() : null);
                 JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
-                                "Payment to " + vendorName, TX_PAYMENT_VOUCHER);
+                                "Payment to " + vendorName, TX_PAYMENT_VOUCHER, voucher.getBranch());
 
                 BigDecimal paid     = voucher.getAmount() != null ? voucher.getAmount() : BigDecimal.ZERO;
                 BigDecimal discount = voucher.getDiscountAmount() != null
@@ -713,7 +917,8 @@ public class PostingEngineService {
 
                 AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
-                                "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER);
+                                "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER,
+                                receipt.getBranchEntity());
 
                 BigDecimal received = receipt.getAmount() != null ? receipt.getAmount() : BigDecimal.ZERO;
                 BigDecimal discount = receipt.getDiscountAmount() != null
@@ -728,6 +933,22 @@ public class PostingEngineService {
                 if (discount.compareTo(BigDecimal.ZERO) > 0) {
                         addLine(entry, "Discount Allowed", ACC_DISCOUNT_ALLOWED,
                                         "Early payment discount - " + ref, discount, BigDecimal.ZERO);
+                        // F-11: UAE FTA requires VAT Output adjustment when consideration is reduced by
+                        // a settlement discount. VAT component of the discount = discount * 5/105.
+                        // Dr VAT Output (reduces liability) / Cr AR (reduces the amount owed).
+                        // Only applies to standard-rated (5%) non-advance receipts.
+                        if (receipt.getPurpose() != com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED) {
+                                BigDecimal vatOnDiscount = discount
+                                                .multiply(new BigDecimal("5"))
+                                                .divide(new BigDecimal("105"), 2, java.math.RoundingMode.HALF_UP);
+                                if (vatOnDiscount.compareTo(BigDecimal.ZERO) > 0) {
+                                        addLine(entry, "VAT Output (Discount Adj)", ACC_VAT_OUTPUT,
+                                                        "VAT adjustment on settlement discount - " + ref,
+                                                        vatOnDiscount, BigDecimal.ZERO);
+                                        // Contra: reduce AR by the same amount so entry stays balanced
+                                        totalAR = totalAR.subtract(vatOnDiscount);
+                                }
+                        }
                 }
 
                 // Use Customer Advance account for advances, otherwise use AR
@@ -781,7 +1002,7 @@ public class PostingEngineService {
                 if (isDuplicate(ref)) return null;
 
                 JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
-                                "Sales Return " + ref, TX_CREDIT_NOTE);
+                                "Sales Return " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
 
                 BigDecimal subTotal   = salesReturn.getSubTotal()   != null ? BigDecimal.valueOf(salesReturn.getSubTotal())   : BigDecimal.ZERO;
                 BigDecimal taxAmount  = salesReturn.getTaxAmount()  != null ? BigDecimal.valueOf(salesReturn.getTaxAmount())  : BigDecimal.ZERO;
@@ -802,7 +1023,7 @@ public class PostingEngineService {
                 if (costOfGoodsReturned != null && costOfGoodsReturned.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry invEntry = createBaseEntry(salesReturn.getReturnDate(),
                                         ref + "-INV",
-                                        "Stock return - " + ref, TX_CREDIT_NOTE);
+                                        "Stock return - " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
                         addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
                         addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
                         post(invEntry);
@@ -833,7 +1054,7 @@ public class PostingEngineService {
                 addLine(entry, "Bank",              ACC_BANK,               "Settled funds",          settlement.getNetAmount(),   BigDecimal.ZERO);
                 addLine(entry, "Merchant Clearing", ACC_MERCHANT_CLEARING,  "Clear merchant suspense", BigDecimal.ZERO,            settlement.getGrossAmount());
                 if (settlement.getFeeAmount() != null && settlement.getFeeAmount().compareTo(BigDecimal.ZERO) > 0) {
-                        addLine(entry, "Bank Charges", ACC_EXPENSE_GENERAL, "Merchant fees", settlement.getFeeAmount(), BigDecimal.ZERO);
+                        addLine(entry, "Bank Charges", ACC_BANK_CHARGES, "Merchant fees", settlement.getFeeAmount(), BigDecimal.ZERO);
                 }
                 return post(entry);
         }
@@ -1095,8 +1316,71 @@ public class PostingEngineService {
 
                 JournalEntry entry = createBaseEntry(postingDate != null ? postingDate : LocalDate.now(), ref,
                                 "Inventory write-off: " + description, TX_MANUAL_JOURNAL);
-                addLine(entry, "Inventory Write-off", "5104", "Write-off: " + description, cost, BigDecimal.ZERO);
+                addLine(entry, "Inventory Write-off / Shrinkage", ACC_INVENTORY_WRITEOFF, "Write-off: " + description, cost, BigDecimal.ZERO);
                 addLine(entry, "Inventory",           ACC_INVENTORY, "Inventory reduction: " + description, BigDecimal.ZERO, cost);
+                return post(entry);
+        }
+
+        // =========================================================
+        // PURCHASE RETURN / DEBIT NOTE (PDF §11 / GAP-007)
+        // =========================================================
+
+        /**
+         * Posts the GL journal for an approved purchase return (Debit Note).
+         *
+         * Dr Accounts Payable (2101) [grandTotal]            — reduces vendor liability
+         * Cr Inventory (1120)        [originalInventoryCost] — removes stock at original GRN receipt cost
+         * Cr/Dr PPV (5110)           [difference]            — absorbs price variance vs original cost
+         * Cr VAT Input (1130)        [taxTotal]              — reverses the input VAT claimed
+         *
+         * @param purchaseReturn       the approved purchase return entity
+         * @param originalInventoryCost cost from the original GRN items; null = fall back to subTotal
+         */
+        @Transactional
+        public JournalEntry createJournalFromPurchaseReturn(
+                        com.billbull.backend.purchase.returns.PurchaseReturn purchaseReturn,
+                        BigDecimal originalInventoryCost) {
+
+                String ref = "DN-" + purchaseReturn.getDebitNoteNumber();
+                if (isDuplicate(ref)) return null;
+
+                BigDecimal taxTotal   = purchaseReturn.getTaxTotal()   != null ? purchaseReturn.getTaxTotal()   : BigDecimal.ZERO;
+                BigDecimal grandTotal = purchaseReturn.getGrandTotal() != null ? purchaseReturn.getGrandTotal() : BigDecimal.ZERO;
+                BigDecimal subTotal   = purchaseReturn.getSubTotal()   != null ? purchaseReturn.getSubTotal()   : BigDecimal.ZERO;
+
+                if (grandTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                        log.warn("[PostingEngine] Purchase Return {}: zero/null grandTotal — no journal created.", ref);
+                        return null;
+                }
+
+                // PDF §11: inventory credit must use original GRN receipt cost, not re-negotiated return price.
+                BigDecimal inventoryCost = (originalInventoryCost != null && originalInventoryCost.compareTo(BigDecimal.ZERO) > 0)
+                        ? originalInventoryCost : subTotal;
+                BigDecimal ppvVariance = subTotal.subtract(inventoryCost); // positive = debit PPV; negative = credit PPV
+
+                JournalEntry entry = createBaseEntry(purchaseReturn.getReturnDate(), ref,
+                                "Purchase Return (Debit Note) " + purchaseReturn.getDebitNoteNumber(),
+                                TX_PURCHASE_INVOICE, purchaseReturn.getBranch());
+
+                addLine(entry, "Accounts Payable - " + purchaseReturn.getVendorName(), ACC_ACCOUNTS_PAYABLE,
+                                "AP reduction - " + ref, grandTotal, BigDecimal.ZERO);
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Inventory returned to vendor at GRN cost - " + ref, BigDecimal.ZERO, inventoryCost);
+                // Absorb variance between return price and original GRN cost in PPV (5103)
+                if (ppvVariance.abs().compareTo(new BigDecimal("0.005")) > 0) {
+                        if (ppvVariance.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "Purchase Price Variance", "5103",
+                                        "Return price > GRN cost variance - " + ref, ppvVariance, BigDecimal.ZERO);
+                        } else {
+                                addLine(entry, "Purchase Price Variance", "5103",
+                                        "Return price < GRN cost variance - " + ref, BigDecimal.ZERO, ppvVariance.negate());
+                        }
+                }
+                if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Input", ACC_VAT_INPUT,
+                                        "VAT Input reversal - " + ref, BigDecimal.ZERO, taxTotal);
+                }
+
                 return post(entry);
         }
 
@@ -1152,6 +1436,243 @@ public class PostingEngineService {
         }
 
         // =========================================================
+        // VAT SETTLEMENT (PDF §07 / GAP-008)
+        // =========================================================
+
+        /**
+         * Posts the VAT return settlement journal — nets VAT Output and VAT Input
+         * into VAT Payable, ready for FTA payment.
+         *
+         * When Output > Input (VAT due):
+         *   Dr VAT Output (2102) [outputTotal]
+         *   Cr VAT Input  (1130) [inputTotal]
+         *   Cr VAT Payable (2108) [outputTotal - inputTotal]
+         *
+         * When Input > Output (VAT refund claim):
+         *   Dr VAT Output (2102)  [outputTotal]
+         *   Dr VAT Payable (2108) [inputTotal - outputTotal]
+         *   Cr VAT Input (1130)   [inputTotal]
+         *
+         * Idempotent: reference = "VATSETTL-{period}" (e.g. "VATSETTL-2025-Q1").
+         *
+         * @param outputVat   total VAT Output (2102) to clear for the period
+         * @param inputVat    total VAT Input (1130) to clear for the period
+         * @param period      period identifier used in the reference, e.g. "2025-Q1"
+         * @param settlementDate  effective date of the VAT return filing
+         * @param branch      branch posting this settlement
+         */
+        @Transactional
+        public JournalEntry createJournalFromVatSettlement(
+                        BigDecimal outputVat, BigDecimal inputVat,
+                        String period, LocalDate settlementDate,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "VATSETTL-" + period;
+                if (isDuplicate(ref)) {
+                        log.warn("[PostingEngine] VAT settlement for period {} already posted.", period);
+                        return null;
+                }
+
+                BigDecimal output = outputVat != null ? outputVat.abs() : BigDecimal.ZERO;
+                BigDecimal input  = inputVat  != null ? inputVat.abs()  : BigDecimal.ZERO;
+
+                if (output.compareTo(BigDecimal.ZERO) == 0 && input.compareTo(BigDecimal.ZERO) == 0) {
+                        log.warn("[PostingEngine] VAT settlement {}: both VAT amounts are zero — no journal created.", ref);
+                        return null;
+                }
+
+                JournalEntry entry = createBaseEntry(settlementDate, ref,
+                                "VAT Return Settlement - " + period, TX_VAT_SETTLEMENT, branch);
+
+                // Clear VAT Output liability (Dr reduces the liability)
+                addLine(entry, "VAT Output Tax", ACC_VAT_OUTPUT,
+                                "Clear VAT Output for " + period, output, BigDecimal.ZERO);
+
+                // Clear VAT Input asset (Cr reduces the asset)
+                addLine(entry, "VAT Input Tax", ACC_VAT_INPUT,
+                                "Clear VAT Input for " + period, BigDecimal.ZERO, input);
+
+                BigDecimal netPayable = output.subtract(input);
+                if (netPayable.compareTo(BigDecimal.ZERO) > 0) {
+                        // Net VAT due to FTA
+                        addLine(entry, "VAT Payable", ACC_VAT_PAYABLE,
+                                        "Net VAT payable to FTA - " + period, BigDecimal.ZERO, netPayable);
+                } else if (netPayable.compareTo(BigDecimal.ZERO) < 0) {
+                        // Net VAT refund claim from FTA
+                        addLine(entry, "VAT Payable (Refund Claim)", ACC_VAT_PAYABLE,
+                                        "Net VAT refund claim from FTA - " + period, netPayable.abs(), BigDecimal.ZERO);
+                }
+                // If net is exactly zero the two lines already balance.
+
+                return post(entry);
+        }
+
+        /**
+         * Posts the FTA payment entry after the VAT Payable amount is settled.
+         *
+         * Dr VAT Payable (2108) [amount]
+         * Cr Bank (1102)        [amount]
+         *
+         * Idempotent: reference = "VATPAY-{period}".
+         */
+        @Transactional
+        public JournalEntry createJournalFromVatPayment(
+                        BigDecimal amount, String period, LocalDate paymentDate,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "VATPAY-" + period;
+                if (isDuplicate(ref)) {
+                        log.warn("[PostingEngine] VAT payment for period {} already posted.", period);
+                        return null;
+                }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(paymentDate, ref,
+                                "VAT Payment to FTA - " + period, TX_VAT_SETTLEMENT, branch);
+                addLine(entry, "VAT Payable", ACC_VAT_PAYABLE,
+                                "Clear VAT payable - " + period, amount, BigDecimal.ZERO);
+                addLine(entry, "Bank", ACC_BANK,
+                                "Bank payment for VAT - " + period, BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        // =========================================================
+        // CONTRA VOUCHER (PDF §14 / GAP-009)
+        // =========================================================
+
+        /**
+         * Contra Voucher: transfer cash between Cash and Bank accounts.
+         *
+         * Cash Deposit (cash → bank):
+         *   Dr Bank (1102) / Cr Cash (1101)
+         *
+         * Cash Withdrawal (bank → cash):
+         *   Dr Cash (1101) / Cr Bank (1102)
+         *
+         * Idempotent: reference = "CONT-{contraNumber}".
+         *
+         * @param contraNumber  unique reference for this contra entry
+         * @param amount        transfer amount (positive)
+         * @param isDeposit     true = Cash→Bank (deposit), false = Bank→Cash (withdrawal)
+         * @param date          transfer date
+         * @param narration     description
+         * @param branch        branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromContraVoucher(
+                        String contraNumber, BigDecimal amount, boolean isDeposit,
+                        LocalDate date, String narration,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "CONT-" + contraNumber;
+                if (isDuplicate(ref)) {
+                        log.warn("[PostingEngine] Contra voucher {} already posted.", ref);
+                        return null;
+                }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(date, ref,
+                                narration != null ? narration : (isDeposit ? "Cash Deposit" : "Cash Withdrawal"),
+                                TX_CONTRA, branch);
+
+                if (isDeposit) {
+                        addLine(entry, "Bank",  ACC_BANK,       "Cash deposit to bank",  amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash",  ACC_CASH,       "Cash withdrawn",         BigDecimal.ZERO, amount);
+                } else {
+                        addLine(entry, "Cash",  ACC_CASH,       "Cash from bank",         amount,          BigDecimal.ZERO);
+                        addLine(entry, "Bank",  ACC_BANK,       "Bank withdrawal",        BigDecimal.ZERO, amount);
+                }
+                return post(entry);
+        }
+
+        // =========================================================
+        // OPENING BALANCES (PDF §19 / GAP-015)
+        // =========================================================
+
+        /**
+         * Posts opening balances as a proper double-entry GL journal so they are
+         * visible in Trial Balance, Balance Sheet, and all ledger reports.
+         *
+         * Convention: debit-normal accounts (Assets, Expenses) are Dr with their opening
+         * balance; credit-normal accounts (Liabilities, Equity, Income) are Cr.
+         * The contra entry for the net of all opening balances goes to Retained Earnings
+         * (account 3000) — or to the Owner's Equity account if the net is negative
+         * (accumulated losses). This follows the standard "Opening Entry" model.
+         *
+         * Idempotent: posting for the same fiscal year is blocked if already done.
+         *
+         * @param requests  list of account code + balance type + amount
+         * @param asOfDate  the opening balance date (first day of fiscal year)
+         * @return the posted JournalEntry, or null if there was nothing to post
+         */
+        @Transactional
+        public JournalEntry postOpeningBalances(
+                        List<com.billbull.backend.financials.generalledger.OpeningBalanceRequest> requests,
+                        LocalDate asOfDate) {
+
+                if (requests == null || requests.isEmpty()) return null;
+
+                String ref = "OB-" + asOfDate.getYear();
+                if (isDuplicate(ref)) {
+                        log.warn("[PostingEngine] Opening balance journal for {} already posted. Skipping.", asOfDate.getYear());
+                        return null;
+                }
+
+                JournalEntry entry = createBaseEntry(asOfDate, ref,
+                                "Opening Balances " + asOfDate.getYear(), TX_MANUAL_JOURNAL);
+
+                BigDecimal netDebit  = BigDecimal.ZERO;
+                BigDecimal netCredit = BigDecimal.ZERO;
+
+                for (com.billbull.backend.financials.generalledger.OpeningBalanceRequest req : requests) {
+                        if (req == null || req.getAccountCode() == null || req.getAmount() == null
+                                        || req.getAmount().compareTo(BigDecimal.ZERO) <= 0) continue;
+
+                        Account acc = accountRepository.findByCode(req.getAccountCode());
+                        if (acc == null || Boolean.TRUE.equals(acc.getIsGroup())) continue;
+
+                        String balType = req.getBalanceType() != null
+                                        && "Cr".equalsIgnoreCase(req.getBalanceType().trim()) ? "Cr" : "Dr";
+
+                        if ("Dr".equals(balType)) {
+                                addLine(entry, acc.getName() != null ? acc.getName() : req.getAccountCode(),
+                                                req.getAccountCode(),
+                                                "Opening balance - " + req.getAccountCode(),
+                                                req.getAmount().abs(), BigDecimal.ZERO);
+                                netDebit = netDebit.add(req.getAmount().abs());
+                        } else {
+                                addLine(entry, acc.getName() != null ? acc.getName() : req.getAccountCode(),
+                                                req.getAccountCode(),
+                                                "Opening balance - " + req.getAccountCode(),
+                                                BigDecimal.ZERO, req.getAmount().abs());
+                                netCredit = netCredit.add(req.getAmount().abs());
+                        }
+                }
+
+                if (entry.getLines().isEmpty()) return null;
+
+                // Plug the imbalance into Retained Earnings / Owner's Equity
+                BigDecimal diff = netDebit.subtract(netCredit);
+                if (diff.abs().compareTo(new BigDecimal("0.005")) > 0) {
+                        // Net debit > net credit → equity = credit side plug (normal for profitable entity)
+                        // Net credit > net debit → equity = debit side plug (accumulated losses)
+                        if (diff.signum() > 0) {
+                                addLine(entry, "Retained Earnings", "3000",
+                                                "Plug - Opening Entry " + asOfDate.getYear(),
+                                                BigDecimal.ZERO, diff);
+                        } else {
+                                addLine(entry, "Retained Earnings", "3000",
+                                                "Plug - Opening Entry " + asOfDate.getYear(),
+                                                diff.abs(), BigDecimal.ZERO);
+                        }
+                }
+
+                return post(entry);
+        }
+
+        // =========================================================
         // Reconciliation helpers
         // =========================================================
 
@@ -1199,6 +1720,11 @@ public class PostingEngineService {
         }
 
         private JournalEntry createBaseEntry(LocalDate date, String reference, String narration, String txType) {
+                return createBaseEntry(date, reference, narration, txType, null);
+        }
+
+        private JournalEntry createBaseEntry(LocalDate date, String reference, String narration, String txType,
+                        com.billbull.backend.settings.branch.Branch branch) {
                 JournalEntry entry = new JournalEntry();
                 LocalDate effectiveDate = date != null ? date : LocalDate.now();
                 entry.setDate(effectiveDate);
@@ -1206,11 +1732,10 @@ public class PostingEngineService {
                 entry.setNarration(narration);
                 entry.setStatus("Draft");
                 entry.setPreparedBy("System");
-                // Per-branch / per-type / per-fiscal-year voucher number (PDF §1).
-                // Branch is not known at this point for most system flows, so the
-                // default branch code is used; voucher format remains stable.
-                entry.setEntryNumber(voucherSequenceService.nextVoucherNumber(
-                                txType, VoucherSequenceService.DEFAULT_BRANCH_CODE, effectiveDate));
+                entry.setBranch(branch);
+                String branchCode = (branch != null && branch.getCode() != null && !branch.getCode().isBlank())
+                                ? branch.getCode() : VoucherSequenceService.DEFAULT_BRANCH_CODE;
+                entry.setEntryNumber(voucherSequenceService.nextVoucherNumber(txType, branchCode, effectiveDate));
                 return entry;
         }
 
@@ -1221,6 +1746,18 @@ public class PostingEngineService {
 
         private void addLine(JournalEntry entry, String accountName, String accountCode,
                         String description, BigDecimal debit, BigDecimal credit, String costCenter) {
+                addLine(entry, accountName, accountCode, description, debit, credit, costCenter, "AED");
+        }
+
+        /**
+         * Core line-builder (F-20). Supports multi-currency: pass a non-AED currency code
+         * and the amounts are treated as foreign-currency amounts. The base-currency
+         * equivalents (baseDebit/baseCredit) are derived from CurrencyService on the
+         * journal entry date. For AED (or when the rate is unavailable) fxRate = 1.0.
+         */
+        private void addLine(JournalEntry entry, String accountName, String accountCode,
+                        String description, BigDecimal debit, BigDecimal credit,
+                        String costCenter, String currency) {
                 JournalLine line = new JournalLine();
                 line.setAccount(accountName);
                 line.setAccountCode(accountCode);
@@ -1230,12 +1767,42 @@ public class PostingEngineService {
                 line.setDebit(dr);
                 line.setCredit(cr);
                 line.setCostCenter(costCenter);
-                // AED-only MVP: populate currency/FX columns so the schema is non-null.
-                // Replace with CurrencyService.getRate() lookup when multi-currency is scoped.
-                line.setCurrency("AED");
-                line.setFxRate(BigDecimal.ONE);
-                line.setBaseDebit(dr);
-                line.setBaseCredit(cr);
+                // Propagate branch from journal header to each line for dimensional reporting.
+                if (entry.getBranch() != null) {
+                        line.setBranch(entry.getBranch());
+                        // PDF §4: revenue (4xxx) and COGS (5xxx) lines require an outlet dimension.
+                        // Auto-resolve to the first active outlet for the branch if available.
+                        if (accountCode != null && (accountCode.startsWith("4") || accountCode.startsWith("5"))) {
+                                List<com.billbull.backend.settings.outlet.Outlet> outlets =
+                                        outletRepository.findByBranchIdAndIsActiveTrue(entry.getBranch().getId());
+                                if (!outlets.isEmpty()) {
+                                        line.setOutlet(outlets.get(0));
+                                } else {
+                                        log.debug("[PostingEngine] No active outlet for branch {} — revenue/COGS line {} has no outlet dimension.",
+                                                entry.getBranch().getId(), accountCode);
+                                }
+                        }
+                }
+                // Populate Cash Flow bucket from Account master (PDF §15 / Phase 7.4).
+                if (accountCode != null && !accountCode.isBlank()) {
+                        Account acct = accountRepository.findByCode(accountCode);
+                        if (acct != null && acct.getCashFlowSection() != null) {
+                                line.setCfBucket(acct.getCashFlowSection());
+                        }
+                }
+                // F-20: Resolve FX rate from CurrencyService for dated, multi-currency support.
+                // Falls back to 1.0 if the currency is AED or no rate exists (AED-only fallback).
+                String txCurrency = (currency == null || currency.isBlank()) ? "AED" : currency.trim().toUpperCase();
+                BigDecimal fxRate = BigDecimal.ONE;
+                if (!"AED".equals(txCurrency)) {
+                        LocalDate rateDate = entry.getDate() != null ? entry.getDate() : LocalDate.now();
+                        fxRate = currencyService.getRate(txCurrency, "AED", rateDate)
+                                        .orElse(BigDecimal.ONE);
+                }
+                line.setCurrency(txCurrency);
+                line.setFxRate(fxRate);
+                line.setBaseDebit(dr.multiply(fxRate).setScale(2, java.math.RoundingMode.HALF_UP));
+                line.setBaseCredit(cr.multiply(fxRate).setScale(2, java.math.RoundingMode.HALF_UP));
                 entry.addLine(line);
         }
 
@@ -1478,5 +2045,354 @@ public class PostingEngineService {
                         this.name = name;
                         this.code = code;
                 }
+        }
+
+        // =========================================================
+        // FIXED ASSET — DEPRECIATION (PDF §14)
+        // Dr Depreciation Expense (6030) / Cr Accumulated Depreciation (1450)
+        // Reference: "DEP-{assetCode}-{YYYY-MM}" — idempotent
+        // =========================================================
+
+        private static final String ACC_DEPRECIATION_EXPENSE = "6030";
+        private static final String ACC_ACCUM_DEPRECIATION   = "1450";
+        private static final String ACC_FIXED_ASSET          = "1400";
+        private static final String TX_DEPRECIATION          = "DEP";
+        private static final String TX_ASSET_DISPOSAL        = "DISP";
+
+        @Transactional
+        public JournalEntry createJournalFromDepreciation(
+                        String ref, java.time.LocalDate runDate, String assetName,
+                        BigDecimal amount,
+                        String depExpenseCode, String accumDeprecCode,
+                        String costCenter,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(runDate, ref,
+                                "Depreciation — " + assetName, TX_DEPRECIATION, branch);
+
+                String expCode = depExpenseCode != null ? depExpenseCode : ACC_DEPRECIATION_EXPENSE;
+                String accCode = accumDeprecCode != null ? accumDeprecCode : ACC_ACCUM_DEPRECIATION;
+
+                addLine(entry, "Depreciation Expense", expCode,
+                                "Depreciation " + assetName, amount, BigDecimal.ZERO, costCenter);
+                addLine(entry, "Accumulated Depreciation", accCode,
+                                "Depreciation " + assetName, BigDecimal.ZERO, amount, costCenter);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // FIXED ASSET — DISPOSAL (PDF §14 / §17 Investing)
+        // Dr Accumulated Depreciation / Dr Loss (or Cr Gain) / Cr Fixed Asset / Dr/Cr Cash (proceeds)
+        // =========================================================
+
+        @Transactional
+        public JournalEntry createJournalFromAssetDisposal(
+                        String ref, java.time.LocalDate disposalDate, String assetName,
+                        BigDecimal cost, BigDecimal accumDeprec, BigDecimal proceeds,
+                        BigDecimal gainLoss,
+                        String assetAccountCode, String accumDeprecCode,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(disposalDate, ref,
+                                "Asset Disposal — " + assetName, TX_ASSET_DISPOSAL, branch);
+
+                String assetCode = assetAccountCode != null ? assetAccountCode : ACC_FIXED_ASSET;
+                String accCode   = accumDeprecCode  != null ? accumDeprecCode  : ACC_ACCUM_DEPRECIATION;
+
+                // Clear accumulated depreciation: Dr Accum Depreciation
+                addLine(entry, "Accumulated Depreciation", accCode,
+                                "Disposal " + assetName, accumDeprec, BigDecimal.ZERO, null);
+
+                // Record proceeds received (if any): Dr Cash
+                if (proceeds != null && proceeds.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Cash on Hand", ACC_CASH,
+                                        "Disposal proceeds " + assetName, proceeds, BigDecimal.ZERO, null);
+                }
+
+                // Remove asset at cost: Cr Fixed Asset
+                addLine(entry, "Fixed Assets", assetCode,
+                                "Disposal " + assetName, BigDecimal.ZERO, cost, null);
+
+                // Gain or Loss on disposal
+                if (gainLoss != null && gainLoss.compareTo(BigDecimal.ZERO) != 0) {
+                        if (gainLoss.compareTo(BigDecimal.ZERO) > 0) {
+                                // Gain: Cr Other Income (7002 re-used as gain placeholder)
+                                addLine(entry, "Gain on Disposal", "7002",
+                                                "Gain on disposal " + assetName, BigDecimal.ZERO, gainLoss, null);
+                        } else {
+                                // Loss: Dr Other Expense
+                                addLine(entry, "Loss on Disposal", "7501",
+                                                "Loss on disposal " + assetName, gainLoss.abs(), BigDecimal.ZERO, null);
+                        }
+                }
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // PREPAID EXPENSE — AMORTIZATION (PDF §14)
+        // Dr Expense Account / Cr Prepaid Expenses (1320)
+        // Reference: "PRPD-{prepaidCode}-{YYYY-MM}" — idempotent
+        // =========================================================
+
+        private static final String ACC_PREPAID_EXPENSES = "1320";
+        private static final String TX_PREPAID_AMORT    = "PRPD";
+
+        @Transactional
+        public JournalEntry createJournalFromPrepaidAmortization(
+                        String ref, java.time.LocalDate runDate, String description,
+                        BigDecimal amount, String expenseAccountCode, String costCenter,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(runDate, ref,
+                                "Prepaid Amortization — " + description, TX_PREPAID_AMORT, branch);
+
+                String expCode = expenseAccountCode != null ? expenseAccountCode : ACC_EXPENSE_GENERAL;
+
+                addLine(entry, "Expense", expCode,
+                                description, amount, BigDecimal.ZERO, costCenter);
+                addLine(entry, "Prepaid Expenses", ACC_PREPAID_EXPENSES,
+                                description, BigDecimal.ZERO, amount, costCenter);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // GRATUITY PROVISION — UAE End-of-Service Benefit (PDF §13)
+        // Dr Gratuity Expense (6020) / Cr Gratuity Payable (2210)
+        // Reference: "GRAT-{employeeId}-{year}-{month}" — idempotent
+        // =========================================================
+
+        public static final String ACC_GRATUITY_EXPENSE = "6020";
+        public static final String ACC_GRATUITY_PAYABLE = "2210";
+        private static final String TX_GRATUITY = "GRAT";
+
+        /**
+         * Monthly gratuity provision for UAE labour law compliance.
+         *
+         * Dr Gratuity Expense (6020) [monthlyProvision]
+         * Cr Gratuity Payable (2210) [monthlyProvision]
+         *
+         * @param employeeId       employee identifier (for idempotency key)
+         * @param employeeName     name for narration
+         * @param monthlyProvision accrual amount for the month
+         * @param year             year of provision
+         * @param month            month of provision (1–12)
+         * @param costCenter       department cost center
+         * @param provisionDate    effective date of the accrual
+         */
+        @Transactional
+        public JournalEntry createJournalFromGratuityProvision(
+                        String employeeId, String employeeName,
+                        BigDecimal monthlyProvision, int year, int month,
+                        String costCenter, LocalDate provisionDate) {
+
+                String ref = "GRAT-" + employeeId + "-" + year + "-" + String.format("%02d", month);
+                if (isDuplicate(ref)) return null;
+
+                if (monthlyProvision == null || monthlyProvision.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(
+                                provisionDate != null ? provisionDate : LocalDate.now(), ref,
+                                "Gratuity provision - " + employeeName + " " + year + "/" + String.format("%02d", month),
+                                TX_GRATUITY);
+                addLine(entry, "Gratuity Expense", ACC_GRATUITY_EXPENSE,
+                                "Gratuity accrual - " + employeeName, monthlyProvision, BigDecimal.ZERO, costCenter);
+                addLine(entry, "Gratuity Payable", ACC_GRATUITY_PAYABLE,
+                                "Gratuity payable - " + employeeName, BigDecimal.ZERO, monthlyProvision);
+                return post(entry);
+        }
+
+        /**
+         * Gratuity settlement on employee exit (full or partial).
+         *
+         * Dr Gratuity Payable (2210) [settlementAmount]
+         * Cr Bank / Cash             [settlementAmount]
+         */
+        @Transactional
+        public JournalEntry createJournalFromGratuitySettlement(
+                        String employeeId, String employeeName,
+                        BigDecimal settlementAmount, String paymentMode, LocalDate settlementDate) {
+
+                String ref = "GRATSETL-" + employeeId;
+                if (isDuplicate(ref)) return null;
+
+                if (settlementAmount == null || settlementAmount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                AccountSelection settlement = resolveOutgoingPaymentAccount(paymentMode);
+                JournalEntry entry = createBaseEntry(
+                                settlementDate != null ? settlementDate : LocalDate.now(), ref,
+                                "Gratuity settlement - " + employeeName, TX_GRATUITY);
+                addLine(entry, "Gratuity Payable", ACC_GRATUITY_PAYABLE,
+                                "Gratuity settled - " + employeeName, settlementAmount, BigDecimal.ZERO);
+                addLine(entry, settlement.name, settlement.code,
+                                "Gratuity payment - " + employeeName, BigDecimal.ZERO, settlementAmount);
+                return post(entry);
+        }
+
+        // =========================================================
+        // EXPENSE VOUCHER — Multi-line approved expense (PDF §08)
+        // Supports line-level GL account assignment
+        // Reference: "EV-{voucherId}" — idempotent
+        // =========================================================
+
+        private static final String TX_EXPENSE_VOUCHER = "EV";
+
+        /**
+         * Posts an approved expense voucher with multiple line items.
+         * Each line carries its own GL account and cost center.
+         *
+         * Dr [various expense accounts] [line amounts]
+         * Dr VAT Input (1130)           [total VAT]   (if > 0)
+         * Cr Bank / Cash / AP           [total amount]
+         *
+         * @param voucherId       unique voucher ID for idempotency
+         * @param voucherDate     date of the voucher
+         * @param payee           payee name for narration
+         * @param lines           list of line items (each with amount, glAccount, costCenter, description)
+         * @param totalVat        total VAT on this voucher
+         * @param totalAmount     grand total to credit
+         * @param paymentMode     CASH | BANK | CREDIT (AP)
+         * @param branch          branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromExpenseVoucher(
+                        String voucherId, LocalDate voucherDate, String payee,
+                        List<ExpenseVoucherLine> lines, BigDecimal totalVat,
+                        BigDecimal totalAmount, String paymentMode,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "EV-" + voucherId;
+                if (isDuplicate(ref)) return null;
+
+                if (lines == null || lines.isEmpty()) return null;
+
+                JournalEntry entry = createBaseEntry(
+                                voucherDate != null ? voucherDate : LocalDate.now(),
+                                ref, "Expense Voucher - " + payee, TX_EXPENSE_VOUCHER, branch);
+
+                for (ExpenseVoucherLine l : lines) {
+                        if (l.amount() == null || l.amount().compareTo(BigDecimal.ZERO) <= 0) continue;
+                        String accCode = (l.glAccountCode() != null && !l.glAccountCode().isBlank())
+                                        ? l.glAccountCode() : ACC_EXPENSE_GENERAL;
+                        String accName = l.accountName() != null ? l.accountName() : "Expense";
+                        addLine(entry, accName, accCode, l.description(), l.amount(), BigDecimal.ZERO, l.costCenter());
+                }
+
+                BigDecimal vat = totalVat != null ? totalVat : BigDecimal.ZERO;
+                if (vat.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on " + payee, vat, BigDecimal.ZERO);
+                }
+
+                AccountSelection payAccount = resolveExpenseSettlementAccount(paymentMode);
+                BigDecimal total = totalAmount != null ? totalAmount : BigDecimal.ZERO;
+                addLine(entry, payAccount.name, payAccount.code, "Payment to " + payee, BigDecimal.ZERO, total);
+
+                return post(entry);
+        }
+
+        /** Line item carrier for createJournalFromExpenseVoucher. */
+        public record ExpenseVoucherLine(
+                        BigDecimal amount,
+                        String glAccountCode,
+                        String accountName,
+                        String description,
+                        String costCenter) {}
+
+        // =========================================================
+        // PERIOD CLOSE — Profit & Loss transfer to Retained Earnings
+        // Dr Revenue accounts (4xxx) / Cr Retained Earnings (3000)
+        // Dr Retained Earnings (3000) / Cr Expense accounts (5xxx/6xxx/7xxx)
+        // Reference: "CLOSE-{year}-{month}" — idempotent
+        // =========================================================
+
+        public static final String ACC_RETAINED_EARNINGS = "3000";
+        private static final String TX_PERIOD_CLOSE = "CLOS";
+
+        /**
+         * Posts a period-close (P&L to Retained Earnings) journal.
+         * Zeros out all income and expense balances into Retained Earnings (3000).
+         *
+         * Positive netIncome → Dr Revenue accounts / Cr Retained Earnings
+         * Negative netIncome → Dr Retained Earnings / Cr Expense accounts (loss)
+         *
+         * @param periodLabel  human label for the period, e.g. "2025-12"
+         * @param closeDate    effective date of the close
+         * @param netIncome    net profit (positive) or net loss (negative)
+         * @param revenueTotal total revenue to zero-out
+         * @param expenseTotal total expense to zero-out
+         * @param branch       branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromPeriodClose(
+                        String periodLabel, LocalDate closeDate,
+                        BigDecimal netIncome, BigDecimal revenueTotal, BigDecimal expenseTotal,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = "CLOSE-" + periodLabel;
+                if (isDuplicate(ref)) return null;
+
+                BigDecimal rev = nvl(revenueTotal);
+                BigDecimal exp = nvl(expenseTotal);
+                BigDecimal net = nvl(netIncome);
+
+                if (rev.compareTo(BigDecimal.ZERO) == 0 && exp.compareTo(BigDecimal.ZERO) == 0) return null;
+
+                JournalEntry entry = createBaseEntry(
+                                closeDate != null ? closeDate : LocalDate.now(),
+                                ref, "Period Close - " + periodLabel, TX_PERIOD_CLOSE, branch);
+
+                // Clear revenue (debit to zero, credit goes to RE)
+                if (rev.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Sales Revenue (Close)", ACC_SALES_REVENUE,
+                                        "Close revenue - " + periodLabel, rev, BigDecimal.ZERO);
+                }
+                // Clear expenses (credit to zero, debit comes from RE)
+                if (exp.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Expense (Close)", ACC_EXPENSE_GENERAL,
+                                        "Close expenses - " + periodLabel, BigDecimal.ZERO, exp);
+                }
+                // Plug into Retained Earnings
+                if (net.compareTo(BigDecimal.ZERO) > 0) {
+                        // Profit: credit RE
+                        addLine(entry, "Retained Earnings", ACC_RETAINED_EARNINGS,
+                                        "Net profit transfer - " + periodLabel, BigDecimal.ZERO, net);
+                } else if (net.compareTo(BigDecimal.ZERO) < 0) {
+                        // Loss: debit RE
+                        addLine(entry, "Retained Earnings", ACC_RETAINED_EARNINGS,
+                                        "Net loss transfer - " + periodLabel, net.abs(), BigDecimal.ZERO);
+                }
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // EQUITY INJECTION — Share Capital / Opening Equity (PDF §03)
+        // Dr Cash/Bank / Cr Share Capital (3001)
+        // Reference: "EQ-{ref}" — idempotent
+        // =========================================================
+
+        private static final String ACC_SHARE_CAPITAL = "3001";
+        private static final String TX_EQUITY         = "EQ";
+
+        @Transactional
+        public JournalEntry createJournalFromEquityInjection(
+                        String ref, java.time.LocalDate date, String narration,
+                        BigDecimal amount, String paymentMode,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                String fullRef = "EQ-" + ref;
+                if (isDuplicate(fullRef)) return null;
+
+                JournalEntry entry = createBaseEntry(date, fullRef, narration, TX_EQUITY, branch);
+
+                AccountSelection cashAcc = resolveIncomingPaymentAccount(paymentMode);
+                addLine(entry, cashAcc.name, cashAcc.code, narration, amount, BigDecimal.ZERO, null);
+                addLine(entry, "Share Capital", ACC_SHARE_CAPITAL, narration, BigDecimal.ZERO, amount, null);
+
+                return post(entry);
         }
 }
