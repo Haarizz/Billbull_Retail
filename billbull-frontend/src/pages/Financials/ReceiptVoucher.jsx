@@ -55,6 +55,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { getUsernameFromToken } from '../../api/auth';
 import { formatUserDisplayName } from '../../utils/displayName';
@@ -916,7 +917,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Today's Receipts</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.todayTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1"><CurrencySymbol /> {stats.todayTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">{stats.todayCount} transactions</p>
                         </div>
                         <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -929,7 +930,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.monthTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1"><CurrencySymbol /> {stats.monthTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
                         </div>
                         <div className="p-2 bg-emerald-50 rounded text-emerald-600">
@@ -942,7 +943,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Pending Amount</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.pendingTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1"><CurrencySymbol /> {stats.pendingTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">Awaiting payment</p>
                         </div>
                         <div className="p-2 bg-orange-50 rounded text-orange-600">
@@ -980,7 +981,7 @@ const ReceiptVoucher = () => {
                                     <item.icon size={20} />
                                 </div>
                                 <p className="text-[10px] text-slate-500 font-semibold text-center mb-0.5">{item.label}</p>
-                                <p className="text-sm font-bold text-slate-800">{currency} {item.amount}</p>
+                                <p className="text-sm font-bold text-slate-800"><CurrencySymbol /> {item.amount}</p>
                                 <p className="text-[10px] text-slate-400">{item.count}</p>
                             </div>
                         ))}
@@ -1181,7 +1182,7 @@ const ReceiptVoucher = () => {
                                 <th className="px-4 py-3">Source Channel</th>
                                 <th className="px-4 py-3">Payer / Employee</th>
                                 <th className="px-4 py-3">Branch</th>
-                                <th className="px-4 py-3 text-right">Amount ({currency})</th>
+                                <th className="px-4 py-3 text-right">Amount (<CurrencySymbol />)</th>
                                 <th className="px-4 py-3">Payment Mode</th>
                                 <th className="px-4 py-3">Status</th>
                                 <th className="px-4 py-3 text-center">Actions</th>
@@ -1241,7 +1242,7 @@ const ReceiptVoucher = () => {
                                                 <span className="text-slate-300">—</span>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-bold text-emerald-600">{currency} {row.amount}</td>
+                                        <td className="px-4 py-3 text-right font-bold text-emerald-600"><CurrencySymbol /> {row.amount}</td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1 text-slate-600">
                                                 {row.mode === 'Card' ? <CreditCard size={12} /> : <DollarSign size={12} />}
@@ -1552,7 +1553,7 @@ const ReceiptVoucher = () => {
                             {/* Amount & Status Row */}
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="border border-slate-200 rounded-lg p-4 text-center bg-white shadow-sm">
-                                    <p className="text-2xl font-bold text-emerald-600">{currency} {selectedReceipt.amount}</p>
+                                    <p className="text-2xl font-bold text-emerald-600"><CurrencySymbol /> {selectedReceipt.amount}</p>
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">Receipt Amount</p>
                                 </div>
                                 <div className="border border-slate-200 rounded-lg p-4 text-center flex flex-col items-center justify-center bg-white shadow-sm">

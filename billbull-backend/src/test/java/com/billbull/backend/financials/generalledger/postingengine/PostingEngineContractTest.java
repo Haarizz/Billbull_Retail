@@ -48,6 +48,8 @@ class PostingEngineContractTest {
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private GlAccountBalanceRepository glBalanceRepository;
     @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
+    @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
 
     private PostingEngineService service;
 
@@ -61,7 +63,8 @@ class PostingEngineContractTest {
         service = new PostingEngineService(
                 journalEntryRepository, journalEntryService, accountRepository,
                 accountingPeriodService, dimensionMatrixService, voucherSequenceService,
-                customerCreditService, grnRepository, glBalanceRepository, salesSettingsService);
+                customerCreditService, grnRepository, glBalanceRepository, salesSettingsService,
+                currencyService, outletRepository);
 
         // Default: all accounts active, no duplicate references, no period lock
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());

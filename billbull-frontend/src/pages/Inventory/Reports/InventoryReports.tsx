@@ -36,6 +36,7 @@ import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/pri
 import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { useBranch } from "../../../context/BranchContext";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 type ReportGroupId =
   | "stock"
@@ -1691,7 +1692,7 @@ function StockValuationReport() {
               <span className="text-[10px] font-medium text-slate-600">Average Cost Method</span>
               <DollarSign className="h-4 w-4 text-[#F5C742]" />
             </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalAvgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalAvgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-[9px] text-slate-500 mt-1">{totalValuationItems} items / {totalValuationQty.toLocaleString()} units</div>
           </CardContent>
         </Card>
@@ -1702,7 +1703,7 @@ function StockValuationReport() {
               <span className="text-[10px] font-medium text-slate-600">FIFO Cost Method</span>
               <TrendingUp className="h-4 w-4 text-blue-600" />
             </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalFifoValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalFifoValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-[9px] text-slate-500 mt-1">First-in, First-out basis</div>
           </CardContent>
         </Card>
@@ -1713,7 +1714,7 @@ function StockValuationReport() {
               <span className="text-[10px] font-medium text-slate-600">Last Purchase Cost</span>
               <TrendingUp className="h-4 w-4 text-emerald-600" />
             </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalLastValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalLastValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-[9px] text-slate-500 mt-1">Latest purchase price</div>
           </CardContent>
         </Card>
@@ -1827,8 +1828,8 @@ function StockValuationReport() {
                       <td className="px-3 py-2 align-top text-slate-700">{r.category}</td>
                       <td className="px-3 py-2 align-top text-slate-700">{r.warehouse}</td>
                       <td className="px-3 py-2 align-top text-right text-slate-700">{r.qty}</td>
-                      <td className="px-3 py-2 align-top text-right text-slate-700">AED {cost.toFixed(2)}</td>
-                      <td className="px-3 py-2 align-top text-right font-semibold text-[#F5C742]">AED {value.toFixed(2)}</td>
+                      <td className="px-3 py-2 align-top text-right text-slate-700"><CurrencySymbol /> {cost.toFixed(2)}</td>
+                      <td className="px-3 py-2 align-top text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {value.toFixed(2)}</td>
                     </tr>
                   );
                 })}
@@ -1840,7 +1841,7 @@ function StockValuationReport() {
             <div>
               <div className="text-[10px] opacity-90">Total Stock Valuation</div>
               <div className="text-2xl font-bold leading-none tabular-nums tracking-normal">
-                AED {(costingMethod === 'avg' ? totalAvgValue : costingMethod === 'fifo' ? totalFifoValue : totalLastValue).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                <CurrencySymbol /> {(costingMethod === 'avg' ? totalAvgValue : costingMethod === 'fifo' ? totalFifoValue : totalLastValue).toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
             </div>
             <div className="text-right">
@@ -1973,7 +1974,7 @@ function StockOnHandReport() {
         {[
           { label: "Total SKUs", value: mockSOH.length.toString(), sub: "across all warehouses" },
           { label: "Total Units", value: mockSOH.reduce((s, r) => s + r.qty, 0).toLocaleString(), sub: "on hand now" },
-          { label: "Total Value", value: `AED ${mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 0 })}`, sub: "at avg cost" },
+          { label: "Total Value", value: <><CurrencySymbol /> {mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 0 })}</>, sub: "at avg cost" },
           { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
@@ -2039,14 +2040,14 @@ function StockOnHandReport() {
                   </Td>
                   <Td>{r.uom}</Td>
                   <Td right>{r.minQty}</Td>
-                  <Td right>AED {r.cost.toFixed(2)}</Td>
-                  <Td right><span className="font-semibold text-[#F5C742]">AED {r.value.toFixed(2)}</span></Td>
+                  <Td right><CurrencySymbol /> {r.cost.toFixed(2)}</Td>
+                  <Td right><span className="font-semibold text-[#F5C742]"><CurrencySymbol /> {r.value.toFixed(2)}</span></Td>
                 </tr>
               ))}
             </tbody>
           </Tbl>
           <div className="mt-3 text-[10px] text-slate-500">
-            <span>Total value: <b className="text-slate-800">AED {mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b></span>
+            <span>Total value: <b className="text-slate-800"><CurrencySymbol /> {mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b></span>
           </div>
         </CardContent>
       </Card>
@@ -2203,7 +2204,7 @@ function NegativeStockReport() {
           { label: "Negative SKUs",   value: mockNegativeStock.length.toString(), sub: "data integrity issues" },
           { label: "Critical",        value: mockNegativeStock.filter((r) => r.severity === "Critical").length.toString(), sub: "immediate fix needed" },
           { label: "High Severity",   value: mockNegativeStock.filter((r) => r.severity === "High").length.toString(), sub: "action required" },
-          { label: "Cost Impact",     value: `AED ${totalImpact.toFixed(2)}`, sub: "financial exposure" },
+          { label: "Cost Impact",     value: <><CurrencySymbol /> {totalImpact.toFixed(2)}</>, sub: "financial exposure" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
@@ -2229,7 +2230,7 @@ function NegativeStockReport() {
                   <Td right><span className="text-red-600 font-bold">{r.qty}</span></Td>
                   <Td>{r.issue}</Td>
                   <Td>{r.lastTxn}</Td>
-                  <Td right><span className="text-red-600 font-semibold">AED {r.impact.toFixed(2)}</span></Td>
+                  <Td right><span className="text-red-600 font-semibold"><CurrencySymbol /> {r.impact.toFixed(2)}</span></Td>
                   <Td>{statusBadge(r.severity)}</Td>
                 </tr>
               ))}
@@ -2237,7 +2238,7 @@ function NegativeStockReport() {
           </Tbl>
           <div className="mt-3 p-3 bg-red-50 border border-red-100 rounded-lg text-[11px] text-red-700 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            Total financial exposure: <b>AED {Math.abs(totalImpact).toFixed(2)}</b>. Post missing GRNs and reconcile before next period close.
+            Total financial exposure: <b><CurrencySymbol /> {Math.abs(totalImpact).toFixed(2)}</b>. Post missing GRNs and reconcile before next period close.
           </div>
         </CardContent>
       </Card>
@@ -2309,7 +2310,7 @@ function ExpiryReport() {
           { label: "Items Tracked",        value: mockExpiry.length.toString(),    sub: `${totalBatchCount} batches total` },
           { label: "Critical Batches ≤7d", value: criticalBatches.length.toString(),  cls: "text-red-600",    sub: `${mockExpiry.filter((i) => i.batches.some((b) => b.daysLeft <= 7)).length} SKUs affected` },
           { label: "High Batches 8–14d",   value: highBatches.length.toString(),       cls: "text-orange-500", sub: `${mockExpiry.filter((i) => i.batches.some((b) => b.daysLeft > 7 && b.daysLeft <= 14)).length} SKUs affected` },
-          { label: "At-Risk Value",        value: `AED ${atRiskValue.toFixed(0)}`,     cls: "text-red-600",    sub: "critical + high batches" },
+          { label: "At-Risk Value",        value: <><CurrencySymbol /> {atRiskValue.toFixed(0)}</>,     cls: "text-red-600",    sub: "critical + high batches" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">

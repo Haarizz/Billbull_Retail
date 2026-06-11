@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+﻿import React, { useMemo, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -54,6 +54,7 @@ import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { getBranches } from "../../../api/branchApi";
 import { getVendors } from "../../../api/vendorsApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -358,10 +359,10 @@ function statusBadge(status: string) {
 
 function amtBadge(amount: number) {
   const color = amount > 0 ? "text-emerald-700" : amount < 0 ? "text-red-600" : "text-slate-600";
-  return <span className={`font-semibold ${color}`}>AED {Math.abs(amount).toLocaleString()}</span>;
+  return <span className={`font-semibold ${color}`}><CurrencySymbol /> {Math.abs(amount).toLocaleString()}</span>;
 }
 
-function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function KpiCard({ label, value, sub, accent }: { label: string; value: React.ReactNode; sub?: string; accent?: boolean }) {
   return (
     <Card className={`border ${accent ? "border-2 border-[#F5C742] bg-gradient-to-br from-[#FFF6D8] to-white" : "border-slate-200 bg-white"}`}>
       <CardContent className="p-4">
@@ -1036,8 +1037,8 @@ function VendorMasterReport() {
       <ReportHeader title="Vendor Master Report" subtitle="Active and inactive vendors with credit details" count={mockVendorMaster.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Vendors" value={String(mockVendorMaster.length)} sub="In system" accent />
-        <KpiCard label="Total Outstanding" value={`AED ${total.toLocaleString()}`} sub="All vendors" />
-        <KpiCard label="Total Credit Limit" value={`AED ${creditTotal.toLocaleString()}`} sub="Aggregate limit" />
+        <KpiCard label="Total Outstanding" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="All vendors" />
+        <KpiCard label="Total Credit Limit" value={<><CurrencySymbol /> {creditTotal.toLocaleString()}</>} sub="Aggregate limit" />
       </div>
       <Card className="border border-slate-200 bg-white">
         <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Outstanding by Category</CardTitle></CardHeader>
@@ -1064,8 +1065,8 @@ function VendorMasterReport() {
                 <Th>Vendor Name</Th>
                 <Th>Category</Th>
                 <Th>TRN</Th>
-                <Th right>Credit Limit (AED)</Th>
-                <Th right>Outstanding (AED)</Th>
+                <Th right>Credit Limit (<CurrencySymbol />)</Th>
+                <Th right>Outstanding (<CurrencySymbol />)</Th>
                 <Th>Terms</Th>
                 <Th>Status</Th>
               </tr>
@@ -1128,17 +1129,17 @@ function VendorAgingReport() {
     <div className="space-y-3">
       <ReportHeader title="Vendor Outstanding & Aging" subtitle="Payable aging analysis across all vendors" count={mockVendorAging.length} />
       <div className="grid grid-cols-4 gap-3">
-        <KpiCard label="Total Payable" value={`AED ${totals.total.toLocaleString()}`} sub="All vendors" accent />
-        <KpiCard label="0–30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
-        <KpiCard label="31–90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
-        <KpiCard label="90+ Days" value={`AED ${totals.d90plus.toLocaleString()}`} sub="Overdue" />
+        <KpiCard label="Total Payable" value={<><CurrencySymbol /> {totals.total.toLocaleString()}</>} sub="All vendors" accent />
+        <KpiCard label="0–30 Days" value={<><CurrencySymbol /> {totals.d30.toLocaleString()}</>} sub="Current" />
+        <KpiCard label="31–90 Days" value={<><CurrencySymbol /> {(totals.d60 + totals.d90).toLocaleString()}</>} sub="Moderate" />
+        <KpiCard label="90+ Days" value={<><CurrencySymbol /> {totals.d90plus.toLocaleString()}</>} sub="Overdue" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Tbl>
           <thead>
             <tr>
               <Th>Vendor</Th>
-              <Th right>Total (AED)</Th>
+              <Th right>Total (<CurrencySymbol />)</Th>
               <Th right>0-30</Th>
               <Th right>31-60</Th>
               <Th right>61-90</Th>
@@ -1304,11 +1305,11 @@ function VendorPriceHistoryReport() {
             <Th>Item</Th>
             <Th>SKU</Th>
             <Th>Vendor</Th>
-            <Th right>P1 (AED)</Th>
-            <Th right>P2 (AED)</Th>
-            <Th right>P3 (AED)</Th>
-            <Th right>P4 (AED)</Th>
-            <Th right>P5 (AED)</Th>
+            <Th right>P1 (<CurrencySymbol />)</Th>
+            <Th right>P2 (<CurrencySymbol />)</Th>
+            <Th right>P3 (<CurrencySymbol />)</Th>
+            <Th right>P4 (<CurrencySymbol />)</Th>
+            <Th right>P5 (<CurrencySymbol />)</Th>
             <Th right>Change%</Th>
           </tr>
         </thead>
@@ -1376,9 +1377,9 @@ function VendorContractComplianceReport() {
           <tr>
             <Th>Vendor</Th>
             <Th>Item</Th>
-            <Th right>Contract Price (AED)</Th>
-            <Th right>Actual Price (AED)</Th>
-            <Th right>Variance (AED)</Th>
+            <Th right>Contract Price (<CurrencySymbol />)</Th>
+            <Th right>Actual Price (<CurrencySymbol />)</Th>
+            <Th right>Variance (<CurrencySymbol />)</Th>
             <Th right>Variance%</Th>
             <Th>Penalty</Th>
             <Th>Status</Th>
@@ -1436,7 +1437,7 @@ function LpoRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="LPO Register" subtitle="All purchase orders with approval status" count={mockLpoRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total LPO Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total LPO Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Approved" value={String(mockLpoRegister.filter((r) => r.status === "Approved" || r.status === "Received").length)} sub="Orders" />
         <KpiCard label="Pending / Partial" value={String(mockLpoRegister.filter((r) => r.status === "Pending" || r.status === "Partial").length)} sub="Awaiting action" />
       </div>
@@ -1448,7 +1449,7 @@ function LpoRegisterReport() {
             <Th>Vendor</Th>
             <Th>Branch</Th>
             <Th right>Items</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Status</Th>
             <Th>Approved By</Th>
           </tr>
@@ -1513,8 +1514,8 @@ function LpoFulfillmentReport() {
               <Th right>Ordered Qty</Th>
               <Th right>Delivered Qty</Th>
               <Th right>Pending Qty</Th>
-              <Th right>Ordered (AED)</Th>
-              <Th right>Delivered (AED)</Th>
+              <Th right>Ordered (<CurrencySymbol />)</Th>
+              <Th right>Delivered (<CurrencySymbol />)</Th>
               <Th right>Fulfillment%</Th>
             </tr>
           </thead>
@@ -1591,7 +1592,7 @@ function LpoAgingReport() {
               <Th>Issue Date</Th>
               <Th>Expected Date</Th>
               <Th right>Days Pending</Th>
-              <Th right>Value (AED)</Th>
+              <Th right>Value (<CurrencySymbol />)</Th>
               <Th>Status</Th>
             </tr>
           </thead>
@@ -1660,7 +1661,7 @@ function LpoCancelledReport() {
     <div className="space-y-3">
       <ReportHeader title="Cancelled / Modified LPO" subtitle="Cancelled and modified orders with authorization" count={mockLpoCancelled.length} />
       <div className="grid grid-cols-2 gap-3">
-        <KpiCard label="Total Cancelled Value" value={`AED ${total.toLocaleString()}`} sub="This period" accent />
+        <KpiCard label="Total Cancelled Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="This period" accent />
         <KpiCard label="Cancelled Orders" value={String(mockLpoCancelled.length)} sub="Requiring review" />
       </div>
       <Tbl>
@@ -1669,7 +1670,7 @@ function LpoCancelledReport() {
             <Th>LPO No.</Th>
             <Th>Vendor</Th>
             <Th>Date</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Reason</Th>
             <Th>Cancelled By</Th>
             <Th>Status</Th>
@@ -1728,7 +1729,7 @@ function GrnRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="GRN Register" subtitle="All goods receipts with QC and warehouse status" count={mockGrnRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Received Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Received Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="QC Passed" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Pass").length)} sub="Receipts" />
         <KpiCard label="QC Failed / On Hold" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Fail" || r.status === "On Hold").length)} sub="Needs action" />
       </div>
@@ -1742,7 +1743,7 @@ function GrnRegisterReport() {
             <Th>Warehouse</Th>
             <Th right>Items</Th>
             <Th right>Qty</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>QC</Th>
             <Th>Status</Th>
           </tr>
@@ -1813,7 +1814,7 @@ function GrnVarianceReport() {
               <Th right>Qty Var</Th>
               <Th right>LPO Rate</Th>
               <Th right>GRN Rate</Th>
-              <Th right>Value Var (AED)</Th>
+              <Th right>Value Var (<CurrencySymbol />)</Th>
             </tr>
           </thead>
           <tbody>
@@ -1956,7 +1957,7 @@ function GrnQcRejectionReport() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <KpiCard label="Total Rejections" value={String(mockQcRejection.length)} sub="This period" accent />
-            <KpiCard label="Total Rejected Value" value={`AED ${totalValue.toLocaleString()}`} sub="Impact" />
+            <KpiCard label="Total Rejected Value" value={<><CurrencySymbol /> {totalValue.toLocaleString()}</>} sub="Impact" />
           </div>
           <Tbl>
             <thead>
@@ -1966,7 +1967,7 @@ function GrnQcRejectionReport() {
                 <Th>Item</Th>
                 <Th right>Rejected Qty</Th>
                 <Th>Reason</Th>
-                <Th right>Value (AED)</Th>
+                <Th right>Value (<CurrencySymbol />)</Th>
                 <Th>Action</Th>
               </tr>
             </thead>
@@ -2037,7 +2038,7 @@ function GrvRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="GRV Register" subtitle="All goods return vouchers with settlement status" count={mockGrvRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total GRV Value" value={`AED ${total.toLocaleString()}`} sub="Period returns" accent />
+        <KpiCard label="Total GRV Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period returns" accent />
         <KpiCard label="Settled" value={String(mockGrvRegister.filter((r) => r.status === "Settled").length)} sub="Returns" />
         <KpiCard label="Pending / Issued" value={String(mockGrvRegister.filter((r) => r.status !== "Settled").length)} sub="Awaiting action" />
       </div>
@@ -2049,7 +2050,7 @@ function GrvRegisterReport() {
             <Th>GRN Ref</Th>
             <Th>Vendor</Th>
             <Th right>Items</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Reason</Th>
             <Th>Debit Note</Th>
             <Th>Status</Th>
@@ -2108,8 +2109,8 @@ function GrvReasonAnalysisReport() {
             <tr>
               <Th>Return Reason</Th>
               <Th right>Count</Th>
-              <Th right>Total Value (AED)</Th>
-              <Th right>Avg per Return (AED)</Th>
+              <Th right>Total Value (<CurrencySymbol />)</Th>
+              <Th right>Avg per Return (<CurrencySymbol />)</Th>
             </tr>
           </thead>
           <tbody>
@@ -2175,7 +2176,7 @@ function GrvReplacementPendingReport() {
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Pending Replacements" value={String(mockGrvPending.length)} sub="Open items" accent />
         <KpiCard label="Overdue SLA" value={String(mockGrvPending.filter((r) => r.status === "Overdue").length)} sub="Breach count" />
-        <KpiCard label="Total Value Pending" value={`AED ${mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="At risk" />
+        <KpiCard label="Total Value Pending" value={<><CurrencySymbol /> {mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="At risk" />
       </div>
       <Tbl>
         <thead>
@@ -2184,7 +2185,7 @@ function GrvReplacementPendingReport() {
             <Th>Vendor</Th>
             <Th>Item</Th>
             <Th right>Qty</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>GRV Date</Th>
             <Th>SLA Date</Th>
             <Th right>Days Pending</Th>
@@ -2244,16 +2245,16 @@ function GrvDebitNoteMappingReport() {
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Matched & Settled" value={String(mockGrvDebitNote.filter((r) => r.matched).length)} sub="GRV-DN pairs" accent />
         <KpiCard label="Unmatched GRVs" value={String(mockGrvDebitNote.filter((r) => !r.matched).length)} sub="Need debit note" />
-        <KpiCard label="Total Settled" value={`AED ${mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}`} sub="Recovered" />
+        <KpiCard label="Total Settled" value={<><CurrencySymbol /> {mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}</>} sub="Recovered" />
       </div>
       <Tbl>
         <thead>
           <tr>
             <Th>GRV No.</Th>
             <Th>Vendor</Th>
-            <Th right>GRV Value (AED)</Th>
+            <Th right>GRV Value (<CurrencySymbol />)</Th>
             <Th>Debit Note</Th>
-            <Th right>DN Value (AED)</Th>
+            <Th right>DN Value (<CurrencySymbol />)</Th>
             <Th>Matched</Th>
             <Th>Settled Date</Th>
             <Th>Status</Th>
@@ -2315,8 +2316,8 @@ function InvoiceRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="Purchase Invoice Register" subtitle="All vendor invoices with VAT and reference details" count={mockInvoiceRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Invoice Value" value={`AED ${total.toLocaleString()}`} sub="Gross with VAT" accent />
-        <KpiCard label="Total VAT (Input)" value={`AED ${vatTotal.toLocaleString()}`} sub="Recoverable" />
+        <KpiCard label="Total Invoice Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Gross with VAT" accent />
+        <KpiCard label="Total VAT (Input)" value={<><CurrencySymbol /> {vatTotal.toLocaleString()}</>} sub="Recoverable" />
         <KpiCard label="On Hold" value={String(mockInvoiceRegister.filter((r) => r.status === "On Hold").length)} sub="Awaiting clearance" />
       </div>
       <Tbl>
@@ -2327,9 +2328,9 @@ function InvoiceRegisterReport() {
             <Th>Vendor</Th>
             <Th>GRN Ref</Th>
             <Th>LPO Ref</Th>
-            <Th right>Taxable (AED)</Th>
-            <Th right>VAT (AED)</Th>
-            <Th right>Total (AED)</Th>
+            <Th right>Taxable (<CurrencySymbol />)</Th>
+            <Th right>VAT (<CurrencySymbol />)</Th>
+            <Th right>Total (<CurrencySymbol />)</Th>
             <Th>Due Date</Th>
             <Th>Status</Th>
           </tr>
@@ -2403,7 +2404,7 @@ function InvoiceGrnVarianceReport() {
               <Th right>Qty Var</Th>
               <Th right>Inv Rate</Th>
               <Th right>GRN Rate</Th>
-              <Th right>Value Var (AED)</Th>
+              <Th right>Value Var (<CurrencySymbol />)</Th>
               <Th>Status</Th>
             </tr>
           </thead>
@@ -2483,9 +2484,9 @@ function InvoiceLandedCostReport() {
     <div className="space-y-3">
       <ReportHeader title="Landed Cost Allocation" subtitle="Freight, customs, handling allocated per purchase invoice" count={mockLandedCost.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Invoice Value" value={`AED ${mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0).toLocaleString()}`} sub="Before landed cost" accent />
-        <KpiCard label="Total Landed Costs" value={`AED ${mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0).toLocaleString()}`} sub="Freight + customs + handling" />
-        <KpiCard label="Total NLC" value={`AED ${mockLandedCost.reduce((s, r) => s + r.total, 0).toLocaleString()}`} sub="Net landed cost" />
+        <KpiCard label="Total Invoice Value" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0).toLocaleString()}</>} sub="Before landed cost" accent />
+        <KpiCard label="Total Landed Costs" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0).toLocaleString()}</>} sub="Freight + customs + handling" />
+        <KpiCard label="Total NLC" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.total, 0).toLocaleString()}</>} sub="Net landed cost" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Tbl>
@@ -2493,11 +2494,11 @@ function InvoiceLandedCostReport() {
             <tr>
               <Th>Invoice No.</Th>
               <Th>Vendor</Th>
-              <Th right>Invoice (AED)</Th>
-              <Th right>Freight (AED)</Th>
-              <Th right>Customs (AED)</Th>
-              <Th right>Handling (AED)</Th>
-              <Th right>Total NLC (AED)</Th>
+              <Th right>Invoice (<CurrencySymbol />)</Th>
+              <Th right>Freight (<CurrencySymbol />)</Th>
+              <Th right>Customs (<CurrencySymbol />)</Th>
+              <Th right>Handling (<CurrencySymbol />)</Th>
+              <Th right>Total NLC (<CurrencySymbol />)</Th>
               <Th right>Items</Th>
               <Th right>NLC/Item</Th>
             </tr>
@@ -2572,7 +2573,7 @@ function InvoiceBackdatedReport() {
       <ReportHeader title="Backdated Invoice Report" subtitle="Invoices posted after the period lock date" count={mockBackdatedInv.length} />
       <div className="grid grid-cols-2 gap-3">
         <KpiCard label="Backdated Invoices" value={String(mockBackdatedInv.length)} sub="Period violations" accent />
-        <KpiCard label="Total Backdated Value" value={`AED ${mockBackdatedInv.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Financial impact" />
+        <KpiCard label="Total Backdated Value" value={<><CurrencySymbol /> {mockBackdatedInv.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="Financial impact" />
       </div>
       <Tbl>
         <thead>
@@ -2581,7 +2582,7 @@ function InvoiceBackdatedReport() {
             <Th>Invoice Date</Th>
             <Th>Post Date</Th>
             <Th>Vendor</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Posted By</Th>
             <Th>Locked Period</Th>
             <Th>Status</Th>
@@ -2638,7 +2639,7 @@ function PaymentRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="Payment Voucher Register" subtitle="All vendor payments with mode and bank details" count={mockPaymentRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Payments" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Payments" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Bank Transfers" value={String(mockPaymentRegister.filter((r) => r.mode === "Bank Transfer").length)} sub="Transactions" />
         <KpiCard label="Cheque / PDC" value={String(mockPaymentRegister.filter((r) => r.mode === "Cheque" || r.mode === "PDC").length)} sub="Instruments" />
       </div>
@@ -2651,7 +2652,7 @@ function PaymentRegisterReport() {
             <Th>Invoice Ref</Th>
             <Th>Mode</Th>
             <Th>Bank</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Status</Th>
           </tr>
         </thead>
@@ -2717,7 +2718,7 @@ function PaymentAgingReport() {
           <thead>
             <tr>
               <Th>Vendor</Th>
-              <Th right>Total (AED)</Th>
+              <Th right>Total (<CurrencySymbol />)</Th>
               <Th right>Current</Th>
               <Th right>0-30d</Th>
               <Th right>31-60d</Th>
@@ -2796,7 +2797,7 @@ function PaymentChequeTrackingReport() {
     <div className="space-y-3">
       <ReportHeader title="Cheque / PDC Tracking" subtitle="Post-dated cheques with clearance status" count={mockChequeTracking.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Cheque Value" value={`AED ${mockChequeTracking.reduce((s, r) => s + r.amount, 0).toLocaleString()}`} sub="All instruments" accent />
+        <KpiCard label="Total Cheque Value" value={<><CurrencySymbol /> {mockChequeTracking.reduce((s, r) => s + r.amount, 0).toLocaleString()}</>} sub="All instruments" accent />
         <KpiCard label="Cleared" value={String(mockChequeTracking.filter((r) => r.status === "Cleared").length)} sub="Cheques" />
         <KpiCard label="Bounced / Pending" value={String(mockChequeTracking.filter((r) => r.status !== "Cleared").length)} sub="Requires attention" />
       </div>
@@ -2807,7 +2808,7 @@ function PaymentChequeTrackingReport() {
             <Th>Vendor</Th>
             <Th>Bank</Th>
             <Th>Branch</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Cheque Date</Th>
             <Th>PV No.</Th>
             <Th>Cleared Date</Th>
@@ -2869,8 +2870,8 @@ function PaymentAdvanceReport() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <KpiCard label="Total Advances" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0).toLocaleString()}`} sub="Given to vendors" accent />
-            <KpiCard label="Unadjusted Balance" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.balance, 0).toLocaleString()}`} sub="Remaining" />
+            <KpiCard label="Total Advances" value={<><CurrencySymbol /> {mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0).toLocaleString()}</>} sub="Given to vendors" accent />
+            <KpiCard label="Unadjusted Balance" value={<><CurrencySymbol /> {mockAdvancePayment.reduce((s, r) => s + r.balance, 0).toLocaleString()}</>} sub="Remaining" />
           </div>
           <Tbl>
             <thead>
@@ -2878,9 +2879,9 @@ function PaymentAdvanceReport() {
                 <Th>PV No.</Th>
                 <Th>Vendor</Th>
                 <Th>Adv Date</Th>
-                <Th right>Advance (AED)</Th>
-                <Th right>Adjusted (AED)</Th>
-                <Th right>Balance (AED)</Th>
+                <Th right>Advance (<CurrencySymbol />)</Th>
+                <Th right>Adjusted (<CurrencySymbol />)</Th>
+                <Th right>Balance (<CurrencySymbol />)</Th>
                 <Th>Last Adj</Th>
                 <Th>Status</Th>
               </tr>
@@ -2955,7 +2956,7 @@ function DebitNoteRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="Debit Note Register" subtitle="All vendor debit notes with reason and settlement status" count={mockDebitNoteRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Debit Notes" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Debit Notes" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Settled" value={String(mockDebitNoteRegister.filter((r) => r.status === "Settled").length)} sub="Recovered" />
         <KpiCard label="Pending / Rejected" value={String(mockDebitNoteRegister.filter((r) => r.status !== "Settled").length)} sub="Open" />
       </div>
@@ -2967,7 +2968,7 @@ function DebitNoteRegisterReport() {
             <Th>Vendor</Th>
             <Th>GRV Ref</Th>
             <Th>Reason</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Settled Date</Th>
             <Th>Status</Th>
           </tr>
@@ -3032,7 +3033,7 @@ function ClaimSettlementReport() {
               <tr>
                 <Th>Claim No.</Th>
                 <Th>Vendor</Th>
-                <Th right>Amount (AED)</Th>
+                <Th right>Amount (<CurrencySymbol />)</Th>
                 <Th>Issue Date</Th>
                 <Th>Settle Date</Th>
                 <Th right>Days</Th>
@@ -3107,7 +3108,7 @@ function VendorClaimHistoryReport() {
               <Th right>Settled</Th>
               <Th right>Rejected</Th>
               <Th right>Pending</Th>
-              <Th right>Total Value (AED)</Th>
+              <Th right>Total Value (<CurrencySymbol />)</Th>
               <Th right>Avg Settle Days</Th>
               <Th>Last Claim</Th>
             </tr>
@@ -3184,9 +3185,9 @@ function VatInputRegisterReport() {
     <div className="space-y-3">
       <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Taxable Value" value={`AED ${totalTaxable.toLocaleString()}`} sub="Excl. VAT" accent />
-        <KpiCard label="Total Input VAT" value={`AED ${totalVat.toLocaleString()}`} sub="Recoverable @ 5%" />
-        <KpiCard label="Total Incl. VAT" value={`AED ${(totalTaxable + totalVat).toLocaleString()}`} sub="Gross" />
+        <KpiCard label="Total Taxable Value" value={<><CurrencySymbol /> {totalTaxable.toLocaleString()}</>} sub="Excl. VAT" accent />
+        <KpiCard label="Total Input VAT" value={<><CurrencySymbol /> {totalVat.toLocaleString()}</>} sub="Recoverable @ 5%" />
+        <KpiCard label="Total Incl. VAT" value={<><CurrencySymbol /> {(totalTaxable + totalVat).toLocaleString()}</>} sub="Gross" />
       </div>
       <Tbl>
         <thead>
@@ -3195,9 +3196,9 @@ function VatInputRegisterReport() {
             <Th>Date</Th>
             <Th>Vendor</Th>
             <Th>TRN</Th>
-            <Th right>Taxable (AED)</Th>
-            <Th right>VAT (AED)</Th>
-            <Th right>Total (AED)</Th>
+            <Th right>Taxable (<CurrencySymbol />)</Th>
+            <Th right>VAT (<CurrencySymbol />)</Th>
+            <Th right>Total (<CurrencySymbol />)</Th>
             <Th>VAT Rate</Th>
             <Th>Period</Th>
           </tr>
@@ -3319,7 +3320,7 @@ function MissingDocumentsReport() {
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Issues" value={String(mockMissingDocuments.length)} sub="Open items" accent />
         <KpiCard label="Critical" value={String(mockMissingDocuments.filter((r) => r.status === "Critical").length)} sub="High priority" />
-        <KpiCard label="Total Value at Risk" value={`AED ${mockMissingDocuments.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Unverified transactions" />
+        <KpiCard label="Total Value at Risk" value={<><CurrencySymbol /> {mockMissingDocuments.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="Unverified transactions" />
       </div>
       <Tbl>
         <thead>
@@ -3328,7 +3329,7 @@ function MissingDocumentsReport() {
             <Th>Issue Type</Th>
             <Th>Vendor</Th>
             <Th>Date</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th right>Days Open</Th>
             <Th>Priority</Th>
           </tr>
