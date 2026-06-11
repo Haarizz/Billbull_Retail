@@ -41,6 +41,7 @@ const SubDepartments = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("Name");
   const [deptFilter, setDeptFilter] = useState("All Departments");
+  const [statusFilter, setStatusFilter] = useState("All");
   const [subDepartments, setSubDepartments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [departments, setDepartments] = useState([]);
@@ -199,7 +200,8 @@ const SubDepartments = () => {
         item.code.includes(searchTerm) ||
         item.parent.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesDept = deptFilter === "All Departments" || item.parent === deptFilter;
-      return matchesSearch && matchesDept;
+      const matchesStatus = statusFilter === "All" || item.status === statusFilter;
+      return matchesSearch && matchesDept && matchesStatus;
     })
     .sort((a, b) => {
       if (sortBy === "Name") return a.name.localeCompare(b.name);
@@ -211,7 +213,7 @@ const SubDepartments = () => {
 
   const LIST_PAGE_SIZE = 30;
   const [listPage, setListPage] = useState(0);
-  useEffect(() => { setListPage(0); }, [searchTerm, deptFilter, sortBy]);
+  useEffect(() => { setListPage(0); }, [searchTerm, deptFilter, sortBy, statusFilter]);
   const pagedSubDepartments = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
 
   return (
@@ -294,8 +296,8 @@ const SubDepartments = () => {
 
       <div className="flex flex-col gap-6 rounded-xl border bg-white border-slate-200 shadow-sm overflow-hidden">
         <div className="p-4 pb-0">
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <div className="lg:col-span-2 relative">
+          <div className="flex gap-3 items-center">
+            <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
                 value={searchTerm}
@@ -304,8 +306,21 @@ const SubDepartments = () => {
                 placeholder="Search by name, code, or department..."
               />
             </div>
+            {/* Status Filter */}
+            <div className="relative w-36">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="appearance-none w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 outline-none focus:ring-2 focus:ring-[#F5C742]/50 cursor-pointer"
+              >
+                <option value="All">All Status</option>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 pointer-events-none" />
+            </div>
             {/* Department Filter */}
-            <div className="relative">
+            <div className="relative w-44">
               <select
                 value={deptFilter}
                 onChange={(e) => setDeptFilter(e.target.value)}
@@ -319,7 +334,7 @@ const SubDepartments = () => {
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 pointer-events-none" />
             </div>
             {/* Sort Dropdown */}
-            <div className="relative">
+            <div className="relative w-40">
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}

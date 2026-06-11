@@ -13,4 +13,7 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 
     @org.springframework.data.jpa.repository.Query("SELECT c.code FROM Customer c WHERE c.code LIKE CONCAT(:prefix, '%')")
     List<String> findCodesByPrefix(@org.springframework.data.repository.query.Param("prefix") String prefix);
+
+    boolean existsByMobile(String mobile);
+    boolean existsByMobileAndIdNot(String mobile, Long id);
 }

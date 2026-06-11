@@ -27,7 +27,7 @@ public class SubDepartmentService {
     // LIST
     // ---------------------------
     public List<SubDepartmentResponse> list() {
-        return repo.findByActiveTrue().stream().map(this::map).toList();
+        return repo.findAll().stream().map(this::map).toList();
     }
 
     // ---------------------------
