@@ -47,7 +47,7 @@ public class FiscalYearService {
         if (fiscalYearRepository.existsByCode(fy.getCode())) {
             throw new IllegalArgumentException("Fiscal year '" + fy.getCode() + "' already exists.");
         }
-        fy.setStatus("Open");
+        fy.setStatus(FiscalYear.STATUS_OPEN);
         FiscalYear saved = fiscalYearRepository.save(fy);
         // Link any already-existing periods that fall inside the new fiscal year
         linkPeriodsToFiscalYear(saved);
@@ -61,10 +61,10 @@ public class FiscalYearService {
     @Transactional
     public FiscalYear beginClose(Long id, String initiatedBy) {
         FiscalYear fy = getOrThrow(id);
-        if (!"Open".equals(fy.getStatus())) {
+        if (!FiscalYear.STATUS_OPEN.equals(fy.getStatus())) {
             throw new IllegalStateException("Fiscal year " + fy.getCode() + " is not Open (current: " + fy.getStatus() + ").");
         }
-        fy.setStatus("Closing");
+        fy.setStatus(FiscalYear.STATUS_CLOSING);
         log.info("[FiscalYear] {} transitioned to Closing by {}", fy.getCode(), initiatedBy);
         return fiscalYearRepository.save(fy);
     }
@@ -79,19 +79,19 @@ public class FiscalYearService {
     @Transactional
     public FiscalYear finaliseClose(Long id, String closedBy) {
         FiscalYear fy = getOrThrow(id);
-        if (!"Closing".equals(fy.getStatus())) {
+        if (!FiscalYear.STATUS_CLOSING.equals(fy.getStatus())) {
             throw new IllegalStateException("Fiscal year " + fy.getCode() + " must be in Closing state before finalising (current: " + fy.getStatus() + ").");
         }
         // Close any child periods that are still Open
-        periodRepository.findByFiscalYearIdAndStatus(fy.getId(), "Open")
+        periodRepository.findByFiscalYearIdAndStatus(fy.getId(), AccountingPeriod.STATUS_OPEN)
                 .forEach(p -> {
-                    p.setStatus("Closed");
+                    p.setStatus(AccountingPeriod.STATUS_CLOSED);
                     p.setClosedBy(closedBy);
                     p.setClosedAt(LocalDateTime.now());
                     periodRepository.save(p);
                 });
 
-        fy.setStatus("Closed");
+        fy.setStatus(FiscalYear.STATUS_CLOSED);
         fy.setClosedBy(closedBy);
         fy.setClosedAt(LocalDateTime.now());
         log.info("[FiscalYear] {} finalised/Closed by {}", fy.getCode(), closedBy);

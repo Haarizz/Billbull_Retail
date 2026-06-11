@@ -27,12 +27,12 @@ public class AccountingPeriodService {
     }
 
     public List<AccountingPeriod> getOpenPeriods() {
-        return repository.findByStatusOrderByStartDateDesc("Open");
+        return repository.findByStatusOrderByStartDateDesc(AccountingPeriod.STATUS_OPEN);
     }
 
     @Transactional
     public AccountingPeriod createPeriod(AccountingPeriod period) {
-        period.setStatus("Open");
+        period.setStatus(AccountingPeriod.STATUS_OPEN);
         return repository.save(period);
     }
 
@@ -41,11 +41,11 @@ public class AccountingPeriodService {
         AccountingPeriod period = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Accounting period not found: " + id));
 
-        if ("Closed".equals(period.getStatus())) {
+        if (AccountingPeriod.STATUS_CLOSED.equals(period.getStatus())) {
             throw new RuntimeException("Period is already closed.");
         }
 
-        period.setStatus("Closed");
+        period.setStatus(AccountingPeriod.STATUS_CLOSED);
         period.setClosedBy(closedBy != null ? closedBy : "System");
         period.setClosedAt(LocalDateTime.now());
         return repository.save(period);
@@ -55,7 +55,7 @@ public class AccountingPeriodService {
     public AccountingPeriod reopenPeriod(Long id) {
         AccountingPeriod period = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Accounting period not found: " + id));
-        period.setStatus("Open");
+        period.setStatus(AccountingPeriod.STATUS_OPEN);
         period.setClosedBy(null);
         period.setClosedAt(null);
         return repository.save(period);

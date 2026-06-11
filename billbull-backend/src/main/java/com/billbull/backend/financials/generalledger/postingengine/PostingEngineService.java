@@ -1730,7 +1730,7 @@ public class PostingEngineService {
                 entry.setDate(effectiveDate);
                 entry.setReference(reference);
                 entry.setNarration(narration);
-                entry.setStatus("Draft");
+                entry.setStatus(JournalEntry.STATUS_DRAFT);
                 entry.setPreparedBy("System");
                 entry.setBranch(branch);
                 String branchCode = (branch != null && branch.getCode() != null && !branch.getCode().isBlank())
@@ -2119,12 +2119,10 @@ public class PostingEngineService {
                 // Gain or Loss on disposal
                 if (gainLoss != null && gainLoss.compareTo(BigDecimal.ZERO) != 0) {
                         if (gainLoss.compareTo(BigDecimal.ZERO) > 0) {
-                                // Gain: Cr Other Income (7002 re-used as gain placeholder)
-                                addLine(entry, "Gain on Disposal", "7002",
+                                addLine(entry, "Gain on Disposal", "4302",
                                                 "Gain on disposal " + assetName, BigDecimal.ZERO, gainLoss, null);
                         } else {
-                                // Loss: Dr Other Expense
-                                addLine(entry, "Loss on Disposal", "7501",
+                                addLine(entry, "Loss on Disposal", "6040",
                                                 "Loss on disposal " + assetName, gainLoss.abs(), BigDecimal.ZERO, null);
                         }
                 }

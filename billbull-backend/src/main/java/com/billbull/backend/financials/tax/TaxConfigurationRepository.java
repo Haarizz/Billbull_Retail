@@ -5,4 +5,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface TaxConfigurationRepository extends JpaRepository<TaxConfiguration, Long> {
+    boolean existsByTypeAndStatus(String type, String status);
 }
