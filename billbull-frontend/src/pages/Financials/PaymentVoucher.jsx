@@ -54,6 +54,7 @@ import { ReceiptPaymentPreview } from './FinancialVoucherDesigner';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { CurrencySymbol } from '../../components/CurrencyAmount';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import TableSkeleton from '../../components/common/TableSkeleton';
@@ -324,17 +325,26 @@ const PaymentVoucher = () => {
                 const fullVendor = findVendorRecord(vendors, detail, detail?.vendorName);
                 const linkedInvoice = purchaseInvoices.find((inv) => inv.id === detail.invoiceId) || null;
                 printData = buildPaymentVoucherPrintData(detail, fullVendor, company, linkedInvoice);
-                if (printData?.invoice?.number) {
+                const invoiceRef = linkedInvoice?.invoiceNumber
+                    || (detail.invoiceId ? `Invoice #${detail.invoiceId}` : null);
+                if (invoiceRef) {
                     invoices = [{
-                        ref: printData.invoice.number,
-                        date: printData.invoice.date ? formatDisplayDate(printData.invoice.date) : '',
-                        total: row.amount,
+                        ref: invoiceRef,
+                        date: linkedInvoice?.invoiceDate ? formatDisplayDate(linkedInvoice.invoiceDate)
+                            : linkedInvoice?.date ? formatDisplayDate(linkedInvoice.date) : '',
+                        total: linkedInvoice?.grandTotal ?? linkedInvoice?.total ?? row.amount,
                         paid: row.amount,
                     }];
                 }
             } else {
                 const shaped = buildExpenseVoucherShape(row);
                 printData = buildPaymentVoucherPrintData(shaped, null, company, null);
+                invoices = [{
+                    ref: row.voucherNumber,
+                    date: row.date ? formatDisplayDate(row.date) : '',
+                    total: row.amount,
+                    paid: row.amount,
+                }];
             }
 
             const coProfile = buildDocumentHeaderProfile({
@@ -463,21 +473,21 @@ const PaymentVoucher = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <StatCard
                     label="Total Paid"
-                    value={`${currency} ${stats.totalPaid.toLocaleString()}`}
+                    value={<><CurrencySymbol /> {stats.totalPaid.toLocaleString()}</>}
                     sub={`${stats.count} vouchers`}
                     icon={<Wallet size={20} />}
                     accent="bg-[#F5C742] text-slate-900"
                 />
                 <StatCard
                     label="Vendor Payments"
-                    value={`${currency} ${stats.vendorTotal.toLocaleString()}`}
+                    value={<><CurrencySymbol /> {stats.vendorTotal.toLocaleString()}</>}
                     sub="Invoice / advance"
                     icon={<Banknote size={20} />}
                     accent="bg-emerald-50 text-emerald-600"
                 />
                 <StatCard
                     label="Expense Payments"
-                    value={`${currency} ${stats.expenseTotal.toLocaleString()}`}
+                    value={<><CurrencySymbol /> {stats.expenseTotal.toLocaleString()}</>}
                     sub="Operating expenses"
                     icon={<TrendingDown size={20} />}
                     accent="bg-indigo-50 text-indigo-600"
@@ -551,7 +561,7 @@ const PaymentVoucher = () => {
                                 <th className="px-4 py-3">Date</th>
                                 <th className="px-4 py-3">Paid To</th>
                                 <th className="px-4 py-3">Source</th>
-                                <th className="px-4 py-3 text-right">Amount ({currency})</th>
+                                <th className="px-4 py-3 text-right">Amount (<CurrencySymbol />)</th>
                                 <th className="px-4 py-3">Payment Mode</th>
                                 <th className="px-4 py-3">Status</th>
                                 <th className="px-4 py-3 text-center">Actions</th>
@@ -604,7 +614,7 @@ const PaymentVoucher = () => {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-right font-bold text-rose-600">
-                                                {currency} {row.amount.toLocaleString()}
+                                                <CurrencySymbol /> {row.amount.toLocaleString()}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-1 text-slate-600">
@@ -687,7 +697,7 @@ const PaymentVoucher = () => {
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="border border-slate-200 rounded-lg p-4 text-center bg-white shadow-sm">
                                     <p className="text-2xl font-bold text-rose-600">
-                                        {currency} {Number(selected.amount).toLocaleString()}
+                                        <CurrencySymbol /> {Number(selected.amount).toLocaleString()}
                                     </p>
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">Amount Paid</p>
                                 </div>

@@ -48,6 +48,8 @@ class PostingEngineServiceTest {
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
     @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
+    @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
 
     private PostingEngineService service;
 
@@ -68,7 +70,9 @@ class PostingEngineServiceTest {
                 customerCreditService,
                 grnRepository,
                 glBalanceRepository,
-                salesSettingsService);
+                salesSettingsService,
+                currencyService,
+                outletRepository);
     }
 
     @Test

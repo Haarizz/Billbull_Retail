@@ -40,6 +40,7 @@ import { getCompanyProfile } from "../../api/companyProfileApi";
 import { getBranches } from "../../api/branchApi";
 import { getAccounts, getCostCenters } from "../../api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
+import { CurrencySymbol } from "../../components/CurrencyAmount";
 
 // ─── Report data types ────────────────────────────────────────────────────────
 
@@ -778,7 +779,7 @@ function statusBadge(status: "Paid" | "Overdue" | "Partial" | "Pending" | string
 }
 
 function aed(n: number) {
-  return `AED ${n.toLocaleString("en-AE", { minimumFractionDigits: 0 })}`;
+  return <><CurrencySymbol /> {n.toLocaleString("en-AE", { minimumFractionDigits: 0 })}</>;
 }
 
 // ─── Mini Bar Chart ───────────────────────────────────────────────────────────

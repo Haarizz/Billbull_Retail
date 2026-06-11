@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -41,6 +41,7 @@ import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { getBranches } from "../../../api/branchApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 import { useBranch } from "../../../context/BranchContext";
+import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 type ReportGroupId =
   | "summary"
@@ -2335,7 +2336,7 @@ function SalesSummaryReport() {
               <span className="text-[10px] font-medium text-slate-600">Net Sales</span>
               <DollarSign className="h-4 w-4 text-[#F5C742]" />
             </div>
-            <div className="text-xl font-bold text-slate-900">AED {totalNetSales.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-900"><CurrencySymbol /> {totalNetSales.toLocaleString()}</div>
             <div className="text-[9px] text-slate-500 mt-1">After returns & discounts</div>
           </CardContent>
         </Card>
@@ -2346,7 +2347,7 @@ function SalesSummaryReport() {
               <span className="text-[10px] font-medium text-slate-600">Gross Profit</span>
               <TrendingUp className="h-4 w-4 text-emerald-600" />
             </div>
-            <div className="text-xl font-bold text-emerald-700">AED {totalGrossProfit.toLocaleString()}</div>
+            <div className="text-xl font-bold text-emerald-700"><CurrencySymbol /> {totalGrossProfit.toLocaleString()}</div>
             <div className="text-[9px] text-slate-500 mt-1">GP: {avgGP.toFixed(1)}%</div>
           </CardContent>
         </Card>
@@ -2357,7 +2358,7 @@ function SalesSummaryReport() {
               <span className="text-[10px] font-medium text-slate-600">Tax Collected</span>
               <Shield className="h-4 w-4 text-blue-600" />
             </div>
-            <div className="text-xl font-bold text-blue-700">AED {totalTax.toLocaleString()}</div>
+            <div className="text-xl font-bold text-blue-700"><CurrencySymbol /> {totalTax.toLocaleString()}</div>
             <div className="text-[9px] text-slate-500 mt-1">VAT @ 5%</div>
           </CardContent>
         </Card>
@@ -2368,7 +2369,7 @@ function SalesSummaryReport() {
               <span className="text-[10px] font-medium text-slate-600">Returns</span>
               <AlertTriangle className="h-4 w-4 text-orange-600" />
             </div>
-            <div className="text-xl font-bold text-orange-700">AED {totalReturns.toLocaleString()}</div>
+            <div className="text-xl font-bold text-orange-700"><CurrencySymbol /> {totalReturns.toLocaleString()}</div>
             <div className="text-[9px] text-slate-500 mt-1">{returnsPct}% of gross</div>
           </CardContent>
         </Card>
@@ -2456,13 +2457,13 @@ function SalesSummaryReport() {
                 {rows.map((row, idx) => (
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 text-slate-700">{row.date}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.grossSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.returns.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.discounts.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-blue-600">AED {row.tax.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.cogs.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-emerald-600">AED {row.grossProfit.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.grossSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.returns.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.discounts.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-blue-600"><CurrencySymbol /> {row.tax.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.cogs.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-emerald-600"><CurrencySymbol /> {row.grossProfit.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.gp.toFixed(1)}%</td>
                   </tr>
                 ))}
@@ -2470,13 +2471,13 @@ function SalesSummaryReport() {
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
                   <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">AED {totalGrossSales.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalReturns.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalDiscounts.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalNetSales.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalTax.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalCOGS.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totalGrossProfit.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalGrossSales.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalReturns.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalDiscounts.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalNetSales.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalTax.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalCOGS.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalGrossProfit.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">{avgGP.toFixed(1)}%</td>
                 </tr>
               </tfoot>
@@ -2907,7 +2908,7 @@ function DailySalesReport() {
                       <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmt(a.closing)}</td>
                       <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmt(a.actual)}</td>
                       <td className={`px-3 py-2 text-right font-bold ${variance < 0 ? "text-red-600" : variance > 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                        {variance === 0 ? "—" : `${variance > 0 ? "+" : ""}AED ${variance.toFixed(2)}`}
+                        {variance === 0 ? "—" : <>{variance > 0 ? "+" : ""}<CurrencySymbol /> {variance.toFixed(2)}</>}
                       </td>
                     </tr>
                   );
@@ -2922,7 +2923,7 @@ function DailySalesReport() {
                   <td className="px-3 py-2 text-right font-bold">{fmt(d.cashAccounts.reduce((s, a) => s + a.closing, 0))}</td>
                   <td className="px-3 py-2 text-right font-bold">{fmt(d.cashAccounts.reduce((s, a) => s + a.actual, 0))}</td>
                   <td className={`px-3 py-2 text-right font-bold ${totalCashVariance < 0 ? "text-red-600" : totalCashVariance > 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                    {totalCashVariance === 0 ? "—" : `${totalCashVariance > 0 ? "+" : ""}AED ${totalCashVariance.toFixed(2)}`}
+                    {totalCashVariance === 0 ? "—" : <>{totalCashVariance > 0 ? "+" : ""}<CurrencySymbol /> {totalCashVariance.toFixed(2)}</>}
                   </td>
                 </tr>
               </tfoot>
@@ -3098,8 +3099,8 @@ function ChannelWiseReport() {
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.channel}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.transactions}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.salesValue.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.avgBill.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.salesValue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.avgBill.toFixed(2)}</td>
                     <td className="px-3 py-2 text-right text-orange-600">{row.discountPct}%</td>
                     <td className="px-3 py-2 text-right text-red-600">{row.returnPct}%</td>
                   </tr>
@@ -3173,11 +3174,11 @@ function CustomerSalesSummaryReport() {
                 {mockCustomerSalesData.map((row, idx) => (
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 text-slate-800 font-medium">{row.customer}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.totalSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.returns.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.outstanding.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.creditLimit.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.totalSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.returns.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.outstanding.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.creditLimit.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">
                       <span className={`font-semibold ${row.utilization > 25 ? 'text-orange-600' : 'text-emerald-600'}`}>
                         {row.utilization.toFixed(1)}%
@@ -3258,8 +3259,8 @@ function CashierPerformanceReport() {
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 text-slate-800 font-medium">{row.cashier}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.bills}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.totalSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.avgBill.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.totalSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.avgBill.toFixed(2)}</td>
                     <td className="px-3 py-2 text-right text-orange-600">{row.discountPct}%</td>
                     <td className="px-3 py-2 text-right">
                       <span className={row.voidCount > 3 ? 'text-red-600 font-semibold' : 'text-slate-700'}>
@@ -3269,7 +3270,7 @@ function CashierPerformanceReport() {
                     <td className="px-3 py-2 text-right text-slate-700">{row.returnCount}</td>
                     <td className="px-3 py-2 text-right">
                       <span className={`font-semibold ${row.variance < 0 ? 'text-red-600' : row.variance > 0 ? 'text-emerald-600' : 'text-slate-700'}`}>
-                        AED {row.variance}
+                        <CurrencySymbol /> {row.variance}
                       </span>
                     </td>
                   </tr>
@@ -3379,9 +3380,9 @@ function POSTransactionReport() {
                     <td className="px-3 py-2 text-slate-800">{row.cashier}</td>
                     <td className="px-3 py-2 text-slate-700">{row.customer}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.items}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.grossAmt.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.discount.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netAmt.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.grossAmt.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.discount.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netAmt.toFixed(2)}</td>
                     <td className="px-3 py-2 text-slate-700">{row.payMode}</td>
                     <td className="px-3 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusColor(row.status)}`}>{row.status}</span>
@@ -3506,9 +3507,9 @@ function POSItemSalesReport() {
                     <td className="px-3 py-2 text-right text-slate-700">{row.qtyOrdered}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.qtySold}</td>
                     <td className="px-3 py-2 text-right text-orange-600">{row.returns}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.grossAmt.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.discount.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netAmt.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.grossAmt.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.discount.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netAmt.toFixed(2)}</td>
                     <td className="px-3 py-2 text-right text-emerald-700 font-semibold">{row.contribution}%</td>
                   </tr>
                 ))}
@@ -3516,7 +3517,7 @@ function POSItemSalesReport() {
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
                   <td colSpan={8} className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">AED {totalNet.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalNet.toFixed(2)}</td>
                   <td className="px-3 py-2 text-right">100%</td>
                 </tr>
               </tfoot>
@@ -3620,9 +3621,9 @@ function POSPaymentModeReport() {
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.mode}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.transactions}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.amount.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.refunds.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netAmount.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.amount.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.refunds.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netAmount.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-16 bg-slate-100 rounded-full h-1.5 overflow-hidden">
@@ -3637,7 +3638,7 @@ function POSPaymentModeReport() {
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
                   <td colSpan={4} className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">AED {total.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {total.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">100%</td>
                 </tr>
               </tfoot>
@@ -3689,7 +3690,7 @@ function POSVoidReport() {
         <Card className="border-2 border-red-200 bg-red-50">
           <CardContent className="p-3">
             <div className="text-[10px] text-red-700 mb-1">Total Void/Cancel Value</div>
-            <div className="text-xl font-bold text-red-800">AED {totalValue.toFixed(2)}</div>
+            <div className="text-xl font-bold text-red-800"><CurrencySymbol /> {totalValue.toFixed(2)}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
@@ -3732,7 +3733,7 @@ function POSVoidReport() {
                     <td className="px-3 py-2 font-mono text-[10px] text-blue-700">{row.billNo}</td>
                     <td className="px-3 py-2 text-slate-600">{row.date} {row.time}</td>
                     <td className="px-3 py-2 text-slate-800">{row.cashier}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-red-700">AED {row.value.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-red-700"><CurrencySymbol /> {row.value.toFixed(2)}</td>
                     <td className="px-3 py-2 text-slate-700">{row.reason}</td>
                     <td className="px-3 py-2 text-slate-600">{row.approvedBy}</td>
                     <td className="px-3 py-2">
@@ -3796,13 +3797,13 @@ function VANSalesSummaryReport() {
         <Card className="border-2 border-[#F5C742] bg-[#FFF6D8]">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total Net Sales</div>
-            <div className="text-xl font-bold text-slate-900">AED {totalNetSales.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-900"><CurrencySymbol /> {totalNetSales.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total Collected</div>
-            <div className="text-xl font-bold text-emerald-700">AED {totalCollection.toLocaleString()}</div>
+            <div className="text-xl font-bold text-emerald-700"><CurrencySymbol /> {totalCollection.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
@@ -3861,9 +3862,9 @@ function VANSalesSummaryReport() {
                     <td className="px-3 py-2 text-slate-700">{row.salesperson}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.visits}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.actualVisits}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.stockIssued.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netSales.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700">AED {row.collection.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.stockIssued.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700"><CurrencySymbol /> {row.collection.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3934,7 +3935,7 @@ function VANItemSalesReport() {
                   <td className="px-3 py-2 text-right text-orange-600">{row.qtyReturned}</td>
                   <td className="px-3 py-2 text-right text-blue-600">{row.freeIssue}</td>
                   <td className="px-3 py-2 text-right font-semibold text-slate-800">{row.netQty}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.value.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.value.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -4023,10 +4024,10 @@ function VANRoutePerformanceReport() {
                     <td className="px-3 py-2 text-right">
                       <span className={`font-semibold ${row.conversion >= 95 ? 'text-emerald-600' : row.conversion >= 85 ? 'text-amber-600' : 'text-red-600'}`}>{row.conversion}%</span>
                     </td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.salesTarget.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.salesActual.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700">AED {row.collection.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.outstanding.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.salesTarget.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.salesActual.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700"><CurrencySymbol /> {row.collection.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.outstanding.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4096,13 +4097,13 @@ function VANCollectionReport() {
                 <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                   <td className="px-3 py-2 font-semibold text-slate-800">{row.salesperson}</td>
                   <td className="px-3 py-2 text-slate-600">{row.route}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.cashCollected.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.cardCollected.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-orange-600">AED {row.creditSales.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.totalCollected.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-red-600">AED {row.pending.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.cashCollected.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.cardCollected.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.creditSales.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.totalCollected.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.pending.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">
-                    <span className={`font-semibold ${row.variance < 0 ? 'text-red-600' : row.variance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>AED {row.variance}</span>
+                    <span className={`font-semibold ${row.variance < 0 ? 'text-red-600' : row.variance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}><CurrencySymbol /> {row.variance}</span>
                   </td>
                 </tr>
               ))}
@@ -4172,13 +4173,13 @@ function VANStockVarianceReport() {
                 <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                   <td className="px-3 py-2 font-semibold text-slate-800">{row.salesperson}</td>
                   <td className="px-3 py-2 text-slate-600">{row.route}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.issued.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.sold.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-orange-600">AED {row.returned.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.expected.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.actual.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.issued.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.sold.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.returned.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.expected.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.actual.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">
-                    <span className={`font-bold ${row.variance < 0 ? 'text-red-600' : row.variance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>AED {row.variance}</span>
+                    <span className={`font-bold ${row.variance < 0 ? 'text-red-600' : row.variance > 0 ? 'text-emerald-600' : 'text-slate-500'}`}><CurrencySymbol /> {row.variance}</span>
                   </td>
                 </tr>
               ))}
@@ -4257,13 +4258,13 @@ function SalesInvoiceRegisterReport() {
         <Card className="border-2 border-[#F5C742] bg-[#FFF6D8]">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total Invoiced</div>
-            <div className="text-xl font-bold text-slate-900">AED {totals.total.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-900"><CurrencySymbol /> {totals.total.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Outstanding</div>
-            <div className="text-xl font-bold text-red-700">AED {totals.outstanding.toLocaleString()}</div>
+            <div className="text-xl font-bold text-red-700"><CurrencySymbol /> {totals.outstanding.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
@@ -4310,10 +4311,10 @@ function SalesInvoiceRegisterReport() {
                     <td className="px-3 py-2 text-slate-600">{row.date}</td>
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.customer}</td>
                     <td className="px-3 py-2 text-slate-600">{row.salesperson}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.amount.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-blue-600">AED {row.tax.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.total.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.outstanding.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.amount.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-blue-600"><CurrencySymbol /> {row.tax.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.total.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.outstanding.toLocaleString()}</td>
                     <td className="px-3 py-2 text-slate-600">{row.dueDate}</td>
                     <td className="px-3 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusColor(row.status)}`}>{row.status}</span>
@@ -4324,10 +4325,10 @@ function SalesInvoiceRegisterReport() {
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
                   <td colSpan={4} className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">AED {totals.amount.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.tax.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.total.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.outstanding.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.amount.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.tax.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.total.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.outstanding.toLocaleString()}</td>
                   <td colSpan={2} />
                 </tr>
               </tfoot>
@@ -4429,8 +4430,8 @@ function SalesOrderStatusReport() {
                     <td className="px-3 py-2 text-right text-slate-700">{row.orderedQty}</td>
                     <td className="px-3 py-2 text-right text-emerald-700">{row.deliveredQty}</td>
                     <td className="px-3 py-2 text-right text-orange-600">{row.pendingQty}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.orderedValue.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.deliveredValue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.orderedValue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.deliveredValue.toLocaleString()}</td>
                     <td className="px-3 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusColor(row.status)}`}>{row.status}</span>
                     </td>
@@ -4605,7 +4606,7 @@ function CreditNoteReturnsReport() {
         <Card className="border-2 border-[#F5C742] bg-[#FFF6D8]">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total Return Value</div>
-            <div className="text-xl font-bold text-slate-900">AED {totalReturn.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-900"><CurrencySymbol /> {totalReturn.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
@@ -4653,8 +4654,8 @@ function CreditNoteReturnsReport() {
                     <td className="px-3 py-2 font-mono text-[10px] text-slate-600">{row.linkedInvoice}</td>
                     <td className="px-3 py-2 text-slate-700">{row.reason}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.items}</td>
-                    <td className="px-3 py-2 text-right text-orange-700">AED {row.returnValue.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-red-600">AED {row.total.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-700"><CurrencySymbol /> {row.returnValue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-red-600"><CurrencySymbol /> {row.total.toLocaleString()}</td>
                     <td className="px-3 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusColor(row.status)}`}>{row.status}</span>
                     </td>
@@ -4766,13 +4767,13 @@ function CustomerAgingReport() {
                   <div className="w-24 bg-slate-100 rounded-full h-1.5 overflow-hidden">
                     <div className="h-full bg-[#F5C742] rounded-full" style={{ width: `${totals.total > 0 ? (b.value / totals.total * 100) : 0}%` }} />
                   </div>
-                  <span className="font-semibold w-24 text-right text-slate-800">AED {b.value.toLocaleString()}</span>
+                  <span className="font-semibold w-24 text-right text-slate-800"><CurrencySymbol /> {b.value.toLocaleString()}</span>
                 </div>
               </div>
             ))}
             <div className="pt-2 border-t border-slate-200 flex items-center justify-between font-bold text-slate-900">
               <span>Total Outstanding</span>
-              <span className="text-red-600">AED {totals.total.toLocaleString()}</span>
+              <span className="text-red-600"><CurrencySymbol /> {totals.total.toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>
@@ -4804,13 +4805,13 @@ function CustomerAgingReport() {
                 {mockAgingData.map((row, idx) => (
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.customer}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">AED {row.creditLimit.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700">AED {row.current.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-amber-600">AED {row.days30.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.days60.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.days90.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-bold text-red-700">AED {row.over90.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.total.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-600"><CurrencySymbol /> {row.creditLimit.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700"><CurrencySymbol /> {row.current.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-amber-600"><CurrencySymbol /> {row.days30.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.days60.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.days90.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-bold text-red-700"><CurrencySymbol /> {row.over90.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.total.toLocaleString()}</td>
                     <td className="px-3 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${riskColor(row.riskLevel)}`}>{row.riskLevel}</span>
                     </td>
@@ -4820,12 +4821,12 @@ function CustomerAgingReport() {
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
                   <td colSpan={2} className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">AED {totals.current.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.days30.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.days60.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.days90.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.over90.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.total.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.current.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.days30.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.days60.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.days90.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.over90.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.total.toLocaleString()}</td>
                   <td />
                 </tr>
               </tfoot>
@@ -4897,7 +4898,7 @@ function TopDormantCustomersReport() {
                     <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                       <td className="px-3 py-2 font-bold text-[#F5C742]">#{row.rank}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800">{row.customer}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netSales.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netSales.toLocaleString()}</td>
                       <td className="px-3 py-2 text-right">
                         <span className={`font-semibold ${row.growth >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{row.growth > 0 ? "+" : ""}{row.growth}%</span>
                       </td>
@@ -5019,7 +5020,7 @@ function CustomerPriceLevelReport() {
                   </td>
                   <td className="px-3 py-2 text-right text-orange-600 font-semibold">{row.discountPct}%</td>
                   <td className="px-3 py-2 text-right text-slate-700">{row.creditDays} days</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.minOrderValue.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.minOrderValue.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right text-blue-600">{row.specialItems}</td>
                   <td className="px-3 py-2 text-right font-semibold text-red-600">{row.marginImpact}%</td>
                 </tr>
@@ -5104,19 +5105,19 @@ function ItemWiseSalesReport() {
         <Card className="border-2 border-[#F5C742] bg-[#FFF6D8]">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total Net Revenue</div>
-            <div className="text-xl font-bold text-slate-900">AED {totals.netRevenue.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-900"><CurrencySymbol /> {totals.netRevenue.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Gross Profit</div>
-            <div className="text-xl font-bold text-emerald-700">AED {totals.grossProfit.toLocaleString()}</div>
+            <div className="text-xl font-bold text-emerald-700"><CurrencySymbol /> {totals.grossProfit.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
           <CardContent className="p-3">
             <div className="text-[10px] text-slate-600 mb-1">Total COGS</div>
-            <div className="text-xl font-bold text-slate-700">AED {totals.cost.toLocaleString()}</div>
+            <div className="text-xl font-bold text-slate-700"><CurrencySymbol /> {totals.cost.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
@@ -5174,12 +5175,12 @@ function ItemWiseSalesReport() {
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.item}</td>
                     <td className="px-3 py-2 text-slate-600">{row.category}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.qtySold.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.revenue.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">AED {row.cost.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700">AED {row.grossProfit.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.revenue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-600"><CurrencySymbol /> {row.cost.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700"><CurrencySymbol /> {row.grossProfit.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-semibold text-emerald-700">{row.gp}%</td>
                     <td className="px-3 py-2 text-right text-orange-600">{row.returnQty}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netRevenue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netRevenue.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -5187,12 +5188,12 @@ function ItemWiseSalesReport() {
                 <tr>
                   <td colSpan={2} className="px-3 py-2">TOTAL</td>
                   <td className="px-3 py-2 text-right">{totals.qtySold.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.revenue.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.cost.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">AED {totals.grossProfit.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.revenue.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.cost.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.grossProfit.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">{overallGpPct}%</td>
                   <td />
-                  <td className="px-3 py-2 text-right">AED {totals.netRevenue.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totals.netRevenue.toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
@@ -5306,7 +5307,7 @@ function CategoryBrandSalesReport() {
                   <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.category}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.qtySold.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.salesValue.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.salesValue.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <div className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden">
@@ -5315,8 +5316,8 @@ function CategoryBrandSalesReport() {
                         <span className="text-slate-700">{row.contribution}%</span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.returns.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.netSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.returns.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.netSales.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-semibold text-emerald-700">{row.avgGP}%</td>
                   </tr>
                 ))}
@@ -5523,7 +5524,7 @@ function DiscountAnalysisReport() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-xs font-semibold text-slate-800">Discount Analysis by Cashier</CardTitle>
-              <span className="text-[10px] text-slate-500">Total discounts: AED {total.toLocaleString()}</span>
+              <span className="text-[10px] text-slate-500">Total discounts: <CurrencySymbol /> {total.toLocaleString()}</span>
             </div>
             <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockDiscountData, [{ header: "Cashier", key: "cashier" }, { header: "Bills", key: "bills" }, { header: "Discounted Bills", key: "discountedBills" }, { header: "Discount Amount", key: "discountAmount" }, { header: "Discount %", key: "discountPct" }, { header: "Max Bill Discount", key: "maxBillDiscount" }, { header: "Avg Discount", key: "avgDiscount" }], "Discount_Analysis")}><Download className="h-3 w-3" />Export</Button>
           </div>
@@ -5548,12 +5549,12 @@ function DiscountAnalysisReport() {
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.cashier}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.bills}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{row.discountedBills}</td>
-                    <td className="px-3 py-2 text-right text-orange-700 font-semibold">AED {row.discountAmount.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-700 font-semibold"><CurrencySymbol /> {row.discountAmount.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right">
                       <span className={`font-semibold ${row.discountPct > 9 ? 'text-red-600' : 'text-amber-600'}`}>{row.discountPct}%</span>
                     </td>
-                    <td className="px-3 py-2 text-right text-red-600">AED {row.maxBillDiscount}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.avgDiscount.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-right text-red-600"><CurrencySymbol /> {row.maxBillDiscount}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.avgDiscount.toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -5643,10 +5644,10 @@ function PromotionImpactReport() {
                     <td className="px-3 py-2 font-semibold text-slate-800">{row.promotionName}</td>
                     <td className="px-3 py-2 text-slate-600">{row.type}</td>
                     <td className="px-3 py-2 text-slate-600">{row.period}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">AED {row.salesBefore.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.salesDuring.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.salesBefore.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.salesDuring.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right text-emerald-700 font-semibold">+{row.uplift}%</td>
-                    <td className="px-3 py-2 text-right text-orange-600">AED {row.discountCost.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-orange-600"><CurrencySymbol /> {row.discountCost.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-semibold text-blue-700">{row.netMargin}%</td>
                   </tr>
                 ))}
@@ -5701,7 +5702,7 @@ function FreeIssueSchemeReport() {
         <CardContent className="p-3 flex items-center justify-between">
           <div>
             <div className="text-[10px] text-slate-600 mb-0.5">Total Free Issue Cost</div>
-            <div className="text-xl font-bold text-red-700">AED {totalCost.toLocaleString()}</div>
+            <div className="text-xl font-bold text-red-700"><CurrencySymbol /> {totalCost.toLocaleString()}</div>
           </div>
           <div>
             <div className="text-[10px] text-slate-600 mb-0.5">Active Schemes</div>
@@ -5744,8 +5745,8 @@ function FreeIssueSchemeReport() {
                     <td className="px-3 py-2 text-right text-slate-700">{row.freeQty}</td>
                     <td className="px-3 py-2 text-right text-emerald-700 font-semibold">{row.activatedTimes}</td>
                     <td className="px-3 py-2 text-right text-blue-700">{row.freeQtyIssued}</td>
-                    <td className="px-3 py-2 text-right text-red-600 font-semibold">AED {row.freeIssueCost.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.totalSales.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-red-600 font-semibold"><CurrencySymbol /> {row.freeIssueCost.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.totalSales.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -5810,23 +5811,23 @@ function TaxSummaryReport() {
             <div className="text-[10px] text-blue-700 font-semibold">VAT Summary</div>
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-600">Taxable Sales (5% VAT)</span>
-              <span className="font-semibold">AED {mockTaxData[0].taxableSales.toLocaleString()}</span>
+              <span className="font-semibold"><CurrencySymbol /> {mockTaxData[0].taxableSales.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-600">VAT Collected</span>
-              <span className="font-bold text-blue-700">AED {mockTaxData[0].taxAmount.toLocaleString()}</span>
+              <span className="font-bold text-blue-700"><CurrencySymbol /> {mockTaxData[0].taxAmount.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-600">Zero-Rated Sales</span>
-              <span className="font-semibold">AED {mockTaxData[1].zeroRated.toLocaleString()}</span>
+              <span className="font-semibold"><CurrencySymbol /> {mockTaxData[1].zeroRated.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-600">Exempt Sales</span>
-              <span className="font-semibold">AED {mockTaxData[2].exemptSales.toLocaleString()}</span>
+              <span className="font-semibold"><CurrencySymbol /> {mockTaxData[2].exemptSales.toLocaleString()}</span>
             </div>
             <div className="pt-2 border-t-2 border-blue-200 flex justify-between font-bold text-[12px]">
               <span>Net VAT Payable</span>
-              <span className="text-blue-700">AED {mockTaxData[0].netTaxPayable.toLocaleString()}</span>
+              <span className="text-blue-700"><CurrencySymbol /> {mockTaxData[0].netTaxPayable.toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>
@@ -5879,7 +5880,7 @@ function VATOutputRegisterReport() {
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="text-xs font-semibold text-slate-800">VAT Output Register</CardTitle>
-            <span className="text-[10px] text-slate-500">Total VAT Collected: AED {totalTax.toLocaleString()}</span>
+            <span className="text-[10px] text-slate-500">Total VAT Collected: <CurrencySymbol /> {totalTax.toLocaleString()}</span>
           </div>
           <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVATOutputData, [{ header: "Invoice No", key: "invoiceNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "TRN", key: "trn" }, { header: "Taxable Amt", key: "taxableAmt" }, { header: "VAT Rate", key: "vatRate" }, { header: "VAT Amount", key: "vatAmt" }, { header: "Total", key: "totalAmt" }], "VAT_Output_Register")}><Download className="h-3 w-3" />Export</Button>
         </div>
@@ -5906,18 +5907,18 @@ function VATOutputRegisterReport() {
                   <td className="px-3 py-2 text-slate-600">{row.date}</td>
                   <td className="px-3 py-2 font-semibold text-slate-800">{row.customer}</td>
                   <td className="px-3 py-2 font-mono text-[10px] text-slate-600">{row.trn}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.taxableAmt.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.taxableAmt.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right text-blue-600">{row.vatRate}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-blue-700">AED {row.vatAmt.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]">AED {row.totalAmt.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-blue-700"><CurrencySymbol /> {row.vatAmt.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-[#F5C742]"><CurrencySymbol /> {row.totalAmt.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
               <tr>
                 <td colSpan={6} className="px-3 py-2">TOTAL</td>
-                <td className="px-3 py-2 text-right">AED {totalTax.toLocaleString()}</td>
-                <td className="px-3 py-2 text-right">AED {mockVATOutputData.reduce((s, r) => s + r.totalAmt, 0).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalTax.toLocaleString()}</td>
+                <td className="px-3 py-2 text-right"><CurrencySymbol /> {mockVATOutputData.reduce((s, r) => s + r.totalAmt, 0).toLocaleString()}</td>
               </tr>
             </tfoot>
           </table>
@@ -5992,8 +5993,8 @@ function PriceOverrideReport() {
                 <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                   <td className="px-3 py-2 text-slate-600">{row.date} {row.time}</td>
                   <td className="px-3 py-2 font-semibold text-slate-800">{row.item}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">AED {row.originalPrice.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-right text-orange-700 font-semibold">AED {row.newPrice.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700"><CurrencySymbol /> {row.originalPrice.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right text-orange-700 font-semibold"><CurrencySymbol /> {row.newPrice.toFixed(2)}</td>
                   <td className="px-3 py-2 text-right text-red-600 font-semibold">{row.change}%</td>
                   <td className="px-3 py-2 text-slate-700">{row.cashier}</td>
                   <td className="px-3 py-2 text-slate-600">{row.approvedBy}</td>
@@ -6075,7 +6076,7 @@ function ManualEntryReport() {
                   <td className="px-3 py-2 font-semibold text-slate-800">{row.user}</td>
                   <td className="px-3 py-2 text-slate-600">{row.type}</td>
                   <td className="px-3 py-2 text-right">
-                    <span className={`font-bold ${row.impact < 0 ? 'text-red-600' : 'text-emerald-700'}`}>AED {row.impact.toLocaleString()}</span>
+                    <span className={`font-bold ${row.impact < 0 ? 'text-red-600' : 'text-emerald-700'}`}><CurrencySymbol /> {row.impact.toLocaleString()}</span>
                   </td>
                   <td className="px-3 py-2 text-slate-700">{row.reason}</td>
                   <td className="px-3 py-2 text-slate-600">{row.approvedBy}</td>
@@ -6474,11 +6475,11 @@ function CustomerProfitDrilldownReport() {
                         <span className="text-[9px] text-slate-500">{customer.priceLevel} · {customer.totalBills} bill{customer.totalBills > 1 ? "s" : ""}</span>
                       </div>
                     </div>
-                    <div className="px-3 py-2.5 text-right text-slate-700 font-medium self-center">AED {customer.grossSales.toLocaleString()}</div>
-                    <div className="px-3 py-2.5 text-right text-orange-600 self-center">AED {customer.totalDiscount.toLocaleString()}</div>
-                    <div className="px-3 py-2.5 text-right font-bold text-[#F5C742] self-center">AED {customer.netSales.toLocaleString()}</div>
-                    <div className="px-3 py-2.5 text-right text-slate-600 self-center">AED {customer.totalCost.toLocaleString()}</div>
-                    <div className="px-3 py-2.5 text-right font-bold text-emerald-700 self-center">AED {customer.grossProfit.toLocaleString()}</div>
+                    <div className="px-3 py-2.5 text-right text-slate-700 font-medium self-center"><CurrencySymbol /> {customer.grossSales.toLocaleString()}</div>
+                    <div className="px-3 py-2.5 text-right text-orange-600 self-center"><CurrencySymbol /> {customer.totalDiscount.toLocaleString()}</div>
+                    <div className="px-3 py-2.5 text-right font-bold text-[#F5C742] self-center"><CurrencySymbol /> {customer.netSales.toLocaleString()}</div>
+                    <div className="px-3 py-2.5 text-right text-slate-600 self-center"><CurrencySymbol /> {customer.totalCost.toLocaleString()}</div>
+                    <div className="px-3 py-2.5 text-right font-bold text-emerald-700 self-center"><CurrencySymbol /> {customer.grossProfit.toLocaleString()}</div>
                     <div className="px-3 py-2.5 text-right self-center">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-semibold ${gpBadge(customer.gpPct)}`}>{customer.gpPct.toFixed(1)}%</span>
                     </div>
@@ -6508,11 +6509,11 @@ function CustomerProfitDrilldownReport() {
                               <span className="text-[9px] text-slate-500">{bill.date} · {bill.salesperson}</span>
                             </div>
                           </div>
-                          <div className="px-3 py-2 text-right text-slate-600 self-center">AED {bill.grossTotal.toLocaleString()}</div>
-                          <div className="px-3 py-2 text-right text-orange-500 self-center">AED {bill.discount.toLocaleString()}</div>
-                          <div className="px-3 py-2 text-right font-semibold text-slate-800 self-center">AED {bill.netTotal.toLocaleString()}</div>
-                          <div className="px-3 py-2 text-right text-slate-500 self-center">AED {bill.totalCost.toLocaleString()}</div>
-                          <div className="px-3 py-2 text-right font-semibold text-emerald-600 self-center">AED {bill.grossProfit.toLocaleString()}</div>
+                          <div className="px-3 py-2 text-right text-slate-600 self-center"><CurrencySymbol /> {bill.grossTotal.toLocaleString()}</div>
+                          <div className="px-3 py-2 text-right text-orange-500 self-center"><CurrencySymbol /> {bill.discount.toLocaleString()}</div>
+                          <div className="px-3 py-2 text-right font-semibold text-slate-800 self-center"><CurrencySymbol /> {bill.netTotal.toLocaleString()}</div>
+                          <div className="px-3 py-2 text-right text-slate-500 self-center"><CurrencySymbol /> {bill.totalCost.toLocaleString()}</div>
+                          <div className="px-3 py-2 text-right font-semibold text-emerald-600 self-center"><CurrencySymbol /> {bill.grossProfit.toLocaleString()}</div>
                           <div className="px-3 py-2 text-right self-center">
                             <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${gpBadge(bill.gpPct)}`}>{bill.gpPct.toFixed(1)}%</span>
                           </div>
@@ -6545,11 +6546,11 @@ function CustomerProfitDrilldownReport() {
                                     <div className="text-[9px] text-slate-400">{item.category}</div>
                                   </div>
                                 </div>
-                                <div className="px-3 py-1.5 text-right text-slate-600">AED {item.unitPrice.toFixed(2)}</div>
-                                <div className="px-3 py-1.5 text-right text-slate-500">AED {item.unitCost.toFixed(2)}</div>
-                                <div className="px-3 py-1.5 text-right text-slate-700">AED {item.lineTotal.toLocaleString()}</div>
-                                <div className="px-3 py-1.5 text-right text-slate-500">AED {item.lineCost.toLocaleString()}</div>
-                                <div className="px-3 py-1.5 text-right font-semibold text-emerald-600">AED {item.lineGP.toLocaleString()}</div>
+                                <div className="px-3 py-1.5 text-right text-slate-600"><CurrencySymbol /> {item.unitPrice.toFixed(2)}</div>
+                                <div className="px-3 py-1.5 text-right text-slate-500"><CurrencySymbol /> {item.unitCost.toFixed(2)}</div>
+                                <div className="px-3 py-1.5 text-right text-slate-700"><CurrencySymbol /> {item.lineTotal.toLocaleString()}</div>
+                                <div className="px-3 py-1.5 text-right text-slate-500"><CurrencySymbol /> {item.lineCost.toLocaleString()}</div>
+                                <div className="px-3 py-1.5 text-right font-semibold text-emerald-600"><CurrencySymbol /> {item.lineGP.toLocaleString()}</div>
                                 <div className="px-3 py-1.5 text-right">
                                   <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${gpBadge(item.gpPct)}`}>{item.gpPct.toFixed(1)}%</span>
                                 </div>
@@ -6561,9 +6562,9 @@ function CustomerProfitDrilldownReport() {
                               <div className="px-3 py-1.5 pl-14 text-slate-700">Bill Total ({bill.items.length} items)</div>
                               <div className="px-3 py-1.5 text-right text-slate-500">—</div>
                               <div className="px-3 py-1.5 text-right text-slate-500">—</div>
-                              <div className="px-3 py-1.5 text-right text-slate-800">AED {bill.netTotal.toLocaleString()}</div>
-                              <div className="px-3 py-1.5 text-right text-slate-600">AED {bill.totalCost.toLocaleString()}</div>
-                              <div className="px-3 py-1.5 text-right text-emerald-700">AED {bill.grossProfit.toLocaleString()}</div>
+                              <div className="px-3 py-1.5 text-right text-slate-800"><CurrencySymbol /> {bill.netTotal.toLocaleString()}</div>
+                              <div className="px-3 py-1.5 text-right text-slate-600"><CurrencySymbol /> {bill.totalCost.toLocaleString()}</div>
+                              <div className="px-3 py-1.5 text-right text-emerald-700"><CurrencySymbol /> {bill.grossProfit.toLocaleString()}</div>
                               <div className="px-3 py-1.5 text-right">
                                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-bold ${gpBadge(bill.gpPct)}`}>{bill.gpPct.toFixed(1)}%</span>
                               </div>
@@ -6581,11 +6582,11 @@ function CustomerProfitDrilldownReport() {
             {/* Grand total row */}
             <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] bg-[#F5C742] text-slate-900 font-bold text-[11px] border-t-2 border-[#e4b82e]">
               <div className="px-3 py-2.5">GRAND TOTAL ({mockProfitDrilldownData.length} customers)</div>
-              <div className="px-3 py-2.5 text-right">AED {grandTotals.grossSales.toLocaleString()}</div>
-              <div className="px-3 py-2.5 text-right">AED {grandTotals.totalDiscount.toLocaleString()}</div>
-              <div className="px-3 py-2.5 text-right">AED {grandTotals.netSales.toLocaleString()}</div>
-              <div className="px-3 py-2.5 text-right">AED {grandTotals.totalCost.toLocaleString()}</div>
-              <div className="px-3 py-2.5 text-right">AED {grandTotals.grossProfit.toLocaleString()}</div>
+              <div className="px-3 py-2.5 text-right"><CurrencySymbol /> {grandTotals.grossSales.toLocaleString()}</div>
+              <div className="px-3 py-2.5 text-right"><CurrencySymbol /> {grandTotals.totalDiscount.toLocaleString()}</div>
+              <div className="px-3 py-2.5 text-right"><CurrencySymbol /> {grandTotals.netSales.toLocaleString()}</div>
+              <div className="px-3 py-2.5 text-right"><CurrencySymbol /> {grandTotals.totalCost.toLocaleString()}</div>
+              <div className="px-3 py-2.5 text-right"><CurrencySymbol /> {grandTotals.grossProfit.toLocaleString()}</div>
               <div className="px-3 py-2.5 text-right">{overallGP.toFixed(1)}%</div>
               <div className="px-3 py-2.5 text-right">—</div>
             </div>
