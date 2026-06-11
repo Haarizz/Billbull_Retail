@@ -61,13 +61,6 @@ export default function DateFilter({ onChange, defaultPreset = 'today' }) {
     const [pendingTo, setPendingTo] = useState('');
     const ref = useRef(null);
 
-    // Emit initial value on mount
-    useEffect(() => {
-        const resolved = resolvePreset(defaultPreset);
-        if (resolved) onChange(resolved);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     useEffect(() => {
         const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
         document.addEventListener('mousedown', handler);

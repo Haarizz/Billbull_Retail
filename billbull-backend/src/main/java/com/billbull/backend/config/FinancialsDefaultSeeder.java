@@ -76,7 +76,7 @@ public class FinancialsDefaultSeeder implements ApplicationRunner {
     }
 
     private void seedTaxConfiguration() {
-        if (taxRepo.count() > 0) return;
+        if (taxRepo.existsByTypeAndStatus("VAT", "Active")) return;
 
         TaxConfiguration vat = new TaxConfiguration();
         vat.setType("VAT");
@@ -90,30 +90,27 @@ public class FinancialsDefaultSeeder implements ApplicationRunner {
     }
 
     private void seedAccountingPeriods() {
-        if (periodRepo.count() > 0) return;
-
         int currentYear = Year.now().getValue();
-        // Seed previous year, current year, and next year
-        List<AccountingPeriod> periods = new ArrayList<>();
+        // Seed prev year, current year, and next year — idempotent per start date
+        List<AccountingPeriod> toSave = new ArrayList<>();
         for (int year = currentYear - 1; year <= currentYear + 1; year++) {
             for (int month = 1; month <= 12; month++) {
                 LocalDate start = LocalDate.of(year, month, 1);
+                if (periodRepo.existsByStartDate(start)) continue;
                 LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
-
                 AccountingPeriod p = new AccountingPeriod();
                 p.setPeriodName(start.getMonth().getDisplayName(
                         java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + " " + year);
                 p.setStartDate(start);
                 p.setEndDate(end);
-                // Close all periods in prior years; open current and future
                 p.setStatus(year < currentYear ? "Closed" : "Open");
-                periods.add(p);
+                toSave.add(p);
             }
         }
-        periodRepo.saveAll(periods);
-
-        System.out.println("[FinancialsDefaultSeeder] Seeded " + periods.size() + " accounting periods (" +
-                (currentYear - 1) + "–" + (currentYear + 1) + ").");
+        if (!toSave.isEmpty()) {
+            periodRepo.saveAll(toSave);
+            System.out.println("[FinancialsDefaultSeeder] Seeded " + toSave.size() + " new accounting period(s).");
+        }
     }
 
     private void seedFiscalYears() {
