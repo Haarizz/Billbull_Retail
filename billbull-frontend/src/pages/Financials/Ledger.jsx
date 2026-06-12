@@ -1254,11 +1254,11 @@ const glAccountOptions = accounts
                 const group = (a.group || '').toLowerCase().trim();
                 const actType = (a.accountType || '').toLowerCase().trim();
                 const target = type.toLowerCase();
-                
+
                 // Robust matching for plural/singular and empty groups
-                return group === target || 
+                return group === target ||
                        group === target.replace(/s$/, '').replace(/ies$/, 'y') ||
-                       actType === target || 
+                       actType === target ||
                        actType === target.replace(/s$/, '').replace(/ies$/, 'y');
               });
               

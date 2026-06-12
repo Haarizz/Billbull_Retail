@@ -877,8 +877,7 @@ public class PostingEngineService {
                 String ref = voucher.getVoucherNumber();
                 if (isDuplicate(ref)) return null;
 
-                AccountSelection settlementAccount = resolveOutgoingPaymentAccount(
-                                voucher.getPaymentMode() != null ? voucher.getPaymentMode().name() : null);
+                AccountSelection settlementAccount = resolveOutgoingPaymentAccount(voucher);
                 JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
                                 "Payment to " + vendorName, TX_PAYMENT_VOUCHER, voucher.getBranch());
 
@@ -886,10 +885,13 @@ public class PostingEngineService {
                 BigDecimal discount = voucher.getDiscountAmount() != null
                                 && voucher.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0
                                         ? voucher.getDiscountAmount() : BigDecimal.ZERO;
-                BigDecimal totalAP  = paid.add(discount); // full AP amount cleared
+                BigDecimal totalDebit = paid.add(discount);
+                boolean vendorAdvance = voucher.getLpoId() != null && voucher.getInvoiceId() == null;
+                String debitAccountName = vendorAdvance ? "Vendor Advances Paid" : "Accounts Payable";
+                String debitAccountCode = vendorAdvance ? ACC_VENDOR_ADVANCES : ACC_ACCOUNTS_PAYABLE;
 
-                addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE,
-                                "Payment - " + ref, totalAP, BigDecimal.ZERO);
+                addLine(entry, debitAccountName, debitAccountCode,
+                                "Payment - " + ref, totalDebit, BigDecimal.ZERO);
                 addLine(entry, settlementAccount.name, settlementAccount.code,
                                 settlementAccount.name + " payment", BigDecimal.ZERO, paid);
 
@@ -2117,11 +2119,47 @@ public class PostingEngineService {
         private AccountSelection resolveOutgoingPaymentAccount(String paymentMode) {
                 String mode = normalizePaymentMode(paymentMode);
                 return switch (mode) {
-                        case "CASH"    -> new AccountSelection("Cash",  ACC_CASH);
+                        case "CASH"    -> new AccountSelection("Petty Cash",  ACC_PETTY_CASH);
                         case "CHEQUE"  -> new AccountSelection("Bank",  ACC_BANK); // Cheque clears via bank
                         case "CARD"    -> new AccountSelection("Bank",  ACC_BANK); // Card payment debits bank
                         default        -> new AccountSelection("Bank",  ACC_BANK);
                 };
+        }
+
+        private AccountSelection resolveOutgoingPaymentAccount(PaymentVoucher voucher) {
+                AccountSelection selectedAccount = resolveSelectedPaymentAccount(
+                                voucher != null ? voucher.getBankAccount() : null);
+                if (selectedAccount != null) {
+                        return selectedAccount;
+                }
+                return resolveOutgoingPaymentAccount(
+                                voucher != null && voucher.getPaymentMode() != null
+                                                ? voucher.getPaymentMode().name() : null);
+        }
+
+        private AccountSelection resolveSelectedPaymentAccount(String accountText) {
+                if (accountText == null || accountText.isBlank()) {
+                        return null;
+                }
+
+                String value = accountText.trim();
+                String firstToken = value.split("\\s+", 2)[0].replaceAll("[^0-9A-Za-z]", "");
+                Account account = !firstToken.isBlank() ? accountRepository.findByCode(firstToken) : null;
+                if (account == null) {
+                        account = accountRepository.findByName(value);
+                }
+                if (account == null && value.toLowerCase(java.util.Locale.ROOT).contains("petty cash")) {
+                        account = accountRepository.findByCode(ACC_PETTY_CASH);
+                }
+                if (account == null) {
+                        return null;
+                }
+
+                String name = account.getName() != null && !account.getName().isBlank()
+                                ? account.getName() : value;
+                String code = account.getCode() != null && !account.getCode().isBlank()
+                                ? account.getCode() : firstToken;
+                return new AccountSelection(name, code);
         }
 
         private String normalizePaymentMode(String paymentMode) {

@@ -95,6 +95,13 @@ const getStatusColor = (status) => {
     return "bg-slate-100 text-slate-700 border-slate-200";
 };
 
+const getApiErrorMessage = (error, fallback = "Failed to process payment.") => {
+    const data = error?.response?.data;
+    if (data?.message) return data.message;
+    if (typeof data === 'string' && data.trim()) return data;
+    return error?.message || fallback;
+};
+
 // ==========================================
 // SUB-COMPONENTS
 // ==========================================
@@ -526,6 +533,7 @@ const PaymentVoucher = () => {
             fetchData();
         } catch (error) {
             console.error("Approve failed", error);
+            alert(getApiErrorMessage(error, "Failed to approve payment voucher."));
         }
     };
 
@@ -780,7 +788,12 @@ const PaymentVoucher = () => {
                     bankAccount: paymentMethod !== 'Cash' ? bankAccount : null,
                 });
                 if (saved && saved.id) {
-                    await updateVoucherStatus(saved.id, 'POSTED');
+                    try {
+                        await updateVoucherStatus(saved.id, 'POSTED');
+                    } catch (error) {
+                        const voucherNo = saved.voucherNumber || `ID-${saved.id}`;
+                        throw new Error(`${voucherNo} was sent to Pending Approval, but posting failed: ${getApiErrorMessage(error)}`);
+                    }
                 }
             }));
 
@@ -797,7 +810,7 @@ const PaymentVoucher = () => {
             handleVendorSelect(selectedVendor);
         } catch (err) {
             console.error('Payment failed', err);
-            alert('Failed to process some payments.');
+            alert(getApiErrorMessage(err, 'Failed to process some payments.'));
         } finally {
             setIsProcessing(false);
         }
@@ -1116,7 +1129,7 @@ const PaymentVoucher = () => {
                                                             className="w-full pl-8 text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                                             <option value="">Select Bank Account...</option>
                                                             {bankAccounts.map(acc => (
-                                                                <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                                                <option key={acc.id} value={acc.code || acc.name}>{acc.code} — {acc.name}</option>
                                                             ))}
                                                         </select>
                                                     </div>

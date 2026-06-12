@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,23 +23,40 @@ import com.billbull.backend.sales.templates.service.PrintTemplateService;
 @RequestMapping("/api/templates")
 public class PrintTemplateController {
 
-    private static final String MODULE = "sales";
-
     @Autowired
     private PrintTemplateService printTemplateService;
 
     @Autowired
     private ModulePermissionService modulePermissionService;
 
+    /** Templates are shared between sales and purchases — allow access if the user can view either. */
+    private void requireView() {
+        if (!modulePermissionService.canView("sales") && !modulePermissionService.canView("purchases")) {
+            throw new AccessDeniedException("No view permission for templates");
+        }
+    }
+
+    private void requireCreate() {
+        if (!modulePermissionService.canCreate("sales") && !modulePermissionService.canCreate("purchases")) {
+            throw new AccessDeniedException("No create permission for templates");
+        }
+    }
+
+    private void requireEdit() {
+        if (!modulePermissionService.canEdit("sales") && !modulePermissionService.canEdit("purchases")) {
+            throw new AccessDeniedException("No edit permission for templates");
+        }
+    }
+
     @GetMapping
     public List<PrintTemplate> getAllTemplates() {
-        modulePermissionService.requireCanView(MODULE);
+        requireView();
         return printTemplateService.getAllTemplates();
     }
 
     @GetMapping("/search")
     public List<PrintTemplate> getTemplatesByCategory(@RequestParam String category) {
-        modulePermissionService.requireCanView(MODULE);
+        requireView();
         return printTemplateService.getTemplatesByCategory(category);
     }
 
@@ -46,20 +64,20 @@ public class PrintTemplateController {
      *  the standard, letterhead, and pre-printed variants together. */
     @GetMapping("/family")
     public List<PrintTemplate> getTemplateFamily(@RequestParam String base) {
-        modulePermissionService.requireCanView(MODULE);
+        requireView();
         return printTemplateService.getTemplatesByCategoryPrefix(base);
     }
 
     @PostMapping
     public PrintTemplate createTemplate(@RequestBody PrintTemplate template) {
-        modulePermissionService.requireCanCreate(MODULE);
+        requireCreate();
         return printTemplateService.createTemplate(template);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<PrintTemplate> updateTemplate(@PathVariable Long id,
             @RequestBody PrintTemplate templateDetails) {
-        modulePermissionService.requireCanEdit(MODULE);
+        requireEdit();
         try {
             PrintTemplate updatedTemplate = printTemplateService.updateTemplate(id, templateDetails);
             return ResponseEntity.ok(updatedTemplate);
@@ -71,7 +89,7 @@ public class PrintTemplateController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit(MODULE);
+        requireEdit();
         printTemplateService.deleteTemplate(id);
         return ResponseEntity.ok().build();
     }

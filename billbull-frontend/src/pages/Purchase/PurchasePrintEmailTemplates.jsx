@@ -340,19 +340,23 @@ export default function PurchasePrintEmailTemplates() {
                     (type) => !rows.some((row) => row.type === type.id)
                 );
                 if (missingTypes.length > 0) {
-                    await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
-                        typeId: type.id,
-                        name: `Default ${type.label}`,
-                        isDefault: true,
-                        settings: defaultSettingsFor(type.id, `Default ${type.label}`)
-                    }))));
-                    const refreshed = await getPrintTemplates();
-                    setTemplates(
-                        (refreshed || [])
-                            .filter((template) => CATEGORY_SET.has(template.category))
-                            .map(templateToRow)
-                    );
-                    return;
+                    try {
+                        await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
+                            typeId: type.id,
+                            name: `Default ${type.label}`,
+                            isDefault: true,
+                            settings: defaultSettingsFor(type.id, `Default ${type.label}`)
+                        }))));
+                        const refreshed = await getPrintTemplates();
+                        setTemplates(
+                            (refreshed || [])
+                                .filter((template) => CATEGORY_SET.has(template.category))
+                                .map(templateToRow)
+                        );
+                        return;
+                    } catch (seedError) {
+                        console.warn("Failed to seed default purchase templates", seedError);
+                    }
                 }
             }
 
@@ -365,7 +369,10 @@ export default function PurchasePrintEmailTemplates() {
         }
     }, []);
 
+    const hasSeeded = useRef(false);
     useEffect(() => {
+        if (hasSeeded.current) return;
+        hasSeeded.current = true;
         refresh({ seedMissing: true });
     }, [refresh]);
 

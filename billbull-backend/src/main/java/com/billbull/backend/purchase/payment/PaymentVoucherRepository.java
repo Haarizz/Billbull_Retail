@@ -39,6 +39,10 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId IS NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
     List<Object[]> sumOnAccountPaidGroupedByVendorName();
 
+    /** Batched sum of POSTED/CLEARED payments that ARE linked to an invoice (invoiceId IS NOT NULL), grouped by vendorName. Rows: [vendorName, sum]. */
+    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId IS NOT NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
+    List<Object[]> sumInvoiceLinkedPaymentsGroupedByVendorName();
+
     @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.voucherNumber, 'PAYMENT_MADE', p.amount, CAST(0 AS big_decimal), CAST(p.status AS string)) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
     java.util.List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
             java.time.LocalDate startDate, java.time.LocalDate endDate);
