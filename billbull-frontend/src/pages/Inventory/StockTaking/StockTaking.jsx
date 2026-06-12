@@ -39,6 +39,7 @@ import { searchExactProducts, searchProductByBarcode } from '../../../api/produc
 import { getDepartments } from '../../../api/departmentsApi';
 import { getBrands } from '../../../api/brandsApi';
 import ProductSelector from '../../../components/ProductSelector';
+import { useBranch } from '../../../context/BranchContext';
 import {
     createStockTakeSession,
     getStockTakeSessions,
@@ -1936,6 +1937,7 @@ const SessionView = ({
 };
 
 const StockTaking = () => {
+    const { activeBranchId, isAllBranches } = useBranch();
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'session'
     const [selectedSession, setSelectedSession] = useState(null);
     const [activeTab, setActiveTab] = useState('All Sessions');
@@ -2110,10 +2112,13 @@ const StockTaking = () => {
     React.useEffect(() => {
         const fetchWarehouses = async () => {
             try {
-                const data = await getWarehouses();
+                const branchIdToPass = isAllBranches || activeBranchId === 'ALL' ? null : activeBranchId;
+                const data = await getWarehouses(branchIdToPass);
                 setWarehousesList(Array.isArray(data) ? data : []);
                 if (data && data.length > 0) {
                     setSelectedWarehouse(data[0].name);
+                } else {
+                    setSelectedWarehouse('');
                 }
             } catch (error) {
                 console.error("Error fetching warehouses:", error);
@@ -2123,7 +2128,7 @@ const StockTaking = () => {
         // BB-015: Pre-load departments and brands for the create modal multi-selects
         getDepartments().then(d => setDepartmentsList(Array.isArray(d) ? d : [])).catch(() => {});
         getBrands().then(b => setBrandsList(Array.isArray(b) ? b : [])).catch(() => {});
-    }, []);
+    }, [activeBranchId, isAllBranches]);
 
     const handleStartSession = async () => {
         setIsLoading(true);

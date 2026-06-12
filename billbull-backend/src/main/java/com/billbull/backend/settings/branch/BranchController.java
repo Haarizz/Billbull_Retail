@@ -26,14 +26,12 @@ public class BranchController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<BranchResponse>> list() {
-        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.listAll());
     }
 
     @GetMapping("/default")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BranchResponse> getDefault() {
-        modulePermissionService.requireCanView(MODULE);
         BranchResponse def = service.getDefault();
         return def != null ? ResponseEntity.ok(def) : ResponseEntity.noContent().build();
     }
@@ -41,7 +39,6 @@ public class BranchController {
     @GetMapping("/headquarters")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BranchResponse> getHeadquarters() {
-        modulePermissionService.requireCanView(MODULE);
         BranchResponse hq = service.getHeadquarters();
         return hq != null ? ResponseEntity.ok(hq) : ResponseEntity.noContent().build();
     }

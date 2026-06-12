@@ -304,6 +304,14 @@ public class BatchSelectionService {
         releaseSourceDocument(DOC_TYPE_SALES_ORDER, salesOrderId);
     }
 
+    public void releaseStaleOrderLines(Long salesOrderId, Collection<Long> activeItemIds) {
+        if (salesOrderId == null || activeItemIds == null || activeItemIds.isEmpty()) {
+            return;
+        }
+        releaseAllocations(allocationRepository.findReservedBySourceExcludingLines(
+                DOC_TYPE_SALES_ORDER, salesOrderId, activeItemIds));
+    }
+
     public void releaseSalesInvoice(Long salesInvoiceId) {
         releaseSourceDocument(DOC_TYPE_SALES_INVOICE, salesInvoiceId);
     }

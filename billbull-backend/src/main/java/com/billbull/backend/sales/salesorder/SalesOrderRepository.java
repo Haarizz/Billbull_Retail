@@ -24,7 +24,8 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
           WHERE si.itemCode = :productCode
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID
             )
             AND NOT EXISTS (
               SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
@@ -45,7 +46,8 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
           WHERE si.itemCode IN :productCodes
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID
             )
             AND NOT EXISTS (
               SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
@@ -67,7 +69,8 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
           WHERE si.itemCode IN :productCodes
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID
             )
             AND NOT EXISTS (
               SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
@@ -102,7 +105,7 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
   @Query("SELECT COUNT(o) FROM SalesOrder o WHERE o.orderDate BETWEEN :from AND :to AND o.status = com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED")
   long countConfirmedBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
 
-  @Query("SELECT COALESCE(SUM(o.orderTotal - o.advanceAmount), 0) FROM SalesOrder o WHERE o.status IN (com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED, com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID)")
+  @Query("SELECT COALESCE(SUM(o.orderTotal - o.advanceAmount), 0) FROM SalesOrder o WHERE o.status IN (com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED, com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID, com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID)")
   Double sumOutstandingBalance();
 
   /** Sales-report loader: date-bounded orders with line items fetched in one query. */

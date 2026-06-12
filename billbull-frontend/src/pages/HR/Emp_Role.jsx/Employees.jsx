@@ -56,6 +56,8 @@ import { useBranch } from '../../../context/BranchContext';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
+import { toast } from 'react-hot-toast';
+import { getWarehouses } from '../../../api/warehouseApi';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -149,6 +151,11 @@ const buildInitialEmployeeForm = (defaultBranchName = '') => ({
   email: '',
   currentAddress: '',
   nationality: '',
+  // Emergency contact
+  emergencyContactName: '',
+  emergencyContactRelation: '',
+  emergencyContactPhone: '',
+  // Job & org
   role: '',
   department: '',
   branch: defaultBranchName,
@@ -158,13 +165,34 @@ const buildInitialEmployeeForm = (defaultBranchName = '') => ({
   joinDate: new Date().toISOString().split('T')[0],
   probationPeriod: '3',
   confirmationDate: '',
-  salaryType: 'Monthly',
-  basicSalary: '',
+  // Access
   posAccess: true,
   posPin: '',
   permissionProfile: 'Role-based (Auto)',
+  // Payroll
+  salaryType: 'Monthly',
+  basicSalary: '',
+  // Attendance
+  shiftType: '',
+  workDays: 'Mon-Fri',
+  weeklyOffDays: 2,
+  leavePolicy: '',
+  // Documents
   emiratesId: '',
   expiryDate: '',
+  passportNumber: '',
+  passportIssueDate: '',
+  passportExpiryDate: '',
+  visaType: '',
+  visaNumber: '',
+  visaExpiryDate: '',
+  // Branch access (additional branches beyond default)
+  additionalBranchIds: [],
+  additionalWarehouseIds: [],
+  // Notes & tags
+  hrNotes: '',
+  tags: '',
+  // Login provisioning (UI-only, stripped before submit)
   createLoginAccess: false,
   loginUsername: '',
   temporaryPassword: '',
@@ -373,8 +401,21 @@ const AddEmployeeModal = ({
   const [designationRoles, setDesignationRoles] = useState([]);
   const [designationRolesLoading, setDesignationRolesLoading] = useState(false);
 
+
   // --- Form Data State (Captures all inputs) ---
   const [formData, setFormData] = useState(buildInitialEmployeeForm);
+  const [warehousesList, setWarehousesList] = useState([]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    getWarehouses().then(res => {
+      if (!cancelled) {
+        setWarehousesList(res.data || res.content || res || []);
+      }
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   const branchOptions = useMemo(() => (
     buildUniqueOptions(
@@ -389,9 +430,6 @@ const AddEmployeeModal = ({
     buildUniqueOptions(roleOptions, formData.role)
   ), [roleOptions, formData.role]);
 
-  const resolvedDepartmentOptions = useMemo(() => (
-    buildUniqueOptions(departmentOptions, formData.department)
-  ), [departmentOptions, formData.department]);
 
   const currentEmployeeName = useMemo(() => (
     [employeeToEdit?.firstName, employeeToEdit?.lastName]
@@ -419,7 +457,6 @@ const AddEmployeeModal = ({
       formData.lastName,
       formData.phone,
       formData.email,
-      formData.currentAddress,
     ].every(hasFilledValue);
 
     const roleAssigned = [
@@ -442,8 +479,7 @@ const AddEmployeeModal = ({
 
     const mandatoryDocsUploaded = (
       hasFilledValue(formData.emiratesId) &&
-      hasFilledValue(formData.expiryDate) &&
-      Boolean(emiratesIdFile)
+      hasFilledValue(formData.expiryDate)
     );
 
     return [
@@ -480,6 +516,9 @@ const AddEmployeeModal = ({
         email: employeeToEdit.email || "",
         currentAddress: employeeToEdit.currentAddress || "",
         nationality: employeeToEdit.nationality || "",
+        emergencyContactName: employeeToEdit.emergencyContactName || "",
+        emergencyContactRelation: employeeToEdit.emergencyContactRelation || "",
+        emergencyContactPhone: employeeToEdit.emergencyContactPhone || "",
         role: employeeToEdit.role || "",
         department: employeeToEdit.department || "",
         branch: employeeToEdit.branch || "",
@@ -494,8 +533,30 @@ const AddEmployeeModal = ({
         posAccess: employeeToEdit.posAccess ?? true,
         posPin: employeeToEdit.posPin || "",
         permissionProfile: employeeToEdit.permissionProfile || "",
+        shiftType: employeeToEdit.shiftType || "",
+        workDays: employeeToEdit.workDays || "Mon-Fri",
+        weeklyOffDays: employeeToEdit.weeklyOffDays ?? 2,
+        leavePolicy: employeeToEdit.leavePolicy || "",
         emiratesId: employeeToEdit.emiratesId || "",
-        expiryDate: employeeToEdit.emiratesIdExpiry || ""
+        expiryDate: employeeToEdit.emiratesIdExpiry || "",
+        passportNumber: employeeToEdit.passportNumber || "",
+        passportIssueDate: employeeToEdit.passportIssueDate || "",
+        passportExpiryDate: employeeToEdit.passportExpiryDate || "",
+        visaType: employeeToEdit.visaType || "",
+        visaNumber: employeeToEdit.visaNumber || "",
+        visaExpiryDate: employeeToEdit.visaExpiryDate || "",
+        hrNotes: employeeToEdit.hrNotes || "",
+        tags: employeeToEdit.tags || "",
+        additionalBranchIds: employeeToEdit.additionalBranchIds
+          ? (typeof employeeToEdit.additionalBranchIds === 'string'
+              ? employeeToEdit.additionalBranchIds.split(',').map(Number).filter(Boolean)
+              : employeeToEdit.additionalBranchIds)
+          : [],
+        additionalWarehouseIds: employeeToEdit.additionalWarehouseIds
+          ? (typeof employeeToEdit.additionalWarehouseIds === 'string'
+              ? employeeToEdit.additionalWarehouseIds.split(',').map(Number).filter(Boolean)
+              : employeeToEdit.additionalWarehouseIds)
+          : []
       });
 
       if (employeeToEdit.avatarUrl) {
@@ -506,6 +567,22 @@ const AddEmployeeModal = ({
       return;
     }
 
+    // Restore draft for new employee creation
+    const draft = (() => {
+      try { return JSON.parse(localStorage.getItem('employee_form_draft')); } catch { return null; }
+    })();
+    if (draft) {
+      const restore = window.confirm("A saved draft was found. Restore it?");
+      if (restore) {
+        setFormData({ ...buildInitialEmployeeForm(defaultBranchName), ...draft.formData });
+        setActiveTab(draft.activeTab || 'personal');
+        setCompletedSteps(new Set(draft.completedSteps || []));
+        setAvatarPreview(null);
+        localStorage.removeItem('employee_form_draft');
+        return;
+      }
+      localStorage.removeItem('employee_form_draft');
+    }
     setFormData(buildInitialEmployeeForm(defaultBranchName));
     setAvatarPreview(null);
   }, [isOpen, employeeToEdit]);
@@ -545,6 +622,7 @@ const AddEmployeeModal = ({
 
     return () => { cancelled = true; };
   }, [isOpen]);
+
 
   useEffect(() => {
     if (!isOpen || !canProvisionLoginAccess) {
@@ -661,8 +739,15 @@ const AddEmployeeModal = ({
     }
   };
 
+  const DRAFT_KEY = 'employee_form_draft';
+
   const handleSaveDraft = () => {
-    alert("Employee details saved locally as draft.");
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ formData, activeTab, completedSteps: [...completedSteps] }));
+      alert("Draft saved. Your progress will be restored when you reopen this form.");
+    } catch {
+      alert("Could not save draft to local storage.");
+    }
     onClose();
   };
 
@@ -704,12 +789,16 @@ const AddEmployeeModal = ({
       loginUsername,
       temporaryPassword,
       systemRoleId,
+      additionalBranchIds,
       ...employeeFields
     } = formData;
 
     const submissionData = {
       ...employeeFields,
       emiratesIdExpiry: expiryDate || null,
+      tags: formData.tags || null,
+      // store additional branch IDs as comma-separated string
+      additionalBranchIds: additionalBranchIds.length > 0 ? additionalBranchIds.join(',') : null,
     };
 
     if (employeeToEdit) {
@@ -727,6 +816,7 @@ const AddEmployeeModal = ({
 
     const success = await onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
     if (success) {
+      localStorage.removeItem('employee_form_draft');
       onClose();
     }
   };
@@ -934,26 +1024,38 @@ const AddEmployeeModal = ({
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs font-medium text-slate-500 mb-1">Nationality</label>
-                  <input name="nationality" value={formData.nationality} onChange={handleInputChange} type="text" placeholder="Enter nationality" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <select name="nationality" value={formData.nationality} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742] bg-white">
+                    <option value="">Select nationality</option>
+                    <option value="United Arab Emirates">United Arab Emirates</option>
+                    <option value="India">India</option>
+                    <option value="Pakistan">Pakistan</option>
+                    <option value="Bangladesh">Bangladesh</option>
+                    <option value="Philippines">Philippines</option>
+                    <option value="Egypt">Egypt</option>
+                    <option value="United States">United States</option>
+                    <option value="United Kingdom">United Kingdom</option>
+                    <option value="Saudi Arabia">Saudi Arabia</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </div>
               </div>
             </div>
 
-            {/* Emergency Contact (Visual Only for now) */}
+            {/* Emergency Contact */}
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-6">Emergency Contact</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Contact Name</label>
-                  <input type="text" placeholder="Full name" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <input name="emergencyContactName" value={formData.emergencyContactName} onChange={handleInputChange} type="text" placeholder="Full name" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Relation</label>
-                  <input type="text" placeholder="e.g., Spouse, Parent" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <input name="emergencyContactRelation" value={formData.emergencyContactRelation} onChange={handleInputChange} type="text" placeholder="e.g., Spouse, Parent" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Phone</label>
-                  <input type="text" placeholder="+971 50 XXX XXXX" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <input name="emergencyContactPhone" value={formData.emergencyContactPhone} onChange={handleInputChange} type="text" placeholder="+971 50 XXX XXXX" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
                 </div>
               </div>
             </div>
@@ -990,13 +1092,27 @@ const AddEmployeeModal = ({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Department *</label>
-                  <AutocompleteField
-                    options={resolvedDepartmentOptions}
-                    value={formData.department}
-                    onChange={(nextValue) => updateFormField('department', nextValue)}
-                    placeholder="Enter or select department"
-                    noOptionsMessage="No saved departments yet"
-                  />
+                  <div className="relative">
+                    <select
+                      name="department"
+                      value={formData.department}
+                      onChange={handleInputChange}
+                      className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600"
+                    >
+                      <option value="">Select department</option>
+                      <option value="Store Team">Store Team</option>
+                      <option value="Warehouse Team">Warehouse Team</option>
+                      <option value="Management">Management</option>
+                      <option value="Back Office">Back Office</option>
+                      <option value="Sales">Sales</option>
+                      <option value="Finance & Accounts">Finance &amp; Accounts</option>
+                      <option value="HR">HR</option>
+                      <option value="IT">IT</option>
+                      <option value="Operations">Operations</option>
+                      <option value="Procurement">Procurement</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1232,43 +1348,111 @@ const AddEmployeeModal = ({
             )}
 
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-700 mb-4">Branch & Warehouse Access</h3>
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Saved Branch</div>
-                    <div className="mt-1 text-sm font-medium text-slate-700">
-                      {selectedBranch ? (formatBranchLabel(selectedBranch) || selectedBranch.name) : 'Select a branch in Job & Organization'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Default Warehouse</div>
-                    <div className="mt-1 text-sm font-medium text-slate-700">
-                      {selectedBranch?.defaultWarehouseName || 'No default warehouse configured'}
-                    </div>
-                  </div>
-                </div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-1">Branch & Warehouse Access</h3>
+              <p className="text-xs text-slate-400 mb-5">Select branches this employee can access. The default branch is set in Job &amp; Organization.</p>
 
-                {(selectedBranch?.address || selectedBranch?.phone) && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-200 pt-4">
+              {/* Default branch — read from Job & Org selection */}
+              <div className="mb-4">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Default Branch</div>
+                {selectedBranch ? (
+                  <div className="flex items-center justify-between rounded-md border border-[#F5C742] bg-yellow-50 px-4 py-3">
                     <div>
-                      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Branch Address</div>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {selectedBranch?.address || EMPTY_DATA_LABEL}
-                      </div>
+                      <div className="text-sm font-semibold text-slate-800">{formatBranchLabel(selectedBranch) || selectedBranch.name}</div>
+                      {selectedBranch.defaultWarehouseName && (
+                        <div className="text-[11px] text-slate-500 mt-0.5">Warehouse: {selectedBranch.defaultWarehouseName}</div>
+                      )}
                     </div>
-                    <div>
-                      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Branch Phone</div>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {selectedBranch?.phone || EMPTY_DATA_LABEL}
-                      </div>
-                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-yellow-700 bg-yellow-100 border border-yellow-300 px-2 py-0.5 rounded-full">Default</span>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-xs text-slate-400">
+                    No default branch — select one in Job &amp; Organization tab
                   </div>
                 )}
+              </div>
 
-                <p className="text-xs text-slate-500">
-                  This form now shows only live branch setup data. The old placeholder branch and warehouse options were removed because they were not tied to saved employee data.
-                </p>
+              {/* Additional branches multi-select */}
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Additional Branch Access</div>
+                <div className="space-y-2">
+                  {branches.filter(b => !selectedBranch || b.id !== selectedBranch.id).map(b => {
+                    const isChecked = formData.additionalBranchIds.includes(b.id);
+                    return (
+                      <label
+                        key={b.id}
+                        className={`flex items-center justify-between rounded-md border px-4 py-3 cursor-pointer transition-colors ${isChecked ? 'border-slate-400 bg-slate-50' : 'border-slate-200 hover:bg-slate-50'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              const next = isChecked
+                                ? formData.additionalBranchIds.filter(id => id !== b.id)
+                                : [...formData.additionalBranchIds, b.id];
+                              updateFormField('additionalBranchIds', next);
+                            }}
+                            className="w-4 h-4 text-[#F5C742] rounded border-slate-300 focus:ring-[#F5C742]"
+                          />
+                          <div>
+                            <div className="text-sm font-medium text-slate-700">{formatBranchLabel(b) || b.name}</div>
+                            {b.defaultWarehouseName && (
+                              <div className="text-[11px] text-slate-400">Warehouse: {b.defaultWarehouseName}</div>
+                            )}
+                          </div>
+                        </div>
+                        {b.isDefault && (
+                          <span className="text-[10px] text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">System Default</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                  {branches.length === 0 && (
+                    <div className="text-xs text-slate-400 py-2">No other branches configured</div>
+                  )}
+                  {branches.length > 0 && branches.filter(b => !selectedBranch || b.id !== selectedBranch.id).length === 0 && (
+                    <div className="text-xs text-slate-400 py-2">No additional branches available</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Additional warehouses multi-select */}
+              <div className="mt-6">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Additional Warehouse Access</div>
+                <div className="space-y-2">
+                  {warehousesList.map(w => {
+                    const isChecked = formData.additionalWarehouseIds.includes(w.id);
+                    return (
+                      <label
+                        key={w.id}
+                        className={`flex items-center justify-between rounded-md border px-4 py-3 cursor-pointer transition-colors ${isChecked ? 'border-slate-400 bg-slate-50' : 'border-slate-200 hover:bg-slate-50'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              const next = isChecked
+                                ? formData.additionalWarehouseIds.filter(id => id !== w.id)
+                                : [...formData.additionalWarehouseIds, w.id];
+                              updateFormField('additionalWarehouseIds', next);
+                            }}
+                            className="w-4 h-4 text-[#F5C742] rounded border-slate-300 focus:ring-[#F5C742]"
+                          />
+                          <div>
+                            <div className="text-sm font-medium text-slate-700">{w.name}</div>
+                            {w.code && (
+                              <div className="text-[11px] text-slate-400">Code: {w.code}</div>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {warehousesList.length === 0 && (
+                    <div className="text-xs text-slate-400 py-2">No warehouses available</div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1315,10 +1499,64 @@ const AddEmployeeModal = ({
 
       case 'attendance':
         return (
-          <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm h-64 flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-sm font-semibold text-slate-700 mb-4">Attendance Rules</h3>
-            <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">
-              Attendance configuration coming soon
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Shift & Schedule</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Shift Type</label>
+                  <div className="relative">
+                    <select name="shiftType" value={formData.shiftType} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="">Select shift</option>
+                      <option value="Morning">Morning</option>
+                      <option value="Evening">Evening</option>
+                      <option value="Night">Night</option>
+                      <option value="Flexible">Flexible</option>
+                      <option value="Split">Split</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Work Days</label>
+                  <div className="relative">
+                    <select name="workDays" value={formData.workDays} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Mon-Fri">Monday – Friday</option>
+                      <option value="Mon-Sat">Monday – Saturday</option>
+                      <option value="Mon-Sun">7 Days</option>
+                      <option value="Sat-Thu">Saturday – Thursday</option>
+                      <option value="Sun-Thu">Sunday – Thursday</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Weekly Off Days</label>
+                  <input
+                    name="weeklyOffDays"
+                    value={formData.weeklyOffDays}
+                    onChange={handleInputChange}
+                    type="number"
+                    min="0"
+                    max="7"
+                    placeholder="2"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Leave Policy</label>
+                  <div className="relative">
+                    <select name="leavePolicy" value={formData.leavePolicy} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="">Select policy</option>
+                      <option value="Standard UAE">Standard UAE (30 days annual)</option>
+                      <option value="GCC Standard">GCC Standard</option>
+                      <option value="Probation">Probation (no leave)</option>
+                      <option value="Custom">Custom</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -1328,43 +1566,153 @@ const AddEmployeeModal = ({
           <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-6">Identity Documents</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Emirates ID Number</label>
-                  <input name="emiratesId" value={formData.emiratesId} onChange={handleInputChange} type="text" placeholder="784-XXXX-XXXXXXX-X" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <input
+                    name="emiratesId"
+                    value={formData.emiratesId}
+                    onChange={handleInputChange}
+                    type="text"
+                    placeholder="784-XXXX-XXXXXXX-X"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Expiry Date</label>
-                  <input name="expiryDate" value={formData.expiryDate} onChange={handleInputChange} type="text" placeholder="dd-mm-yyyy" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  <input
+                    name="expiryDate"
+                    value={formData.expiryDate}
+                    onChange={handleInputChange}
+                    type="date"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]"
+                  />
                 </div>
               </div>
 
-              {/* File Upload Section */}
-              <input
-                type="file"
-                ref={docInputRef}
-                className="hidden"
-                accept="application/pdf"
-                onChange={handleDocUpload}
-              />
+              {/* Emirates ID PDF Upload (optional) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-slate-500">Emirates ID Copy <span className="text-slate-400">(PDF — optional)</span></label>
+                  {emiratesIdFile && (
+                    <button
+                      type="button"
+                      onClick={() => setEmiratesIdFile(null)}
+                      className="text-[10px] text-red-500 hover:text-red-600 flex items-center gap-1"
+                    >
+                      <XCircle size={12} /> Remove
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  ref={docInputRef}
+                  className="hidden"
+                  accept="application/pdf"
+                  onChange={handleDocUpload}
+                />
+                <div
+                  onClick={() => docInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center transition-colors cursor-pointer ${emiratesIdFile ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-[#F5C742] hover:bg-yellow-50/10'}`}
+                >
+                  {emiratesIdFile ? (
+                    <div className="flex flex-col items-center text-green-700">
+                      <FileText size={24} className="mb-2" />
+                      <span className="text-xs font-bold">{emiratesIdFile.name}</span>
+                      <span className="text-[10px] opacity-70">{(emiratesIdFile.size / 1024).toFixed(1)} KB</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={20} className="mb-2 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-500">Click to upload Emirates ID Copy</span>
+                      <span className="text-[10px] text-slate-400 mt-1">PDF only · Max 2MB</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
 
-              <div
-                onClick={() => docInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center transition-colors cursor-pointer ${emiratesIdFile ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-[#F5C742] hover:bg-yellow-50/10'}`}
-              >
-                {emiratesIdFile ? (
-                  <div className="flex flex-col items-center text-green-700">
-                    <FileText size={24} className="mb-2" />
-                    <span className="text-xs font-bold">{emiratesIdFile.name}</span>
-                    <span className="text-[10px] opacity-70">{(emiratesIdFile.size / 1024).toFixed(1)} KB</span>
+            {/* Passport section */}
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Passport Details <span className="text-xs font-normal text-slate-400">(optional)</span></h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Passport Number</label>
+                  <input
+                    name="passportNumber"
+                    value={formData.passportNumber || ''}
+                    onChange={handleInputChange}
+                    type="text"
+                    placeholder="Enter passport number"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Issue Date</label>
+                  <input
+                    name="passportIssueDate"
+                    value={formData.passportIssueDate || ''}
+                    onChange={handleInputChange}
+                    type="date"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Expiry Date</label>
+                  <input
+                    name="passportExpiryDate"
+                    value={formData.passportExpiryDate || ''}
+                    onChange={handleInputChange}
+                    type="date"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Visa section */}
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Visa / Residency <span className="text-xs font-normal text-slate-400">(optional)</span></h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Visa Type</label>
+                  <div className="relative">
+                    <select
+                      name="visaType"
+                      value={formData.visaType || ''}
+                      onChange={handleInputChange}
+                      className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600"
+                    >
+                      <option value="">Select type</option>
+                      <option value="Employment">Employment Visa</option>
+                      <option value="Residency">Residency Visa</option>
+                      <option value="Visit">Visit Visa</option>
+                      <option value="Citizen">UAE Citizen</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   </div>
-                ) : (
-                  <>
-                    <Upload size={20} className="mb-2 text-slate-400" />
-                    <span className="text-xs font-medium text-slate-500">Upload Emirates ID Copy</span>
-                    <span className="text-[10px] text-slate-400 mt-1">PDF, Max 2MB</span>
-                  </>
-                )}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Visa Number</label>
+                  <input
+                    name="visaNumber"
+                    value={formData.visaNumber || ''}
+                    onChange={handleInputChange}
+                    type="text"
+                    placeholder="Enter visa number"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Visa Expiry Date</label>
+                  <input
+                    name="visaExpiryDate"
+                    value={formData.visaExpiryDate || ''}
+                    onChange={handleInputChange}
+                    type="date"
+                    className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1390,27 +1738,49 @@ const AddEmployeeModal = ({
           </div>
         );
 
-      case 'notes':
+      case 'notes': {
+        const activeTags = formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+        const toggleTag = (tag) => {
+          const next = activeTags.includes(tag)
+            ? activeTags.filter(t => t !== tag)
+            : [...activeTags, tag];
+          updateFormField('tags', next.join(','));
+        };
         return (
           <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-4">HR Notes (Private)</h3>
-              <textarea placeholder="Internal notes visible only to HR" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 h-32 resize-none focus:outline-none focus:border-[#F5C742]"></textarea>
+              <textarea
+                name="hrNotes"
+                value={formData.hrNotes}
+                onChange={handleInputChange}
+                placeholder="Internal notes visible only to HR"
+                className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 h-32 resize-none focus:outline-none focus:border-[#F5C742]"
+              />
             </div>
 
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-4">Tags</h3>
               <div className="flex flex-wrap gap-2">
                 {['Keyholder', 'Night Shift', 'Cash Handling', 'Driver'].map(tag => (
-                  <label key={tag} className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-full text-xs cursor-pointer hover:bg-slate-50">
-                    <input type="checkbox" className="w-3 h-3 text-[#F5C742] rounded focus:ring-[#F5C742]" />
-                    <span className="text-slate-600">{tag}</span>
+                  <label key={tag} className={`flex items-center gap-2 px-3 py-1.5 border rounded-full text-xs cursor-pointer transition-colors ${activeTags.includes(tag) ? 'border-[#F5C742] bg-yellow-50 text-yellow-800 font-medium' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}>
+                    <input
+                      type="checkbox"
+                      checked={activeTags.includes(tag)}
+                      onChange={() => toggleTag(tag)}
+                      className="w-3 h-3 text-[#F5C742] rounded focus:ring-[#F5C742]"
+                    />
+                    <span>{tag}</span>
                   </label>
                 ))}
               </div>
+              {activeTags.length > 0 && (
+                <p className="mt-3 text-[10px] text-slate-400">Selected: {activeTags.join(', ')}</p>
+              )}
             </div>
           </div>
         );
+      }
 
       case 'review':
         // Check completions for review
@@ -2432,11 +2802,11 @@ const Employees = () => {
       if (isEditMode) {
         // UPDATE LOGIC
         await employeesApi.updateEmployee(formData.id, backendPayload, avatarFile);
-        alert("Employee updated successfully.");
+        toast.success("Employee updated successfully.");
       } else {
         // CREATE LOGIC
         await employeesApi.createEmployee(backendPayload, avatarFile);
-        alert("Employee creation initiated. Approval workflow started.");
+        toast.success("Employee creation initiated. Approval workflow started.");
         setActiveCategory("Access & Permissions"); // Auto-switch to view request
       }
 
@@ -2445,7 +2815,7 @@ const Employees = () => {
         return true;
       } catch (e) {
         console.error(e);
-        alert(e.response?.data?.message || "Error saving employee. Check console.");
+        toast.error(e.response?.data?.message || "Error saving employee. Check console.");
         return false;
       }
     };

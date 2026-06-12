@@ -99,9 +99,10 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}) =
         const itemFooterDisc = r.taxableAmount * footerDiscountRatio;
         const netAfterFooter = Math.max(0, r.taxableAmount - itemFooterDisc);
 
-        // Tax is always computed on net after ALL discounts (item + footer).
-        // Since explicitTaxAmount from the backend already has footer discount applied, we use it directly.
-        const taxAmount = (r.explicitLineTotal > 0 && r.explicitTaxAmount != null)
+        // Tax is computed on net after ALL discounts (item + footer).
+        // Only use the stored taxAmount when no footer discount is active — with a
+        // footer discount the taxable base is reduced first, so we must recalculate.
+        const taxAmount = (footerDiscountRatio === 0 && r.explicitLineTotal > 0 && r.explicitTaxAmount != null)
             ? r.explicitTaxAmount
             : netAfterFooter * (r.taxPercent / 100);
         const lineTotal = netAfterFooter + taxAmount;

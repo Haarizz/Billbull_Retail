@@ -775,9 +775,9 @@ const SalesInvoice = () => {
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
                 tax: Number(i.tax) || 5,
-                taxAmt: Number(i.taxAmt) || 0,
-                gross: Number(i.total) || 0,
-                net: Number(i.total) || 0,
+                taxAmt: 0,
+                gross: 0,
+                net: 0,
                 cost: 0
             }));
 
@@ -857,9 +857,9 @@ const SalesInvoice = () => {
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
                 tax: Number(i.tax) || 5,
-                taxAmt: Number(i.taxAmt) || 0,
-                gross: Number(i.total) || 0,
-                net: Number(i.total) || 0,
+                taxAmt: 0,
+                gross: 0,
+                net: 0,
                 cost: Number(i.cost) || 0,
                 // Inherit batch picks from the SO so the invoice editor shows
                 // "Batches N/N" instead of "0/N", and the auto-DN can reuse them.
@@ -1186,7 +1186,7 @@ const SalesInvoice = () => {
         setIsGeneratedFromDN(false);
         setPaymentMode('');
         setPaymentTerms('Immediate');
-        setSalesperson('John Doe');
+        setSalesperson('');
         setBranch(activeBranch?.name || defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
@@ -1232,6 +1232,17 @@ const SalesInvoice = () => {
         setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
+
+        // Auto-fill salesperson from customer default
+        if (cust.salesman) setSalesperson(cust.salesman);
+
+        // Auto-fill item warehouse from customer default warehouse
+        if (cust.warehouse) {
+            const matchedWh = warehousesList.find(w => w.name === cust.warehouse);
+            if (matchedWh) {
+                setItems(prev => prev.map(item => ({ ...item, warehouseId: matchedWh.id })));
+            }
+        }
 
         // Fetch real outstanding balance for this customer (QA-035)
         if (cust.code) {
@@ -4855,6 +4866,7 @@ const SalesInvoice = () => {
                 <InvoiceSettlementModal
                     invoice={settlementInvoice}
                     customer={selectedCustomer || {}}
+                    invoiceTotal={settlementInvoice.invoiceTotal != null ? settlementInvoice.invoiceTotal : netTotal}
                     netTotal={settlementInvoice.balance != null ? settlementInvoice.balance : netTotal}
                     currency={invoiceCurrency}
                     bankAccountOptions={bankAccountOptions}

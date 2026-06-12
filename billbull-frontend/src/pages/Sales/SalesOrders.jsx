@@ -228,6 +228,8 @@ const SalesOrders = () => {
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
   const [showItemError, setShowItemError] = useState(false);
+  // null | 'need-draft' | 'need-batches'
+  const [batchGuideStep, setBatchGuideStep] = useState(null);
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
@@ -360,6 +362,8 @@ const SalesOrders = () => {
   const [paymentNotes, setPaymentNotes] = useState('');
   const [bankAccountOptions, setBankAccountOptions] = useState([]);
 
+  const [pendingPaymentSave, setPendingPaymentSave] = useState(false);
+
   // Payment Modal State
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -469,6 +473,9 @@ const SalesOrders = () => {
         customerCode: qtn.customerCode ?? '',
         customerName: qtn.customerName ?? qtn.customer,
         billDiscount: qtn.billDiscount,
+        billDiscountType: qtn.billDiscountType,
+        billDiscountFixed: qtn.billDiscountFixed,
+        billDiscountAmount: qtn.billDiscountAmount,
         shippingAddress: qtn.shippingAddress || '',
         items: qtn.items || []
       });
@@ -1121,19 +1128,32 @@ const SalesOrders = () => {
     setIsPaymentModalOpen(true);
   };
 
-  const handleAddPaymentFromModal = () => {
+  const handleAddPaymentFromModal = async () => {
     if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
       return alert("Please enter a valid amount.");
     }
-    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+    const outstanding = Math.max(orderTotal - Number(advanceAmount), 0);
+    if (Number(modalPaymentAmount) > outstanding + 0.001) {
+      return alert(`Payment amount cannot exceed the outstanding balance of ${outstanding.toFixed(2)}.`);
+    }
+    const newAdvance = Number(advanceAmount) + Number(modalPaymentAmount);
+    setAdvanceAmount(newAdvance);
     setPaymentMethod(modalPaymentMode);
     setPaymentRef(modalPaymentRef);
     setPaymentNotes(modalNotes);
     setIsPaymentModalOpen(false);
+
+    if (orderId) {
+      // SO already exists — persist immediately so the receipt voucher is created now
+      await saveOrUpdateOrder('CONFIRMED', { overrideAdvance: newAdvance, overridePaymentMethod: modalPaymentMode, overridePaymentRef: modalPaymentRef });
+    } else {
+      // New unsaved SO — flag that the user must save to persist the payment
+      setPendingPaymentSave(true);
+    }
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
-  const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
+  const saveOrUpdateOrder = async (targetStatus = 'DRAFT', overrides = {}) => {
     if (!orderAutoNumbering && !soNumber.trim()) {
       alert('Please enter a sales order number.');
       return;
@@ -1169,9 +1189,9 @@ const SalesOrders = () => {
       vatMode,
 
       // Payment & Delivery
-      advanceAmount: Number(advanceAmount),
-      paymentMethod,
-      paymentReference: paymentRef,
+      advanceAmount: overrides.overrideAdvance !== undefined ? Number(overrides.overrideAdvance) : Number(advanceAmount),
+      paymentMethod: overrides.overridePaymentMethod !== undefined ? overrides.overridePaymentMethod : paymentMethod,
+      paymentReference: overrides.overridePaymentRef !== undefined ? overrides.overridePaymentRef : paymentRef,
       deliveryType,
       expectedDeliveryDate: expectedDelivery,
       shippingAddress,
@@ -1270,15 +1290,21 @@ const SalesOrders = () => {
         && savedOrder.items.some(item => item.batchControlled);
       if (targetStatus === 'DRAFT' && hasBatchLines) {
         setActiveTab('create');
-        alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the Sales Order.');
+        setBatchGuideStep('need-batches');
       } else {
+        setBatchGuideStep(null);
         setActiveTab('list');
       }
+      setPendingPaymentSave(false);
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
       const msg = e?.response?.data?.message || e?.response?.data || e?.message || "Please check inputs.";
-      alert(`Failed to save Sales Order: ${msg}`);
+      if (typeof msg === 'string' && msg.toLowerCase().includes('batch-controlled')) {
+        setBatchGuideStep('need-draft');
+      } else {
+        alert(`Failed to save Sales Order: ${msg}`);
+      }
     }
   };
 
@@ -1336,7 +1362,10 @@ const SalesOrders = () => {
     setLinkedQtn(qtn.qtnNo);
     setLinkedPi('');
     setLinkedSourceSearch(qtn.qtnNo || '');
-    setBillDiscount(Number(qtn.billDiscount) || 0);
+    setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
+    setBillDiscount(qtn.billDiscountType === 'amount'
+      ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
+      : Number(qtn.billDiscount) || 0);
 
     if (qtn.customer || qtn.customerId || qtn.customerCode) {
       // Centralised resolution: id → code → name → fuzzy. Falls back to a thin
@@ -1444,6 +1473,7 @@ const SalesOrders = () => {
 
     setAttachmentName('No file chosen');
     setAttachmentFile(null);
+    setBatchGuideStep(null);
     setActiveTab('create');
   };
 
@@ -1469,6 +1499,7 @@ const SalesOrders = () => {
     setBillDiscount(0);
     setBillDiscountType('percent');
     setAdvanceAmount(0);
+    setPendingPaymentSave(false);
     setPaymentMethod('Cash');
     setPaymentRef('');
     setDeliveryType('Delivery');
@@ -1480,6 +1511,7 @@ const SalesOrders = () => {
     setStatus('DRAFT');
     setAttachmentName('No file chosen');
     setAttachmentFile(null);
+    setBatchGuideStep(null);
     setActiveTab('create');
     setFocusedItem(null);
   };
@@ -1967,7 +1999,52 @@ const SalesOrders = () => {
 
       {/* ======================= VIEW: CREATE ======================= */}
       {activeTab === 'create' && (
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 relative mb-24 md:mb-16">
+        <div className="flex flex-col gap-4 flex-1 relative mb-24 md:mb-16">
+
+        {/* BATCH GUIDE BANNER */}
+        {batchGuideStep && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg px-5 py-4 flex items-start gap-4 shadow-sm">
+            <div className="flex-shrink-0 mt-0.5">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                <AlertTriangle size={16} className="text-amber-600" />
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800 mb-2">Batch selection required to confirm this order</p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {/* Step 1 */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-draft' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-white text-emerald-700 border-emerald-300 line-through opacity-60'}`}>
+                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-draft' ? 'bg-white text-amber-600' : 'bg-emerald-500 text-white'}`}>
+                    {batchGuideStep === 'need-draft' ? '1' : '✓'}
+                  </span>
+                  Save as Draft
+                </div>
+                <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                {/* Step 2 */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-batches' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-batches' ? 'bg-white text-amber-600' : 'bg-slate-300 text-slate-500'}`}>2</span>
+                  Select batches for each item
+                </div>
+                <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                {/* Step 3 */}
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border bg-slate-100 text-slate-400 border-slate-200">
+                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-300 text-slate-500">3</span>
+                  Confirm Order
+                </div>
+              </div>
+              <p className="text-xs text-amber-700 mt-2">
+                {batchGuideStep === 'need-draft'
+                  ? 'Click "Save Draft" first, then use the batch selector on each line to assign stock batches before confirming.'
+                  : 'Click the batch selector icon on each highlighted item row to assign stock batches, then click "Confirm Order".'}
+              </p>
+            </div>
+            <button onClick={() => setBatchGuideStep(null)} className="flex-shrink-0 text-amber-400 hover:text-amber-600 transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
 
           {/* LEFT COLUMN */}
           <div className="xl:col-span-1 space-y-4">
@@ -2122,42 +2199,6 @@ const SalesOrders = () => {
               onCustomerCreated={fetchAllData}
             />
 
-            {/* Delivery Instructions */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
-                Delivery Instructions
-              </h3>
-              <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none" />
-            </div>
-
-            {/* 4. ATTACHMENTS (Moved to Left Column) */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 min-h-[180px] flex flex-col">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
-                <Paperclip size={16} className="text-slate-400" /> Attachments
-              </h3>
-              <div className="border border-dashed border-slate-300 rounded p-4 text-center flex-1 flex flex-col items-center justify-center">
-                <p className="text-xs text-slate-500 mb-2">Upload (Customer PO, PI, LPO, etc.)</p>
-                <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <label className="cursor-pointer">
-                    <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-colors">Choose File</span>
-                    <input type="file" disabled={isLocked} className="hidden" onChange={handleFileUpload} accept="image/*,.pdf" />
-                  </label>
-
-                  <div className="flex items-center gap-1 mt-1 justify-center w-full">
-                    <span className="text-xs text-slate-500 truncate max-w-[150px]">{attachmentName}</span>
-                    {attachmentName !== 'No file chosen' && !isLocked && (
-                      <button
-                        onClick={handleRemoveFile}
-                        className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
-                        title="Remove file"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div> {/* End Left Column */}
 
           {/* ======================= MIDDLE COLUMN ======================= */}
@@ -2432,8 +2473,48 @@ const SalesOrders = () => {
               </div>
             </div>
 
-            {/* 4. Combined Attachments & Notes */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 4. Delivery Instructions, Attachments & Notes */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+              {/* Delivery Instructions */}
+              <div className="h-full">
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 h-full">
+                  <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <Truck size={16} className="text-slate-400" /> Delivery Instructions
+                  </h3>
+                  <textarea rows="5" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-3 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none leading-relaxed min-h-[120px]" />
+                </div>
+              </div>
+
+              {/* Attachments */}
+              <div className="h-full">
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                  <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <Paperclip size={16} className="text-slate-400" /> Attachments
+                  </h3>
+                  <div className="border border-dashed border-slate-300 rounded p-4 text-center flex-1 flex flex-col items-center justify-center">
+                    <p className="text-xs text-slate-500 mb-2">Upload (Customer PO, PI, LPO, etc.)</p>
+                    <div className="flex flex-col items-center justify-center gap-2 w-full">
+                      <label className="cursor-pointer">
+                        <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-colors">Choose File</span>
+                        <input type="file" disabled={isLocked} className="hidden" onChange={handleFileUpload} accept="image/*,.pdf" />
+                      </label>
+                      <div className="flex items-center gap-1 mt-1 justify-center w-full">
+                        <span className="text-xs text-slate-500 truncate max-w-[150px]">{attachmentName}</span>
+                        {attachmentName !== 'No file chosen' && !isLocked && (
+                          <button
+                            onClick={handleRemoveFile}
+                            className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                            title="Remove file"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* Notes */}
               <div className="h-full">
@@ -2534,6 +2615,14 @@ const SalesOrders = () => {
                     <span className={`px-2 py-1 rounded text-xs font-bold border ${balanceDue > 0 ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
                       {balanceDue > 0 ? 'Partially Paid / Unpaid' : 'Fully Paid'}
                     </span>
+                  </div>
+                )}
+
+                {/* Unsaved payment warning — only shown for new (unsaved) orders */}
+                {pendingPaymentSave && !orderId && (
+                  <div className="mt-2 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded p-2">
+                    <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                    <span className="text-[10px] text-amber-700 font-semibold">Payment not yet saved. Save or Confirm the order to record this payment.</span>
                   </div>
                 )}
               </div>
@@ -2674,7 +2763,7 @@ const SalesOrders = () => {
                   </button>
                 </>
               )}
-              {status !== 'INVOICED' && (
+              {status !== 'INVOICED' && status !== 'DRAFT' && (
                 <button
                   onClick={handleOpenPaymentModal}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
@@ -2693,6 +2782,7 @@ const SalesOrders = () => {
             onSave={() => saveOrUpdateOrder('DRAFT')}
             onPrint={handlePrintClick}
           />
+        </div>
         </div>
       )}
 

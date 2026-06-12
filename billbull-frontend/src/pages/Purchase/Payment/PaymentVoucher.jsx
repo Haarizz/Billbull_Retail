@@ -24,6 +24,7 @@ import {
     Check,
     Printer
 } from 'lucide-react';
+import SearchableDropdown from '../../../components/SearchableDropdown';
 import { useCompany } from '../../../context/CompanyContext';
 import { useBranch } from '../../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
@@ -924,29 +925,31 @@ const PaymentVoucher = () => {
                             <div className="lg:col-span-2 space-y-6">
 
                                 {/* Vendor Selection & Balance */}
-                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6" onClick={() => setIsVendorOpen(false)}>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Select Vendor <span className="text-red-500">*</span></label>
-                                    <div className="mb-6 relative">
-                                        <div
-                                            onClick={(e) => { e.stopPropagation(); setIsVendorOpen(!isVendorOpen); }}
-                                            className="w-full text-sm px-3 py-2.5 border border-slate-200 rounded bg-white flex justify-between items-center cursor-pointer hover:border-yellow-400 transition-all"
-                                        >
-                                            {selectedVendor
-                                                ? <span className="font-bold text-slate-700">{selectedVendor.name}</span>
-                                                : <span className="text-slate-400">Search or Select Vendor...</span>}
-                                            <ChevronDown className="w-4 h-4 text-slate-400" />
-                                        </div>
-                                        {isVendorOpen && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
-                                                {vendors.map(v => (
-                                                    <div key={v.id} onClick={() => handleVendorSelect(v)}
-                                                        className="px-3 py-2.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0">
-                                                        <span className="font-bold text-slate-800">{v.name}</span>
-                                                        {v.code && <span className="text-slate-400 ml-1">• {v.code}</span>}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                    <div className="mb-6">
+                                        <SearchableDropdown
+                                            options={vendors.map(v => ({
+                                                value: v.id || v.code,
+                                                label: v.name,
+                                                subtitle: v.code ? `• ${v.code}` : undefined
+                                            }))}
+                                            value={selectedVendor?.id || selectedVendor?.code}
+                                            onChange={(val) => {
+                                                const vendor = vendors.find(v => (v.id || v.code) === val);
+                                                if (vendor) {
+                                                    handleVendorSelect(vendor);
+                                                } else {
+                                                    setSelectedVendor(null);
+                                                    setSelectedInvoices({});
+                                                    setSettleAmounts({});
+                                                    setReceivedAmount('');
+                                                    setVendorInvoices([]);
+                                                }
+                                            }}
+                                            placeholder="Search or Select Vendor..."
+                                            className="w-full"
+                                        />
                                     </div>
                                     {selectedVendor && (
                                         <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex items-center gap-3">

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import com.billbull.backend.util.DocumentOrderingUtil;
+import org.hibernate.Hibernate;
 
 @Service
 public class PaymentVoucherService {
@@ -114,8 +115,9 @@ public class PaymentVoucherService {
 
         PaymentVoucher saved = repository.save(voucher);
         saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
-
-        return repository.save(saved);
+        PaymentVoucher result = repository.save(saved);
+        Hibernate.initialize(result.getBranch());
+        return result;
     }
 
     @Transactional
@@ -135,7 +137,9 @@ public class PaymentVoucherService {
             applyPaymentToInvoice(voucher);
         }
 
-        return repository.save(voucher);
+        PaymentVoucher result = repository.save(voucher);
+        Hibernate.initialize(result.getBranch());
+        return result;
     }
 
     private void applyPaymentToInvoice(PaymentVoucher voucher) {

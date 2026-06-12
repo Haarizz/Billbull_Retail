@@ -22,6 +22,7 @@ const InvoiceSettlementModal = ({
     invoice,
     customer = {},
     netTotal = 0,
+    invoiceTotal,
     currency = 'AED',
     bankAccountOptions = [],
     isSaving = false,
@@ -35,7 +36,12 @@ const InvoiceSettlementModal = ({
     onWhatsAppVoucher,
 }) => {
     const QUICK_MODES = hideCredit ? ALL_QUICK_MODES.filter(m => m !== 'Credit') : ALL_QUICK_MODES;
+    // invoiceAmount is what the user needs to pay now (the remaining balance)
     const invoiceAmount = Number(netTotal) || 0;
+    // displayTotal is the full invoice face value (for the "Invoice Amount" header card)
+    const displayTotal = Number(invoiceTotal) > 0 ? Number(invoiceTotal) : invoiceAmount;
+    // alreadyPaid is what was collected before this settlement (e.g. SO advance)
+    const alreadyPaid = Math.max(displayTotal - invoiceAmount, 0);
     const money = (v) => formatCurrencyDisplay(Number(v) || 0, currency);
 
     const [phase, setPhase] = useState('input'); // 'input' | 'done'
@@ -179,11 +185,13 @@ const InvoiceSettlementModal = ({
                     <div className="grid grid-cols-3 gap-3">
                         <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-center">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice Amount</p>
-                            <p className="text-base font-bold text-slate-800 mt-1">{money(invoiceAmount)}</p>
+                            <p className="text-base font-bold text-slate-800 mt-1">{money(displayTotal)}</p>
                         </div>
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Paid</p>
-                            <p className="text-base font-bold text-emerald-700 mt-1">{money(phase === 'done' ? recordedTotal : totalSettled)}</p>
+                            <p className="text-base font-bold text-emerald-700 mt-1">
+                                {money(alreadyPaid + (phase === 'done' ? recordedTotal : totalSettled))}
+                            </p>
                         </div>
                         <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-center">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Balance Due</p>

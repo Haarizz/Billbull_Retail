@@ -12,5 +12,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
 
     boolean existsByReference(String reference);
 
+    Optional<JournalEntry> findByReference(String reference);
+
     java.util.List<JournalEntry> findByStatus(String status);
 }

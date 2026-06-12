@@ -697,8 +697,22 @@ const Ledger = () => {
           {/* STATS */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
-                const typeAccounts = accounts.filter(a => a.group === type && a.status !== 'archived');
-                const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
+                const typeAccounts = accounts.filter(a => a.group === type && a.status !== 'archived' && !a.isGroup);
+                let total = 0;
+                typeAccounts.forEach(acc => {
+                  const amount = parseFloat(acc.balanceAmount || 0);
+                  if (amount === 0) return;
+                  
+                  const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
+                  const isDebit = balType.toLowerCase().startsWith('dr');
+                  const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
+                  
+                  if (isCrNormal) {
+                    total += isDebit ? -amount : amount;
+                  } else {
+                    total += isDebit ? amount : -amount;
+                  }
+                });
                 
                 let icon = Wallet; 
                 let color = 'text-blue-700'; 
