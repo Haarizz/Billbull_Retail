@@ -776,7 +776,12 @@ const Quotations = () => {
             items: data.items.map(i => calculateRow({
                 id: i.id || Math.random(),
                 code: i.itemCode,
-                name: i.itemName || i.name || '',
+                name: i.itemName || i.productName || i.name || '',
+                sku: i.sku || i.skuCode || i.productSku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || i.shortDescription || '',
+                detailedDesc: i.detailedDesc || i.detailedDescription || '',
+                localName: i.localName || i.arabicName || '',
                 barcode: i.barcode || '',
                 image: i.primaryImage || i.image || '',
                 desc: i.description,
@@ -1546,7 +1551,12 @@ const Quotations = () => {
                     focUnit: i.focUnit || 'PCS',
                     taxAmount: itemTax,
                     lineTotal: itemNet + itemTax,
-                    remarks: i.remarks
+                    remarks: i.remarks,
+                    sku: i.sku || '',
+                    brandName: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
+                    detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || ''
                 };
             })
         };

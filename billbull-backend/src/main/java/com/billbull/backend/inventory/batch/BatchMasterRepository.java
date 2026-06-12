@@ -102,4 +102,12 @@ public interface BatchMasterRepository extends JpaRepository<BatchMaster, Long> 
             WHERE b.id IN :ids
             """)
     List<BatchMaster> findByIdInForUpdate(@Param("ids") Collection<Long> ids);
+
+    @Query("""
+            SELECT b.batchNumber
+            FROM BatchMaster b
+            WHERE b.binId = :binId
+              AND b.status = com.billbull.backend.inventory.batch.BatchStatus.RESERVED
+            """)
+    List<String> findReservedBatchNumbersByBin(@Param("binId") Long binId);
 }

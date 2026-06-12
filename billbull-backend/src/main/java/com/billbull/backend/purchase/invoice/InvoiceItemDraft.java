@@ -24,6 +24,10 @@ public class InvoiceItemDraft {
     private BigDecimal lineTotal;
     private String remarks;
     private String detailedDesc;
+    private String sku;
+    private String brandName;
+    private String shortDesc;
+    private String localName;
     private Boolean batchEnabled;
     private List<InvoiceItemBatchDraft> batches;
 
@@ -191,5 +195,37 @@ public class InvoiceItemDraft {
 
     public void setBatches(List<InvoiceItemBatchDraft> batches) {
         this.batches = batches;
+    }
+
+    public String getSku() {
+        return sku;
+    }
+
+    public void setSku(String sku) {
+        this.sku = sku;
+    }
+
+    public String getBrandName() {
+        return brandName;
+    }
+
+    public void setBrandName(String brandName) {
+        this.brandName = brandName;
+    }
+
+    public String getShortDesc() {
+        return shortDesc;
+    }
+
+    public void setShortDesc(String shortDesc) {
+        this.shortDesc = shortDesc;
+    }
+
+    public String getLocalName() {
+        return localName;
+    }
+
+    public void setLocalName(String localName) {
+        this.localName = localName;
     }
 }

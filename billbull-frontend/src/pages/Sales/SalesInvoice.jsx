@@ -22,6 +22,7 @@ import {
     Edit,
     ArrowLeft,
     X, // ✅ Added X for Modal Close
+    AlertTriangle,
     Box, // ✅ Added Box for product image placeholder
     Menu,
     ChevronUp,
@@ -302,6 +303,8 @@ const SalesInvoice = () => {
 
     // ✅ Invoice ID for tracking edit vs create
     const [invoiceId, setInvoiceId] = useState(null);
+    // null | 'need-draft' | 'need-batches'
+    const [batchGuideStep, setBatchGuideStep] = useState(null);
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
 
     // --- FORM STATES ---
@@ -1197,6 +1200,7 @@ const SalesInvoice = () => {
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
         setInvoiceNotes('');
+        setBatchGuideStep(null);
         setActiveTab('create');
     };
 
@@ -1915,6 +1919,18 @@ const SalesInvoice = () => {
         }
         const hasItems = items.some(i => i && (i.code || i.name) && Number(i.qty) > 0);
         if (!hasItems) { alert("Add at least one item before saving."); return; }
+
+        if (mode === 'Confirmed' && salesType === 'DIRECT_SALE') {
+            const incompleteBatchItems = items.filter(i =>
+                i && i.batchControlled &&
+                Number(i.batchSelectedQuantity || 0) < Number(i.baseRequiredQuantity || i.qty || 0)
+            );
+            if (incompleteBatchItems.length > 0) {
+                setBatchGuideStep(!invoiceId ? 'need-draft' : 'need-batches');
+                return;
+            }
+        }
+
         setPreviewMode(mode);
     };
 
@@ -2091,7 +2107,7 @@ const SalesInvoice = () => {
                 && savedInvoice.items.some(item => item.batchControlled);
             if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
                 setActiveTab('create');
-                alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the invoice.');
+                setBatchGuideStep('need-batches');
             } else if (newStatus === 'Confirmed') {
                 // Invoice confirmed — offer AR settlement before returning to the list.
                 setSettlementInvoice(savedInvoice);
@@ -2109,7 +2125,13 @@ const SalesInvoice = () => {
         if (updatedInvoice?.id) {
             setInvoiceId(updatedInvoice.id);
             setStatus(updatedInvoice.status || status);
-            setItems((updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            const updatedItems = (updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index));
+            setItems(updatedItems);
+            const allBatchesDone = updatedItems.every(i =>
+                !i.batchControlled ||
+                Number(i.batchSelectedQuantity || 0) >= Number(i.baseRequiredQuantity || i.qty || 0)
+            );
+            if (allBatchesDone) setBatchGuideStep(null);
             await fetchInvoices();
         }
     };
@@ -2346,10 +2368,12 @@ const SalesInvoice = () => {
     // phase both close the modal and return to the list.
     const handleSettlementSkip = () => {
         setSettlementInvoice(null);
+        setBatchGuideStep(null);
         setActiveTab('list');
     };
     const handleSettlementDone = () => {
         setSettlementInvoice(null);
+        setBatchGuideStep(null);
         setActiveTab('list');
     };
 
@@ -3580,6 +3604,46 @@ const SalesInvoice = () => {
                                     <p className="text-xs text-amber-700">
                                         <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create a Picking delivery note, mark it delivered, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
                                     </p>
+                                </div>
+                            )}
+
+                            {/* BATCH GUIDE BANNER */}
+                            {batchGuideStep && (
+                                <div className="bg-amber-50 border border-amber-300 rounded-lg px-5 py-4 flex items-start gap-4 shadow-sm">
+                                    <div className="flex-shrink-0 mt-0.5">
+                                        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                                            <AlertTriangle size={16} className="text-amber-600" />
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-amber-800 mb-2">Batch selection required to confirm this invoice</p>
+                                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-draft' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-white text-emerald-700 border-emerald-300 line-through opacity-60'}`}>
+                                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-draft' ? 'bg-white text-amber-600' : 'bg-emerald-500 text-white'}`}>
+                                                    {batchGuideStep === 'need-draft' ? '1' : '✓'}
+                                                </span>
+                                                Save as Draft
+                                            </div>
+                                            <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-batches' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-batches' ? 'bg-white text-amber-600' : 'bg-slate-300 text-slate-500'}`}>2</span>
+                                                Select batches for each item
+                                            </div>
+                                            <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border bg-slate-100 text-slate-400 border-slate-200">
+                                                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-300 text-slate-500">3</span>
+                                                Confirm Invoice
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-amber-700 mt-2">
+                                            {batchGuideStep === 'need-draft'
+                                                ? 'Click "Save Draft" first, then use the batch selector on each line to assign stock batches before confirming.'
+                                                : 'Click the batch selector button on each highlighted item row to assign stock batches, then click "Confirm".'}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setBatchGuideStep(null)} className="flex-shrink-0 text-amber-400 hover:text-amber-600 transition-colors">
+                                        <X size={16} />
+                                    </button>
                                 </div>
                             )}
 

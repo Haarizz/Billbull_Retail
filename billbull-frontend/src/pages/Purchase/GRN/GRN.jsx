@@ -59,9 +59,10 @@ import {
   getZoneLocators,
   getLocatorBins
 } from '../../../api/warehouseApi';
-import { getProducts, searchProductByBarcode } from '../../../api/productsApi'; // Import getProducts
+import { searchProductByBarcode } from '../../../api/productsApi';
 import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
+import LocationSelector from '../../../components/common/LocationSelector';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
@@ -238,11 +239,10 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                     <div className="text-[9px] text-slate-400">V001</div>
                   </td>
                   <td className="px-6 py-4 text-slate-600 text-[11px]">
-                    {row.branchName ? (
-                      <>
-                        <div className="font-medium">{row.branchName}</div>
-                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                      </>
+                    {row.branchCode ? (
+                      <div className="font-medium">{row.branchCode}</div>
+                    ) : row.branchName ? (
+                      <div className="font-medium">{row.branchName}</div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
@@ -657,8 +657,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
 
   const [lpoList, setLpoList] = useState([]);
-  const [products, setProducts] = useState([]); // State for products
-  const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false); // State for Product Selector
+  const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
 
   // Scan bar state
   const [isScanOpen, setIsScanOpen] = useState(false);
@@ -737,24 +736,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       setWarehouses(Array.isArray(data) ? data : []);
     }).catch(err => console.error("Failed to fetch warehouses", err));
 
-    // Fetch products for the selector
-    getProducts().then((data) => {
-      const normalizedProducts = (data || []).map(p => ({
-        id: p.product?.id || p.id,
-        code: p.product?.code || p.code,
-        name: p.product?.name || p.name,
-        unit: p.inventory?.defaultUnit?.name || p.unit || '',
-        stock: p.inventory?.onHand || p.stock || 0,
-        sku: p.product?.sku || p.sku || '-',
-        salesPrice: p.pricing?.salesPrice || p.pricing?.price || p.salesPrice || p.price || 0, // Added p.price fallback
-        lastPrice: p.pricing?.cost || p.cost || 0,
-        cost: p.pricing?.cost || p.cost || 0, // Explicit cost
-        price: p.pricing?.cost || p.cost || 0, // Use cost for GRN
-        maxDiscount: p.product?.maxDiscount || 0,
-        image: p.primaryImage // Will be processed by getImageUrl in selector
-      }));
-      setProducts(normalizedProducts);
-    }).catch(err => console.error("Failed to fetch products", err));
   }, []);
 
   // NEW: Effect to load location hierarchy when initialData (Draft) is loaded
@@ -1479,6 +1460,16 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
 
+  const handleLocationChange = (payload) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseId: payload.warehouseId,
+      warehouse: payload.warehouseName,
+      zoneId: payload.zoneId,
+      locatorId: payload.locatorId,
+      binId: payload.binId
+    }));
+  };
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 relative flex-1">
@@ -1682,87 +1673,20 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Warehouse</label>
-                <div className="relative">
-                  <SearchableDropdown
-                    options={warehouses.map(w => ({ value: w.id, label: w.name }))}
-                    value={formData.warehouseId}
-                    onChange={(val) => {
-                      const wh = warehouses.find(w => w.id === Number(val));
-                      setFormData(prev => ({
-                        ...prev,
-                        warehouseId: val,
-                        warehouse: wh ? wh.name : "",
-                        zoneId: null, locatorId: null, binId: null
-                      }));
-                      if (val) getWarehouseZones(val).then(setZoneList).catch(console.error);
-                      else setZoneList([]);
-                    }}
-                    placeholder="Select Warehouse"
-                    disabled={isLocked}
-                    menuPlacement="auto"
-                    menuZIndexClass="z-[120]"
-                  />
-                </div>
+                <label className="text-[10px] text-slate-500 mb-1 block">Delivery Location</label>
+                <LocationSelector
+                  value={{
+                    warehouseId: formData.warehouseId,
+                    warehouseName: formData.warehouse,
+                    zoneId: formData.zoneId,
+                    locatorId: formData.locatorId,
+                    binId: formData.binId
+                  }}
+                  onChange={handleLocationChange}
+                  disabled={isLocked}
+                  className="w-full"
+                />
               </div>
-              {formData.warehouseId && (
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Zone</label>
-                  <div className="relative">
-                    <SearchableDropdown
-                      options={zoneList.map(z => ({ value: z.id, label: z.name }))}
-                      value={formData.zoneId}
-                      onChange={(val) => {
-                        setFormData(prev => ({ ...prev, zoneId: val, locatorId: null, binId: null }));
-                        if (val) getZoneLocators(val).then(setLocatorList).catch(console.error);
-                        else setLocatorList([]);
-                      }}
-                      placeholder="Select Zone"
-                      disabled={isLocked || !formData.warehouseId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {formData.zoneId && (
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Locator</label>
-                  <div className="relative">
-                    <SearchableDropdown
-                      options={locatorList.map(l => ({ value: l.id, label: l.name }))}
-                      value={formData.locatorId}
-                      onChange={(val) => {
-                        setFormData(prev => ({ ...prev, locatorId: val, binId: null }));
-                        if (val) getLocatorBins(val).then(setBinList).catch(console.error);
-                        else setBinList([]);
-                      }}
-                      placeholder="Select Locator"
-                      disabled={isLocked || !formData.zoneId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {formData.locatorId && (
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Bin</label>
-                  <div className="relative">
-                    <SearchableDropdown
-                      options={binList.map(b => ({ value: b.id, label: b.name }))}
-                      value={formData.binId}
-                      onChange={(val) => setFormData(prev => ({ ...prev, binId: val }))}
-                      placeholder="Select Bin"
-                      disabled={isLocked || !formData.locatorId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                    />
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Received By</label>
                 <div className="relative">
@@ -2649,8 +2573,8 @@ const GRN = () => {
   };
 
   const handlePost = async (grnId) => {
-    // Accept optional grnId (from list view quick-post)
-    const id = grnId || currentGrnData?.id;
+    // Accept optional grnId (from list view quick-post); ignore synthetic events
+    const id = (typeof grnId === 'number' ? grnId : null) || currentGrnData?.id;
     if (!id) {
       alert("No GRN selected to post.");
       return;

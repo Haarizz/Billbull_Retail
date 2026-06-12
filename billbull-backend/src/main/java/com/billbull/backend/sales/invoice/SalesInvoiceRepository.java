@@ -160,9 +160,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         }
 
         @Query("SELECT COALESCE(SUM(si.balance), 0) FROM SalesInvoice si " +
-               "WHERE si.status IN (" +
-               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT," +
-               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.PARTIALLY_PAID" +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID" +
                ") AND si.balance > 0")
         Double sumOutstandingBalance();
 

@@ -630,7 +630,11 @@ public class BatchSelectionService {
             return;
         }
         List<Long> batchIds = selected.stream().map(BatchMaster::getId).toList();
-        List<BatchAllocation> conflicts = allocationRepository.findActiveByBatchIdsForUpdate(batchIds, ACTIVE_STATUSES);
+        // Only RESERVED allocations block re-selection; CONSUMED ones have already
+        // had stock deducted and their BatchMaster status is CONSUMED (caught earlier
+        // by validateSelectable), so including them here causes false conflicts.
+        List<BatchAllocation> conflicts = allocationRepository.findActiveByBatchIdsForUpdate(
+                batchIds, List.of(BatchAllocationStatus.RESERVED));
         if (conflicts != null && !conflicts.isEmpty()) {
             BatchAllocation conflict = conflicts.get(0);
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -674,14 +678,24 @@ public class BatchSelectionService {
         if (allocations == null || allocations.isEmpty()) {
             return;
         }
+        List<BatchMaster> batchesToSave = new ArrayList<>();
         for (BatchAllocation allocation : allocations) {
             BatchMaster batch = allocation.getBatchMaster();
             if (batch.getStatus() == BatchStatus.RESERVED) {
                 batch.setStatus(BatchStatus.AVAILABLE);
+                batchesToSave.add(batch);
             }
             allocation.setStatus(BatchAllocationStatus.RELEASED);
         }
         allocationRepository.saveAll(allocations);
+        if (!batchesToSave.isEmpty()) {
+            batchRepository.saveAll(batchesToSave);
+        }
+        // Flush both sides so subsequent queries in the same transaction (e.g.
+        // findAvailableForSelection, assertNoActiveAllocations) see the released state
+        // rather than the pre-release snapshot still sitting in the persistence context.
+        allocationRepository.flush();
+        batchRepository.flush();
     }
 
     private BatchSelectionRow toSelectionRow(Product product, BatchMaster batch, boolean selected, LocalDate today) {

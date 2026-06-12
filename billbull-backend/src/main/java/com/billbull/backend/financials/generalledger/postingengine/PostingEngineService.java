@@ -192,19 +192,20 @@ public class PostingEngineService {
 
                 if (isAgainstGrn) {
                         // GRN value = what was accrued at receipt time (GRN grandTotal).
-                        // PI net = what the vendor charges (grandTotal - taxTotal).
-                        // Variance = PI net - GRN value → posted to Purchase Price Variance (5103).
+                        // piNetGoods = vendor goods charge excluding VAT and landed costs.
+                        // PPV = difference between piNetGoods and GRN accrual (goods-only variance).
+                        // Landed cost is capitalised separately to Inventory; must not inflate piNet
+                        // used for PPV or the journal will be out of balance by the landed cost amount.
                         BigDecimal grnValue = BigDecimal.ZERO;
                         com.billbull.backend.purchase.grn.GrnEntity grn =
                                         grnRepository.findById(invoice.getGrnId()).orElse(null);
                         if (grn != null && grn.getGrandTotal() != null) {
                                 grnValue = grn.getGrandTotal();
                         }
-                        BigDecimal piNet   = grandTotal.subtract(taxTotal);
-                        BigDecimal ppv     = piNet.subtract(grnValue);
+                        BigDecimal piNetGoods = grandTotal.subtract(taxTotal).subtract(landedCost);
+                        BigDecimal ppv        = piNetGoods.subtract(grnValue);
 
-                        BigDecimal grnClearingAmt = grnValue; // clear exactly what was accrued
-                        if (grnClearingAmt.compareTo(BigDecimal.ZERO) < 0) grnClearingAmt = BigDecimal.ZERO;
+                        BigDecimal grnClearingAmt = grnValue.max(BigDecimal.ZERO);
 
                         addLine(entry, "GRN Clearing", ACC_GRN_CLEARING,
                                         "Clear GRN Liability - " + ref,

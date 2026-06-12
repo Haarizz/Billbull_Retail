@@ -263,6 +263,20 @@ public class PurchaseInvoiceService {
             d.setFocQty(i.getFocQty());
             d.setFocUnit(i.getFocUnit());
             d.setRemarks(i.getRemarks());
+            
+            if (i.getProduct() != null) {
+                d.setSku(i.getProduct().getSku());
+                d.setBrandName(i.getProduct().getBrand() != null ? i.getProduct().getBrand().getName() : null);
+                d.setShortDesc(i.getProduct().getShortDesc());
+                d.setLocalName(i.getProduct().getLocalName());
+                d.setDetailedDesc(i.getProduct().getDetailedDesc());
+                d.setBarcode(productBarcodeRepository.findByProductId(i.getProduct().getId()).stream()
+                        .map(b -> b.getBarcode())
+                        .filter(b -> b != null && !b.isBlank())
+                        .findFirst()
+                        .orElse(null));
+            }
+
             return d;
         }).toList();
 
@@ -363,6 +377,19 @@ public class PurchaseInvoiceService {
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
             d.setLineTotal(netLineBase.add(taxAmount));
+            
+            if (i.getProduct() != null) {
+                d.setSku(i.getProduct().getSku());
+                d.setBrandName(i.getProduct().getBrand() != null ? i.getProduct().getBrand().getName() : null);
+                d.setShortDesc(i.getProduct().getShortDesc());
+                d.setLocalName(i.getProduct().getLocalName());
+                d.setDetailedDesc(i.getProduct().getDetailedDesc());
+                d.setBarcode(productBarcodeRepository.findByProductId(i.getProduct().getId()).stream()
+                        .map(b -> b.getBarcode())
+                        .filter(b -> b != null && !b.isBlank())
+                        .findFirst()
+                        .orElse(null));
+            }
 
             return d;
         }).toList();
@@ -908,6 +935,16 @@ public class PurchaseInvoiceService {
         dto.setSubTotal(invoice.getSubTotal());
         dto.setTaxTotal(invoice.getTaxTotal());
         dto.setGrandTotal(invoice.getGrandTotal());
+        dto.setLandedCost(invoice.getLandedCost());
+        if (invoice.getLandedCosts() != null) {
+            dto.setLandedCosts(invoice.getLandedCosts().stream().map(lc -> {
+                LandedCostRequest r = new LandedCostRequest();
+                r.setCostName(lc.getCostName());
+                r.setDescription(lc.getDescription());
+                r.setAmount(lc.getAmount());
+                return r;
+            }).toList());
+        }
         dto.setAmountPaid(amountPaid);
         dto.setBalanceDue(balanceDue);
 
@@ -945,17 +982,23 @@ public class PurchaseInvoiceService {
                 d.setTaxAmount(i.getTaxAmount());
                 d.setLineTotal(i.getLineTotal());
                 d.setRemarks(i.getRemarks());
-                if ((d.getBarcode() == null || d.getBarcode().isBlank()) && i.getItemCode() != null) {
+                if (i.getItemCode() != null) {
                     productRepository.findByCodeAndIsActiveTrue(i.getItemCode()).ifPresent(product -> {
-                        String barcode = productBarcodeRepository.findByProductId(product.getId()).stream()
-                                .map(b -> b.getBarcode())
-                                .filter(b -> b != null && !b.isBlank())
-                                .findFirst()
-                                .orElse(null);
-                        d.setBarcode(barcode);
+                        if (d.getBarcode() == null || d.getBarcode().isBlank()) {
+                            String barcode = productBarcodeRepository.findByProductId(product.getId()).stream()
+                                    .map(b -> b.getBarcode())
+                                    .filter(b -> b != null && !b.isBlank())
+                                    .findFirst()
+                                    .orElse(null);
+                            d.setBarcode(barcode);
+                        }
                         if (d.getDetailedDesc() == null && product.getDetailedDesc() != null) {
                             d.setDetailedDesc(product.getDetailedDesc());
                         }
+                        d.setSku(product.getSku());
+                        d.setBrandName(product.getBrand() != null ? product.getBrand().getName() : null);
+                        d.setShortDesc(product.getShortDesc());
+                        d.setLocalName(product.getLocalName());
                     });
                 }
                 List<BatchMaster> batches = findBatchesForResponse(invoice, i);

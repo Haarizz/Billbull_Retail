@@ -166,6 +166,14 @@ const CustomSelect = ({ label, placeholder, options = [], value, onChange, searc
   );
 };
 
+const SUB_GROUP_OPTIONS_MAP = {
+  Assets: ['Current Assets', 'Fixed Assets', 'Non-Current Assets', 'Cash and Cash Equivalents', 'Accounts Receivable', 'Inventory', 'Other Assets'],
+  Liabilities: ['Current Liabilities', 'Long-Term Liabilities', 'Accounts Payable', 'Accrued Liabilities', 'Other Liabilities'],
+  Equity: ['Owner\'s Equity', 'Retained Earnings', 'Share Capital', 'Drawings'],
+  Income: ['Operating Income', 'Non-Operating Income', 'Sales Revenue', 'Service Revenue', 'Other Income'],
+  Expenses: ['Operating Expenses', 'Cost of Goods Sold (COGS)', 'Administrative Expenses', 'Selling Expenses', 'Payroll Expenses', 'Other Expenses']
+};
+
 const Ledger = () => {
   const { branches, defaultBranchName, activeBranch } = useBranch();
   const { company } = useCompany();
@@ -547,6 +555,34 @@ const Ledger = () => {
   const [ccManager, setCcManager] = useState('');
   const [ccBudget, setCcBudget] = useState('');
   const [ccDescription, setCcDescription] = useState('');
+
+  // --- DERIVED OPTIONS (Must be below state declarations) ---
+  const parentAccountSelectOptions = useMemo(() => {
+    return [
+      { value: '', label: '— None (Root Account) —', searchText: 'none root account' },
+      ...accounts
+        .filter(a => !accId || a.id !== accId)
+        .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+        .map(a => ({
+          value: a.code,
+          label: `${a.code} — ${a.name}`,
+          searchText: `${a.code} ${a.name}`
+        }))
+    ];
+  }, [accounts, accId]);
+
+  const subGroupSelectOptions = useMemo(() => {
+    const defaultOptions = SUB_GROUP_OPTIONS_MAP[selectedGroup] || [];
+    const optionsSet = new Set(defaultOptions);
+    
+    accounts.forEach(acc => {
+      if (acc.group === selectedGroup && acc.sub && acc.sub !== '-' && !optionsSet.has(acc.sub)) {
+        optionsSet.add(acc.sub);
+      }
+    });
+    
+    return Array.from(optionsSet).sort();
+  }, [selectedGroup, accounts]);
 
   // --- FORM STATES: TRANSACTION ---
   const [txnAccount, setTxnAccount] = useState('');
@@ -2135,31 +2171,35 @@ const glAccountOptions = accounts
 
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Account Group <span className="text-red-500">*</span></label>
-                  <CustomSelect placeholder="Select account group" options={['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity']} value={selectedGroup} onChange={setSelectedGroup} />
+                  <CustomSelect 
+                    placeholder="Select account group" 
+                    options={['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity']} 
+                    value={selectedGroup} 
+                    onChange={(newGrp) => {
+                      setSelectedGroup(newGrp);
+                      setAccSubGroup('');
+                    }} 
+                  />
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Sub Group</label>
-                  <input type="text" value={accSubGroup} onChange={(e) => setAccSubGroup(e.target.value)} placeholder="e.g., Current Assets, Fixed Asset" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400" />
+                  <CustomSelect 
+                    placeholder="Select or enter sub group" 
+                    options={subGroupSelectOptions} 
+                    value={accSubGroup} 
+                    onChange={setAccSubGroup} 
+                  />
                 </div>
 
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Parent Account</label>
-                  <select
+                  <CustomSelect
+                    placeholder="— None (Root Account) —"
+                    options={parentAccountSelectOptions}
                     value={accParentCode}
-                    onChange={(e) => setAccParentCode(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none bg-white text-slate-700"
-                  >
-                    <option value="">— None (Root Account) —</option>
-                    {accounts
-                      .filter(a => !accId || a.id !== accId)
-                      .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
-                      .map(a => (
-                        <option key={a.id} value={a.code}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))
-                    }
-                  </select>
+                    onChange={setAccParentCode}
+                    searchable
+                  />
                   <p className="text-[10px] text-slate-400 mt-1">Select a parent to nest this account in the tree hierarchy</p>
                 </div>
 
