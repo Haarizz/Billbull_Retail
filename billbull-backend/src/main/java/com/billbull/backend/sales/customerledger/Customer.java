@@ -20,6 +20,7 @@ import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 
 @Entity
 @Table(
@@ -128,6 +129,7 @@ public class Customer {
             orphanRemoval = true,
             fetch = FetchType.LAZY
     )
+    @BatchSize(size = 50)
     private List<SavedAddress> savedAddresses = new ArrayList<>();
 
     @OneToMany(
@@ -163,6 +165,7 @@ public class Customer {
             orphanRemoval = true,
             fetch = FetchType.LAZY
     )
+    @BatchSize(size = 50)
     @JsonIgnore
     private List<CustomerBranchAllocation> branchAllocations = new ArrayList<>();
 

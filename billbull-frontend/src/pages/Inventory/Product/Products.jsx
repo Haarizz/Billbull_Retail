@@ -2439,8 +2439,9 @@ const Products = () => {
       await fetchProducts();
     } catch (err) {
       console.error('Import failed', err);
-      const errMsg = err.response?.data || err.message || 'Failed to import products.';
-      setImportModal({ fileName: file.name, status: 'error', message: errMsg, progress: null });
+      const errData = err.response?.data;
+      const errMsg = (typeof errData === 'string' ? errData : errData?.message) || err.message || 'Failed to import products.';
+      setImportModal({ fileName: file.name, status: 'error', message: errMsg, progress: {} });
     } finally {
       e.target.value = null;
     }

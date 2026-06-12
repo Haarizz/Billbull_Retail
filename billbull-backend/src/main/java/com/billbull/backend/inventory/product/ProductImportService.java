@@ -219,16 +219,17 @@ public class ProductImportService {
                         "model no.", "model", "model number", "item model");
                 Integer codeIdx = findContentIndex(headerMap, "item code", "code", "product code");
                 Integer nameIdx = findContentIndex(headerMap, "item name", "description", "product description",
-                        "product name", "name", "item description");
+                        "product name", "name", "item description", "product");
                 Integer picIdx = findContentIndex(headerMap, "picture", "image", "photo", "img", "item photo");
                 Integer barcodeIdx = findContentIndex(headerMap, "barcode", "bar code", "ean", "upc");
                 Integer unitIdx = findContentIndex(headerMap, "unit code", "unit", "uom");
-                Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept");
-                Integer costIdx = findContentIndex(headerMap, "cost");
+                Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept",
+                        "manufacture", "manufacturer");
+                Integer costIdx = findContentIndex(headerMap, "cost", "purchase cost", "purchasecost");
                 Integer lastSupCostIdx = findContentIndex(headerMap, "last sup cost", "last supplier cost",
                         "landing cost");
                 Integer priceInclTaxIdx = findContentIndex(headerMap, "price incl tax", "price including tax",
-                        "retail price", "selling price");
+                        "retail price", "selling price", "sales rate", "salesrate");
                 Integer costInclTaxIdx = findContentIndex(headerMap, "cost incl tax", "cost including tax", "nlc");
                 Integer inactiveIdx = findContentIndex(headerMap, "inactive", "in active");
                 Integer markupIdx = findContentIndex(headerMap, "markup");
@@ -243,10 +244,18 @@ public class ProductImportService {
                 if (modelIdx == null && codeIdx != null) {
                     modelIdx = codeIdx;
                 }
+                // Albadar format: no code/model column — use barcode as product code
+                if (codeIdx == null && modelIdx == null && barcodeIdx != null) {
+                    codeIdx = barcodeIdx;
+                    modelIdx = barcodeIdx;
+                }
+                final boolean albadarFormat = (codeIdx != null && codeIdx.equals(barcodeIdx) && brandColIdx == null);
 
                 String fallbackBrandName = "Sheet".equalsIgnoreCase(sheetName) ? "General" : sheetName;
                 Brand fallbackBrand = getOrCreateBrand(fallbackBrandName);
                 Map<Integer, PictureData> rowImageMap = buildRowImageMap(sheet);
+                // Albadar format: track the group name from column A (carry forward when blank)
+                String lastGroupBrandName = null;
 
                 for (int r = headerRowNum + 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
@@ -262,6 +271,14 @@ public class ProductImportService {
                             continue;
                         }
 
+                        // Albadar format: column A holds the group/brand name (only filled on first row of group)
+                        if (albadarFormat) {
+                            String groupCell = cell(row, 0);
+                            if (!isBlank(groupCell)) {
+                                lastGroupBrandName = groupCell;
+                            }
+                        }
+
                         String valModel = cell(row, modelIdx);
                         String valCode = cell(row, codeIdx);
                         String valName = cell(row, nameIdx);
@@ -272,6 +289,10 @@ public class ProductImportService {
                         String valInactive = cell(row, inactiveIdx);
                         String valCat = cell(row, catIdx);
                         String valBrandCol = cell(row, brandColIdx);
+                        // Albadar: use carried-forward group name as brand when no explicit brand column
+                        if (albadarFormat && isBlank(valBrandCol)) {
+                            valBrandCol = lastGroupBrandName;
+                        }
 
                         String finalName = firstNonBlank(valName, valCat, valModel, valCode);
                         String baseCode = firstNonBlank(valCode, valModel, valCat, finalName);
@@ -454,6 +475,13 @@ public class ProductImportService {
             Integer foundModelIdx = findContentIndex(headerMap, "supplier model no", "supplier model", "model no",
                     "model no.", "model", "model number", "item model");
             if (foundCodeIdx != null || foundModelIdx != null) {
+                return r;
+            }
+            // Albadar format: no code/model column, but has product name + barcode columns
+            Integer foundBarcodeIdx = findContentIndex(headerMap, "barcode", "bar code", "ean", "upc");
+            Integer foundNameIdx = findContentIndex(headerMap, "item name", "description", "product description",
+                    "product name", "name", "item description", "product");
+            if (foundBarcodeIdx != null && foundNameIdx != null) {
                 return r;
             }
         }
