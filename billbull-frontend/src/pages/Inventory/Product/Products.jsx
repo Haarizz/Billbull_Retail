@@ -319,9 +319,10 @@ const buildProductPayload = (formData) => {
 };
 
 const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands, departments: initialDepts, units: initialUnits, warehouses, vendors, branches }) => {
-  const { hasAnyRole } = usePermissions();
+  const { hasAnyRole, canApprove } = usePermissions();
   const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
+  const canSetNegativeStock = canApprove('inventory');
   const [currentStep, setCurrentStep] = useState(1);
   const [subDepartments, setSubDepartments] = useState([]);
   const [zones, setZones] = useState([]);
