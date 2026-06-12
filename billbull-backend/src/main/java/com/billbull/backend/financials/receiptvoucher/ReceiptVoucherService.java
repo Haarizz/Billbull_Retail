@@ -14,6 +14,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -150,6 +151,16 @@ public class ReceiptVoucherService {
         return saved;
     }
 
+    /**
+     * Creates a receipt in a separate transaction so that GL-posting failures do not
+     * roll back the caller's transaction (e.g. a Sales Order save that auto-creates
+     * an advance receipt).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ReceiptVoucher createReceiptInNewTransaction(ReceiptVoucher receipt, MultipartFile file) {
+        return createReceipt(receipt, file);
+    }
+
     @Transactional
     public ReceiptVoucher updateReceipt(Long id, ReceiptVoucher receiptDetails, MultipartFile file) {
         ReceiptVoucher receipt = getReceiptById(id);
@@ -158,6 +169,7 @@ public class ReceiptVoucherService {
         // Branch is immutable on update — receipt.branchEntity stays as-is, never copied from receiptDetails.
 
         String previousStatus = receipt.getStatus();
+        BigDecimal previousAmount = receipt.getAmount();
         Long previousInvoiceId = receipt.getSalesInvoiceId();
         Long previousOpeningInvoiceId = receipt.getOpeningInvoiceId();
 
@@ -201,6 +213,11 @@ public class ReceiptVoucherService {
                 && !isCompletedStatus(previousStatus);
         if (isNewlyCompleted) {
             postingEngineService.createJournalFromReceiptVoucher(saved);
+        } else if (isCompletedStatus(saved.getStatus()) && isCompletedStatus(previousStatus)
+                && previousAmount != null && saved.getAmount() != null
+                && previousAmount.compareTo(saved.getAmount()) != 0) {
+            // Amount changed on an already-completed receipt — reverse old GL entry and re-post new one
+            postingEngineService.reverseAndRepostReceiptVoucher(saved, previousAmount);
         }
 
         syncLinkedInvoice(previousInvoiceId);

@@ -14,8 +14,9 @@ import PaginationFooter from '../../components/common/PaginationFooter';
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount, fetchARAgingReport } from '../../api/financialsApi';
-// ✅ Import Warehouse API
+// ✅ Import Warehouse & Employee API
 import { getWarehouses } from '../../api/warehouseApi';
+import { getEmployees } from '../../api/employeeApi';
 // ✅ Import Sales Payment & Invoice API
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
@@ -472,6 +473,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     // ✅ WAREHOUSE LIST STATE
     const [warehouseList, setWarehouseList] = useState([]);
+    const [employeeList, setEmployeeList] = useState([]);
 
     const fileInputRef = useRef(null);
     const docInputRef = useRef(null);
@@ -540,17 +542,24 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         (value) => ({ value, label: value, displayLabel: value })
     ), [formData.currency]);
 
-    // ✅ FETCH WAREHOUSES ON MOUNT
+    // ✅ FETCH WAREHOUSES & EMPLOYEES ON MOUNT
     useEffect(() => {
-        const fetchWarehouses = async () => {
+        const fetchDropdownData = async () => {
             try {
-                const data = await getWarehouses();
-                setWarehouseList(data);
+                const [whData, empData] = await Promise.all([
+                    getWarehouses(),
+                    getEmployees()
+                ]);
+                setWarehouseList(whData);
+                setEmployeeList(empData.map(e => ({
+                    value: `${e.firstName} ${e.lastName}`,
+                    label: `${e.firstName} ${e.lastName}`
+                })));
             } catch (error) {
-                console.error("Error fetching warehouses", error);
+                console.error("Error fetching dropdown data", error);
             }
         };
-        fetchWarehouses();
+        fetchDropdownData();
     }, []);
 
     // ✅ SYNC FORM STATE WHEN EDITING
@@ -915,7 +924,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                     className="w-full"
                                 />
                             </div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label>
+                                <SearchableDropdown
+                                    options={employeeList}
+                                    value={formData.salesman}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, salesman: value }))}
+                                    placeholder="Select Salesman"
+                                    className="w-full"
+                                />
+                            </div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             {/* ✅ UPDATED WAREHOUSE DROPDOWN */}
                             <div>

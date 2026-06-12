@@ -71,13 +71,19 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
      * filters by one or more statuses; pass an empty/sentinel-only collection
      * with {@code allStatuses=true} to skip the status predicate.
      */
-    @Query("SELECT v FROM PaymentVoucher v WHERE "
+    @Query(value = "SELECT v FROM PaymentVoucher v LEFT JOIN FETCH v.branch WHERE "
             + "(:allBranches = true OR v.branch IS NULL OR v.branch.id IN :branchIds) "
             + "AND (:allStatuses = true OR v.status IN :statuses) "
             + "AND (:search = '' OR LOWER(v.voucherNumber) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.vendorName) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.referenceNumber) LIKE CONCAT('%', :search, '%')) "
-            + "ORDER BY v.id DESC")
+            + "ORDER BY v.id DESC",
+           countQuery = "SELECT COUNT(v) FROM PaymentVoucher v WHERE "
+            + "(:allBranches = true OR v.branch IS NULL OR v.branch.id IN :branchIds) "
+            + "AND (:allStatuses = true OR v.status IN :statuses) "
+            + "AND (:search = '' OR LOWER(v.voucherNumber) LIKE CONCAT('%', :search, '%') "
+            + "OR LOWER(v.vendorName) LIKE CONCAT('%', :search, '%') "
+            + "OR LOWER(v.referenceNumber) LIKE CONCAT('%', :search, '%'))")
     Page<PaymentVoucher> searchPage(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds,
             @Param("allStatuses") boolean allStatuses,

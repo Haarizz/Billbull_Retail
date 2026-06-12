@@ -1244,6 +1244,10 @@ const DeliveryNote = () => {
                 ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
                 : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
             setShippingAddress(_resolvedAddr);
+
+        // Auto-fill warehouse from customer default
+        if (cust.warehouse) setWarehouse(cust.warehouse);
+
         setLinkedSO('');
         setLinkedPI('');
         setLinkedSI('');

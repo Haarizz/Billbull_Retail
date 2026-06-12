@@ -388,6 +388,18 @@ public class DeliveryNoteService {
             salesOrderService.updateStatus(
                     dn.getSalesOrderNo(),
                     com.billbull.backend.sales.salesorder.SalesOrderStatus.DISPATCHED);
+
+            // Release any stale RESERVED SO batch allocations whose source line is not
+            // referenced by this DN (e.g. orphaned allocations from a previous item-ID
+            // recreation). Only SO lines actively inherited by this DN are kept.
+            java.util.Set<Long> activeSoLineIds = dn.getItems().stream()
+                    .map(com.billbull.backend.sales.delivery.DeliveryNoteItem::getSalesOrderItemId)
+                    .filter(lineId -> lineId != null)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!activeSoLineIds.isEmpty()) {
+                salesOrderService.findIdBySoNumber(dn.getSalesOrderNo()).ifPresent(soId ->
+                        batchSelectionService.releaseStaleOrderLines(soId, activeSoLineIds));
+            }
         }
 
         return toResponse(saved);

@@ -357,6 +357,10 @@ public class SalesInvoiceService {
                 linkedSO.ifPresent(so -> {
                     so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
                     salesOrderRepository.save(so);
+                    // Release any RESERVED batch allocations that were held against the SO.
+                    // The invoice's own DN has already consumed (or will consume) the actual
+                    // batches, so the SO-level reservations are orphaned at this point.
+                    batchSelectionService.releaseSalesOrder(so.getId());
                 });
                 // If the invoice was reached via SO and the SO came from a quotation,
                 // surface that quotation here so it gets stamped Invoiced too.
@@ -1249,7 +1253,8 @@ public class SalesInvoiceService {
         return salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder())
                 .map(so -> {
                     if (so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED
-                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID) {
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID) {
                         return 0;
                     }
                     if (warehouseId != null && so.getWarehouse() != null

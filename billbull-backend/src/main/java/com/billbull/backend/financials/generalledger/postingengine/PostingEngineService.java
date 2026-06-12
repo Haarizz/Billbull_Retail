@@ -967,6 +967,101 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        /**
+         * Reverses the original GL posting for a receipt voucher and re-posts it
+         * with the updated amount. Called when a completed receipt is edited.
+         *
+         * Reversal entry ref: VOID-{voucherId}
+         * New entry ref:      {voucherId} (original ref is freed by voiding the old entry's reference)
+         */
+        /**
+         * Posts a corrective adjustment when a completed receipt's amount is edited.
+         *
+         * Rather than voiding and reposting (which compounds across multiple edits),
+         * this computes the net amount already in the GL for this RV (original + all
+         * prior adjustments) and posts a single delta entry to bring the balance to
+         * the new amount.
+         *
+         * Corrective entry ref: ADJ-{voucherId}-{n} where n increments per edit.
+         */
+        @Transactional
+        public void reverseAndRepostReceiptVoucher(ReceiptVoucher receipt, BigDecimal previousAmount) {
+                String originalRef = receipt.getVoucherId();
+                BigDecimal newAmount = receipt.getAmount() != null ? receipt.getAmount() : BigDecimal.ZERO;
+
+                // Compute the net cash/bank debit already posted for this RV across
+                // the original entry + all prior ADJ entries.
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                boolean isAdvance = receipt.getPurpose() ==
+                                com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED;
+                String creditAccount = isAdvance ? ACC_CUSTOMER_ADVANCE : ACC_ACCOUNTS_RECEIVABLE;
+                String creditName    = isAdvance ? "Customer Advance"   : "Accounts Receivable";
+
+                // Sum net debit on the settlement account across the original entry,
+                // legacy VOID-*/REPOST-* entries (from the old reversal scheme), and
+                // any ADJ-* entries created by this scheme.
+                BigDecimal alreadyPosted = BigDecimal.ZERO;
+                for (String ref : new String[]{ originalRef, "VOID-" + originalRef, "REPOST-" + originalRef }) {
+                        java.util.Optional<JournalEntry> e = journalEntryRepository.findByReference(ref);
+                        if (e.isPresent()) alreadyPosted = alreadyPosted.add(netDebitForAccount(e.get(), settlementAccount.code));
+                }
+                for (int i = 1; i <= 99; i++) {
+                        String adjRef = "ADJ-" + originalRef + "-" + i;
+                        java.util.Optional<JournalEntry> adjEntry = journalEntryRepository.findByReference(adjRef);
+                        if (adjEntry.isEmpty()) break;
+                        alreadyPosted = alreadyPosted.add(netDebitForAccount(adjEntry.get(), settlementAccount.code));
+                }
+
+                BigDecimal delta = newAmount.subtract(alreadyPosted).setScale(2, java.math.RoundingMode.HALF_UP);
+                if (delta.compareTo(BigDecimal.ZERO) == 0) return;
+
+                // Find the next unused ADJ-{n} sequence number
+                String adjRef = null;
+                for (int i = 1; i <= 99; i++) {
+                        String candidate = "ADJ-" + originalRef + "-" + i;
+                        if (!journalEntryRepository.existsByReference(candidate)) {
+                                adjRef = candidate;
+                                break;
+                        }
+                }
+                if (adjRef == null) {
+                        log.warn("[PostingEngine] Cannot create adjustment for {} — ADJ sequence exhausted.", originalRef);
+                        return;
+                }
+
+                JournalEntry adj = createBaseEntry(receipt.getDate(), adjRef,
+                                "Amount adjustment - " + originalRef, TX_RECEIPT_VOUCHER,
+                                receipt.getBranchEntity());
+
+                if (delta.compareTo(BigDecimal.ZERO) > 0) {
+                        // Amount increased — Dr settlement, Cr liability
+                        addLine(adj, settlementAccount.name, settlementAccount.code,
+                                        "Adjustment - " + originalRef, delta, BigDecimal.ZERO);
+                        addLine(adj, creditName, creditAccount,
+                                        "Adjustment - " + originalRef, BigDecimal.ZERO, delta);
+                } else {
+                        // Amount decreased — Cr settlement, Dr liability
+                        BigDecimal abs = delta.abs();
+                        addLine(adj, settlementAccount.name, settlementAccount.code,
+                                        "Adjustment - " + originalRef, BigDecimal.ZERO, abs);
+                        addLine(adj, creditName, creditAccount,
+                                        "Adjustment - " + originalRef, abs, BigDecimal.ZERO);
+                }
+                post(adj);
+        }
+
+        /** Sum of (debit - credit) for a given account code across all lines in an entry. */
+        private BigDecimal netDebitForAccount(JournalEntry entry, String accountCode) {
+                return entry.getLines().stream()
+                                .filter(l -> accountCode.equals(l.getAccountCode()))
+                                .map(l -> {
+                                        BigDecimal d = l.getDebit()  != null ? l.getDebit()  : BigDecimal.ZERO;
+                                        BigDecimal c = l.getCredit() != null ? l.getCredit() : BigDecimal.ZERO;
+                                        return d.subtract(c);
+                                })
+                                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
         // =========================================================
         // SALES RETURN
         // =========================================================

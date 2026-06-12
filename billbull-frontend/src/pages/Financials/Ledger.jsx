@@ -1249,8 +1249,8 @@ const glAccountOptions = accounts
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
               const typeAccounts = accounts.filter(a => {
                 if (a.status === 'archived') return false;
-                if (a.isGroup === true) return false;
-
+                if (a.isGroup) return false; // Avoid double counting groups
+                
                 const group = (a.group || '').toLowerCase().trim();
                 const actType = (a.accountType || '').toLowerCase().trim();
                 const target = type.toLowerCase();
@@ -1261,7 +1261,22 @@ const glAccountOptions = accounts
                        actType === target ||
                        actType === target.replace(/s$/, '').replace(/ies$/, 'y');
               });
-              const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
+              
+              let total = 0;
+              typeAccounts.forEach(acc => {
+                const amount = parseFloat(acc.balanceAmount || 0);
+                if (amount === 0) return;
+                
+                const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
+                const isDebit = balType.toLowerCase().startsWith('dr');
+                const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
+                
+                if (isCrNormal) {
+                  total += isDebit ? -amount : amount;
+                } else {
+                  total += isDebit ? amount : -amount;
+                }
+              });
 
               let icon = Wallet;
               let color = 'text-blue-700';
