@@ -114,8 +114,9 @@ public class PaymentVoucherService {
 
         PaymentVoucher saved = repository.save(voucher);
         saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
-
-        return repository.save(saved);
+        repository.save(saved);
+        // Refetch so EAGER associations (branch) are fully initialized before the session closes
+        return repository.findById(saved.getId()).orElse(saved);
     }
 
     @Transactional
@@ -130,12 +131,15 @@ public class PaymentVoucherService {
 
         voucher.setStatus(status);
 
-        // 🔥 LOGIC: If Voucher is POSTED (Approved), update the Purchase Invoice
-        if (status == PaymentStatus.POSTED && voucher.getInvoiceId() != null) {
-            applyPaymentToInvoice(voucher);
+        if (status == PaymentStatus.POSTED) {
+            if (voucher.getInvoiceId() != null) {
+                applyPaymentToInvoice(voucher);
+            }
+            postingEngineService.createJournalFromPaymentVoucher(voucher, voucher.getVendorName());
         }
 
-        return repository.save(voucher);
+        repository.save(voucher);
+        return repository.findById(voucher.getId()).orElse(voucher);
     }
 
     private void applyPaymentToInvoice(PaymentVoucher voucher) {
@@ -191,10 +195,6 @@ public class PaymentVoucherService {
 
         invoiceRepository.save(invoice);
 
-        // 🔵 AUTO-GENERATE JOURNAL ENTRY
-        // Dr. Accounts Payable (amount)
-        // Cr. Bank (amount)
-        postingEngineService.createJournalFromPaymentVoucher(voucher, invoice.getVendorName());
     }
 
     private BigDecimal sumInvoicePayments(PurchaseInvoice invoice) {

@@ -272,6 +272,11 @@ public class ProductService {
             throw new IllegalArgumentException("Product code already exists");
         }
 
+        if (product.getSku() != null && !product.getSku().isBlank()
+                && productRepo.existsBySkuAndIsActiveTrue(product.getSku())) {
+            throw new IllegalArgumentException("A product with SKU '" + product.getSku() + "' already exists");
+        }
+
         // 1. Fetch real entities to prevent foreign key errors
         resolveRelationships(product);
 
@@ -304,6 +309,11 @@ public class ProductService {
                 .orElseThrow(() -> new RuntimeException("Product not found"));
 
         Product updated = req.getProduct();
+
+        if (updated.getSku() != null && !updated.getSku().isBlank()
+                && productRepo.existsBySkuAndIdNotAndIsActiveTrue(updated.getSku(), productId)) {
+            throw new IllegalArgumentException("A product with SKU '" + updated.getSku() + "' already exists");
+        }
 
         // Preserve BaseEntity fields
         updated.setId(existing.getId());
