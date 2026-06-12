@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.statement;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -10,12 +11,16 @@ import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/financials/statement")
-@CrossOrigin(origins = "*") // Adjust for production security
 @PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE')")
 public class StatementController {
 
+    private static final String MODULE = "finance";
+
     @Autowired
     private StatementService statementService;
+
+    @Autowired
+    private ModulePermissionService modulePermissionService;
 
     @GetMapping
     public ResponseEntity<StatementResponse> getStatement(
@@ -23,6 +28,8 @@ public class StatementController {
             @RequestParam String accountCode, // For vendor, this receives vendorName
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        modulePermissionService.requireCanView(MODULE);
 
         StatementResponse response;
 

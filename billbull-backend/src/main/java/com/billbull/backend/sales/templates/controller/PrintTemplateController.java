@@ -1,10 +1,10 @@
 package com.billbull.backend.sales.templates.controller;
 
+import com.billbull.backend.security.ModulePermissionService;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,19 +20,25 @@ import com.billbull.backend.sales.templates.service.PrintTemplateService;
 
 @RestController
 @RequestMapping("/api/templates")
-@CrossOrigin(origins = "*", allowedHeaders = "*")
 public class PrintTemplateController {
+
+    private static final String MODULE = "sales";
 
     @Autowired
     private PrintTemplateService printTemplateService;
 
+    @Autowired
+    private ModulePermissionService modulePermissionService;
+
     @GetMapping
     public List<PrintTemplate> getAllTemplates() {
+        modulePermissionService.requireCanView(MODULE);
         return printTemplateService.getAllTemplates();
     }
 
     @GetMapping("/search")
     public List<PrintTemplate> getTemplatesByCategory(@RequestParam String category) {
+        modulePermissionService.requireCanView(MODULE);
         return printTemplateService.getTemplatesByCategory(category);
     }
 
@@ -40,17 +46,20 @@ public class PrintTemplateController {
      *  the standard, letterhead, and pre-printed variants together. */
     @GetMapping("/family")
     public List<PrintTemplate> getTemplateFamily(@RequestParam String base) {
+        modulePermissionService.requireCanView(MODULE);
         return printTemplateService.getTemplatesByCategoryPrefix(base);
     }
 
     @PostMapping
     public PrintTemplate createTemplate(@RequestBody PrintTemplate template) {
+        modulePermissionService.requireCanCreate(MODULE);
         return printTemplateService.createTemplate(template);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<PrintTemplate> updateTemplate(@PathVariable Long id,
             @RequestBody PrintTemplate templateDetails) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             PrintTemplate updatedTemplate = printTemplateService.updateTemplate(id, templateDetails);
             return ResponseEntity.ok(updatedTemplate);
@@ -62,6 +71,7 @@ public class PrintTemplateController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         printTemplateService.deleteTemplate(id);
         return ResponseEntity.ok().build();
     }

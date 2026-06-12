@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getRoles, isAuthenticated } from '../api/auth';
 import { rolePermissionsApi } from '../api/rolePermissionsApi';
 
@@ -27,8 +27,17 @@ export const PermissionProvider = ({ children }) => {
         tally: false,
     });
 
+  const pollIntervalRef = useRef(null);
+
   useEffect(() => {
     refreshPermissions();
+
+    // Poll every 5 minutes so permission changes take effect without requiring logout
+    pollIntervalRef.current = setInterval(() => {
+      if (isAuthenticated()) refreshPermissions();
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(pollIntervalRef.current);
   }, []);
 
   const refreshPermissions = async () => {
@@ -87,7 +96,7 @@ export const PermissionProvider = ({ children }) => {
     const canView    = (module) => canAction(module, 'view');
     const canCreate  = (module) => canAction(module, 'create');
     const canEdit    = (module) => canAction(module, 'edit');
-    const canDelete  = (module) => canAction(module, 'edit');
+    const canDelete  = (module) => canAction(module, 'delete');
     const canApprove = (module) => canAction(module, 'approve');
     const canExport  = (module) => canAction(module, 'export');
 

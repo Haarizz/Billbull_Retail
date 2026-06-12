@@ -1,9 +1,9 @@
 package com.billbull.backend.financials.reports;
 
+import com.billbull.backend.security.ModulePermissionService;
 import java.time.LocalDate;
 
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,16 +14,20 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/financials/reports")
-@CrossOrigin(origins = "*")
 public class FinancialReportController {
+
+    private static final String MODULE = "finance";
 
     private final FinancialReportService reportService;
     private final SubLedgerReconciliationService reconciliationService;
+    private final ModulePermissionService modulePermissionService;
 
     public FinancialReportController(FinancialReportService reportService,
-                                     SubLedgerReconciliationService reconciliationService) {
+                                     SubLedgerReconciliationService reconciliationService,
+                                     ModulePermissionService modulePermissionService) {
         this.reportService         = reportService;
         this.reconciliationService = reconciliationService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/trial-balance")
@@ -31,6 +35,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateTrialBalance(startDate, endDate, branchId);
     }
 
@@ -40,6 +45,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId,
             @RequestParam(required = false) String costCenter) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateProfitLoss(startDate, endDate, branchId, costCenter);
     }
 
@@ -47,6 +53,7 @@ public class FinancialReportController {
     public BalanceSheetDTO getBalanceSheet(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateBalanceSheet(asOfDate != null ? asOfDate : LocalDate.now(), branchId);
     }
 
@@ -55,6 +62,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateCashFlow(startDate, endDate, branchId);
     }
 
@@ -63,6 +71,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateExpenseAnalysis(startDate, endDate, branchId);
     }
 
@@ -71,6 +80,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateTaxDashboard(startDate, endDate, branchId);
     }
 
@@ -79,18 +89,21 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateTaxReconciliation(startDate, endDate, branchId);
     }
 
     @GetMapping("/ar-aging")
     public Object getARAgingReport(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateARAgingReport(asOfDate != null ? asOfDate : LocalDate.now());
     }
 
     @GetMapping("/ap-aging")
     public Object getAPAgingReport(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOfDate) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateAPAgingReport(asOfDate != null ? asOfDate : LocalDate.now());
     }
 
@@ -99,12 +112,14 @@ public class FinancialReportController {
             @RequestParam String accountCode,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateLedgerStatement(accountCode, from, to);
     }
 
     /** Sub-ledger ↔ GL reconciliation health check (PDF §17 / Phase 7.1). */
     @GetMapping("/reconciliation")
     public SubLedgerReconciliationService.ReconciliationReport getReconciliation() {
+        modulePermissionService.requireCanExport(MODULE);
         return reconciliationService.reconcileAll();
     }
 
@@ -114,6 +129,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateVatReturnReport(startDate, endDate, branchId);
     }
 
@@ -123,6 +139,7 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateDetailedTrialBalance(startDate, endDate, branchId);
     }
 
@@ -130,6 +147,7 @@ public class FinancialReportController {
     @GetMapping("/commitment")
     public Object getCommitmentReport(
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanExport(MODULE);
         return reportService.generateCommitmentReport(branchId);
     }
 }

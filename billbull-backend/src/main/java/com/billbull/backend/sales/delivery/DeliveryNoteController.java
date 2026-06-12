@@ -5,6 +5,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.email.DocumentEmailSender;
 
 import java.util.List;
@@ -15,12 +16,17 @@ import java.util.Map;
 @PreAuthorize("hasAnyRole('ADMIN','SALES')")
 public class DeliveryNoteController {
 
+    private static final String MODULE = "sales";
+
     private final DeliveryNoteService service;
     private final DocumentEmailSender emailSender;
+    private final ModulePermissionService modulePermissionService;
 
-    public DeliveryNoteController(DeliveryNoteService service, DocumentEmailSender emailSender) {
+    public DeliveryNoteController(DeliveryNoteService service, DocumentEmailSender emailSender,
+                                  ModulePermissionService modulePermissionService) {
         this.service = service;
         this.emailSender = emailSender;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // QA-040: send the DN email using the frontend-rendered HTML body.
@@ -52,6 +58,7 @@ public class DeliveryNoteController {
 
     @GetMapping
     public List<DeliveryNoteResponse> list() {
+        modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
@@ -88,6 +95,7 @@ public class DeliveryNoteController {
 
     @PostMapping
     public DeliveryNoteResponse create(@RequestBody DeliveryNoteRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return service.create(req);
     }
 
@@ -95,6 +103,7 @@ public class DeliveryNoteController {
     public DeliveryNoteResponse update(
             @PathVariable Long id,
             @RequestBody DeliveryNoteRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return service.update(id, req);
     }
 

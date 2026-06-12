@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.fixedasset;
 
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -13,29 +14,35 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/financials/fixed-assets")
-@CrossOrigin(origins = "*")
 public class FixedAssetController {
+
+    private static final String MODULE = "finance";
 
     private final FixedAssetService service;
     private final BranchRepository branchRepository;
+    private final ModulePermissionService modulePermissionService;
 
-    public FixedAssetController(FixedAssetService service, BranchRepository branchRepository) {
+    public FixedAssetController(FixedAssetService service, BranchRepository branchRepository, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.branchRepository = branchRepository;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     public List<FixedAsset> getAll() {
+        modulePermissionService.requireCanView(MODULE);
         return service.findAll();
     }
 
     @GetMapping("/branch/{branchId}")
     public List<FixedAsset> getByBranch(@PathVariable Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         return service.findByBranch(branchId);
     }
 
     @PostMapping
     public ResponseEntity<FixedAsset> create(@RequestBody FixedAsset asset) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.save(asset));
     }
 
@@ -46,6 +53,7 @@ public class FixedAssetController {
     @PostMapping("/depreciation-run")
     public ResponseEntity<Map<String, Integer>> runDepreciation(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate runDate) {
+        modulePermissionService.requireCanEdit(MODULE);
         int count = service.runMonthlyDepreciation(runDate);
         return ResponseEntity.ok(Map.of("journalsPosted", count));
     }
@@ -58,6 +66,7 @@ public class FixedAssetController {
     public ResponseEntity<FixedAsset> dispose(
             @PathVariable Long id,
             @RequestBody DisposalRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         Branch branch = req.branchId() != null
                 ? branchRepository.findById(req.branchId()).orElse(null) : null;
         return ResponseEntity.ok(service.dispose(id, req.disposalDate(), req.proceedsAmount(), branch));

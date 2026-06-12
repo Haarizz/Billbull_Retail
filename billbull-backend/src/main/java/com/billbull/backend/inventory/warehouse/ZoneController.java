@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.warehouse;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -11,21 +12,27 @@ import java.util.List;
 @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER')")
 public class ZoneController {
 
-    private final ZoneService zoneService;
+    private static final String MODULE = "inventory";
 
-    public ZoneController(ZoneService zoneService) {
+    private final ZoneService zoneService;
+    private final ModulePermissionService modulePermissionService;
+
+    public ZoneController(ZoneService zoneService, ModulePermissionService modulePermissionService) {
         this.zoneService = zoneService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<List<ZoneResponse>> getZones(@PathVariable Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(zoneService.getZoneResponsesByWarehouse(warehouseId));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<ZoneResponse> getZone(@PathVariable Long warehouseId, @PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(zoneService.getZoneResponseById(id));
     }
 
@@ -33,6 +40,7 @@ public class ZoneController {
     public ResponseEntity<ZoneResponse> createZone(
             @PathVariable Long warehouseId,
             @RequestBody ZoneRequest request) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(zoneService.createZoneAndGetResponse(warehouseId, request));
     }
 
@@ -41,11 +49,13 @@ public class ZoneController {
             @PathVariable Long warehouseId,
             @PathVariable Long id,
             @RequestBody ZoneRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(zoneService.updateZoneAndGetResponse(id, request));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteZone(@PathVariable Long warehouseId, @PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         zoneService.deleteZone(id);
         return ResponseEntity.noContent().build();
     }

@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.bankreconciliation;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,22 +22,27 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/financials/bank-reconciliation")
-@CrossOrigin(origins = "*")
 public class BankReconciliationController {
 
-    private final BankReconciliationService service;
+    private static final String MODULE = "finance";
 
-    public BankReconciliationController(BankReconciliationService service) {
+    private final BankReconciliationService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public BankReconciliationController(BankReconciliationService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/statements")
     public List<BankStatement> getStatements(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         return service.findAllStatements(branchId);
     }
 
     @PostMapping("/statements")
     public ResponseEntity<BankStatement> createStatement(@RequestBody BankStatement statement) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.createStatement(statement));
     }
 
@@ -44,11 +50,13 @@ public class BankReconciliationController {
     public ResponseEntity<List<BankStatementLine>> importLines(
             @PathVariable Long id,
             @RequestBody List<BankStatementLine> lines) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.importLines(id, lines));
     }
 
     @PostMapping("/statements/{id}/auto-match")
     public ResponseEntity<Map<String, Integer>> autoMatch(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         int count = service.autoMatch(id);
         return ResponseEntity.ok(Map.of("autoMatchedLines", count));
     }
@@ -57,6 +65,7 @@ public class BankReconciliationController {
     public ResponseEntity<BankStatementLine> matchLine(
             @PathVariable Long id,
             @RequestParam Long journalLineId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.matchLine(id, journalLineId));
     }
 
@@ -64,6 +73,7 @@ public class BankReconciliationController {
     public ResponseEntity<BankStatementLine> postBankCharge(
             @PathVariable Long id,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.postBankCharge(id, branchId));
     }
 
@@ -71,16 +81,19 @@ public class BankReconciliationController {
     public ResponseEntity<BankStatementLine> postBankInterest(
             @PathVariable Long id,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.postBankInterest(id, branchId));
     }
 
     @GetMapping("/statements/{id}/summary")
     public ResponseEntity<Map<String, Object>> getSummary(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getReconciliationSummary(id));
     }
 
     @PostMapping("/statements/{id}/mark-reconciled")
     public ResponseEntity<BankStatement> markReconciled(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.markReconciled(id));
     }
 }

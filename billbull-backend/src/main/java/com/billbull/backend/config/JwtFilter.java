@@ -22,6 +22,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.billbull.backend.security.BranchContextHolder;
 import com.billbull.backend.logging.LogContext;
+import com.billbull.backend.user.UserRepository;
 
 @Component
 public class JwtFilter extends OncePerRequestFilter {
@@ -29,9 +30,11 @@ public class JwtFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(JwtFilter.class);
 
     private final JwtUtil jwtUtil;
+    private final UserRepository userRepository;
 
-    public JwtFilter(JwtUtil jwtUtil) {
+    public JwtFilter(JwtUtil jwtUtil, UserRepository userRepository) {
         this.jwtUtil = jwtUtil;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -51,6 +54,16 @@ public class JwtFilter extends OncePerRequestFilter {
             if (jwtUtil.isTokenValid(token)) {
 
                 String username = jwtUtil.extractUsername(token);
+
+                // Reject tokens belonging to frozen/deleted users
+                boolean isActive = userRepository.findByUsername(username)
+                        .map(u -> u.isActive())
+                        .orElse(false);
+                if (!isActive) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
+                }
+
                 Long userId = jwtUtil.extractUserId(token);
                 List<String> roles = jwtUtil.extractRoles(token);
                 log.debug("JWT authenticated username={} roles={}", username, roles);

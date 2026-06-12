@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.salesorder;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
 import com.billbull.backend.settings.email.DocumentEmailSender;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,24 +18,28 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales/sales-orders")
-@CrossOrigin
 @PreAuthorize("hasAnyRole('ADMIN','SALES')")
 public class SalesOrderController {
+
+    private static final String MODULE = "sales";
 
     private final SalesOrderService service;
     private final SalesOrderAttachmentRepository attachmentRepo;
     private final AuditLogService auditLogService;
     private final DocumentEmailSender emailSender;
+    private final ModulePermissionService modulePermissionService;
 
     public SalesOrderController(
             SalesOrderService service,
             SalesOrderAttachmentRepository attachmentRepo,
             AuditLogService auditLogService,
-            DocumentEmailSender emailSender) {
+            DocumentEmailSender emailSender,
+            ModulePermissionService modulePermissionService) {
         this.service = service;
         this.attachmentRepo = attachmentRepo;
         this.auditLogService = auditLogService;
         this.emailSender = emailSender;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // QA-040: send the SO email using the frontend-rendered HTML body.
@@ -65,6 +70,7 @@ public class SalesOrderController {
 
     @PostMapping
     public ResponseEntity<?> save(@RequestBody SalesOrder order) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             return ResponseEntity.ok(service.save(order));
         } catch (IllegalStateException e) {
@@ -74,6 +80,7 @@ public class SalesOrderController {
 
     @GetMapping
     public List<SalesOrder> getAll() {
+        modulePermissionService.requireCanView(MODULE);
         return service.getAll();
     }
 
@@ -85,6 +92,7 @@ public class SalesOrderController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
+        modulePermissionService.requireCanView(MODULE);
         java.util.List<SalesOrder> all = (fromDate != null || toDate != null)
                 ? service.getAllByDateRange(
                         fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
@@ -95,16 +103,19 @@ public class SalesOrderController {
 
     @GetMapping("/stats")
     public Map<String, Object> getStats() {
+        modulePermissionService.requireCanView(MODULE);
         return service.getStats();
     }
 
     @GetMapping("/next-number")
     public Map<String, String> getNextNumber() {
+        modulePermissionService.requireCanCreate(MODULE);
         return Map.of("soNumber", service.generateSalesOrderNumber());
     }
 
     @GetMapping("/{id}")
     public SalesOrder getById(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getById(id);
     }
 
@@ -114,11 +125,13 @@ public class SalesOrderController {
      */
     @GetMapping("/{id}/receipt-vouchers")
     public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchers(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getReceiptVouchersForOrder(id);
     }
 
     @PutMapping("/{id}/status")
     public void updateStatus(@PathVariable Long id, @RequestParam String status) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.updateStatusById(id, SalesOrderStatus.valueOf(status));
     }
 
@@ -127,6 +140,7 @@ public class SalesOrderController {
             @PathVariable Long orderId,
             @PathVariable Long itemId,
             @RequestBody BatchSelectionRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.saveBatchSelection(orderId, itemId, request));
         } catch (IllegalStateException e) {
@@ -138,6 +152,7 @@ public class SalesOrderController {
     public ResponseEntity<?> deleteBatchSelection(
             @PathVariable Long orderId,
             @PathVariable Long itemId) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.deleteBatchSelection(orderId, itemId));
         } catch (IllegalStateException e) {

@@ -1,5 +1,6 @@
 package com.billbull.backend.purchase.lpo.workflow;
 
+import com.billbull.backend.security.ModulePermissionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -12,13 +13,17 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ApprovalWorkflowController {
 
+    private static final String MODULE = "purchases";
+
     private final ApprovalWorkflowStepRepository stepRepository;
+    private final ModulePermissionService modulePermissionService;
 
     @GetMapping("/{module}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<ApprovalWorkflowStep>> getSteps(
             @PathVariable String module,
             @RequestParam(required = false, defaultValue = "DEFAULT") String tenantId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(stepRepository.findAllByTenantIdAndModuleOrderByStepOrderAsc(tenantId, module));
     }
 
@@ -28,7 +33,7 @@ public class ApprovalWorkflowController {
             @PathVariable String module,
             @RequestParam(required = false, defaultValue = "DEFAULT") String tenantId,
             @RequestBody List<ApprovalWorkflowStep> steps) {
-
+        modulePermissionService.requireCanEdit(MODULE);
         // Simple implementation: clear and re-save
         List<ApprovalWorkflowStep> existing = stepRepository.findAllByTenantIdAndModuleOrderByStepOrderAsc(tenantId,
                 module);

@@ -1,5 +1,6 @@
 package com.billbull.backend.dashboard;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -8,10 +9,14 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/dashboard")
 public class DashboardController {
 
-    private final DashboardService dashboardService;
+    private static final String MODULE = "dashboard";
 
-    public DashboardController(DashboardService dashboardService) {
+    private final DashboardService dashboardService;
+    private final ModulePermissionService modulePermissionService;
+
+    public DashboardController(DashboardService dashboardService, ModulePermissionService modulePermissionService) {
         this.dashboardService = dashboardService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/summary")
@@ -19,6 +24,7 @@ public class DashboardController {
     public ResponseEntity<DashboardSummaryResponse> getSummary(
             @RequestParam(defaultValue = "All Time") String timeRange,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
     }
 
@@ -28,6 +34,7 @@ public class DashboardController {
     public ResponseEntity<DashboardSummaryResponse> refresh(
             @RequestParam(defaultValue = "All Time") String timeRange,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         dashboardService.invalidateCache();
         return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
     }

@@ -67,17 +67,16 @@ public class RolePermissionService {
             boolean canView,
             boolean canCreate,
             boolean canEdit,
+            boolean canDelete,
             boolean canApprove,
             boolean canExport) {
 
         RolePermission rp;
 
         if (id != null) {
-            // Update existing by ID
             rp = rolePermissionRepository.findById(id)
                     .orElseThrow(() -> new RuntimeException("RolePermission not found with id: " + id));
         } else {
-            // Upsert by role + module
             Role role = roleRepository.findByName(roleName)
                     .orElseThrow(() -> new RuntimeException("Role not found: " + roleName));
             rp = rolePermissionRepository.findByRoleAndModule(role, module)
@@ -92,6 +91,7 @@ public class RolePermissionService {
         rp.setCanView(canView);
         rp.setCanCreate(canCreate);
         rp.setCanEdit(canEdit);
+        rp.setCanDelete(canDelete);
         rp.setCanApprove(canApprove);
         rp.setCanExport(canExport);
 
@@ -107,10 +107,8 @@ public class RolePermissionService {
                 .map(Role::getName)
                 .collect(Collectors.toSet());
 
-        // Get all permission rows for these roles
-        List<RolePermission> allPerms = rolePermissionRepository.findAll().stream()
-                .filter(rp -> roleNames.contains(rp.getRole().getName()))
-                .collect(Collectors.toList());
+        // Get all permission rows for these roles in a single query
+        List<RolePermission> allPerms = rolePermissionRepository.findByRole_NameIn(roleNames);
 
         // Merge: ALLOW wins (union)
         Map<String, Map<String, Object>> merged = new HashMap<>();
@@ -123,6 +121,7 @@ public class RolePermissionService {
             p.put("view",    (boolean) p.get("view")    || rp.isCanView());
             p.put("create",  (boolean) p.get("create")  || rp.isCanCreate());
             p.put("edit",    (boolean) p.get("edit")    || rp.isCanEdit());
+            p.put("delete",  (boolean) p.get("delete")  || rp.isCanDelete());
             p.put("approve", (boolean) p.get("approve") || rp.isCanApprove());
             p.put("export",  (boolean) p.get("export")  || rp.isCanExport());
         }
@@ -161,9 +160,10 @@ public class RolePermissionService {
         map.put("view", false);
         map.put("create", false);
         map.put("edit", false);
+        map.put("delete", false);
         map.put("approve", false);
         map.put("export", false);
-        map.put("fields", new HashMap<>()); // Scalable structure
+        map.put("fields", new HashMap<>());
         return map;
     }
 }

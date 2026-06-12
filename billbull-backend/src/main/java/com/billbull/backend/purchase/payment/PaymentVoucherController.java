@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.payment;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -14,9 +15,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/vouchers")
-@CrossOrigin(origins = "*") // Adjust for production security
 @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
 public class PaymentVoucherController {
+
+    private static final String MODULE = "purchases";
 
     @Autowired
     private PaymentVoucherService service;
@@ -24,11 +26,15 @@ public class PaymentVoucherController {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private ModulePermissionService modulePermissionService;
+
     // --------------------
     // GET ALL
     // --------------------
     @GetMapping
     public ResponseEntity<List<PaymentVoucher>> getAllVouchers() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllVouchers());
     }
 
@@ -38,6 +44,7 @@ public class PaymentVoucherController {
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String status) {
+        modulePermissionService.requireCanView(MODULE);
         // `status` may be a single status or a comma-separated group (e.g. the
         // History tab = POSTED,REJECTED,CLEARED). Blank/absent → all statuses.
         java.util.List<PaymentStatus> statuses = new java.util.ArrayList<>();
@@ -57,6 +64,7 @@ public class PaymentVoucherController {
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, BigDecimal>> getStats() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.statsByMode());
     }
 
@@ -65,6 +73,7 @@ public class PaymentVoucherController {
     // --------------------
     @GetMapping("/{id}")
     public ResponseEntity<PaymentVoucher> getVoucherById(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getVoucherById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -75,6 +84,7 @@ public class PaymentVoucherController {
     // --------------------
     @PostMapping
     public ResponseEntity<PaymentVoucher> createVoucher(@RequestBody Map<String, Object> payload) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             PaymentVoucher voucher = new PaymentVoucher();
 
@@ -125,6 +135,7 @@ public class PaymentVoucherController {
     public ResponseEntity<PaymentVoucher> updateStatus(
             @PathVariable Long id,
             @RequestParam String status) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             PaymentStatus newStatus = PaymentStatus.valueOf(status.toUpperCase());
             return ResponseEntity.ok(service.updateStatus(id, newStatus));
@@ -138,6 +149,7 @@ public class PaymentVoucherController {
     // --------------------
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteVoucher(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteVoucher(id);
         return ResponseEntity.noContent().build();
     }

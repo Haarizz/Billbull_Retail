@@ -28,15 +28,15 @@ public class RolePermissionInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // ADMIN: full access to all modules — force-upsert so the DB always reflects
-        // full access on startup. This prevents accidental lockout while still allowing
-        // the UI toggles to restrict access between restarts.
+        // ADMIN: seed full access only if no row exists yet (first deployment).
+        // Using seedIfAbsent so UI changes to ADMIN permissions are preserved across restarts.
+        // The AdminSafeguardService prevents complete lockout of the ADMIN role.
         roleRepository.findByName("ADMIN").ifPresent(role -> {
             String[] allModules = {"sales", "inventory", "purchases", "finance",
                                    "hr", "customer", "dashboard", "userManagement",
                                    "batch_manual_select", "notification"};
             for (String module : allModules) {
-                seedOrUpdate(role, module, true, true, true, true, true);
+                seedIfAbsent(role, module, true, true, true, true, true);
             }
         });
 
@@ -87,6 +87,14 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.vendor.advance",         true, true, true, false, false);
         });
         roleRepository.findByName("MANAGER").ifPresent(role -> {
+            // Base module access so MANAGER can see the modules their approvals pertain to
+            seedIfAbsent(role, "sales",      true,  false, false, true,  false);
+            seedIfAbsent(role, "finance",    true,  false, false, true,  false);
+            seedIfAbsent(role, "purchases",  true,  false, false, true,  false);
+            seedIfAbsent(role, "customer",   true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true, true, false, false, false);
+            // Special approval permissions
             seedIfAbsent(role, "permissions.journal.approve",              true, true, true, true,  false);
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
@@ -112,31 +120,11 @@ public class RolePermissionInitializer implements ApplicationRunner {
             rp.setCanView(view);
             rp.setCanCreate(create);
             rp.setCanEdit(edit);
+            // canDelete defaults to same as canEdit for seeded roles
+            rp.setCanDelete(edit);
             rp.setCanApprove(approve);
             rp.setCanExport(export);
             rolePermissionRepository.save(rp);
         }
-    }
-
-    /** Always creates or overwrites the row — used for ADMIN to prevent accidental lockout. */
-    private void seedOrUpdate(
-            Role role, String module,
-            boolean view, boolean create, boolean edit,
-            boolean approve, boolean export) {
-
-        RolePermission rp = rolePermissionRepository
-                .findByRoleAndModule(role, module)
-                .orElseGet(() -> {
-                    RolePermission n = new RolePermission();
-                    n.setRole(role);
-                    n.setModule(module);
-                    return n;
-                });
-        rp.setCanView(view);
-        rp.setCanCreate(create);
-        rp.setCanEdit(edit);
-        rp.setCanApprove(approve);
-        rp.setCanExport(export);
-        rolePermissionRepository.save(rp);
     }
 }

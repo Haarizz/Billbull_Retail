@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.balance;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -9,24 +10,29 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/inventory/balances")
-@CrossOrigin(origins = "*")
 public class InventoryBalanceController {
 
-    private final InventoryBalanceService service;
+    private static final String MODULE = "inventory";
 
-    public InventoryBalanceController(InventoryBalanceService service) {
+    private final InventoryBalanceService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public InventoryBalanceController(InventoryBalanceService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     /** All products with positive on-hand stock. */
     @GetMapping
     public List<InventoryBalance> getAll() {
+        modulePermissionService.requireCanView(MODULE);
         return service.findAll();
     }
 
     /** All balances for one warehouse. */
     @GetMapping("/by-warehouse/{warehouseId}")
     public List<InventoryBalance> getByWarehouse(@PathVariable Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return service.findByWarehouse(warehouseId);
     }
 
@@ -34,6 +40,7 @@ public class InventoryBalanceController {
     @GetMapping("/total-value")
     public ResponseEntity<Map<String, BigDecimal>> getTotalValue(
             @RequestParam(required = false) Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         BigDecimal value = warehouseId != null
                 ? service.totalInventoryValueByWarehouse(warehouseId)
                 : service.totalInventoryValue();
@@ -43,6 +50,7 @@ public class InventoryBalanceController {
     /** Full rebuild from stock_movements — use after bulk imports or data correction. */
     @PostMapping("/rebuild")
     public ResponseEntity<Map<String, Integer>> rebuild() {
+        modulePermissionService.requireCanEdit(MODULE);
         int count = service.rebuildAll();
         return ResponseEntity.ok(Map.of("rebuiltRows", count));
     }
