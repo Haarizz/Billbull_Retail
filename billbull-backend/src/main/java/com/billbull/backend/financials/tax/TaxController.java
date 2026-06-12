@@ -1,6 +1,7 @@
 package com.billbull.backend.financials.tax;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,13 +16,17 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class TaxController {
 
+    private static final String MODULE = "finance";
+
     private final TaxService taxService;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
     // --- Configurations ---
 
     @GetMapping("/configs")
     public List<TaxConfiguration> getAllConfigs() {
+        modulePermissionService.requireCanView(MODULE);
         return taxService.getAllConfigs();
     }
 
@@ -33,6 +38,7 @@ public class TaxController {
      */
     @GetMapping("/active-vat-rate")
     public java.util.Map<String, Object> getActiveVatRate() {
+        modulePermissionService.requireCanView(MODULE);
         return taxService.getActiveVatRate()
                 .<java.util.Map<String, Object>>map(rate -> java.util.Map.of("rate", rate))
                 .orElseGet(() -> {
@@ -44,17 +50,20 @@ public class TaxController {
 
     @PostMapping("/configs")
     public TaxConfiguration createConfig(@RequestBody TaxConfiguration config) {
+        modulePermissionService.requireCanCreate(MODULE);
         return taxService.saveConfig(config);
     }
 
     @PutMapping("/configs/{id}")
     public ResponseEntity<TaxConfiguration> updateConfig(@PathVariable Long id, @RequestBody TaxConfiguration config) {
+        modulePermissionService.requireCanEdit(MODULE);
         config.setId(id);
         return ResponseEntity.ok(taxService.saveConfig(config));
     }
 
     @DeleteMapping("/configs/{id}")
     public ResponseEntity<Void> deleteConfig(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         taxService.deleteConfig(id);
         return ResponseEntity.ok().build();
     }
@@ -63,11 +72,13 @@ public class TaxController {
 
     @GetMapping("/filings")
     public List<TaxFilingDTO> getAllFilings() {
+        modulePermissionService.requireCanView(MODULE);
         return taxService.getAllFilings();
     }
 
     @PutMapping("/filings/{id}")
     public ResponseEntity<TaxFiling> updateFiling(@PathVariable Long id, @RequestBody TaxFiling filing) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(taxService.updateFiling(id, filing));
     }
 
@@ -75,16 +86,19 @@ public class TaxController {
     public ResponseEntity<TaxFilingDTO> uploadDocument(
             @PathVariable Long id,
             @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(taxService.uploadDocument(id, file));
     }
 
     @DeleteMapping("/filings/{id}/document")
     public ResponseEntity<TaxFilingDTO> deleteDocument(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(taxService.removeDocument(id));
     }
 
     @GetMapping("/filings/{id}/document")
     public ResponseEntity<org.springframework.core.io.Resource> downloadDocument(@PathVariable Long id) {
+        modulePermissionService.requireCanExport(MODULE);
         org.springframework.core.io.Resource resource = taxService.loadDocument(id);
 
         // Try to determine filename, fallback if needed

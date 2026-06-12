@@ -1,5 +1,6 @@
 package com.billbull.backend.settings.branch;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -12,21 +13,27 @@ import java.util.List;
 @RequestMapping("/api/branches")
 public class BranchController {
 
-    private final BranchService service;
+    private static final String MODULE = "userManagement";
 
-    public BranchController(BranchService service) {
+    private final BranchService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public BranchController(BranchService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<BranchResponse>> list() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.listAll());
     }
 
     @GetMapping("/default")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BranchResponse> getDefault() {
+        modulePermissionService.requireCanView(MODULE);
         BranchResponse def = service.getDefault();
         return def != null ? ResponseEntity.ok(def) : ResponseEntity.noContent().build();
     }
@@ -34,6 +41,7 @@ public class BranchController {
     @GetMapping("/headquarters")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BranchResponse> getHeadquarters() {
+        modulePermissionService.requireCanView(MODULE);
         BranchResponse hq = service.getHeadquarters();
         return hq != null ? ResponseEntity.ok(hq) : ResponseEntity.noContent().build();
     }
@@ -41,30 +49,35 @@ public class BranchController {
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> create(@RequestBody BranchRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(req));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> update(@PathVariable Long id, @RequestBody BranchRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, req));
     }
 
     @PutMapping("/{id}/default")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> setDefault(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.setDefault(id));
     }
 
     @PutMapping("/{id}/headquarters")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> setHeadquarters(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.setHeadquarters(id));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
         return ResponseEntity.noContent().build();
     }
@@ -72,6 +85,7 @@ public class BranchController {
     @PostMapping("/{id}/logo")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> uploadLogo(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.uploadLogo(id, file));
         } catch (IOException e) {
@@ -84,6 +98,7 @@ public class BranchController {
     @PostMapping("/{id}/stamp")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> uploadStamp(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.uploadStamp(id, file));
         } catch (IOException e) {

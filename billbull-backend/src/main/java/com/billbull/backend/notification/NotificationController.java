@@ -1,5 +1,6 @@
 package com.billbull.backend.notification;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,10 +17,14 @@ import java.util.Map;
 @RequestMapping("/api/notifications")
 public class NotificationController {
 
-    private final NotificationService service;
+    private static final String MODULE = "notification";
 
-    public NotificationController(NotificationService service) {
+    private final NotificationService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public NotificationController(NotificationService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     /**
@@ -37,6 +42,7 @@ public class NotificationController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String category,
             @RequestParam(defaultValue = "false") boolean unreadOnly) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getMyNotifications(page, size, category, unreadOnly);
     }
 
@@ -47,6 +53,7 @@ public class NotificationController {
     @GetMapping("/unread-count")
     @PreAuthorize("isAuthenticated()")
     public Map<String, Long> getUnreadCount() {
+        modulePermissionService.requireCanView(MODULE);
         return Map.of("count", service.getUnreadCount());
     }
 
@@ -54,6 +61,7 @@ public class NotificationController {
     @PutMapping("/{id}/read")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<NotificationResponse> markAsRead(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.markAsRead(id));
     }
 
@@ -61,6 +69,7 @@ public class NotificationController {
     @PutMapping("/read-all")
     @PreAuthorize("isAuthenticated()")
     public Map<String, Integer> markAllAsRead() {
+        modulePermissionService.requireCanEdit(MODULE);
         return Map.of("updated", service.markAllAsRead());
     }
 
@@ -68,6 +77,7 @@ public class NotificationController {
     @DeleteMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> dismiss(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.dismiss(id);
         return ResponseEntity.noContent().build();
     }

@@ -330,7 +330,23 @@ public class UserService {
         if (rawPassword == null || rawPassword.isBlank()) {
             throw new RuntimeException(label + " is required.");
         }
+        validatePasswordComplexity(rawPassword, label);
         return passwordEncoder.encode(rawPassword);
+    }
+
+    private void validatePasswordComplexity(String password, String label) {
+        if (password.length() < 8) {
+            throw new RuntimeException(label + " must be at least 8 characters.");
+        }
+        if (!password.matches(".*[A-Z].*")) {
+            throw new RuntimeException(label + " must contain at least one uppercase letter.");
+        }
+        if (!password.matches(".*[0-9].*")) {
+            throw new RuntimeException(label + " must contain at least one digit.");
+        }
+        if (!password.matches(".*[^a-zA-Z0-9].*")) {
+            throw new RuntimeException(label + " must contain at least one special character.");
+        }
     }
 
     private Set<Role> resolveRoles(Set<Long> roleIds) {

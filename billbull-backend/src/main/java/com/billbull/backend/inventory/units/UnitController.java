@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.units;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -18,12 +19,16 @@ import java.util.List;
 @RequestMapping("/api/units")
 public class UnitController {
 
+    private static final String MODULE = "inventory";
+
     private final UnitService service;
     private final UnitExportService exportService;
+    private final ModulePermissionService modulePermissionService;
 
-    public UnitController(UnitService service, UnitExportService exportService) {
+    public UnitController(UnitService service, UnitExportService exportService, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.exportService = exportService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // ------------------------
@@ -32,12 +37,14 @@ public class UnitController {
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
     public List<UnitResponse> list() {
+        modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
     @GetMapping("/export/excel")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public ResponseEntity<InputStreamResource> exportUnitsToExcel() {
+        modulePermissionService.requireCanExport(MODULE);
         List<UnitResponse> units = service.list();
         ByteArrayInputStream in = exportService.export(units);
 
@@ -58,6 +65,7 @@ public class UnitController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UnitResponse> create(
             @Valid @RequestBody UnitRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(req));
     }
 
@@ -69,6 +77,7 @@ public class UnitController {
     public ResponseEntity<UnitResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody UnitRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, req));
     }
 
@@ -78,6 +87,7 @@ public class UnitController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
         return ResponseEntity.noContent().build();
     }

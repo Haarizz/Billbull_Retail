@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.stocktake;
 
+import com.billbull.backend.security.ModulePermissionService;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
@@ -17,14 +18,19 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/inventory/stock-take")
 public class StockTakeController {
 
-    private final StockTakeService service;
+    private static final String MODULE = "inventory";
 
-    public StockTakeController(StockTakeService service) {
+    private final StockTakeService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public StockTakeController(StockTakeService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @PostMapping("/sessions")
     public ResponseEntity<?> createSession(@RequestBody StockTakeSessionRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             Long categoryId = (req.selectedCategoryIds != null && !req.selectedCategoryIds.isEmpty())
                     ? req.selectedCategoryIds.get(0) : null;
@@ -48,17 +54,20 @@ public class StockTakeController {
             @RequestParam(defaultValue = "") String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "15") int size) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getProductsForStockTake(
                 stockTakeType, warehouseId, countType, categoryId, brandId, search, page, size));
     }
 
     @GetMapping("/sessions")
     public ResponseEntity<List<StockTakeSession>> getAllSessions() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllSessions());
     }
 
     @GetMapping("/sessions/{sessionId}")
     public ResponseEntity<StockTakeSession> getSession(@PathVariable String sessionId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getSession(sessionId));
     }
 
@@ -66,6 +75,7 @@ public class StockTakeController {
     public ResponseEntity<?> scanUnitBarcode(
             @PathVariable String sessionId,
             @RequestBody StockTakeUnitScanRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.scanUnitBarcode(sessionId, req));
         } catch (IllegalStateException | IllegalArgumentException e) {
@@ -75,6 +85,7 @@ public class StockTakeController {
 
     @GetMapping("/sessions/{sessionId}/coverage")
     public ResponseEntity<StockTakeCoverageResponse> getCoverage(@PathVariable String sessionId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getCoverage(sessionId));
     }
 
@@ -82,6 +93,7 @@ public class StockTakeController {
     public ResponseEntity<?> resolveUnitScan(
             @PathVariable Long scanId,
             @RequestBody StockTakeUnitScanResolveRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.resolveUnitScan(scanId, req));
         } catch (IllegalStateException | IllegalArgumentException e) {
@@ -93,6 +105,7 @@ public class StockTakeController {
     public ResponseEntity<StockTakeItem> updateItemCount(
             @PathVariable Long itemId,
             @RequestParam(required = false) Integer countedQty) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.updateItemCount(itemId, countedQty));
     }
 
@@ -100,6 +113,7 @@ public class StockTakeController {
     public ResponseEntity<StockTakeItem> updateItemBin(
             @PathVariable Long itemId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.updateItemBin(itemId, binId));
     }
 
@@ -109,6 +123,7 @@ public class StockTakeController {
             @RequestParam Long productId,
             @RequestParam(required = false, defaultValue = "1") Integer initialCount,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             return ResponseEntity.ok(service.addItemToSession(sessionId, productId, initialCount, binId));
         } catch (IllegalStateException | IllegalArgumentException e) {
@@ -118,6 +133,7 @@ public class StockTakeController {
 
     @PostMapping("/sessions/{sessionId}/submit")
     public ResponseEntity<StockTakeSession> submitForApproval(@PathVariable String sessionId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.submitForApproval(sessionId));
     }
 
@@ -125,6 +141,7 @@ public class StockTakeController {
     public ResponseEntity<List<StockTakeItem>> bulkUpdateItems(
             @PathVariable String sessionId,
             @RequestBody List<StockTakeItemUpdateDTO> updates) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.bulkUpdateItems(sessionId, updates));
     }
 
@@ -132,28 +149,33 @@ public class StockTakeController {
     public ResponseEntity<StockTakeSession> approveSession(
             @PathVariable String sessionId,
             @RequestParam String approvedBy) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.approveSession(sessionId, approvedBy));
     }
 
     @PostMapping("/sessions/{sessionId}/reject")
     public ResponseEntity<StockTakeSession> rejectSession(@PathVariable String sessionId) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.rejectSession(sessionId));
     }
 
     @org.springframework.web.bind.annotation.DeleteMapping("/sessions/{sessionId}")
     public ResponseEntity<Void> deleteSession(@PathVariable String sessionId) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteSession(sessionId);
         return ResponseEntity.ok().build();
     }
 
     @org.springframework.web.bind.annotation.DeleteMapping("/items/{itemId}")
     public ResponseEntity<Void> deleteItem(@PathVariable Long itemId) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteItem(itemId);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/items/{itemId}/batches")
     public ResponseEntity<?> addBatch(@PathVariable Long itemId, @RequestBody BatchRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             // Returns N unit rows for a lot of qty=N. Each row shares the lot prefix
             // and differs only in its trailing -{unitIndex}.
@@ -165,6 +187,7 @@ public class StockTakeController {
 
     @PutMapping("/batches/{batchId}")
     public ResponseEntity<?> updateBatch(@PathVariable Long batchId, @RequestBody BatchRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.updateBatch(batchId, req.batchNumber, req.expiryDate, req.quantity));
         } catch (IllegalStateException | IllegalArgumentException e) {
@@ -174,6 +197,7 @@ public class StockTakeController {
 
     @org.springframework.web.bind.annotation.DeleteMapping("/batches/{batchId}")
     public ResponseEntity<?> deleteBatch(@PathVariable Long batchId) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             service.deleteBatch(batchId);
             return ResponseEntity.ok().build();
@@ -184,11 +208,13 @@ public class StockTakeController {
 
     @GetMapping("/items/{itemId}/batches/next-number")
     public ResponseEntity<?> previewNextBatchNumber(@PathVariable Long itemId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(java.util.Map.of("batchNumber", service.previewNextBatchNumber(itemId)));
     }
 
     @PutMapping("/items/{itemId}/lots")
     public ResponseEntity<?> updateLot(@PathVariable Long itemId, @RequestBody LotUpdateRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.updateLot(
                     itemId,
@@ -209,6 +235,7 @@ public class StockTakeController {
             @RequestParam String lotPrefix,
             @RequestParam(required = false) java.time.LocalDate matchExpiry,
             @RequestParam(required = false, defaultValue = "false") boolean seeded) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             service.deleteLot(itemId, lotPrefix, matchExpiry, seeded);
             return ResponseEntity.ok().build();

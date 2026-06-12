@@ -1,13 +1,17 @@
 package com.billbull.backend.auth;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.config.JwtUtil;
+import com.billbull.backend.security.LoginRateLimiter;
 import com.billbull.backend.user.User;
 import com.billbull.backend.user.UserRepository;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,20 +23,29 @@ public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final LoginRateLimiter loginRateLimiter;
 
     public AuthController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
-            JwtUtil jwtUtil) {
+            JwtUtil jwtUtil,
+            LoginRateLimiter loginRateLimiter) {
 
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     @Transactional
     @PostMapping("/login")
-    public LoginResponse login(@RequestBody LoginRequest request) {
+    public LoginResponse login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+
+        String clientIp = resolveClientIp(httpRequest);
+        if (!loginRateLimiter.isAllowed(clientIp)) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                "Too many login attempts. Please wait 5 minutes before trying again.");
+        }
 
         // Accept username OR email in the "username" field — backward compatible
         User user = userRepository
@@ -44,6 +57,7 @@ public class AuthController {
             throw new RuntimeException("Invalid username or password");
         }
 
+        loginRateLimiter.recordSuccess(clientIp);
         String token = jwtUtil.generateToken(user);
 
         // Primary role is the canonical role for sidebar fallback and login redirect.
@@ -128,5 +142,13 @@ public class AuthController {
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

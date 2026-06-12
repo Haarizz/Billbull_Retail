@@ -792,17 +792,19 @@ const Sidebar = ({ children }) => {
                       <div className={`submenu-wrapper ${item.isOpen ? "open" : ""}`}>
                         <div className="submenu-inner">
                           <div className="sub-menu">
-                            {item.subItems.map((sub, i) => (
-                              <NavLink
-                                key={i}
-                                to={sub.path}
-                                className={({ isActive }) => `sub-item ${isActive ? "active" : ""}`}
-                                onClick={() => isMobile && setMobileOpen(false)}
-                              >
-                                {sub.icon && <span style={{ marginRight: '10px', display: 'flex', alignItems: 'center', opacity: 0.75 }}>{sub.icon}</span>}
-                                {sub.label}
-                              </NavLink>
-                            ))}
+                            {item.subItems
+                              .filter(sub => !sub.module || canView(sub.module))
+                              .map((sub, i) => (
+                                <NavLink
+                                  key={i}
+                                  to={sub.path}
+                                  className={({ isActive }) => `sub-item ${isActive ? "active" : ""}`}
+                                  onClick={() => isMobile && setMobileOpen(false)}
+                                >
+                                  {sub.icon && <span style={{ marginRight: '10px', display: 'flex', alignItems: 'center', opacity: 0.75 }}>{sub.icon}</span>}
+                                  {sub.label}
+                                </NavLink>
+                              ))}
                           </div>
                         </div>
                       </div>

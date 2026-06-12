@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.warehouse;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -8,19 +9,25 @@ import java.util.List;
 @RequestMapping("/api/warehouses/bins/{binId}/stock")
 public class BinStockController {
 
-    private final BinStockService binStockService;
+    private static final String MODULE = "inventory";
 
-    public BinStockController(BinStockService binStockService) {
+    private final BinStockService binStockService;
+    private final ModulePermissionService modulePermissionService;
+
+    public BinStockController(BinStockService binStockService, ModulePermissionService modulePermissionService) {
         this.binStockService = binStockService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     public List<BinStockResponse> getStock(@PathVariable Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return binStockService.getStockByBin(binId);
     }
 
     @GetMapping("/summary")
     public BinStockSummary getSummary(@PathVariable Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return new BinStockSummary(
                 binStockService.getTotalQuantityByBin(binId),
                 binStockService.getSkuCountByBin(binId));

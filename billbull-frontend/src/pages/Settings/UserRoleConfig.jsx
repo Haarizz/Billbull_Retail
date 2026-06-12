@@ -229,22 +229,25 @@ const UserRoleConfig = () => {
     setSaving(prev => ({ ...prev, [key]: true }));
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Hierarchical Cleanup: If turning off VIEW for a PARENT module, 
-    //    we must also turn off EVERYTHING for all its sub-resources.
+    // 3. Hierarchical Cleanup: If turning off VIEW for a PARENT module,
+    //    also clear all sub-resource permissions. Awaited via Promise.allSettled.
     // ─────────────────────────────────────────────────────────────────────────
     if (flag === 'canView' && !newValue) {
       const module = MODULES.find(m => m.key === key);
       if (module && module.resources) {
-        module.resources.forEach(async (res) => {
-           const resCurrent = permMap[res.key];
-           if (resCurrent && resCurrent.id) {
-              // We'll update the state optimistically for children too
-              const resNext = { canView:false, canCreate:false, canEdit:false, canApprove:false, canExport:false };
-              setPermMap(prev => ({ ...prev, [res.key]: resNext }));
-              // Fire off updates for children (async background)
-              rolePermissionsApi.update(resCurrent.id, resNext).catch(console.error);
-           }
-        });
+        const resNext = { canView:false, canCreate:false, canEdit:false, canApprove:false, canExport:false };
+        const childUpdates = module.resources
+          .filter(res => permMap[res.key]?.id)
+          .map(res => {
+            setPermMap(prev => ({ ...prev, [res.key]: resNext }));
+            return rolePermissionsApi.update(permMap[res.key].id, resNext);
+          });
+        const results = await Promise.allSettled(childUpdates);
+        const failed = results.filter(r => r.status === 'rejected');
+        if (failed.length > 0) {
+          setSaveStatus(prev => ({ ...prev, [key]: 'err' }));
+          setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 3000);
+        }
       }
     }
 
@@ -311,15 +314,15 @@ const UserRoleConfig = () => {
 
     // 2. Cascade to resources if this is a parent module
     const parentModule = MODULES.find(m => m.key === key);
+    const childPromises = [];
     if (parentModule && parentModule.resources) {
       parentModule.resources.forEach(res => {
         const resCurrent = permMap[res.key] || {};
         setPermMap(prev => ({ ...prev, [res.key]: { ...resCurrent, ...nextValues } }));
-        // API call for children
         if (resCurrent.id) {
-          rolePermissionsApi.update(resCurrent.id, nextValues).catch(console.error);
+          childPromises.push(rolePermissionsApi.update(resCurrent.id, nextValues));
         } else {
-          rolePermissionsApi.create({ roleName: selectedRole.name, module: res.key, ...nextValues }).catch(console.error);
+          childPromises.push(rolePermissionsApi.create({ roleName: selectedRole.name, module: res.key, ...nextValues }));
         }
       });
     }
@@ -331,6 +334,19 @@ const UserRoleConfig = () => {
       } else {
         result = await rolePermissionsApi.create({ roleName: selectedRole.name, module: key, ...nextValues });
       }
+
+      // Wait for all child saves and surface any failures
+      if (childPromises.length > 0) {
+        const childResults = await Promise.allSettled(childPromises);
+        const failed = childResults.filter(r => r.status === 'rejected');
+        if (failed.length > 0) {
+          setSaveStatus(prev => ({ ...prev, [key]: 'err' }));
+          setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 3000);
+          setSaving(prev => ({ ...prev, [key]: false }));
+          return;
+        }
+      }
+
       setPermMap(prev => ({ ...prev, [key]: { id: result.id, ...nextValues } }));
       setSaveStatus(prev => ({ ...prev, [key]: 'ok' }));
       refreshPermissions();

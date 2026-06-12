@@ -1,6 +1,7 @@
 package com.billbull.backend.hr.salaryadvance;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -13,9 +14,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/salary-advances")
-@CrossOrigin(origins = "*")
 @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
 public class SalaryAdvanceController {
+
+    private static final String MODULE = "hr";
 
     @Autowired
     private SalaryAdvanceService service;
@@ -23,9 +25,13 @@ public class SalaryAdvanceController {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private ModulePermissionService modulePermissionService;
+
     // Get All Requests
     @GetMapping
     public ResponseEntity<List<SalaryAdvanceRequest>> getAllRequests() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllRequests());
     }
 
@@ -34,12 +40,14 @@ public class SalaryAdvanceController {
     public ResponseEntity<SalaryAdvanceRequest> createRequest(
             @RequestPart("request") SalaryAdvanceRequest request,
             @RequestPart(value = "file", required = false) MultipartFile file) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.createRequest(request, file));
     }
 
     // Approve
     @PutMapping("/{id}/approve")
     public ResponseEntity<?> approveRequest(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             service.approveRequest(id);
             return ResponseEntity.ok().build();
@@ -51,6 +59,7 @@ public class SalaryAdvanceController {
     // Reject
     @PutMapping("/{id}/reject")
     public ResponseEntity<Void> rejectRequest(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.rejectRequest(id);
         return ResponseEntity.ok().build();
     }
@@ -58,6 +67,7 @@ public class SalaryAdvanceController {
     // Delete
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteRequest(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteRequest(id);
         return ResponseEntity.ok().build();
     }
@@ -67,24 +77,28 @@ public class SalaryAdvanceController {
     // Get All Schedules
     @GetMapping("/schedules")
     public ResponseEntity<List<RepaymentSchedule>> getAllSchedules() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllSchedules());
     }
 
     // Mark Paid
     @PutMapping("/schedules/{id}/pay")
     public ResponseEntity<RepaymentSchedule> markInstallmentPaid(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.markInstallmentPaid(id));
     }
 
     // Revoke Payment
     @PutMapping("/schedules/{id}/revoke")
     public ResponseEntity<RepaymentSchedule> revokePayment(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.revokePayment(id));
     }
 
     // --- DASHBOARD STATS ---
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getStats());
     }
 }

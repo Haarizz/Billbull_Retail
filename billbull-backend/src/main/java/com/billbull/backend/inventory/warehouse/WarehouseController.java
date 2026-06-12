@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.warehouse;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -13,28 +14,34 @@ import java.util.List;
 @RequestMapping("/api/warehouses")
 public class WarehouseController {
 
+    private static final String MODULE = "inventory";
+
     private final WarehouseService service;
     private final WarehouseStockService stockService;
     private final BinService binService;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
     public WarehouseController(WarehouseService service, WarehouseStockService stockService,
-            BinService binService, AuditLogService auditLogService) {
+            BinService binService, AuditLogService auditLogService, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.stockService = stockService;
         this.binService = binService;
         this.auditLogService = auditLogService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
     public List<WarehouseResponse> list(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         return service.list(branchId);
     }
 
     @GetMapping("/tree")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
     public WarehouseService.WarehouseTree tree(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getTree(branchId);
     }
 
@@ -42,6 +49,7 @@ public class WarehouseController {
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public ResponseEntity<WarehouseResponse> create(
             @Valid @RequestBody WarehouseRequestDto req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(req));
     }
 
@@ -50,12 +58,14 @@ public class WarehouseController {
     public ResponseEntity<WarehouseResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody WarehouseRequestDto req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, req));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
         return ResponseEntity.ok().build();
     }
@@ -63,6 +73,7 @@ public class WarehouseController {
     @GetMapping("/{id}/bins")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
     public List<BinResponse> getBins(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return binService.getBinResponsesByWarehouse(id);
     }
 
@@ -71,18 +82,21 @@ public class WarehouseController {
     @GetMapping("/{id}/stock")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public List<WarehouseStockResponse> stock(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStock(id);
     }
 
     @GetMapping("/stock/product/{productCode}")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public List<WarehouseStockResponse> getStockByProduct(@PathVariable String productCode) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStockByProduct(productCode);
     }
 
     @GetMapping("/{id}/stock/summary")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public WarehouseStockSummary getStockSummary(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStockSummary(id);
     }
 
@@ -94,6 +108,7 @@ public class WarehouseController {
             @RequestParam(required = false) Long zoneId,
             @RequestParam(required = false) Long locatorId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableStockWithFilters(id, productId, zoneId, locatorId, binId);
     }
 
@@ -104,6 +119,7 @@ public class WarehouseController {
             @RequestParam(required = false) Long zoneId,
             @RequestParam(required = false) Long locatorId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableStockWithFilters(id, null, zoneId, locatorId, binId);
     }
 
@@ -119,6 +135,7 @@ public class WarehouseController {
             @PathVariable Long id,
             @PathVariable Long productId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableBatchesForProduct(id, productId, binId);
     }
 

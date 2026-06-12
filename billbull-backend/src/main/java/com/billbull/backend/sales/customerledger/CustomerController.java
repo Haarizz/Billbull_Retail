@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.customerledger;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,8 +16,9 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/sales/customer-ledger")
-@CrossOrigin(origins = "http://localhost:3000")
 public class CustomerController {
+
+    private static final String MODULE = "sales";
 
     @Autowired
     private CustomerService service;
@@ -30,6 +32,9 @@ public class CustomerController {
     @Autowired
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private ModulePermissionService modulePermissionService;
+
     // =========================
     // GET ALL CUSTOMERS
     // BBQA52-024: optional branchName filters by branch allocation
@@ -38,6 +43,7 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<List<Customer>> getAllCustomers(
             @RequestParam(required = false) String branchName) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllCustomers(branchName));
     }
 
@@ -46,18 +52,21 @@ public class CustomerController {
     public ResponseEntity<List<Customer>> search(
             @RequestParam(defaultValue = "") String q,
             @RequestParam(defaultValue = "5") int size) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.search(q).stream().limit(size).toList());
     }
 
     @GetMapping("/next-code")
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(java.util.Map.of("customerCode", numberingService.preview(SalesDocumentType.CUSTOMER)));
     }
 
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     public ResponseEntity<String> importCustomers(@RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             return ResponseEntity.ok(importService.importCustomers(file));
         } catch (Exception e) {
@@ -71,6 +80,7 @@ public class CustomerController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<CustomerDTO> getCustomerById(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         CustomerDTO customerDTO = service.getCustomerDtoById(id);
         return ResponseEntity.ok(customerDTO);
     }
@@ -82,7 +92,7 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     public ResponseEntity<Customer> createOrUpdateCustomer(
             @RequestBody CustomerDTO customerDTO) {
-
+        modulePermissionService.requireCanCreate(MODULE);
         Customer savedCustomer = service.saveCustomer(customerDTO);
         return ResponseEntity.ok(savedCustomer);
     }
@@ -95,6 +105,7 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<List<OpeningInvoice>> getOpeningInvoicesByCode(
             @PathVariable String customerCode) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getOpeningInvoicesByCustomerCode(customerCode));
     }
 
@@ -108,6 +119,7 @@ public class CustomerController {
     public ResponseEntity<List<SavedAddress>> addSavedAddress(
             @PathVariable Long customerId,
             @RequestBody SavedAddress address) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.addSavedAddress(customerId, address));
     }
 
@@ -117,6 +129,7 @@ public class CustomerController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deleteCustomer(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteCustomer(id);
         return ResponseEntity.noContent().build();
     }

@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.warehouse;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -11,21 +12,27 @@ import java.util.List;
 @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER')")
 public class LocatorController {
 
-    private final LocatorService locatorService;
+    private static final String MODULE = "inventory";
 
-    public LocatorController(LocatorService locatorService) {
+    private final LocatorService locatorService;
+    private final ModulePermissionService modulePermissionService;
+
+    public LocatorController(LocatorService locatorService, ModulePermissionService modulePermissionService) {
         this.locatorService = locatorService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<List<LocatorResponse>> getLocators(@PathVariable Long zoneId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(locatorService.getLocatorResponsesByZone(zoneId));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<LocatorResponse> getLocator(@PathVariable Long zoneId, @PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(locatorService.getLocatorResponseById(id));
     }
 
@@ -33,6 +40,7 @@ public class LocatorController {
     public ResponseEntity<LocatorResponse> createLocator(
             @PathVariable Long zoneId,
             @RequestBody LocatorRequest request) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(locatorService.createLocatorAndGetResponse(zoneId, request));
     }
 
@@ -41,11 +49,13 @@ public class LocatorController {
             @PathVariable Long zoneId,
             @PathVariable Long id,
             @RequestBody LocatorRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(locatorService.updateLocatorAndGetResponse(id, request));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteLocator(@PathVariable Long zoneId, @PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         locatorService.deleteLocator(id);
         return ResponseEntity.noContent().build();
     }

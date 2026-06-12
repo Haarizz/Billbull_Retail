@@ -1,5 +1,6 @@
 package com.billbull.backend.settings.company;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -10,10 +11,14 @@ import java.io.IOException;
 @RequestMapping("/api/settings/company-profile")
 public class CompanyProfileController {
 
-    private final CompanyProfileService service;
+    private static final String MODULE = "userManagement";
 
-    public CompanyProfileController(CompanyProfileService service) {
+    private final CompanyProfileService service;
+    private final ModulePermissionService modulePermissionService;
+
+    public CompanyProfileController(CompanyProfileService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     /**
@@ -23,6 +28,7 @@ public class CompanyProfileController {
      */
     @GetMapping
     public ResponseEntity<CompanyProfile> getProfile() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getProfile());
     }
 
@@ -33,6 +39,7 @@ public class CompanyProfileController {
      */
     @PutMapping
     public ResponseEntity<CompanyProfile> updateProfile(@RequestBody CompanyProfile profile) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.updateProfile(profile));
     }
 
@@ -43,6 +50,7 @@ public class CompanyProfileController {
      */
     @PostMapping("/logo")
     public ResponseEntity<CompanyProfile> uploadLogo(@RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.uploadLogo(file));
         } catch (IOException e) {
@@ -59,6 +67,7 @@ public class CompanyProfileController {
      */
     @PostMapping("/stamp")
     public ResponseEntity<CompanyProfile> uploadStamp(@RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             return ResponseEntity.ok(service.uploadStamp(file));
         } catch (IOException e) {
