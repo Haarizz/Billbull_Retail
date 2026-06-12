@@ -2794,7 +2794,8 @@ const CustomerLedger = () => {
             toast.success(result || 'Customers imported successfully.', { id: toastId, duration: 6000 });
         } catch (error) {
             console.error('Failed to import customers', error);
-            const message = error.response?.data || error.message || 'Failed to import customers.';
+            const errData = error.response?.data;
+            const message = (typeof errData === 'string' ? errData : errData?.message) || error.message || 'Failed to import customers.';
             toast.error(message, { id: toastId, duration: 7000 });
         } finally {
             setIsImportingCustomers(false);
@@ -2813,7 +2814,8 @@ const CustomerLedger = () => {
             handleCloseModal();
         } catch (error) {
             console.error("Failed to save customer", error);
-            const msg = error?.response?.data?.message || error?.response?.data || error?.message || "Customer not saved to database";
+            const errData2 = error?.response?.data;
+            const msg = errData2?.message || (typeof errData2 === 'string' ? errData2 : null) || error?.message || "Customer not saved to database";
             toast.error(msg, { duration: 5000 });
         }
     };

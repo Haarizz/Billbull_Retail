@@ -38,89 +38,126 @@ public class CustomerImportService {
         try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
             for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
                 Sheet sheet = workbook.getSheetAt(i);
+
+                // Detect format: standard BillBull export vs. legacy "Name/Address/Phone/Email" format
                 int headerRowNum = findHeaderRow(sheet, "Customer Code");
+                boolean legacyFormat = false;
                 if (headerRowNum < 0) {
-                    errors.add("Sheet '" + sheet.getSheetName() + "': Customer Code header not found.");
+                    headerRowNum = findLegacyHeaderRow(sheet);
+                    legacyFormat = headerRowNum >= 0;
+                }
+                if (headerRowNum < 0) {
+                    errors.add("Sheet '" + sheet.getSheetName() + "': no recognised header row found.");
                     continue;
                 }
 
                 for (int r = headerRowNum + 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
-                    if (row == null || isReportFooterRow(row, 22)) {
+                    if (row == null || isReportFooterRow(row, legacyFormat ? 5 : 22)) {
                         skippedCount++;
                         continue;
                     }
 
                     try {
-                        String code = cell(row, 1);
-                        String name = cell(row, 2);
-                        if (isBlank(code) || isBlank(name)) {
-                            skippedCount++;
-                            continue;
-                        }
+                        if (legacyFormat) {
+                            // Legacy format: A=serial#, B=Name, C=Address, D=Phone, E=Email
+                            String serial = cell(row, 1);
+                            String name = cell(row, 2);
+                            if (isBlank(name)) {
+                                skippedCount++;
+                                continue;
+                            }
+                            String address = cell(row, 3);
+                            String phone = cell(row, 4);
+                            String email = cell(row, 5);
 
-                        Optional<Customer> existing = repository.findByCode(code.trim());
-                        boolean isUpdate = existing.isPresent();
-                        Customer customer = existing.orElseGet(Customer::new);
+                            String code = buildLegacyCode("C", serial, name, r);
+                            Optional<Customer> existing = repository.findByCode(code);
+                            boolean isUpdate = existing.isPresent();
+                            Customer customer = existing.orElseGet(Customer::new);
 
-                        String address = cell(row, 4);
-                        String city = cell(row, 5);
-                        String trn = cell(row, 6);
-                        String route = cell(row, 7);
-                        String phone = cell(row, 8);
-                        String contactPerson = cell(row, 9);
-                        String mobile = cell(row, 10);
-                        String email = cell(row, 11);
-                        String salesPerson = cell(row, 12);
-                        String deliveryPerson = cell(row, 13);
-                        String customerCompany = cell(row, 14);
-                        String location = cell(row, 15);
-                        String customerType = cell(row, 16);
-                        String priceGroup = cell(row, 17);
-                        String customerGroup = cell(row, 18);
-                        String businessType = cell(row, 19);
-                        String defaultTerm = cell(row, 20);
-                        String status = firstNonBlank(cell(row, 21), cell(row, 22), "Active");
+                            customer.setCode(code);
+                            customer.setName(limit(name.trim(), 255));
+                            customer.setBillingAddress(limit(address, 1000));
+                            customer.setDefaultShippingAddress(limit(address, 1000));
+                            customer.setPhone(limit(cleanPhone(phone), 255));
+                            customer.setMobile(limit(cleanPhone(phone), 255));
+                            customer.setEmail(limit(email, 255));
+                            customer.setGroupType("General");
+                            customer.setPriceList("General");
+                            customer.setPayTerms("Immediate");
+                            customer.setStatus("Active");
+                            customer.setCreditStatus(firstNonBlank(customer.getCreditStatus(), "Good"));
+                            customer.setBlockCredit(Boolean.FALSE);
+                            if (customer.getBalance() == null) customer.setBalance(BigDecimal.ZERO);
+                            if (customer.getTotalSales() == null) customer.setTotalSales(BigDecimal.ZERO);
 
-                        customer.setCode(limit(code.trim(), 255));
-                        customer.setName(limit(name.trim(), 255));
-                        customer.setBillingAddress(limit(address, 1000));
-                        customer.setDefaultShippingAddress(limit(joinNonBlank(", ", address, city, location), 1000));
-                        customer.setCity(limit(city, 255));
-                        customer.setTrn(limit(trn, 255));
-                        customer.setPhone(limit(phone, 255));
-                        customer.setMobile(limit(mobile, 255));
-                        customer.setEmail(limit(email, 255));
-                        customer.setSalesman(limit(salesPerson, 255));
-                        customer.setGroupType(limit(firstNonBlank(customerGroup, customerType, "General"), 255));
-                        customer.setPriceList(limit(firstNonBlank(priceGroup, "General"), 255));
-                        customer.setPayMode(limit(defaultTerm, 255));
-                        customer.setPayTerms(limit(normalizePaymentTerms(defaultTerm), 255));
-                        customer.setStatus(limit(status, 255));
-                        customer.setBranch(limit(location, 255));
-                        customer.setWarehouse(limit(route, 255));
-                        customer.setCreditStatus(firstNonBlank(customer.getCreditStatus(), "Good"));
-                        customer.setBlockCredit(Boolean.FALSE);
-                        if (customer.getBalance() == null) {
-                            customer.setBalance(BigDecimal.ZERO);
-                        }
-                        if (customer.getTotalSales() == null) {
-                            customer.setTotalSales(BigDecimal.ZERO);
-                        }
-                        customer.setNotes(limit(buildNotes(
-                                "Contact Person", contactPerson,
-                                "Delivery Person", deliveryPerson,
-                                "Customer Company", customerCompany,
-                                "Customer Type", customerType,
-                                "Customer Business Type", businessType,
-                                "Default Term ID", defaultTerm,
-                                "Route", route), 1000));
-
-                        repository.save(customer);
-                        if (isUpdate) {
-                            updatedCount++;
+                            repository.save(customer);
+                            if (isUpdate) updatedCount++; else createdCount++;
                         } else {
-                            createdCount++;
+                            // Standard BillBull format
+                            String code = cell(row, 1);
+                            String name = cell(row, 2);
+                            if (isBlank(code) || isBlank(name)) {
+                                skippedCount++;
+                                continue;
+                            }
+
+                            Optional<Customer> existing = repository.findByCode(code.trim());
+                            boolean isUpdate = existing.isPresent();
+                            Customer customer = existing.orElseGet(Customer::new);
+
+                            String address = cell(row, 4);
+                            String city = cell(row, 5);
+                            String trn = cell(row, 6);
+                            String route = cell(row, 7);
+                            String phone = cell(row, 8);
+                            String contactPerson = cell(row, 9);
+                            String mobile = cell(row, 10);
+                            String email = cell(row, 11);
+                            String salesPerson = cell(row, 12);
+                            String deliveryPerson = cell(row, 13);
+                            String customerCompany = cell(row, 14);
+                            String location = cell(row, 15);
+                            String customerType = cell(row, 16);
+                            String priceGroup = cell(row, 17);
+                            String customerGroup = cell(row, 18);
+                            String businessType = cell(row, 19);
+                            String defaultTerm = cell(row, 20);
+                            String status = firstNonBlank(cell(row, 21), cell(row, 22), "Active");
+
+                            customer.setCode(limit(code.trim(), 255));
+                            customer.setName(limit(name.trim(), 255));
+                            customer.setBillingAddress(limit(address, 1000));
+                            customer.setDefaultShippingAddress(limit(joinNonBlank(", ", address, city, location), 1000));
+                            customer.setCity(limit(city, 255));
+                            customer.setTrn(limit(trn, 255));
+                            customer.setPhone(limit(phone, 255));
+                            customer.setMobile(limit(mobile, 255));
+                            customer.setEmail(limit(email, 255));
+                            customer.setSalesman(limit(salesPerson, 255));
+                            customer.setGroupType(limit(firstNonBlank(customerGroup, customerType, "General"), 255));
+                            customer.setPriceList(limit(firstNonBlank(priceGroup, "General"), 255));
+                            customer.setPayMode(limit(defaultTerm, 255));
+                            customer.setPayTerms(limit(normalizePaymentTerms(defaultTerm), 255));
+                            customer.setStatus(limit(status, 255));
+                            customer.setBranch(limit(location, 255));
+                            customer.setWarehouse(limit(route, 255));
+                            customer.setCreditStatus(firstNonBlank(customer.getCreditStatus(), "Good"));
+                            customer.setBlockCredit(Boolean.FALSE);
+                            if (customer.getBalance() == null) customer.setBalance(BigDecimal.ZERO);
+                            if (customer.getTotalSales() == null) customer.setTotalSales(BigDecimal.ZERO);
+                            customer.setNotes(limit(buildNotes(
+                                    "Contact Person", contactPerson,
+                                    "Delivery Person", deliveryPerson,
+                                    "Customer Company", customerCompany,
+                                    "Customer Type", customerType,
+                                    "Customer Business Type", businessType,
+                                    "Default Term ID", defaultTerm,
+                                    "Route", route), 1000));
+
+                            repository.save(customer);
+                            if (isUpdate) updatedCount++; else createdCount++;
                         }
                     } catch (Exception e) {
                         errorCount++;
@@ -151,6 +188,39 @@ public class CustomerImportService {
             }
         }
         return -1;
+    }
+
+    // Detects the legacy format: header row where column B = "Name", column D = "Phone"
+    private int findLegacyHeaderRow(Sheet sheet) {
+        for (int r = 0; r <= Math.min(sheet.getLastRowNum(), 20); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            String colB = cell(row, 2);
+            String colD = cell(row, 4);
+            if ("Name".equalsIgnoreCase(colB) && "Phone".equalsIgnoreCase(colD)) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    private String buildLegacyCode(String prefix, String serial, String name, int rowIndex) {
+        if (!isBlank(serial)) {
+            String digits = serial.trim().replaceAll("[^0-9]", "");
+            if (!digits.isEmpty()) {
+                return prefix + String.format("%04d", Integer.parseInt(digits));
+            }
+        }
+        // Fallback: sanitise the name into a code
+        String slug = name.trim().replaceAll("[^a-zA-Z0-9]", "").toUpperCase();
+        if (slug.length() > 8) slug = slug.substring(0, 8);
+        return prefix + slug + rowIndex;
+    }
+
+    private String cleanPhone(String phone) {
+        if (isBlank(phone)) return null;
+        // Strip trailing commas/spaces that the legacy export adds
+        return phone.trim().replaceAll("[,\\s]+$", "");
     }
 
     private String normalizePaymentTerms(String value) {
