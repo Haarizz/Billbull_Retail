@@ -473,7 +473,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
     } catch (err) {
       console.error("Payment failed", err);
-      alert("Failed to process some payments. Check history.");
+      const msg = err?.response?.data?.message || err?.message || "Failed to process some payments.";
+      alert(msg);
     } finally {
       setIsProcessing(false);
     }
@@ -716,7 +717,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                     >
                       <option value="">Select Bank Account...</option>
                       {bankAccounts.map(acc => (
-                        <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                        <option key={acc.id} value={acc.code || acc.name}>{acc.code} — {acc.name}</option>
                       ))}
                     </select>
                   </div>

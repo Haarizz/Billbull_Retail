@@ -1,5 +1,7 @@
 package com.billbull.backend.purchase.vendor;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,9 @@ public class VendorService {
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo;
     private final com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo;
     private final BranchRepository branchRepo;
+
+    @PersistenceContext
+    private EntityManager em;
 
     public VendorService(VendorRepository repo,
             com.billbull.backend.purchase.lpo.LpoRepository lpoRepo,
@@ -64,11 +69,11 @@ public class VendorService {
     }
 
     public List<VendorListResponse> list(String branchName) {
-        // Batch the two balance aggregates into one grouped query each (keyed by
-        // vendor name) instead of running them per-vendor — turns N×2 queries into
-        // 2 total, which is the difference between ~12s and instant at 300 vendors.
-        // Invoice outstanding: grandTotal of POSTED, unpaid/partial invoices per vendor name.
+        // Batch the balance aggregates into grouped queries (keyed by vendor name).
+        // grandTotal of POSTED, unpaid/partial invoices per vendor name.
         java.util.Map<String, BigDecimal> invoiceOutstandingByName = toAmountMap(invRepo.sumOutstandingByVendorName());
+        // POSTED/CLEARED payments already applied to specific invoices — reduces the gross invoice total.
+        java.util.Map<String, BigDecimal> invoiceLinkedPaidByName = toAmountMap(payRepo.sumInvoiceLinkedPaymentsGroupedByVendorName());
         // On-account payments (not linked to any invoice — settle opening balance).
         java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
 
@@ -81,8 +86,10 @@ public class VendorService {
                     BigDecimal onAccountPaid = onAccountByName.getOrDefault(v.getName(), BigDecimal.ZERO);
                     BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid).max(BigDecimal.ZERO);
 
-                    // Payable = unpaid/partial invoice outstanding + remaining opening balance.
-                    BigDecimal invOutstanding = invoiceOutstandingByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    // Payable = (gross invoice total − payments already applied) + remaining opening balance.
+                    BigDecimal invGross = invoiceOutstandingByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal invPaid  = invoiceLinkedPaidByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal invOutstanding = invGross.subtract(invPaid).max(BigDecimal.ZERO);
                     BigDecimal payableBalance = invOutstanding.add(openingOutstanding);
 
                     VendorListResponse r = new VendorListResponse(
@@ -246,6 +253,7 @@ public class VendorService {
         if (req.getBranch() == null && req.getAllocatedBranches() == null) return;
         v.getBranchAllocations().size(); // force-init before clear
         v.getBranchAllocations().clear();
+        em.flush(); // push DELETEs to DB before INSERTs to avoid unique-constraint violation
         Set<String> names = new LinkedHashSet<>();
         if (req.getBranch() != null && !req.getBranch().isBlank()) names.add(req.getBranch());
         if (req.getAllocatedBranches() != null) names.addAll(req.getAllocatedBranches());

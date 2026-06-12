@@ -132,15 +132,27 @@ public class PaymentVoucherController {
     // UPDATE STATUS
     // --------------------
     @PutMapping("/{id}/status")
-    public ResponseEntity<PaymentVoucher> updateStatus(
+    public ResponseEntity<?> updateStatus(
             @PathVariable Long id,
             @RequestParam String status) {
         modulePermissionService.requireCanEdit(MODULE);
         try {
             PaymentStatus newStatus = PaymentStatus.valueOf(status.toUpperCase());
-            return ResponseEntity.ok(service.updateStatus(id, newStatus));
+            PaymentVoucher updated = service.updateStatus(id, newStatus);
+            Map<String, Object> response = new java.util.LinkedHashMap<>();
+            response.put("id", updated.getId());
+            response.put("voucherNumber", updated.getVoucherNumber());
+            response.put("status", updated.getStatus() != null ? updated.getStatus().name() : null);
+            response.put("message", "Payment voucher status updated");
+            return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(Map.of("message", "Invalid status: " + status));
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("message", e.getReason() != null ? e.getReason() : e.getMessage()));
+        } catch (com.billbull.backend.financials.generalledger.postingengine.PostingException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage() != null ? e.getMessage() : "Failed to update payment status"));
         }
     }
 

@@ -113,6 +113,45 @@ class PostingEngineContractTest {
     }
 
     @Test
+    void cashVendorPaymentCreditsPettyCash() {
+        PaymentVoucher pv = paymentVoucher("PV-CASH-001", new BigDecimal("500.00"), null);
+        pv.setPaymentMode(PaymentMode.CASH);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_PETTY_CASH, new BigDecimal("500.00"), false);
+    }
+
+    @Test
+    void selectedPettyCashAccountOverridesBankTransferDefault() {
+        Account pettyCash = activeAccount();
+        pettyCash.setCode(PostingEngineService.ACC_PETTY_CASH);
+        pettyCash.setName("Petty Cash");
+        when(accountRepository.findByCode(PostingEngineService.ACC_PETTY_CASH)).thenReturn(pettyCash);
+
+        PaymentVoucher pv = paymentVoucher("PV-BANK-PETTY-001", new BigDecimal("500.00"), null);
+        pv.setPaymentMode(PaymentMode.BANK_TRANSFER);
+        pv.setBankAccount(PostingEngineService.ACC_PETTY_CASH);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_PETTY_CASH, new BigDecimal("500.00"), false);
+    }
+
+    @Test
+    void lpoAdvancePaymentDebitsVendorAdvances() {
+        PaymentVoucher pv = paymentVoucher("PV-LPO-ADV-001", new BigDecimal("500.00"), null);
+        pv.setLpoId(7L);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_VENDOR_ADVANCES, new BigDecimal("500.00"), true);
+    }
+
+    @Test
     void periodLockedBlocksPosting() {
         doThrow(new PostingException(PostingErrorCode.PERIOD_LOCKED, "closed"))
                 .when(accountingPeriodService).assertOpen(any());
