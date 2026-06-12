@@ -129,7 +129,6 @@ public class SystemAccountSeeder implements ApplicationRunner {
             // Inventory adjustments
             new AccountSeed("SYS-5105", "5105", "Inventory Adjustment",           "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
             // Bank-related
-            new AccountSeed("SYS-1108", "1108", "Petty Cash - Branch",            "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK"),
             // Asset disposal gain/loss — distinct from Interest Income (7002) and Bank Charges (7501)
             new AccountSeed("SYS-4302", "4302", "Gain on Disposal",               "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
             new AccountSeed("SYS-6040", "6040", "Loss on Disposal",               "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES")
@@ -198,6 +197,14 @@ public class SystemAccountSeeder implements ApplicationRunner {
             System.out.println("[SystemAccountSeeder] Seeded " + seeded + " account(s), patched " + patched + " account(s).");
         } else {
             System.out.println("[SystemAccountSeeder] All system accounts already present — no seeding required.");
+        }
+
+        // Account 1108 "Petty Cash - Branch" has been retired; only 1103 "Petty Cash" is used.
+        Account pettyCashBranch = accountRepository.findByCode("1108");
+        if (pettyCashBranch != null && !"archived".equals(pettyCashBranch.getStatus())) {
+            pettyCashBranch.setStatus("archived");
+            accountRepository.save(pettyCashBranch);
+            System.out.println("[SystemAccountSeeder] Archived retired account 1108 (Petty Cash - Branch).");
         }
     }
 

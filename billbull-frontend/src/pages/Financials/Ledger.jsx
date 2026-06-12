@@ -1249,15 +1249,16 @@ const glAccountOptions = accounts
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
               const typeAccounts = accounts.filter(a => {
                 if (a.status === 'archived') return false;
-                
+                if (a.isGroup === true) return false;
+
                 const group = (a.group || '').toLowerCase().trim();
                 const actType = (a.accountType || '').toLowerCase().trim();
                 const target = type.toLowerCase();
-                
+
                 // Robust matching for plural/singular and empty groups
-                return group === target || 
+                return group === target ||
                        group === target.replace(/s$/, '').replace(/ies$/, 'y') ||
-                       actType === target || 
+                       actType === target ||
                        actType === target.replace(/s$/, '').replace(/ies$/, 'y');
               });
               const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
