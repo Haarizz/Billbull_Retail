@@ -1283,6 +1283,7 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             ),
             sku: item.sku || "",
             barcode: firstValue(item.barcode, item.itemBarcode) || "",
+            brand: item.brand || item.brandName || "",
             localName: item.localName || "",
             shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",

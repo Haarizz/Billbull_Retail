@@ -128,6 +128,7 @@ import { useBranch } from '../../../context/BranchContext';
 // UTILITIES & CONSTANTS
 // ==========================================
 import SearchableDropdown from '../../../components/SearchableDropdown';
+import LocationSelector from '../../../components/common/LocationSelector';
 import ProductSelector from '../../../components/ProductSelector';
 import VendorSelector from '../../../components/VendorSelector';
 import TableSkeleton from '../../../components/common/TableSkeleton';
@@ -524,11 +525,10 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 text-[11px]">
-                      {row.branchName ? (
-                        <>
-                          <div className="font-medium">{row.branchName}</div>
-                          {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                        </>
+                      {row.branchCode ? (
+                        <div className="font-medium">{row.branchCode}</div>
+                      ) : row.branchName ? (
+                        <div className="font-medium">{row.branchName}</div>
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}
@@ -1525,55 +1525,15 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     }));
   };
 
-  const handleWarehouseChange = (value) => {
-    const w = warehouses.find(x => x.id === Number(value));
-    if (w) {
-      setFormData(prev => ({
-        ...prev,
-        warehouseId: w.id,
-        warehouseName: w.name,
-        zoneId: null, locatorId: null, binId: null
-      }));
-      getWarehouseZones(w.id).then(setZoneList).catch(console.error);
-      setLocatorList([]);
-      setBinList([]);
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        warehouseId: null,
-        warehouseName: '',
-        zoneId: null, locatorId: null, binId: null
-      }));
-      setZoneList([]);
-      setLocatorList([]);
-      setBinList([]);
-    }
-  };
-
-  const handleZoneChange = (value) => {
-    const z = zoneList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, zoneId: z?.id || null, locatorId: null, binId: null }));
-    if (z) {
-      getZoneLocators(z.id).then(setLocatorList).catch(console.error);
-    } else {
-      setLocatorList([]);
-    }
-    setBinList([]);
-  };
-
-  const handleLocatorChange = (value) => {
-    const l = locatorList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, locatorId: l?.id || null, binId: null }));
-    if (l) {
-      getLocatorBins(l.id).then(setBinList).catch(console.error);
-    } else {
-      setBinList([]);
-    }
-  };
-
-  const handleBinChange = (value) => {
-    const b = binList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, binId: b?.id || null }));
+  const handleLocationChange = (payload) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseId: payload.warehouseId,
+      warehouseName: payload.warehouseName,
+      zoneId: payload.zoneId,
+      locatorId: payload.locatorId,
+      binId: payload.binId
+    }));
   };
 
   return (
@@ -1683,64 +1643,21 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Delivery Location (Warehouse)
+                  Delivery Location
                 </label>
-                <SearchableDropdown
-                  options={warehouses.map(w => ({ value: w.id, label: w.name }))}
-                  value={formData.warehouseId}
-                  onChange={handleWarehouseChange}
-                  placeholder="Select Warehouse"
+                <LocationSelector
+                  value={{
+                    warehouseId: formData.warehouseId,
+                    warehouseName: formData.warehouseName,
+                    zoneId: formData.zoneId,
+                    locatorId: formData.locatorId,
+                    binId: formData.binId
+                  }}
+                  onChange={handleLocationChange}
                   disabled={isReadOnly}
-                  menuPlacement="auto"
-                  menuZIndexClass="z-[120]"
                   className="w-full"
                 />
               </div>
-
-              {/* Cascading Location Fields */}
-              {formData.warehouseId && (
-                <div className="grid grid-cols-3 gap-2 p-2 bg-slate-50 rounded border border-slate-100">
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Zone</label>
-                    <SearchableDropdown
-                      options={zoneList.map(z => ({ value: z.id, label: z.name }))}
-                      value={formData.zoneId}
-                      onChange={handleZoneChange}
-                      placeholder="Zone"
-                      disabled={isReadOnly}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Locator</label>
-                    <SearchableDropdown
-                      options={locatorList.map(l => ({ value: l.id, label: l.name }))}
-                      value={formData.locatorId}
-                      onChange={handleLocatorChange}
-                      placeholder="Locator"
-                      disabled={isReadOnly || !formData.zoneId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Bin</label>
-                    <SearchableDropdown
-                      options={binList.map(b => ({ value: b.id, label: b.code }))}
-                      value={formData.binId}
-                      onChange={handleBinChange}
-                      placeholder="Bin"
-                      disabled={isReadOnly || !formData.locatorId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">
                   Purchase Type

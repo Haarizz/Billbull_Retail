@@ -1263,11 +1263,10 @@ const PaymentVoucher = () => {
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                                    {row.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{row.branchName}</div>
-                                                            {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                                                        </>
+                                                    {row.branchCode ? (
+                                                        <div className="font-medium">{row.branchCode}</div>
+                                                    ) : row.branchName ? (
+                                                        <div className="font-medium">{row.branchName}</div>
                                                     ) : (
                                                         <span className="text-slate-300">—</span>
                                                     )}
