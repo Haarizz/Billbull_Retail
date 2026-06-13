@@ -49,6 +49,12 @@ class PaymentServiceTest {
     @Mock
     private SalesDocumentNumberingService numberingService;
 
+    @Mock
+    private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+
+    @Mock
+    private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+
     private PaymentService paymentService;
 
     @BeforeEach
@@ -60,6 +66,8 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "customerRepository", customerRepository);
         ReflectionTestUtils.setField(paymentService, "receiptVoucherService", receiptVoucherService);
         ReflectionTestUtils.setField(paymentService, "numberingService", numberingService);
+        ReflectionTestUtils.setField(paymentService, "branchAccessService", branchAccessService);
+        ReflectionTestUtils.setField(paymentService, "notifPublisher", notifPublisher);
     }
 
     @Test
