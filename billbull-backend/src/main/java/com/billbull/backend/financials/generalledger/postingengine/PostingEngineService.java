@@ -57,36 +57,39 @@ import com.billbull.backend.financials.pdc.PdcStatus;
 @Slf4j
 public class PostingEngineService {
 
-        public static final String ACC_CASH                = "1101";
-        public static final String ACC_BANK                = "1102";
-        public static final String ACC_PETTY_CASH          = "1103";
-        public static final String ACC_MERCHANT_CLEARING   = "1104";
-        public static final String ACC_ACCOUNTS_RECEIVABLE = "1110";
-        public static final String ACC_INVENTORY           = "1120";
-        public static final String ACC_VAT_INPUT           = "1130";
-        public static final String ACC_ACCOUNTS_PAYABLE    = "2101";
-        public static final String ACC_VAT_OUTPUT          = "2102";
-        public static final String ACC_GRN_CLEARING        = "2103";
-        public static final String ACC_CUSTOMER_ADVANCE    = "2104";
-        public static final String ACC_DEFERRED_REVENUE    = "2107";
-        public static final String ACC_SALES_REVENUE       = "4101";
-        public static final String ACC_SALES_RETURNS       = "4102";
-        public static final String ACC_DELIVERY_INCOME     = "4103";
-        public static final String ACC_COGS                = "5101";
-        public static final String ACC_EXPENSE_GENERAL     = "5403";
-        public static final String ACC_ROUNDING            = "5999";
+        // ── BillBull Standard COA codes (PDF key account codes table) ─────────
+        public static final String ACC_CASH                = "1001";  // Cash in Hand
+        public static final String ACC_BANK                = "1010";  // Bank Account (Main)
+        public static final String ACC_BANK_COLLECTION     = "1011";  // Bank Account (Collection)
+        public static final String ACC_PETTY_CASH          = "1012";  // Petty Cash
+        public static final String ACC_MERCHANT_CLEARING   = "1013";  // Merchant Clearing
+        public static final String ACC_ACCOUNTS_RECEIVABLE = "1100";  // Accounts Receivable Control
+        public static final String ACC_CUC                 = "1101";  // AR – Post-Dated Cheques (Cheques Under Collection)
         public static final String ACC_VENDOR_ADVANCES     = "1105";  // Vendor Advances Paid
-        public static final String ACC_SALARY_ADVANCES     = "1106";  // Employee salary advances (current asset)
-        public static final String ACC_CUC                 = "1107";  // Cheques Under Collection
-        public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Settlement discount granted to customer
-        public static final String ACC_DISCOUNT_RECEIVED   = "7001";  // Settlement discount received from vendor
-        public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary / wage expense
-        public static final String ACC_SALARY_PAYABLE      = "2200";  // Salary payable (net to employee)
-        public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other deductions payable
-        public static final String ACC_BANK_CHARGES        = "7501";  // Bank service charges (expense)
-        public static final String ACC_INTEREST_INCOME     = "7002";  // Bank interest income
-        public static final String ACC_INVENTORY_WRITEOFF  = "7502";  // Inventory write-off / shrinkage expense (Other Expenses)
-        public static final String ACC_VAT_PAYABLE         = "2108";  // Net VAT payable to FTA (VAT settlement account)
+        public static final String ACC_SALARY_ADVANCES     = "1106";  // Salary Advances – Employees
+        public static final String ACC_INVENTORY           = "1200";  // Inventory – Raw / Retail
+        public static final String ACC_VAT_INPUT           = "1310";  // VAT Input Tax
+        public static final String ACC_ACCOUNTS_PAYABLE    = "2001";  // Accounts Payable Control
+        public static final String ACC_GRN_CLEARING        = "2002";  // GRN Clearing
+        public static final String ACC_CUSTOMER_ADVANCE    = "2060";  // Customer Advances Received
+        public static final String ACC_DEFERRED_REVENUE    = "2051";  // Deferred Revenue
+        public static final String ACC_VAT_OUTPUT          = "2100";  // VAT Output Tax
+        public static final String ACC_VAT_PAYABLE         = "2101";  // VAT Payable (Net) — FTA settlement account
+        public static final String ACC_SALARY_PAYABLE      = "2200";  // Salary Payable
+        public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other Deductions Payable
+        public static final String ACC_SALES_REVENUE       = "4001";  // Sales Revenue
+        public static final String ACC_SALES_RETURNS       = "4002";  // Sales Returns
+        public static final String ACC_TRADE_DISC_GIVEN    = "4003";  // Trade Discounts Given (contra-revenue)
+        public static final String ACC_DELIVERY_INCOME     = "4004";  // Delivery Income
+        public static final String ACC_DISCOUNT_RECEIVED   = "7001";  // Discount Received (Purchase)
+        public static final String ACC_INTEREST_INCOME     = "7002";  // Interest Income
+        public static final String ACC_COGS                = "5001";  // Purchase / COGS
+        public static final String ACC_EXPENSE_GENERAL     = "6099";  // General Expense
+        public static final String ACC_ROUNDING            = "5999";  // Rounding Adjustment
+        public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Discount Allowed (Sales)
+        public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary Expense
+        public static final String ACC_BANK_CHARGES        = "7501";  // Bank Charges
+        public static final String ACC_INVENTORY_WRITEOFF  = "7502";  // Inventory Write-off / Shrinkage
 
         /** Max |Σdebit − Σcredit| absorbed into the rounding account instead of rejected. */
         private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
@@ -214,10 +217,10 @@ public class PostingEngineService {
                         // PPV: positive → invoice higher than GRN (extra cost); negative → invoice lower (gain)
                         if (ppv.abs().compareTo(new BigDecimal("0.005")) > 0) {
                                 if (ppv.signum() > 0) {
-                                        addLine(entry, "Purchase Price Variance", "5103",
+                                        addLine(entry, "Purchase Price Variance", "5003",
                                                         "PPV - " + ref, ppv, BigDecimal.ZERO);
                                 } else {
-                                        addLine(entry, "Purchase Price Variance", "5103",
+                                        addLine(entry, "Purchase Price Variance", "5003",
                                                         "PPV gain - " + ref, BigDecimal.ZERO, ppv.abs());
                                 }
                         }
@@ -1464,13 +1467,13 @@ public class PostingEngineService {
                                 "AP reduction - " + ref, grandTotal, BigDecimal.ZERO);
                 addLine(entry, "Inventory", ACC_INVENTORY,
                                 "Inventory returned to vendor at GRN cost - " + ref, BigDecimal.ZERO, inventoryCost);
-                // Absorb variance between return price and original GRN cost in PPV (5103)
+                // Absorb variance between return price and original GRN cost in PPV-Returns (5004)
                 if (ppvVariance.abs().compareTo(new BigDecimal("0.005")) > 0) {
                         if (ppvVariance.compareTo(BigDecimal.ZERO) > 0) {
-                                addLine(entry, "Purchase Price Variance", "5103",
+                                addLine(entry, "Purchase Price Variance", "5004",
                                         "Return price > GRN cost variance - " + ref, ppvVariance, BigDecimal.ZERO);
                         } else {
-                                addLine(entry, "Purchase Price Variance", "5103",
+                                addLine(entry, "Purchase Price Variance", "5004",
                                         "Return price < GRN cost variance - " + ref, BigDecimal.ZERO, ppvVariance.negate());
                         }
                 }
@@ -1757,11 +1760,11 @@ public class PostingEngineService {
                         // Net debit > net credit → equity = credit side plug (normal for profitable entity)
                         // Net credit > net debit → equity = debit side plug (accumulated losses)
                         if (diff.signum() > 0) {
-                                addLine(entry, "Retained Earnings", "3000",
+                                addLine(entry, "Retained Earnings", "3100",
                                                 "Plug - Opening Entry " + asOfDate.getYear(),
                                                 BigDecimal.ZERO, diff);
                         } else {
-                                addLine(entry, "Retained Earnings", "3000",
+                                addLine(entry, "Retained Earnings", "3100",
                                                 "Plug - Opening Entry " + asOfDate.getYear(),
                                                 diff.abs(), BigDecimal.ZERO);
                         }
@@ -2187,9 +2190,9 @@ public class PostingEngineService {
         // Reference: "DEP-{assetCode}-{YYYY-MM}" — idempotent
         // =========================================================
 
-        private static final String ACC_DEPRECIATION_EXPENSE = "6030";
-        private static final String ACC_ACCUM_DEPRECIATION   = "1450";
-        private static final String ACC_FIXED_ASSET          = "1400";
+        private static final String ACC_DEPRECIATION_EXPENSE = "6030";  // unchanged
+        private static final String ACC_ACCUM_DEPRECIATION   = "1450";  // unchanged
+        private static final String ACC_FIXED_ASSET          = "1400";  // unchanged
         private static final String TX_DEPRECIATION          = "DEP";
         private static final String TX_ASSET_DISPOSAL        = "DISP";
 
@@ -2253,7 +2256,7 @@ public class PostingEngineService {
                 // Gain or Loss on disposal
                 if (gainLoss != null && gainLoss.compareTo(BigDecimal.ZERO) != 0) {
                         if (gainLoss.compareTo(BigDecimal.ZERO) > 0) {
-                                addLine(entry, "Gain on Disposal", "4302",
+                                addLine(entry, "Gain on Disposal", "7004",
                                                 "Gain on disposal " + assetName, BigDecimal.ZERO, gainLoss, null);
                         } else {
                                 addLine(entry, "Loss on Disposal", "6040",
@@ -2299,8 +2302,8 @@ public class PostingEngineService {
         // Reference: "GRAT-{employeeId}-{year}-{month}" — idempotent
         // =========================================================
 
-        public static final String ACC_GRATUITY_EXPENSE = "6020";
-        public static final String ACC_GRATUITY_PAYABLE = "2210";
+        public static final String ACC_GRATUITY_EXPENSE = "6020";  // unchanged
+        public static final String ACC_GRATUITY_PAYABLE = "2210";  // unchanged
         private static final String TX_GRATUITY = "GRAT";
 
         /**
@@ -2442,7 +2445,7 @@ public class PostingEngineService {
         // Reference: "CLOSE-{year}-{month}" — idempotent
         // =========================================================
 
-        public static final String ACC_RETAINED_EARNINGS = "3000";
+        public static final String ACC_RETAINED_EARNINGS = "3100";  // Retained Earnings (PDF §03)
         private static final String TX_PERIOD_CLOSE = "CLOS";
 
         /**

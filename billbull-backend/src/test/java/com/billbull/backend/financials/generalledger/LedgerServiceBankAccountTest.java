@@ -26,19 +26,19 @@ class LedgerServiceBankAccountTest {
     @Test
     void getBankAccountsReturnsOnlyActiveAssetBankAccounts() {
         when(accountRepository.findAll()).thenReturn(List.of(
-                account("1102", "Bank Account", "Assets", "Asset", false, "active", true),
-                account("1101", "Cash on Hand", "Assets", "Asset", false, "active", true),
-                account("1103", "Petty Cash", "Assets", "Asset", false, "active", true),
+                account("1010", "Bank Account (Main)", "Assets", "Asset", false, "active", true),
+                account("1001", "Cash in Hand", "Assets", "Asset", false, "active", true),
+                account("1012", "Petty Cash", "Assets", "Asset", false, "active", true),
                 account("1200", "HDFC Current Account", "Assets", "Asset", false, "active", false),
-                account("2105", "Bank Loan", "Liabilities", "Liability", false, "active", false),
+                account("2001", "AP Control", "Liabilities", "Liability", false, "active", false),
                 account("1300", "Old Bank Account", "Assets", "Asset", false, "inactive", true),
-                account("1100", "Bank Accounts", "Assets", "Asset", true, "active", false)));
+                account("1050", "Bank Accounts", "Assets", "Asset", true, "active", false)));
 
         List<Account> result = ledgerService.getBankAccounts();
 
         assertThat(result)
                 .extracting(Account::getCode)
-                .containsExactly("1102", "1200");
+                .containsExactly("1010", "1200");
     }
 
     private Account account(String code, String name, String accountGroup, String accountType,
