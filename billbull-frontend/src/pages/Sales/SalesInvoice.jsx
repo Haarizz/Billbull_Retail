@@ -56,6 +56,7 @@ import {
     getItemPriceHistory,
     updateInvoiceStatus,
     getCustomerOutstanding,
+    getSalesInvoiceById,
     sendSalesInvoiceEmail
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
@@ -819,7 +820,11 @@ const SalesInvoice = () => {
         }
 
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
-        setBillDiscount(Number(fromQtn.billDiscount) || 0);
+        const fromQtnDiscType = fromQtn.billDiscountType === 'amount' ? 'amount' : 'percent';
+        setBillDiscountType(fromQtnDiscType);
+        setBillDiscount(fromQtnDiscType === 'amount'
+            ? Number(fromQtn.billDiscountFixed || fromQtn.billDiscountAmount || fromQtn.billDiscount) || 0
+            : Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
         setLinkedQuotation(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -968,6 +973,16 @@ const SalesInvoice = () => {
 
         window.history.replaceState({}, document.title);
     }, [customersList, deliveryNotesList, location.state]);
+
+    // When salesOrdersList loads after a saved invoice is opened, backfill carriedSoAdvance
+    // so the totals block can show SO advance and invoice payments as separate lines.
+    useEffect(() => {
+        if (!linkedSO || salesOrdersList.length === 0 || !invoiceId) return;
+        if (carriedSoAdvance > 0) return; // already set (new invoice pre-fill path)
+        const soData = salesOrdersList.find(s => s.soNumber === linkedSO);
+        const soAdv = Number(soData?.advanceAmount) || 0;
+        if (soAdv > 0) setCarriedSoAdvance(soAdv);
+    }, [salesOrdersList, linkedSO, invoiceId]);
 
     // Fetch invoices separately for refresh — uses paginated /page endpoint
     // so the list tab only loads the currently visible page.
@@ -1308,7 +1323,17 @@ const SalesInvoice = () => {
             .map(soNumber => salesOrdersList.find(s => s.soNumber === soNumber))
             .filter(Boolean);
         if (linkedSoDiscounts.length === 1) {
-            setBillDiscount(Number(linkedSoDiscounts[0].billDiscount) || 0);
+            const singleSO = linkedSoDiscounts[0];
+            setBillDiscountType(singleSO.billDiscountType === 'amount' ? 'amount' : 'percent');
+            setBillDiscount(singleSO.billDiscountType === 'amount'
+                ? Number(singleSO.billDiscountFixed || singleSO.billDiscountAmount) || 0
+                : Number(singleSO.billDiscount) || 0);
+            // Carry SO advance
+            const soAdvance = Number(singleSO.advanceAmount);
+            if (Number.isFinite(soAdvance) && soAdvance > 0) {
+                setAmountCollected(soAdvance);
+                setCarriedSoAdvance(soAdvance);
+            }
         }
 
         // Merge Items with Composite Key (productCode + unit + warehouse + price if available)
@@ -1470,7 +1495,16 @@ const SalesInvoice = () => {
                 const linkedSO = salesOrdersList.find(s => s.soNumber === dn.salesOrderNo);
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
-                    setBillDiscount(Number(linkedSO.billDiscount) || 0);
+                    setBillDiscountType(linkedSO.billDiscountType === 'amount' ? 'amount' : 'percent');
+                    setBillDiscount(linkedSO.billDiscountType === 'amount'
+                        ? Number(linkedSO.billDiscountFixed || linkedSO.billDiscountAmount) || 0
+                        : Number(linkedSO.billDiscount) || 0);
+                    // Carry SO advance so invoice shows pre-paid amount
+                    const soAdvance = Number(linkedSO.advanceAmount);
+                    if (Number.isFinite(soAdvance) && soAdvance > 0) {
+                        setAmountCollected(soAdvance);
+                        setCarriedSoAdvance(soAdvance);
+                    }
                     // Stock lines come from the DN (with delivered qty); service
                     // lines come from the SO (since they're never on the DN — see
                     // DeliveryNoteService.mapToEntity QA-001 filter). The customer
@@ -2179,6 +2213,16 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
+
+        // Restore SO advance from salesOrdersList so totals block can show
+        // "Advance from SO" and "Payments on Invoice" as separate lines.
+        if (invoice.linkedSalesOrder) {
+            const linkedSOData = salesOrdersList.find(s => s.soNumber === invoice.linkedSalesOrder);
+            const soAdv = Number(linkedSOData?.advanceAmount) || 0;
+            setCarriedSoAdvance(soAdv);
+        } else {
+            setCarriedSoAdvance(0);
+        }
         setBillDiscountType(invoice.billDiscountType === 'amount' ? 'amount' : 'percent');
         setBillDiscount(invoice.billDiscountType === 'amount'
             ? Number(invoice.billDiscountFixed || invoice.billDiscountAmount) || 0
@@ -2314,6 +2358,13 @@ const SalesInvoice = () => {
                 });
             }
             await fetchInvoices();
+
+            // Refresh settlementInvoice with the post-payment state so that
+            // receipt prints show the correct outstanding/balance figures.
+            try {
+                const refreshed = await getSalesInvoiceById(inv.id);
+                if (refreshed) setSettlementInvoice(refreshed);
+            } catch { /* non-fatal — receipt print will fall back gracefully */ }
 
             // Surface the real voucher number(s) the backend just created for
             // this invoice (mirrors the Receipts-history mapping).
@@ -2571,8 +2622,15 @@ const SalesInvoice = () => {
         const amount = Number(receipt.amount) || 0;
         const currencyCode = company?.currencySymbol || company?.currency || 'AED';
         const invoiceTotal = Number(invoice?.invoiceTotal || invoice?.netTotal || 0);
-        const previousPaid = Math.max(0, Number(invoice?.amountPaid || 0) - amount);
-        const outstandingBefore = Math.max(0, invoiceTotal - previousPaid);
+        // Use invoice.balance as the authoritative pre-payment outstanding.
+        // invoice.balance is the remaining balance at the point the invoice object was loaded —
+        // if loaded before this payment it equals (invoiceTotal - priorPayments - soAdvance),
+        // which is correct. The old formula (invoiceTotal - (amountPaid - amount)) broke when
+        // amountPaid already included a carried SO advance, yielding an inflated previous paid.
+        const invoiceBalance = invoice?.balance != null ? Number(invoice.balance) : null;
+        const outstandingBefore = invoiceBalance != null
+            ? Math.max(0, invoiceBalance + amount)
+            : Math.max(0, invoiceTotal - Math.max(0, Number(invoice?.amountPaid || 0) - amount));
         const balanceAfter = Math.max(0, outstandingBefore - amount);
         return {
             // Rich receipt layout data (used by renderCustomerPaymentReceiptHtml)
@@ -4386,6 +4444,18 @@ const SalesInvoice = () => {
                                                     </div>
                                                 )}
 
+                                                {(() => {
+                                                    const invoicePayments = Math.max(0, Number(amountCollected) - carriedSoAdvance);
+                                                    return isReadOnlyInvoice && invoicePayments > 0.004 ? (
+                                                        <div className="flex justify-between text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                                                            <span title="Partial payments recorded against this invoice">
+                                                                Payments on Invoice
+                                                            </span>
+                                                            <CurrencyAmount value={invoicePayments} currency={invoiceCurrency} />
+                                                        </div>
+                                                    ) : null;
+                                                })()}
+
                                                 <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
                                                     <span>- <CurrencySymbol currency={invoiceCurrency} /></span>
                                                     <input
@@ -4790,103 +4860,6 @@ const SalesInvoice = () => {
                     </div>
                 )
             }
-
-            {/* ✅ UNINVOICED DN MODAL */}
-            {false && isDNModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                    <div className="bg-white w-[800px] max-w-full rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                        {/* Header */}
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                    <Package size={20} className="text-purple-600" />
-                                    Un-Invoiced Delivery Notes Found
-                                </h3>
-                                <p className="text-xs text-slate-500 mt-1">Select the delivery notes to merge into this invoice.</p>
-                            </div>
-                            <button onClick={handleProceedManually} className="text-slate-400 hover:text-slate-600">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        {/* Body - Scrollable */}
-                        <div className="p-6 overflow-y-auto flex-1 bg-white">
-                            <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                <table className="bb-nowrap-table w-full text-xs text-left">
-                                    <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
-                                        <tr>
-                                            <th className="px-4 py-3 w-10 text-center">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedDNRows.length === uninvoicedDNs.length && uninvoicedDNs.length > 0}
-                                                    onChange={handleSelectAllDNs}
-                                                    className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-600 cursor-pointer"
-                                                />
-                                            </th>
-                                            <th className="px-4 py-3">DN Number</th>
-                                            <th className="px-4 py-3">Date</th>
-                                            <th className="px-4 py-3">Warehouse</th>
-                                            <th className="px-4 py-3">Linked SO</th>
-                                            <th className="px-4 py-3 text-right">Items</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {uninvoicedDNs.map((dn) => (
-                                            <tr
-                                                key={dn.id}
-                                                className={`hover:bg-purple-50/50 cursor-pointer transition-colors ${selectedDNRows.includes(dn.id) ? 'bg-purple-50' : ''}`}
-                                                onClick={() => handleToggleDNRow(dn.id)}
-                                            >
-                                                <td className="px-4 py-3 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedDNRows.includes(dn.id)}
-                                                        onChange={() => { }} // handled by tr click
-                                                        onClick={(e) => e.stopPropagation()} // in case they click box directly
-                                                        className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-600 cursor-pointer pointer-events-none"
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-3 font-semibold text-slate-700">{dn.dnNumber}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.deliveryDate || dn.createdDate || '-'}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.warehouse || '-'}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.salesOrderNo || '-'}</td>
-                                                <td className="px-4 py-3 text-right font-medium text-slate-600">
-                                                    {dn.items ? dn.items.length : 0} items
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {uninvoicedDNs.length === 0 && (
-                                            <tr>
-                                                <td colSpan="5" className="text-center py-8 text-slate-400">No un-invoiced Delivery Notes found.</td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {/* Footer */}
-                        <div className="px-6 py-4 bg-slate-50 flex justify-between items-center border-t border-slate-100">
-                            <span className="text-xs text-slate-500 font-medium">Selected {selectedDNRows.length} of {uninvoicedDNs.length} documents</span>
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={handleProceedManually}
-                                    className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50 transition-colors"
-                                >
-                                    Proceed Manually
-                                </button>
-                                <button
-                                    onClick={handleProceedWithSelectedDNs}
-                                    disabled={selectedDNRows.length === 0}
-                                    className="px-6 py-2 bg-purple-600 text-white text-xs font-bold rounded hover:bg-purple-700 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                >
-                                    Generate Combined Invoice
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* QA-040: Send Sales Invoice Email */}
             <SendDocumentEmailModal

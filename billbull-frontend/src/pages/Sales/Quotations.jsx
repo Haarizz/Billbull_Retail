@@ -886,8 +886,8 @@ const Quotations = () => {
                     foc: 0,
                     focUnit: item.unit || 'PCS',
                     availableUnits: [item.unit || 'PCS'],
-                    disc: Number(item.discount) ?? incomingDiscount,
-                    tax: Number(item.taxRate) ?? incomingTax,
+                    disc: Number.isFinite(Number(item.discount)) ? Number(item.discount) : incomingDiscount,
+                    tax: Number.isFinite(Number(item.taxRate)) ? Number(item.taxRate) : incomingTax,
                     taxAmt: Number(item.taxAmount) || 0,
                     total: Number(item.lineTotal) || 0,
                     remarks: '',
@@ -2173,6 +2173,9 @@ const Quotations = () => {
                         customerCode: matched?.code ?? '',
                         customerName: matched?.name ?? qtn.customer,
                         billDiscount: qtn.billDiscount,
+                        billDiscountType: qtn.billDiscountType,
+                        billDiscountFixed: qtn.billDiscountFixed,
+                        billDiscountAmount: qtn.billDiscountAmount,
                         shippingAddress: qtn.shippingAddress || '',
                         items: qtn.items
                     }
@@ -2426,6 +2429,9 @@ const Quotations = () => {
                         customerName: selectedCustomerData?.name ?? customer,
                         shippingAddress: shippingAddress || '',
                         billDiscount,
+                        billDiscountType,
+                        billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
+                        billDiscountAmount: billDiscountAmount,
                         items: items
                     }
                 }
@@ -3493,33 +3499,36 @@ const Quotations = () => {
                                     isReadOnly={isViewMode}
                                     currency={displayCurrencyProps.currency}
                                     currencySymbol={displayCurrencyProps.currencySymbol}
+                                    creditAlert={
+                                        selectedCustomerData && selectedCustomerData.creditLimitAmount > 0 &&
+                                        (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount
+                                            ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                                                ? (
+                                                    <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                                        <p>
+                                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                            Confirming this quotation is blocked until the balance is within limit.
+                                                        </p>
+                                                    </div>
+                                                )
+                                                : salesSettings?.creditLimitPolicy === 'WARNING'
+                                                    ? (
+                                                        <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                                            <p>
+                                                                <strong>Credit Warning:</strong> The projected outstanding balance
+                                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                    : null
+                                            : null
+                                    }
                                 />
-
-                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
-                                    selectedCustomerData.creditLimitAmount > 0 &&
-                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                        <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                            <p>
-                                                <strong>Credit Warning:</strong> The projected outstanding balance
-                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                            </p>
-                                        </div>
-                                    )}
-                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-                                    selectedCustomerData.creditLimitAmount > 0 &&
-                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                        <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                                            <p>
-                                                <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                                Confirming this quotation is blocked until the balance is within limit.
-                                            </p>
-                                        </div>
-                                    )}
 
                                 {/* CustomerSelector modal (unchanged) */}
                                 <CustomerSelector

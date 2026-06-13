@@ -30,6 +30,7 @@ import {
 import { GRNTemplateDesigner } from "./Templates/GRNTemplateDesigner";
 import { GRVTemplateDesigner } from "./Templates/GRVTemplateDesigner";
 import { PaymentReceiptDesigner } from "./Templates/PaymentReceiptDesigner";
+import VendorPaymentVoucherDesigner from "./Templates/VendorPaymentVoucherDesigner";
 import {
     VendorSoATemplateDesigner,
     defaultVendorSoaTemplateSettings
@@ -549,7 +550,7 @@ export default function PurchasePrintEmailTemplates() {
         }
         if (meta.designer === "grn") return <GRNTemplateDesigner {...commonProps} />;
         if (meta.designer === "grv") return <GRVTemplateDesigner {...commonProps} />;
-        if (meta.designer === "payment") return <PaymentReceiptDesigner {...commonProps} />;
+        if (meta.designer === "payment") return <VendorPaymentVoucherDesigner {...commonProps} />;
         if (meta.designer === "cheque") return <ChequePrintingDesigner {...commonProps} />;
         if (meta.designer === "soa") {
             return (

@@ -149,7 +149,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownload, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -700,6 +700,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [zoneList, setZoneList] = useState([]);
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
+  const [locationError, setLocationError] = useState(null);
 
   // FIX 5: Lock UI on POSTED
   const isLocked = formData.status === GRN_STATUS.POSTED;
@@ -1469,6 +1470,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       locatorId: payload.locatorId,
       binId: payload.binId
     }));
+    if (payload.binId) setLocationError(null);
+    else if (payload.locatorId) setLocationError("Select a bin to complete the location");
+    else if (payload.zoneId) setLocationError("Select a locator, then a bin");
+    else if (payload.warehouseId) setLocationError("Select a zone, locator, and bin");
+    else setLocationError(null);
   };
 
   return (
@@ -1673,7 +1679,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Delivery Location</label>
+                <label className="text-[10px] mb-1 flex items-center gap-1">
+                  <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                  {locationError && <span className="text-red-500">*</span>}
+                  {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+                </label>
                 <LocationSelector
                   value={{
                     warehouseId: formData.warehouseId,
@@ -1685,6 +1695,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                   onChange={handleLocationChange}
                   disabled={isLocked}
                   className="w-full"
+                  error={locationError}
                 />
               </div>
               <div>
@@ -2278,14 +2289,32 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
           <div className="flex flex-wrap justify-center xl:justify-end items-center gap-2 w-full xl:w-auto">
             {/* Only show Save Draft if not posted */}
             {!isLocked && (
-              <button onClick={() => onSaveDraft(formData, items)} className="px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors">
+              <button onClick={() => {
+                const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                  : !formData.zoneId ? "Select a zone within the warehouse"
+                  : !formData.locatorId ? "Select a locator (aisle / rack)"
+                  : !formData.binId ? "Select a bin to complete the delivery location"
+                  : null;
+                if (locErr) { setLocationError(locErr); return; }
+                setLocationError(null);
+                onSaveDraft(formData, items);
+              }} className="px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors">
                 Save Draft
               </button>
             )}
 
             {/* Only show Submit QC if Draft */}
             {formData.status === GRN_STATUS.DRAFT && (
-              <button onClick={() => onSubmitQC(formData, items)} className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors shadow-sm">
+              <button onClick={() => {
+                const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                  : !formData.zoneId ? "Select a zone within the warehouse"
+                  : !formData.locatorId ? "Select a locator (aisle / rack)"
+                  : !formData.binId ? "Select a bin to complete the delivery location"
+                  : null;
+                if (locErr) { setLocationError(locErr); return; }
+                setLocationError(null);
+                onSubmitQC(formData, items);
+              }} className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors shadow-sm">
                 <ClipboardCheck className="h-4 w-4" /> Submit for QC
               </button>
             )}
@@ -2516,34 +2545,14 @@ const GRN = () => {
   };
 
   const handleSubmitQC = async (formData, items) => {
-    // 1. Validation
+    // 1. Validation (location already checked in EditorView button click)
     if (!items || items.length === 0) {
-      alert("Cannot submit for QC: No items added.");
+      toast.error("Cannot submit for QC: No items added.");
       return;
     }
 
     if (items.some(i => !i.productId)) {
-      alert("Validation Failed: One or more items are missing Product mapping.");
-      return;
-    }
-
-    if (!formData.warehouseId) {
-      alert("Validation Failed: Warehouse is required.");
-      return;
-    }
-
-    if (!formData.zoneId) {
-      alert("Validation Failed: Zone is required.");
-      return;
-    }
-
-    if (!formData.locatorId) {
-      alert("Validation Failed: Locator is required.");
-      return;
-    }
-
-    if (!formData.binId) {
-      alert("Validation Failed: Bin is required.");
+      toast.error("One or more items are missing a product mapping.");
       return;
     }
 

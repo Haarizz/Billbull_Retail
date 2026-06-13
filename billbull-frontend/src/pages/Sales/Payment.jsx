@@ -117,6 +117,7 @@ const Payment = () => {
     // Customer/Vendor
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
+    const [customerSearchQuery, setCustomerSearchQuery] = useState('');
 
     // Multi-Settlement State (object map like CustomerLedger)
     const [selectedInvoices, setSelectedInvoices] = useState({}); // Map: invoiceNo -> boolean
@@ -278,6 +279,9 @@ const Payment = () => {
         const amount = Number(payment.amount) || 0;
         const invoiceAmt = Number(payment.invoiceAmount) || amount;
         const balance = payment.invoiceBalance != null ? Math.max(Number(payment.invoiceBalance), 0) : Math.max(invoiceAmt - amount, 0);
+        // outstandingBefore = balance after this payment + this payment amount
+        // (i.e. what was owed before this payment was received)
+        const outstandingBefore = balance + amount;
         const invoiceNos = payment.invoiceNo
             ? payment.invoiceNo.split(',').map(s => s.trim()).filter(Boolean)
             : [];
@@ -306,13 +310,13 @@ const Payment = () => {
                 soRef: '',
                 date: payment.date || '',
                 total: invoiceAmt / Math.max(invoiceNos.length, 1),
-                outstanding: invoiceAmt / Math.max(invoiceNos.length, 1),
+                outstanding: outstandingBefore / Math.max(invoiceNos.length, 1),
                 received: perInvoiceAmount,
                 balance: balance / Math.max(invoiceNos.length, 1),
                 status: (balance / Math.max(invoiceNos.length, 1)) <= 0 ? 'Fully paid' : 'Partial',
             })),
             summary: {
-                totalOutstanding: invoiceAmt,
+                totalOutstanding: outstandingBefore,
                 discount: 0,
                 remaining: balance,
                 totalReceived: amount,
@@ -807,38 +811,42 @@ const Payment = () => {
                                             <option>Cancelled</option>
                                         </select>
                                     </div>
-                                    <div className="flex gap-2">
-                                        <ExportDropdown
-                                            onExportExcel={() => exportToExcel(
-                                                withListSerialNumbers(filteredPayments, {
-                                                    documentNumberSelector: (payment) => payment.paymentNo,
-                                                    page: listPageMeta.page,
-                                                    size: listPageMeta.size,
-                                                    totalElements: listPageMeta.totalElements,
-                                                }),
-                                                PAYMENT_COLUMNS,
-                                                'Sales_Payments',
-                                                { companyProfile: company, branch: activeBranch?.name || '' }
-                                            )}
-                                            onExportPdf={() => exportToPDF(
-                                                withListSerialNumbers(filteredPayments, {
-                                                    documentNumberSelector: (payment) => payment.paymentNo,
-                                                    page: listPageMeta.page,
-                                                    size: listPageMeta.size,
-                                                    totalElements: listPageMeta.totalElements,
-                                                }),
-                                                PAYMENT_COLUMNS,
-                                                'Sales Payments List',
-                                                'Sales_Payments',
-                                                { companyProfile: company, branch: activeBranch?.name || '' }
-                                            )}
-                                        />
-                                        <button
-                                            onClick={handleCreateNew}
-                                            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
-                                        >
-                                            <Plus size={14} /> New Payment
-                                        </button>
+                                    <div className="md:col-span-3">
+                                        <label className="block text-[10px] font-bold text-transparent mb-1 hidden md:block">&nbsp;</label>
+                                        <div className="flex gap-2">
+                                            <ExportDropdown
+                                                className="h-[34px] flex items-center"
+                                                onExportExcel={() => exportToExcel(
+                                                    withListSerialNumbers(filteredPayments, {
+                                                        documentNumberSelector: (payment) => payment.paymentNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    }),
+                                                    PAYMENT_COLUMNS,
+                                                    'Sales_Payments',
+                                                    { companyProfile: company, branch: activeBranch?.name || '' }
+                                                )}
+                                                onExportPdf={() => exportToPDF(
+                                                    withListSerialNumbers(filteredPayments, {
+                                                        documentNumberSelector: (payment) => payment.paymentNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    }),
+                                                    PAYMENT_COLUMNS,
+                                                    'Sales Payments List',
+                                                    'Sales_Payments',
+                                                    { companyProfile: company, branch: activeBranch?.name || '' }
+                                                )}
+                                            />
+                                            <button
+                                                onClick={handleCreateNew}
+                                                className="h-[34px] w-full md:w-auto flex items-center justify-center gap-2 px-4 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
+                                            >
+                                                <Plus size={14} /> New Payment
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -944,12 +952,38 @@ const Payment = () => {
                                             <ChevronDown size={14} className="text-slate-400" />
                                         </div>
                                         {isCustomerOpen && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
-                                                {customersList.map(c => (
-                                                    <div key={c.id} onClick={() => handleSelectCustomer(c)} className="px-3 py-2.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0">
-                                                        <span className="font-bold text-slate-800">{c.code}</span> <span className="text-slate-500">- {c.name}</span>
+                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-50 mt-1 flex flex-col">
+                                                <div className="p-2 border-b border-slate-100 sticky top-0 bg-white">
+                                                    <div className="relative">
+                                                        <Search className="absolute left-2.5 top-[9px] text-slate-400" size={14} />
+                                                        <input 
+                                                            autoFocus
+                                                            type="text"
+                                                            placeholder="Search customer by name or code..."
+                                                            value={customerSearchQuery}
+                                                            onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                                                            className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded focus:outline-none focus:border-[#F5C742]"
+                                                        />
                                                     </div>
-                                                ))}
+                                                </div>
+                                                <div className="max-h-60 overflow-y-auto">
+                                                    {customersList.filter(c => 
+                                                        c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) || 
+                                                        c.code.toLowerCase().includes(customerSearchQuery.toLowerCase())
+                                                    ).map(c => (
+                                                        <div key={c.id} onClick={() => { handleSelectCustomer(c); setCustomerSearchQuery(''); }} className="px-3 py-2.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0">
+                                                            <span className="font-bold text-slate-800">{c.code}</span> <span className="text-slate-500">- {c.name}</span>
+                                                        </div>
+                                                    ))}
+                                                    {customersList.filter(c => 
+                                                        c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) || 
+                                                        c.code.toLowerCase().includes(customerSearchQuery.toLowerCase())
+                                                    ).length === 0 && (
+                                                        <div className="px-3 py-4 text-center text-xs text-slate-400">
+                                                            No customers found matching "{customerSearchQuery}"
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                     </div>

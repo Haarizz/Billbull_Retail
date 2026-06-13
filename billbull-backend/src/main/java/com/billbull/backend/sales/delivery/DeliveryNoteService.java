@@ -871,6 +871,9 @@ public class DeliveryNoteService {
             BigDecimal itemCogs = effectiveCost.multiply(BigDecimal.valueOf(deliveredQty));
             totalCogs = totalCogs.add(itemCogs);
 
+            // Stamp WAC cost back onto DN item so invoice items can copy it for profit reporting
+            dnItem.setCost(effectiveCost.doubleValue());
+
             // Match DN item to invoice item by itemCode for proportional revenue
             SalesInvoiceItem matchedInvoiceItem = invoice.getItems().stream()
                     .filter(si -> si.getItemCode() != null
@@ -904,6 +907,11 @@ public class DeliveryNoteService {
                             matchedInvoiceItem.getRecognizedRevenue().add(proportionalRevenue));
                     matchedInvoiceItem.setRecognizedCogs(
                             matchedInvoiceItem.getRecognizedCogs().add(itemCogs));
+                }
+
+                // Stamp WAC unit cost onto invoice item for dashboard profit calculation
+                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost() == 0.0) {
+                    matchedInvoiceItem.setCost(effectiveCost.doubleValue());
                 }
             }
         }

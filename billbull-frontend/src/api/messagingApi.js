@@ -20,7 +20,7 @@ export const createTemplate = async (templateData) => {
     }
 };
 
-export const useTemplate = async (id) => {
+export const markTemplateUsed = async (id) => {
     try {
         await axios.post(`/api/messaging/templates/${id}/use`);
     } catch (error) {

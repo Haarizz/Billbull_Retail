@@ -112,7 +112,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         // --- DASHBOARD AGGREGATE QUERIES ---
 
         @Query("SELECT si.invoiceDate, SUM(si.invoiceTotal), COUNT(si) FROM SalesInvoice si " +
-               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
                "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
                "AND (:branchId IS NULL OR si.branchId = :branchId) " +
                "GROUP BY si.invoiceDate ORDER BY si.invoiceDate")
@@ -125,7 +127,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         }
 
         @Query("SELECT COALESCE(si.paymentMode, 'Cash'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
-               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
                "AND si.invoiceDate BETWEEN :startDate AND :endDate " +
                "AND (:branchId IS NULL OR si.branchId = :branchId) " +
                "GROUP BY si.paymentMode")
@@ -138,7 +142,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         }
 
         @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0) FROM SalesInvoice si " +
-               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
                "AND si.invoiceDate BETWEEN :from AND :to " +
                "AND (:branchId IS NULL OR si.branchId = :branchId)")
         Double sumRevenueBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,
@@ -259,7 +265,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                        "COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
-                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to " +
+                       "WHERE si.status <> 'CANCELLED' " +
+                       "AND si.delivery_status IN ('DELIVERED', 'AUTO_DELIVERED') " +
+                       "AND si.invoice_date BETWEEN :from AND :to " +
                        "AND (:branchId IS NULL OR si.branch_id = :branchId) " +
                        "GROUP BY si.invoice_date ORDER BY si.invoice_date",
                nativeQuery = true)
@@ -274,7 +282,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query(value = "SELECT COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
-                       "WHERE si.status <> 'CANCELLED' AND si.invoice_date BETWEEN :from AND :to " +
+                       "WHERE si.status <> 'CANCELLED' " +
+                       "AND si.delivery_status IN ('DELIVERED', 'AUTO_DELIVERED') " +
+                       "AND si.invoice_date BETWEEN :from AND :to " +
                        "AND (:branchId IS NULL OR si.branch_id = :branchId)",
                nativeQuery = true)
         Double sumProfitBetween(@Param("from") LocalDate from, @Param("to") LocalDate to,

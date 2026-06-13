@@ -1336,6 +1336,16 @@ const buildGrandTotal = (layout, renderTarget = 'print') => {
     const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`, {
         inheritColor: renderTarget === 'print'
     });
+    // Email: use inline styles so Gmail/Outlook honour text-align:right without
+    // relying on class-based flex or grid rules that get stripped.
+    if (renderTarget === 'email') {
+        return `
+            <div style="text-align:right;padding:12px 0 6px;">
+                <div style="font-size:11px;color:#888888;font-weight:500;margin-bottom:4px;">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
+                <div style="font-size:${gtFontPx}px;font-weight:800;color:#000000;line-height:1.2;">${currHtml} ${formatNumber(layout.highlight.value)}</div>
+            </div>
+        `;
+    }
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
@@ -1466,9 +1476,40 @@ const buildHeader = (layout, renderTarget = 'print') => {
             <div class="doc-meta-value">${escapeHtml(item.value)}</div>
         </div>
     `).join('');
-    const centerContent = (layout.isPurchaseDesigner || layout.isSalesDesigner)
-        ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
-        : centerItemHtml;
+
+    // Email: replace CSS grid with a real 2-column table so Gmail/Outlook
+    // don't collapse the meta pairs into a single column.
+    const centerContentEmail = (() => {
+        if (centerItems.length === 0) return '';
+        const metaCellStyle = 'padding:3px 6px 3px 0;vertical-align:top;';
+        const labelStyle = 'font-size:8px;color:#999999;font-weight:500;white-space:nowrap;';
+        const valueStyle = 'font-size:9px;color:#111827;font-weight:600;white-space:nowrap;';
+        // Pair items into rows of 2 (mirrors the 2-column grid)
+        const rows = [];
+        for (let i = 0; i < centerItems.length; i += 2) {
+            const a = centerItems[i];
+            const b = centerItems[i + 1];
+            rows.push(`
+                <tr>
+                    <td style="${metaCellStyle}">
+                        <div style="${labelStyle}">${escapeHtml(a.label)}</div>
+                        <div style="${valueStyle}">${escapeHtml(a.value)}</div>
+                    </td>
+                    ${b ? `<td style="${metaCellStyle}padding-left:12px;">
+                        <div style="${labelStyle}">${escapeHtml(b.label)}</div>
+                        <div style="${valueStyle}">${escapeHtml(b.value)}</div>
+                    </td>` : '<td></td>'}
+                </tr>
+            `);
+        }
+        return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows.join('')}</table>`;
+    })();
+
+    const centerContent = renderTarget === 'email'
+        ? centerContentEmail
+        : (layout.isPurchaseDesigner || layout.isSalesDesigner)
+            ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
+            : centerItemHtml;
 
     const rightContent = `
         ${buildLogoBlock(layout)}
@@ -1527,16 +1568,24 @@ const buildFooterBar = (layout, renderTarget, billBullLogo) => {
         return '';
     }
 
+    // Email: table layout so Gmail/Outlook don't flatten the flex footer.
+    const footerCellStyle = 'font-size:9px;color:#6b7280;padding:6px 4px 0;vertical-align:middle;';
     return `
-        <footer class="document-footer">
-            <div class="footer-bar">
-                <div>${escapeHtml(layout.company.companyName || '')}</div>
-                <div class="footer-center">Document ${escapeHtml(layout.docNo || '-')}</div>
-                <div class="footer-right">${escapeHtml(layout.title)}</div>
-            </div>
-            ${billBullLogo
-            ? `<div class="footer-brand"><img src="${billBullLogo}" alt="Powered by BillBull" /></div>`
-            : ''}
+        <footer style="margin-top:16px;padding-top:8px;border-top:1px solid #e0e0e0;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                <tr>
+                    <td style="${footerCellStyle}text-align:left;">${escapeHtml(layout.company.companyName || '')}</td>
+                    <td style="${footerCellStyle}text-align:center;">Document ${escapeHtml(layout.docNo || '-')}</td>
+                    <td style="${footerCellStyle}text-align:right;">${escapeHtml(layout.title)}</td>
+                </tr>
+                ${billBullLogo ? `
+                <tr>
+                    <td colspan="3" style="text-align:right;padding-top:4px;">
+                        <img src="${billBullLogo}" alt="Powered by BillBull" style="height:14px;width:auto;opacity:0.62;" />
+                    </td>
+                </tr>
+                ` : ''}
+            </table>
         </footer>
     `;
 };
@@ -3050,6 +3099,8 @@ const buildEmailStyles = () => `
         border-radius: 8px;
         background: #ffffff;
         box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        /* Override print flex-column so Gmail doesn't collapse the shell */
+        display: block !important;
     }
     /* Email clients ignore CSS Grid / Flex on these blocks — force block
        layout so the right column stacks: logo on top, company address
@@ -3083,6 +3134,59 @@ const buildEmailStyles = () => `
     .totals-table td.tot-currency,
     .totals-table td.tot-amount {
         padding: 4px 0 4px 8px !important;
+    }
+    /* Bill-to block: render as plain block stacking in email */
+    .bill-to-block,
+    .bill-to-eyebrow,
+    .bill-to-name,
+    .bill-to-line {
+        display: block !important;
+    }
+    /* Document title: block display, no grid/flex needed */
+    .document-title {
+        display: block !important;
+        text-align: left;
+    }
+    /* Left meta block */
+    .left-meta-block,
+    .left-meta-item,
+    .left-meta-label,
+    .left-meta-value {
+        display: block !important;
+    }
+    /* Content stack: block in email (overrides display:grid) */
+    .content-stack {
+        display: block !important;
+    }
+    /* Footer group: block in email (overrides display:flex) */
+    .document-footer-group {
+        display: block !important;
+        margin-top: 16px;
+    }
+    /* Footer spacers serve no purpose in email */
+    .footer-push-spacer,
+    .footer-inner-spacer {
+        display: none !important;
+    }
+    /* Table section: full width block */
+    .table-section {
+        display: block !important;
+        width: 100%;
+        overflow-x: auto;
+    }
+    /* Summary section */
+    .summary-section {
+        display: block !important;
+    }
+    /* Signature card */
+    .signature-card,
+    .signature-grid {
+        display: block !important;
+    }
+    /* Stamp row */
+    .stamp-row {
+        display: block !important;
+        text-align: right;
     }
 `;
 
@@ -4206,7 +4310,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
         : '';
 
     const companyContact = [
-        on('showCompanyAddress') && company.address ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div><div>${txt(company.address)}</div>` : (on('showCompanyName') && company.companyName ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div>` : ''),
+        on('showCompanyName') && company.companyName ? `<div style="font-weight:600;color:rgba(0,0,0,0.85);">${txt(company.companyName)}</div>` : '',
+        on('showCompanyAddress') && company.address ? `<div>${txt(company.address)}</div>` : '',
         on('showCompanyPhone') && company.phone ? `<div>${txt(company.phone)}</div>` : '',
         on('showCompanyEmail') && company.email ? `<div>${txt(company.email)}</div>` : '',
         on('showCompanyWebsite') && company.website ? `<div>${txt(company.website)}</div>` : '',
@@ -4563,9 +4668,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
         ${watermark}
         <div style="background:${headerBg};display:grid;grid-template-columns:1fr auto;align-items:stretch;position:relative;z-index:1;">
             <div style="padding:24px 28px;display:flex;flex-direction:column;gap:6px;text-align:${s.companyDetailsAlign || 'left'};">
-                ${logoHtml || on('showCompanyName') ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                ${logoHtml ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                     ${logoHtml}
-                    ${on('showCompanyName') && company.companyName ? `<div><div style="font-size:${headerFontSize}px;font-weight:600;color:#0f1923;letter-spacing:-0.5px;">${txt(company.companyName)}</div></div>` : ''}
                 </div>` : ''}
                 <div style="font-size:11px;color:rgba(0,0,0,0.6);line-height:1.7;margin-top:4px;">${companyContact}</div>
             </div>
@@ -4799,13 +4903,13 @@ const defaultPaymentReceiptSettings = () => ({
     showLogo: true, showStatusBadge: true,
     showCustomerName: true, showCustomerCode: true, showCustomerAddress: true,
     showCustomerPhone: true, showCustomerEmail: false, showCustomerTRN: false, showVATNumber: true,
-    showReceiptNumber: true, showReceiptDate: true, showReceiptSession: true,
+    showReceiptNumber: true, showReceiptDate: true, showCurrencyField: true, showReceiptSession: true,
     showInvoiceCount: true, showAccountCurrency: true, showBankAccount: true,
     showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
     showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true,
     showTotalOutstanding: true, showDiscountAllowed: true, showRemainingBalance: true, showTotalReceivedBold: true,
     showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: true,
-    showAmountInWords: true,
+    showAmountInWords: true, showPaymentDetails: true,
     showNote: true, showCompanyStamp: true, showQRCode: false, stampUrl: '',
     showGeneratedBy: true, showReceivedByLine: true,
     showCompanyName: true, showCompanyAddress: true, showCompanyPhone: true, showCompanyEmail: true, showTRN: true,
@@ -5034,181 +5138,322 @@ table { width: 100%; border-collapse: collapse; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Vendor Payment Voucher — same visual design as Customer Payment Receipt but
-// adapted for the data shape from buildPaymentVoucherPrintData().
-// Triggered for 'Payment Voucher' category.
+// Vendor Payment Voucher — uses the same document-shell-designer visual system
+// as LPO / GRN / Purchase Invoice (amber header band, structured 3-col header,
+// meta grid, amber footer bar).  Triggered for 'Payment Voucher' category.
 // ─────────────────────────────────────────────────────────────────────────────
 const renderVendorPaymentVoucherHtml = (template, data, options = {}) => {
     const raw = getTemplateDesignerSettings(template);
     const s = { ...defaultPaymentReceiptSettings(), ...raw };
     const co = normalizeDocumentCompanyProfile(options.companyProfile || {});
-    const f = Number(s.fontSize) || 9;
-    const gold = s.accentColor || '#F5C742';
-    const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
     const esc = escapeHtml;
     const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const currHtml = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: false });
+
+    const gold = sanitizeCssColor(s.accentColor, '#F5C742');
+    const fontFamily = sanitizeCssFontFamily(s.fontFamily, "'Inter', sans-serif");
+    const f = Math.min(13, Math.max(8, Number(s.fontSize) || 9));
+    const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
 
     const vendor = data.party || {};
     const references = Array.isArray(data.references) ? data.references : [];
-    const paymentDetails = Array.isArray(data.paymentDetails) ? data.paymentDetails : [];
+    const rawPaymentDetails = Array.isArray(data.paymentDetails) ? data.paymentDetails : [];
+    const fmtPaymentMode = (v) => {
+        if (!v) return v;
+        return v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    };
+    const paymentDetails = rawPaymentDetails.map(d =>
+        d.label === 'Payment Mode' ? { ...d, value: fmtPaymentMode(d.value) } : d
+    );
     const summaryAmount = data.summaryAmount || {};
     const amountPaid = Number(data.totals?.grandTotal || summaryAmount.amount || 0);
+    const currency = data.totals?.currency || summaryAmount.currency || co.currency || 'AED';
+    const voucherNo = data.docNo || '';
+    const docDate = data.date || '';
 
     const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(s, co);
-    const logoHtml = s.showLogo
+
+    // ── Logo block (same pattern as LPO/GRN designer) ──
+    const logoBlock = s.showLogo
         ? (resolvedLogoUrl
-            ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
-            : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:${gold};">${esc((co.companyName || 'G').charAt(0))}</div>`)
+            ? `<div class="company-logo"><img src="${esc(resolvedLogoUrl)}" alt="Company Logo" /></div>`
+            : `<div class="company-logo company-logo-fallback"><span>${esc((co.companyName || 'G').charAt(0))}</span></div>`)
         : '';
 
-    // Build meta grid from headerMeta + references (voucher no, date, status, refs)
-    const docDate = data.date || '';
-    const voucherNo = data.docNo || '';
+    // ── Status badge ──
+    const statusBadge = s.showStatusBadge && data.status
+        ? `<span class="pv-status-badge">${esc(data.status)}</span>`
+        : '';
+
+    // ── Vendor (bill-to) block ──
+    const vendorLines = [
+        s.showCustomerCode && vendor.code ? `<div class="bill-to-line">${esc(vendor.code)}</div>` : '',
+        s.showCustomerAddress && vendor.address ? `<div class="bill-to-line">${esc(vendor.address)}</div>` : '',
+        s.showCustomerPhone && vendor.phone ? `<div class="bill-to-line">${esc(vendor.phone)}</div>` : '',
+        s.showCustomerEmail && vendor.email ? `<div class="bill-to-line">${esc(vendor.email)}</div>` : '',
+        s.showCustomerTRN && vendor.taxId ? `<div class="bill-to-line">TRN: ${esc(vendor.taxId)}</div>` : '',
+    ].filter(Boolean).join('');
+
+    const vendorBlock = s.showCustomerName && vendor.name
+        ? `<div class="bill-to-block">
+            <div class="bill-to-eyebrow">PAID TO,</div>
+            <div class="bill-to-name"><span class="bill-to-name-text">${esc(vendor.name)}</span></div>
+            ${vendorLines}
+          </div>`
+        : '';
+
+    // ── Center meta grid (voucher no, date, currency, references) ──
     const metaItems = [
-        s.showReceiptNumber && voucherNo ? ['Voucher Number', voucherNo] : null,
-        s.showReceiptDate && docDate ? ['Date', docDate] : null,
-        ...references.map(r => r?.label && r?.value ? [r.label, r.value] : null),
+        s.showReceiptNumber && voucherNo ? { label: 'Voucher Number', value: voucherNo } : null,
+        s.showReceiptDate && docDate ? { label: 'Date', value: docDate } : null,
+        s.showCurrencyField !== false && currency ? { label: 'Currency', value: currency } : null,
+        ...references.map(r => (r?.label && r?.value ? { label: r.label, value: r.value } : null)),
     ].filter(Boolean);
 
-    const metaGridHtml = metaItems.length > 0
-        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaItems.map(([lbl, val]) =>
-            `<div><p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`
-        ).join('')}</div>`
+    const metaGridHtml = metaItems.map(({ label, value }) =>
+        `<div class="doc-meta-item">
+            <div class="doc-meta-label">${esc(label)}</div>
+            <div class="doc-meta-value">${esc(value)}</div>
+        </div>`
+    ).join('');
+
+    // ── Company right panel ──
+    const companyLines = [
+        s.showCompanyAddress && co.address ? `<div class="company-copy">${esc(co.address)}</div>` : '',
+        s.showCompanyEmail && co.email ? `<div class="company-copy">${esc(co.email)}</div>` : '',
+        s.showCompanyPhone && co.phone ? `<div class="company-copy">${esc(co.phone)}</div>` : '',
+        s.showTRN && co.trn ? `<div class="company-copy">TRN . ${esc(co.trn)}</div>` : '',
+    ].filter(Boolean).join('');
+
+    const companyPanel = `
+        ${logoBlock}
+        ${s.showCompanyName && co.companyName ? `<div class="company-panel">
+            <div class="company-name">${esc(co.companyName)}</div>
+            ${co.branchName && co.branchName !== co.companyName ? `<div class="company-copy" style="font-weight:500;">${esc(co.branchName)}</div>` : ''}
+            ${companyLines}
+        </div>` : ''}`;
+
+    // ── Amount paid highlight block ──
+    const currHtml = renderCurrencySymbolHtml(co, '0.85em', { inheritColor: true });
+    const currHtmlFixed = renderCurrencySymbolHtml(co, '0.85em', { inheritColor: false });
+
+    const amountBlock = `
+        <div class="grand-total-display">
+            <div class="grand-total-label">Amount Paid</div>
+            <div class="grand-total-value">${currHtml} ${fmt(amountPaid)}</div>
+        </div>`;
+
+    const amountInWords = s.showAmountInWords && amountPaid
+        ? `<div class="pv-words-row">
+            <span class="pv-words-label">Amount in words:</span>
+            <span class="pv-words-value">${esc(formatAmountInWords(amountPaid, co.currency))}</span>
+           </div>`
         : '';
 
-    // Payment details table rows
-    const payDetailRows = paymentDetails.map(({ label, value }) => `
-        <tr>
-          <td style="padding:5px 16px 5px 0;color:#64748b;font-size:${f}px;font-weight:600;white-space:nowrap;text-transform:uppercase;letter-spacing:.5px;">${esc(label)}</td>
-          <td style="padding:5px 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(value)}</td>
-        </tr>`).join('');
+    // ── Payment details rows ──
+    const payDetailRows = paymentDetails.map(({ label, value }) =>
+        `<div class="pv-detail-row">
+            <span class="pv-detail-label">${esc(label)}</span>
+            <span class="pv-detail-value">${esc(value)}</span>
+         </div>`
+    ).join('');
 
+    const payDetailSection = payDetailRows && s.showPaymentDetails !== false
+        ? `<div class="pv-details-grid">${payDetailRows}</div>`
+        : '';
+
+    // ── Stamp ──
     const stampHtml = s.showCompanyStamp ? `
-        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
-            ${resolvedStampUrl
-            ? `<img src="${esc(resolvedStampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
-            : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-                       <span style="font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</span>
-                   </div>`
-        }
-            <span style="font-size:${f - 2}px;color:#94a3b8;">Official Stamp</span>
+        <div class="footer-group-atomic stamp-row">
+            <div class="stamp-container">
+                ${resolvedStampUrl
+                    ? `<img src="${esc(resolvedStampUrl)}" alt="Company Stamp" />`
+                    : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
+                <div class="stamp-caption">Official Stamp</div>
+            </div>
+            ${s.showQRCode && options.qrCodeDataUrl ? `<div class="qr-container"><img src="${esc(options.qrCodeDataUrl)}" width="100" height="100" alt="QR Code" style="display:block;width:100px;height:100px;" /><div class="stamp-caption">Scan to verify</div></div>` : ''}
         </div>` : '';
 
-    const qrHtml = s.showQRCode ? `
-        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
-            ${options.qrCodeDataUrl
-            ? `<img src="${esc(options.qrCodeDataUrl)}" style="width:52px;height:52px;" />`
-            : `<div style="width:52px;height:52px;background:#1a1a2e;border-radius:4px;"></div>`
-        }
-            <span style="font-size:${f - 2}px;color:#94a3b8;">Scan to verify</span>
-        </div>` : '';
-
+    // ── Footer bar ──
     const now = new Date();
     const generatedStr = `${now.toLocaleDateString('en-AE')} ${now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })}`;
     const generatedUser = co.email || '';
-    const fontFamily = s.fontFamily || 'Inter, sans-serif';
+    const footerBar = (s.showGeneratedBy || s.showReceivedByLine)
+        ? `<div class="pv-footer-bar">
+            <div class="pv-footer-left">${s.showGeneratedBy ? `BillBull ERP · Generated: ${esc(generatedStr)}${generatedUser ? ` · User: ${esc(generatedUser)}` : ''}` : ''}</div>
+            ${s.showReceivedByLine ? `<div class="pv-footer-right">Received by: <span class="pv-footer-sign-line">&nbsp;</span></div>` : ''}
+           </div>`
+        : '';
+
+    const notesBlock = s.showNote && data.notes
+        ? `<div class="pv-notes">${esc(data.notes)}</div>`
+        : '';
+
     const needsInterImport = /\bInter\b/i.test(fontFamily);
 
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Payment Voucher ${esc(voucherNo)}</title>
 ${needsInterImport ? `<link rel="preconnect" href="https://fonts.googleapis.com"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>` : ''}
 <style>
 @page { size: ${paper.cssSize}; margin: 12mm; }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
-body { font-family: ${esc(fontFamily)}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
-table { width: 100%; border-collapse: collapse; }
-</style></head>
-<body style="padding:0;min-height:100%;">
-<div style="font-family:${esc(fontFamily)};font-size:${f}px;background:#fff;color:#1a1a2e;padding:0 32px 28px 32px;min-height:calc(100vh - 24mm);display:flex;flex-direction:column;">
+*  { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { font-family: ${esc(fontFamily)}; font-size: ${f}pt; color: #111827; }
 
-  <div style="flex:1;padding-top:28px;">
+/* ── shell mirrors document-shell-designer ── */
+.pv-shell {
+    width: 100%; max-width: ${paper.width}mm; margin: 0 auto;
+    background: #fff; display: flex; flex-direction: column; min-height: calc(100vh - 24mm);
+}
 
-    <!-- HEADER -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
+/* ── 3-col header ── */
+.pv-header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0 16px;
+    align-items: start;
+    padding: 0 0 14px 0;
+    border-bottom: 3px solid ${gold};
+    margin-bottom: 14px;
+}
+.pv-header-left  { display: flex; flex-direction: column; gap: 8px; }
+.pv-header-center { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.pv-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 
-      <!-- COL 1: Title + Status + Vendor -->
-      <div style="flex:1;">
-        <h1 style="font-size:${f + 11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px 0;letter-spacing:-0.3px;white-space:nowrap;">Payment Voucher</h1>
-        ${s.showStatusBadge && data.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f - 1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(data.status)}</span></div>` : ''}
-        ${s.showCustomerName && vendor.name ? `<div>
-          <p style="font-weight:700;font-size:${f - 0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Paid To</p>
-          <p style="font-weight:700;font-size:${f + 1}px;margin-bottom:2px;">${esc(vendor.name)}</p>
-          ${s.showCustomerCode && vendor.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${esc(vendor.code)}</p>` : ''}
-          ${s.showCustomerAddress && vendor.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:2px 0 0;">${esc(vendor.address)}</p>` : ''}
-          ${s.showCustomerPhone && vendor.phone ? `<p style="margin-top:2px;color:#555;">${esc(vendor.phone)}</p>` : ''}
-          ${s.showCustomerEmail && vendor.email ? `<p style="margin-top:1px;color:#555;">${esc(vendor.email)}</p>` : ''}
-          ${s.showCustomerTRN && vendor.taxId ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">TRN: ${esc(vendor.taxId)}</p>` : ''}
-          ${s.showVATNumber && vendor.crn ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">CR: ${esc(vendor.crn)}</p>` : ''}
-        </div>` : ''}
+/* title + status */
+.pv-title { font-size: ${f + 11}pt; font-weight: 700; color: #111827; letter-spacing: -0.3px; line-height: 1.1; margin-bottom: 4px; }
+.pv-status-badge {
+    display: inline-block;
+    background: ${gold}33; color: #92400e;
+    border: 1px solid ${gold}99; font-size: ${f - 1}pt; font-weight: 600;
+    padding: 2px 10px; border-radius: 12px; margin-bottom: 10px;
+}
+
+/* bill-to */
+.bill-to-block { margin-top: 4px; }
+.bill-to-eyebrow { font-size: ${f - 1}pt; font-weight: 600; color: #9ca3af; letter-spacing: .8px; text-transform: uppercase; margin-bottom: 2px; }
+.bill-to-name { font-weight: 700; font-size: ${f + 1}pt; color: #111827; margin-bottom: 2px; }
+.bill-to-name-text { font-weight: 700; }
+.bill-to-line { font-size: ${f}pt; color: #4b5563; line-height: 1.55; }
+
+/* meta grid (center column) */
+.doc-meta-item { text-align: right; }
+.doc-meta-label { font-size: ${f - 1}pt; color: #9ca3af; font-weight: 500; line-height: 1.3; }
+.doc-meta-value { font-size: ${f}pt; font-weight: 700; color: #111827; }
+
+/* company right */
+.company-logo { margin-bottom: 6px; }
+.company-logo img { height: 72px; width: auto; object-fit: contain; display: block; }
+.company-logo-fallback {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: ${gold}22; border: 3px solid ${gold};
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 900; color: ${gold};
+}
+.company-panel { text-align: right; line-height: 1.55; }
+.company-name  { font-weight: 700; font-size: ${f + 1}pt; color: #111827; }
+.company-copy  { font-size: ${f - 0.5}pt; color: #4b5563; }
+
+/* amount-paid highlight */
+.grand-total-display {
+    display: flex; justify-content: flex-end; align-items: baseline; gap: 12px;
+    background: ${gold}18; border: 1px solid ${gold}55;
+    border-radius: 4px; padding: 8px 14px; margin-bottom: 10px;
+}
+.grand-total-label { font-size: ${f + 1}pt; font-weight: 700; color: #111827; white-space: nowrap; }
+.grand-total-value { font-size: ${f + 4}pt; font-weight: 800; color: #111827; white-space: nowrap; }
+
+/* amount in words */
+.pv-words-row {
+    display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+    font-size: ${f}pt; background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 4px; padding: 5px 12px; margin-bottom: 14px;
+}
+.pv-words-label { color: #64748b; }
+.pv-words-value { font-weight: 700; color: #111827; }
+
+/* payment details */
+.pv-details-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 32px;
+    border-top: 1px solid ${gold}44; padding-top: 10px; margin-bottom: 14px;
+}
+.pv-detail-row { display: flex; gap: 10px; font-size: ${f}pt; align-items: baseline; }
+.pv-detail-label { color: #94a3b8; min-width: 110px; flex-shrink: 0; }
+.pv-detail-value { font-weight: 600; color: #111827; }
+
+/* notes */
+.pv-notes {
+    background: ${gold}14; border: 1px solid ${gold}66; border-radius: 4px;
+    padding: 7px 12px; font-size: ${f}pt; color: #374151; margin-bottom: 14px;
+}
+
+/* stamp */
+.stamp-row { display: flex; align-items: flex-end; gap: 20px; margin-bottom: 14px; }
+.stamp-container { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.stamp-container img { width: 88px; height: 88px; object-fit: contain; }
+.stamp-placeholder {
+    width: 88px; height: 88px; border-radius: 50%;
+    border: 2px dashed ${gold}; background: ${gold}0d;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: ${f - 1}pt; color: #92400e; font-weight: 700; text-align: center; line-height: 1.4;
+}
+.stamp-caption { font-size: ${f - 2}pt; color: #94a3b8; }
+
+/* footer bar */
+.pv-footer-bar {
+    border-top: 2px solid ${gold}; padding-top: 7px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: ${f - 0.5}pt; color: #64748b; margin-top: auto;
+}
+.pv-footer-right { display: flex; align-items: center; gap: 6px; }
+.pv-footer-sign-line { border-bottom: 1px solid #94a3b8; display: inline-block; min-width: 90px; }
+
+/* spacer so footer bar sits at bottom */
+.pv-body-content { flex: 1; }
+</style>
+</head>
+<body>
+<div class="pv-shell">
+
+  <!-- HEADER -->
+  <header class="pv-header">
+
+    <!-- LEFT: title, status, vendor -->
+    <div class="pv-header-left">
+      <div>
+        <div class="pv-title">Payment Voucher</div>
+        ${statusBadge}
       </div>
+      ${vendorBlock}
+    </div>
 
-      <!-- COL 2: Voucher meta -->
+    <!-- CENTER: meta grid -->
+    <div class="pv-header-center">
       ${metaGridHtml}
-
-      <!-- COL 3: Logo + Company -->
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
-        ${logoHtml}
-        ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
-          <p style="font-weight:700;font-size:${f + 1}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
-          ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${esc(co.address)}</p>` : ''}
-          ${s.showCompanyPhone && co.phone ? `<p style="margin:0;">${esc(co.phone)}</p>` : ''}
-          ${s.showCompanyEmail && co.email ? `<p style="margin:0;">${esc(co.email)}</p>` : ''}
-          ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;">TRN · ${esc(co.trn)}</p>` : ''}
-        </div>` : ''}
-      </div>
     </div>
 
-    <!-- AMOUNT PAID (hero) -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:20px;">
-      <div style="text-align:right;">
-        <p style="margin:0;font-size:${f - 0.5}px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.8px;">Amount Paid</p>
-        <p style="margin:4px 0 0;font-size:${f + 17}px;font-weight:800;color:#1a1a2e;letter-spacing:-1px;">${currHtml} ${fmt(amountPaid)}</p>
-        ${s.showAmountInWords && amountPaid ? `<p style="margin:4px 0 0;font-size:${f}px;color:#64748b;font-style:italic;">${formatAmountInWords(amountPaid, co.currency)}</p>` : ''}
-      </div>
+    <!-- RIGHT: logo + company -->
+    <div class="pv-header-right">
+      ${companyPanel}
     </div>
 
-    <!-- PAYMENT DETAILS TABLE -->
-    ${payDetailRows ? `
-    <div style="font-size:${f - 0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Payment Details</div>
-    <table style="margin-bottom:20px;width:auto;">
-      <tbody>${payDetailRows}</tbody>
-    </table>` : ''}
+  </header>
 
-  </div><!-- end flex:1 -->
+  <!-- BODY -->
+  <div class="pv-body-content">
+
+    ${amountBlock}
+    ${amountInWords}
+    ${payDetailSection}
+
+  </div>
 
   <!-- FOOTER GROUP -->
-  <div style="margin-top:auto;">
-
-    <!-- NOTE -->
-    ${s.showNote && data.notes ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.notes)}</div>` : ''}
-
-    <!-- AUTHORISATION LINES -->
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;gap:40px;">
-      <div style="flex:1;text-align:center;">
-        <div style="border-top:1px solid #94a3b8;padding-top:6px;font-size:${f - 0.5}px;color:#64748b;">Prepared By</div>
-      </div>
-      <div style="flex:1;text-align:center;">
-        <div style="border-top:1px solid ${gold};padding-top:6px;font-size:${f - 0.5}px;color:#64748b;">Approved By</div>
-      </div>
-    </div>
-
-    <!-- STAMP + QR -->
-    ${(s.showCompanyStamp || s.showQRCode) ? `
-    <div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
-      ${stampHtml}
-      ${qrHtml}
-    </div>` : ''}
-
-    <!-- FOOTER STRIP -->
-    ${(s.showGeneratedBy || s.showReceivedByLine) ? `
-    <div style="border-top:2px solid ${gold};padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f - 0.5}px;color:#64748b;">
-      <div>${s.showGeneratedBy ? `BillBull ERP · Generated: ${esc(generatedStr)}${generatedUser ? ` · User: ${esc(generatedUser)}` : ''}` : ''}</div>
-      ${s.showReceivedByLine ? `<div style="display:flex;align-items:center;gap:6px;">Received by: <span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
-    </div>` : ''}
-
-  </div><!-- end footer group -->
+  <div>
+    ${notesBlock}
+    ${stampHtml}
+    ${footerBar}
+  </div>
 
 </div>
 </body></html>`;
@@ -5227,7 +5472,7 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
     }
-    if (template?.category === 'Payment Voucher') {
+    if (template?.category === 'Payment Voucher' && data?.paymentDetails) {
         return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'print');
@@ -5246,7 +5491,7 @@ export const generateDocumentEmailHtml = (template, data, options = {}) => {
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
     }
-    if (template?.category === 'Payment Voucher') {
+    if (template?.category === 'Payment Voucher' && data?.paymentDetails) {
         return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'email');

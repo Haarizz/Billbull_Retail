@@ -8,6 +8,9 @@ public class LpoItemResponse {
     private String itemCode;
     private String itemName;
     private String barcode;
+    private String sku;
+    private String brand;
+    private String shortDesc;
     private String uom;
     private Integer quantity;
     private BigDecimal unitPrice;
@@ -26,6 +29,9 @@ public class LpoItemResponse {
         this.itemCode = item.getItemCode();
         this.itemName = item.getItemName();
         this.barcode = item.getBarcode();
+        this.sku = item.getProduct().getSku();
+        this.brand = (item.getProduct().getBrand() != null) ? item.getProduct().getBrand().getName() : null;
+        this.shortDesc = item.getProduct().getShortDesc();
         this.uom = item.getUom();
         this.quantity = item.getQuantity();
         this.unitPrice = item.getUnitPrice();
@@ -60,6 +66,18 @@ public class LpoItemResponse {
 
     public void setBarcode(String barcode) {
         this.barcode = barcode;
+    }
+
+    public String getSku() {
+        return sku;
+    }
+
+    public String getBrand() {
+        return brand;
+    }
+
+    public String getShortDesc() {
+        return shortDesc;
     }
 
     public String getUom() {

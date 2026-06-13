@@ -11,6 +11,7 @@ import {
   Save,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   ChevronDown,
   History,
   Trash2,
@@ -1813,6 +1814,35 @@ const ProformaInvoice = () => {
                     onShippingChange={setShippingAddress}
                     isReadOnly={isReadOnly}
                     currency={currency}
+                    creditAlert={
+                        selectedCustomer && selectedCustomer.creditLimitAmount > 0 &&
+                        (Number(selectedCustomer.balance || 0) + grandTotal) > selectedCustomer.creditLimitAmount
+                            ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                                ? (
+                                    <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                        <p>
+                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                            (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + grandTotal} currency={currency} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={currency} />.
+                                            Saving this proforma invoice is blocked until the balance is within limit.
+                                        </p>
+                                    </div>
+                                )
+                                : salesSettings?.creditLimitPolicy === 'WARNING'
+                                    ? (
+                                        <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                            <p>
+                                                <strong>Credit Warning:</strong> The projected outstanding balance
+                                                (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + grandTotal} currency={currency} />) exceeds this customer's
+                                                credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={currency} />.
+                                            </p>
+                                        </div>
+                                    )
+                                    : null
+                            : null
+                    }
                 />
 
                 <CustomerSelector
