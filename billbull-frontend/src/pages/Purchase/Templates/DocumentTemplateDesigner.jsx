@@ -159,6 +159,8 @@ function defaultSettings(docType) {
     colProductImage: !isGRN && !isDN,
     colItemCode: true,
     colDescription: true,
+    showShortDescription: true,
+    showDetailedDescription: true,
     colUOM: true,
     colQty: true,
     colUnitPrice: !isGRN && !isDN,
@@ -348,6 +350,11 @@ function ClassicPreview({ s, currencyConfig }) {
     const taxable = item.qty * netUnit;
     const vatAmt = taxable * (item.vat / 100);
     const lineTotal = taxable + vatAmt;
+    const [shortDescriptionLine, ...detailedDescriptionLines] = item.desc.split("\n").filter(Boolean);
+    const visibleDescriptionLines = [
+      s.showShortDescription !== false ? shortDescriptionLine : null,
+      ...(s.showDetailedDescription !== false ? detailedDescriptionLines : [])
+    ].filter(Boolean);
     return <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
                 {s.colNo && <td style={{ ...tdS(false, true), fontWeight: 600 }}>{item.no}</td>}
                 {s.colProductImage && <td style={tdS()}>
@@ -378,7 +385,7 @@ function ClassicPreview({ s, currencyConfig }) {
                       </div>}
                   </td>}
                 {s.colDescription && <td style={tdS()}>
-                    <p style={{ whiteSpace: "pre-line", margin: 0, lineHeight: 1.6, color: "#444" }}>{item.desc.split("\n").map((line, li) => <span key={li} style={{ display: "block" }}>{"\xB7 "}{line}</span>)}</p>
+                    {visibleDescriptionLines.length > 0 && <p style={{ whiteSpace: "pre-line", margin: 0, lineHeight: 1.6, color: "#444" }}>{visibleDescriptionLines.map((line, li) => <span key={li} style={{ display: "block" }}>{"\xB7 "}{line}</span>)}</p>}
                     {item.disc > 0 && <p style={{ margin: "4px 0 0", color: "#e11d48", fontSize: `${f - 1}px`, fontWeight: 600 }}>
                         Discount N/A @ {item.disc}%
                       </p>}
@@ -842,6 +849,8 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
 
               <SectionLabel icon={<Table className="h-3 w-3" />} label="Other Columns" />
               <Row label="Description"><Toggle value={s.colDescription} onChange={(v) => upd("colDescription", v)} /></Row>
+              <Row label="Short Description"><Toggle value={s.showShortDescription !== false} onChange={(v) => upd("showShortDescription", v)} /></Row>
+              <Row label="Detailed Description"><Toggle value={s.showDetailedDescription !== false} onChange={(v) => upd("showDetailedDescription", v)} /></Row>
               <Row label="UOM"><Toggle value={s.colUOM} onChange={(v) => upd("colUOM", v)} /></Row>
               <Row label="Quantity"><Toggle value={s.colQty} onChange={(v) => upd("colQty", v)} /></Row>
               <Row label="Unit Price"><Toggle value={s.colUnitPrice} onChange={(v) => upd("colUnitPrice", v)} /></Row>

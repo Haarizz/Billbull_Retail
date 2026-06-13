@@ -40,6 +40,8 @@ const MOCK = {
     {
       no: 1,
       name: "Industrial Safety Gloves \u2014 XL",
+      shortDesc: "Cut-resistant industrial safety gloves",
+      detailedDesc: "Palm coating worn through on returned units",
       sku: "ISG-XL-001",
       batch: "BTH-2025-0441",
       tag: "Damaged on arrival",
@@ -54,6 +56,8 @@ const MOCK = {
     {
       no: 2,
       name: "Packaging surcharge reversal",
+      shortDesc: "Invoice adjustment line",
+      detailedDesc: "Packaging charge reversed with returned goods",
       sku: "",
       batch: "",
       tag: "Adjustment",
@@ -120,6 +124,8 @@ function defaultSettings() {
     showSalesInvoiceRef: true,
     colNo: true,
     colDescription: true,
+    showShortDescription: true,
+    showDetailedDescription: true,
     colSKU: true,
     colBatch: true,
     colQtyOriginal: true,
@@ -293,6 +299,8 @@ function GRVPreview({ s }) {
               {s.colNo && <td style={{ ...tdS(false, true), fontWeight: 600 }}>{item.no}</td>}
               {s.colDescription && <td style={tdS()}>
                   <p style={{ fontWeight: 700, margin: "0 0 1px" }}>{item.name}</p>
+                  {s.showShortDescription !== false && item.shortDesc && <p style={{ margin: 0, color: "#475569", fontSize: `${f - 1}px` }}>{item.shortDesc}</p>}
+                  {s.showDetailedDescription !== false && item.detailedDesc && <p style={{ margin: "1px 0 0", color: "#94a3b8", fontSize: `${f - 1}px`, fontStyle: "italic" }}>{item.detailedDesc}</p>}
                   {s.colSKU && item.sku && <p style={{ margin: 0, color: "#64748b", fontSize: `${f - 1}px` }}>SKU: {item.sku}</p>}
                   {s.colBatch && item.batch && <p style={{ margin: 0, color: "#64748b", fontSize: `${f - 1}px` }}>Batch: {item.batch}</p>}
                   {item.tag && <span style={{ display: "inline-block", marginTop: 2, fontSize: `${f - 1.5}px`, fontWeight: 600, color: item.tag === "Adjustment" ? "#6366f1" : "#dc2626", background: item.tag === "Adjustment" ? "#eef2ff" : "#fef2f2", border: `1px solid ${item.tag === "Adjustment" ? "#c7d2fe" : "#fecaca"}`, borderRadius: 10, padding: "0 6px" }}>
@@ -632,6 +640,8 @@ function GRVTemplateDesigner({ templateName, initialSettings, onClose, onSave })
               <SLabel label="Table Columns" />
               <Row label="# Line No."><Toggle value={s.colNo} onChange={(v) => upd("colNo", v)} /></Row>
               <Row label="Item / Description"><Toggle value={s.colDescription} onChange={(v) => upd("colDescription", v)} /></Row>
+              <Row label="Short Description"><Toggle value={s.showShortDescription !== false} onChange={(v) => upd("showShortDescription", v)} /></Row>
+              <Row label="Detailed Description"><Toggle value={s.showDetailedDescription !== false} onChange={(v) => upd("showDetailedDescription", v)} /></Row>
               <Row label="SKU (below name)"><Toggle value={s.colSKU} onChange={(v) => upd("colSKU", v)} /></Row>
               <Row label="Batch (below name)"><Toggle value={s.colBatch} onChange={(v) => upd("colBatch", v)} /></Row>
               <Row label="Qty Original"><Toggle value={s.colQtyOriginal} onChange={(v) => upd("colQtyOriginal", v)} /></Row>

@@ -1,9 +1,10 @@
 package com.billbull.backend.inventory.product;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -136,9 +137,10 @@ public class ProductImportService {
         importJobs.put(job.jobId, job);
 
         try {
-            byte[] bytes = file.getBytes();
-            importExecutor.submit(() -> runImportJob(bytes, job));
-        } catch (IOException e) {
+            Path tempFile = Files.createTempFile("product-import-", ".xlsx");
+            file.transferTo(tempFile.toFile());
+            importExecutor.submit(() -> runImportJob(tempFile, job));
+        } catch (Exception e) {
             job.status = "FAILED";
             job.message = "Import Failed: " + e.getMessage();
             job.finishedAt = System.currentTimeMillis();
@@ -155,11 +157,11 @@ public class ProductImportService {
         return job;
     }
 
-    private void runImportJob(byte[] bytes, ImportJobStatus job) {
+    private void runImportJob(Path importFile, ImportJobStatus job) {
         job.status = "RUNNING";
         job.startedAt = System.currentTimeMillis();
-        try {
-            job.message = importProducts(new ByteArrayInputStream(bytes), job);
+        try (InputStream inputStream = Files.newInputStream(importFile)) {
+            job.message = importProducts(inputStream, job);
             job.status = "SUCCESS";
         } catch (Exception e) {
             job.errorCount++;
@@ -167,6 +169,10 @@ public class ProductImportService {
             job.errors.add(job.message);
             job.status = "FAILED";
         } finally {
+            try {
+                Files.deleteIfExists(importFile);
+            } catch (IOException ignored) {
+            }
             job.finishedAt = System.currentTimeMillis();
             job.processedRows = Math.max(job.processedRows, job.totalRows);
         }
@@ -217,15 +223,26 @@ public class ProductImportService {
 
                 Integer modelIdx = findContentIndex(headerMap, "supplier model no", "supplier model", "model no",
                         "model no.", "model", "model number", "item model");
-                Integer codeIdx = findContentIndex(headerMap, "item code", "code", "product code");
-                Integer nameIdx = findContentIndex(headerMap, "item name", "description", "product description",
-                        "product name", "name", "item description", "product");
+                Integer skuIdx = findContentIndex(headerMap, "sku");
+                Integer itemIdx = findContentIndex(headerMap, "item");
+                Integer codeIdx = findContentIndex(headerMap, "item code", "code", "product code", "sku");
+                Integer nameIdx = findContentIndex(headerMap, "item name", "product name", "name", "product",
+                        "item", "description", "product description", "item description");
+                Integer descIdx = findContentIndex(headerMap, "description", "product description",
+                        "item description", "short description", "detailed description");
+                if (itemIdx != null) {
+                    nameIdx = itemIdx;
+                }
+                if (nameIdx == null) {
+                    nameIdx = descIdx;
+                }
                 Integer picIdx = findContentIndex(headerMap, "picture", "image", "photo", "img", "item photo");
                 Integer barcodeIdx = findContentIndex(headerMap, "barcode", "bar code", "ean", "upc");
                 Integer unitIdx = findContentIndex(headerMap, "unit code", "unit", "uom");
                 Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept",
                         "manufacture", "manufacturer");
-                Integer costIdx = findContentIndex(headerMap, "cost", "purchase cost", "purchasecost");
+                Integer costIdx = findContentIndex(headerMap, "cost", "purchase cost", "purchasecost",
+                        "landing cost", "landingcost");
                 Integer lastSupCostIdx = findContentIndex(headerMap, "last sup cost", "last supplier cost",
                         "landing cost");
                 Integer priceInclTaxIdx = findContentIndex(headerMap, "price incl tax", "price including tax",
@@ -250,6 +267,21 @@ public class ProductImportService {
                     modelIdx = barcodeIdx;
                 }
                 final boolean albadarFormat = (codeIdx != null && codeIdx.equals(barcodeIdx) && brandColIdx == null);
+
+                // Some legacy Nest/Fitgenix files swapped SKU and Item. Decide from
+                // row values so normal files with SKU=code and Item=name stay intact.
+                final boolean skuItemFormat = !albadarFormat && skuIdx != null && itemIdx != null;
+                final boolean swapSkuAndItem = skuItemFormat
+                        && shouldUseItemColumnAsCode(sheet, headerRowNum, skuIdx, itemIdx);
+                if (swapSkuAndItem) {
+                    codeIdx = itemIdx;
+                    nameIdx = skuIdx;
+                    modelIdx = codeIdx;
+                    if (brandColIdx == null && deptIdx != null) {
+                        brandColIdx = deptIdx;
+                        deptIdx = null;
+                    }
+                }
 
                 String fallbackBrandName = "Sheet".equalsIgnoreCase(sheetName) ? "General" : sheetName;
                 Brand fallbackBrand = getOrCreateBrand(fallbackBrandName);
@@ -282,6 +314,7 @@ public class ProductImportService {
                         String valModel = cell(row, modelIdx);
                         String valCode = cell(row, codeIdx);
                         String valName = cell(row, nameIdx);
+                        String valDesc = cell(row, descIdx);
                         String valPic = cell(row, picIdx);
                         String valBarcode = cell(row, barcodeIdx);
                         String valUnit = cell(row, unitIdx);
@@ -293,8 +326,13 @@ public class ProductImportService {
                         if (albadarFormat && isBlank(valBrandCol)) {
                             valBrandCol = lastGroupBrandName;
                         }
+                        if (!isBlank(valCode) && !isBlank(valName) && shouldSwapCodeAndNameForRow(valCode, valName)) {
+                            String tmpSwap = valCode;
+                            valCode = valName;
+                            valName = tmpSwap;
+                        }
 
-                        String finalName = firstNonBlank(valName, valCat, valModel, valCode);
+                        String finalName = firstNonBlank(valName, valDesc, valCat, valModel, valCode);
                         String baseCode = firstNonBlank(valCode, valModel, valCat, finalName);
                         if (isBlank(finalName) || isBlank(baseCode)) {
                             counters.skippedCount++;
@@ -321,6 +359,7 @@ public class ProductImportService {
                         if (existingByBarcode.isPresent()
                                 && productMatchesRow(existingByBarcode.get(), finalName, barcodeValue, cost,
                                         lastSupCost, priceInclTax, costInclTax, markup, gp)) {
+                            attachImageIfAbsent(existingByBarcode.get(), rowImageMap.get(r), valPic);
                             counters.skippedCount++;
                             continue;
                         }
@@ -333,6 +372,7 @@ public class ProductImportService {
                             if (existingByCode.isPresent()
                                     && productMatchesRow(existingByCode.get(), finalName, barcodeValue, cost,
                                             lastSupCost, priceInclTax, costInclTax, markup, gp)) {
+                                attachImageIfAbsent(existingByCode.get(), rowImageMap.get(r), valPic);
                                 counters.skippedCount++;
                                 continue;
                             }
@@ -346,6 +386,11 @@ public class ProductImportService {
 
                         reservedCodes.add(product.getCode());
                         product.setName(finalName);
+                        product.setSku(limit(firstNonBlank(valCode, valModel, baseCode), 100));
+                        if (!isBlank(valDesc)) {
+                            product.setShortDesc(limit(valDesc, 300));
+                            product.setDetailedDesc(limit(valDesc, 1000));
+                        }
                         product.setBrand(!isBlank(valBrandCol) ? getOrCreateBrand(valBrandCol) : fallbackBrand);
                         product.setActive(true);
                         product.setStatus(isChecked(valInactive) ? ProductStatus.DRAFT : ProductStatus.ACTIVE);
@@ -484,6 +529,13 @@ public class ProductImportService {
             if (foundBarcodeIdx != null && foundNameIdx != null) {
                 return r;
             }
+            // Nest/Fitgenix format: "SKU" (product name) + "Landing Cost" OR "Item" columns
+            Integer foundSkuIdx = findContentIndex(headerMap, "sku");
+            Integer foundLandingCostIdx = findContentIndex(headerMap, "landing cost", "landingcost");
+            Integer foundItemIdx = findContentIndex(headerMap, "item");
+            if (foundSkuIdx != null && (foundLandingCostIdx != null || foundItemIdx != null)) {
+                return r;
+            }
         }
         return -1;
     }
@@ -521,6 +573,66 @@ public class ProductImportService {
             }
         }
         return rowImageMap;
+    }
+
+    private boolean shouldUseItemColumnAsCode(Sheet sheet, int headerRowNum, Integer skuIdx, Integer itemIdx) {
+        int checked = 0;
+        int skuLooksCode = 0;
+        int itemLooksCode = 0;
+        int skuLooksName = 0;
+        int itemLooksName = 0;
+
+        for (int r = headerRowNum + 1; r <= sheet.getLastRowNum() && checked < 40; r++) {
+            Row row = sheet.getRow(r);
+            if (row == null || isBlankRow(row) || isReportFooterRow(row)) {
+                continue;
+            }
+
+            String sku = cell(row, skuIdx);
+            String item = cell(row, itemIdx);
+            if (isBlank(sku) || isBlank(item)) {
+                continue;
+            }
+
+            checked++;
+            if (looksLikeProductCode(sku)) {
+                skuLooksCode++;
+            }
+            if (looksLikeProductCode(item)) {
+                itemLooksCode++;
+            }
+            if (looksLikeProductName(sku)) {
+                skuLooksName++;
+            }
+            if (looksLikeProductName(item)) {
+                itemLooksName++;
+            }
+        }
+
+        return checked > 0 && itemLooksCode > skuLooksCode && skuLooksName > itemLooksName;
+    }
+
+    private boolean shouldSwapCodeAndNameForRow(String codeValue, String nameValue) {
+        return looksLikeProductName(codeValue) && looksLikeProductCode(nameValue);
+    }
+
+    private boolean looksLikeProductCode(String value) {
+        if (isBlank(value)) {
+            return false;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > 40 || trimmed.matches(".*\\s+.*")) {
+            return false;
+        }
+        return trimmed.matches("[A-Za-z0-9._/#-]+") && trimmed.matches(".*[0-9].*");
+    }
+
+    private boolean looksLikeProductName(String value) {
+        if (isBlank(value)) {
+            return false;
+        }
+        String trimmed = value.trim();
+        return trimmed.length() > 20 || trimmed.matches(".*\\s+.*");
     }
 
     private Optional<Product> findProductByBarcode(String barcodeValue) {
@@ -614,6 +726,17 @@ public class ProductImportService {
             media.setPrimary(true);
             mediaRepo.save(media);
         }
+    }
+
+    private void attachImageIfAbsent(Product product, PictureData embeddedPic, String imageCellValue) {
+        boolean hasImage = embeddedPic != null || !isBlank(imageCellValue);
+        if (!hasImage) {
+            return;
+        }
+        if (mediaRepo.findByProductIdAndIsPrimaryTrue(product.getId()).isPresent()) {
+            return;
+        }
+        attachImageIfPresent(product, embeddedPic, imageCellValue);
     }
 
     private Brand getOrCreateBrand(String brandName) {

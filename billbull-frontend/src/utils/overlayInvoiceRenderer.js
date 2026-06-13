@@ -196,7 +196,9 @@ const cellValue = (col, it, idx) => {
         case 'lineNo': return String(idx + 1);
         case 'code': return escapeHtml(it.code || '');
         case 'name': return escapeHtml(it.name || it.desc || it.code || '');
-        case 'description': return escapeHtml(it.desc || it.detailedDesc || '');
+        case 'description': return escapeHtml(it.desc || (typeof it.description === 'string' ? it.description : '') || '');
+        case 'shortDesc': return escapeHtml(it.shortDesc || it.shortDescription || '');
+        case 'detailedDesc': return escapeHtml(it.detailedDesc || it.detailedDescription || '');
         case 'brand': return escapeHtml(it.brand || '');
         case 'sku': return escapeHtml(it.sku || '');
         case 'barcode': return escapeHtml(it.barcode || '');
@@ -223,6 +225,8 @@ const TABLE_COLUMN_DEFS = [
     { key: 'code', label: 'Item Code', align: 'left', flex: 1.1 },
     { key: 'name', label: 'Product / Service', align: 'left', flex: 2 },
     { key: 'description', label: 'Description', align: 'left', flex: 2.4 },
+    { key: 'shortDesc', label: 'Short Description', align: 'left', flex: 1.8 },
+    { key: 'detailedDesc', label: 'Detailed Description', align: 'left', flex: 2.4 },
     { key: 'brand', label: 'Brand', align: 'left', flex: 1 },
     { key: 'sku', label: 'SKU', align: 'left', flex: 1 },
     { key: 'barcode', label: 'Barcode', align: 'left', flex: 1.2 },
