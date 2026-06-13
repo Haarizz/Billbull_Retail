@@ -1288,10 +1288,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Default Vendor</label>
-                    <select value={formData.defaultVendor} onChange={(e) => handleInputChange('defaultVendor', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                      <option value="">Select Vendor</option>
-                      {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </select>
+                    <ClassificationDropdown
+                      options={vendors.map(v => ({ value: v.id, label: v.name }))}
+                      value={formData.defaultVendor}
+                      onChange={(val) => handleInputChange('defaultVendor', val)}
+                      placeholder="Select Vendor…"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Procurement Type</label>

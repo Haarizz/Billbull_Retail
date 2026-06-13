@@ -5033,6 +5033,187 @@ table { width: 100%; border-collapse: collapse; }
 </body></html>`;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Vendor Payment Voucher — same visual design as Customer Payment Receipt but
+// adapted for the data shape from buildPaymentVoucherPrintData().
+// Triggered for 'Payment Voucher' category.
+// ─────────────────────────────────────────────────────────────────────────────
+const renderVendorPaymentVoucherHtml = (template, data, options = {}) => {
+    const raw = getTemplateDesignerSettings(template);
+    const s = { ...defaultPaymentReceiptSettings(), ...raw };
+    const co = normalizeDocumentCompanyProfile(options.companyProfile || {});
+    const f = Number(s.fontSize) || 9;
+    const gold = s.accentColor || '#F5C742';
+    const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
+    const esc = escapeHtml;
+    const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const currHtml = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: false });
+
+    const vendor = data.party || {};
+    const references = Array.isArray(data.references) ? data.references : [];
+    const paymentDetails = Array.isArray(data.paymentDetails) ? data.paymentDetails : [];
+    const summaryAmount = data.summaryAmount || {};
+    const amountPaid = Number(data.totals?.grandTotal || summaryAmount.amount || 0);
+
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(s, co);
+    const logoHtml = s.showLogo
+        ? (resolvedLogoUrl
+            ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
+            : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:${gold};">${esc((co.companyName || 'G').charAt(0))}</div>`)
+        : '';
+
+    // Build meta grid from headerMeta + references (voucher no, date, status, refs)
+    const docDate = data.date || '';
+    const voucherNo = data.docNo || '';
+    const metaItems = [
+        s.showReceiptNumber && voucherNo ? ['Voucher Number', voucherNo] : null,
+        s.showReceiptDate && docDate ? ['Date', docDate] : null,
+        ...references.map(r => r?.label && r?.value ? [r.label, r.value] : null),
+    ].filter(Boolean);
+
+    const metaGridHtml = metaItems.length > 0
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaItems.map(([lbl, val]) =>
+            `<div><p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`
+        ).join('')}</div>`
+        : '';
+
+    // Payment details table rows
+    const payDetailRows = paymentDetails.map(({ label, value }) => `
+        <tr>
+          <td style="padding:5px 16px 5px 0;color:#64748b;font-size:${f}px;font-weight:600;white-space:nowrap;text-transform:uppercase;letter-spacing:.5px;">${esc(label)}</td>
+          <td style="padding:5px 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(value)}</td>
+        </tr>`).join('');
+
+    const stampHtml = s.showCompanyStamp ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+            ${resolvedStampUrl
+            ? `<img src="${esc(resolvedStampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
+            : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                       <span style="font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</span>
+                   </div>`
+        }
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Official Stamp</span>
+        </div>` : '';
+
+    const qrHtml = s.showQRCode ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            ${options.qrCodeDataUrl
+            ? `<img src="${esc(options.qrCodeDataUrl)}" style="width:52px;height:52px;" />`
+            : `<div style="width:52px;height:52px;background:#1a1a2e;border-radius:4px;"></div>`
+        }
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Scan to verify</span>
+        </div>` : '';
+
+    const now = new Date();
+    const generatedStr = `${now.toLocaleDateString('en-AE')} ${now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })}`;
+    const generatedUser = co.email || '';
+    const fontFamily = s.fontFamily || 'Inter, sans-serif';
+    const needsInterImport = /\bInter\b/i.test(fontFamily);
+
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Payment Voucher ${esc(voucherNo)}</title>
+${needsInterImport ? `<link rel="preconnect" href="https://fonts.googleapis.com"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>` : ''}
+<style>
+@page { size: ${paper.cssSize}; margin: 12mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: ${esc(fontFamily)}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
+table { width: 100%; border-collapse: collapse; }
+</style></head>
+<body style="padding:0;min-height:100%;">
+<div style="font-family:${esc(fontFamily)};font-size:${f}px;background:#fff;color:#1a1a2e;padding:0 32px 28px 32px;min-height:calc(100vh - 24mm);display:flex;flex-direction:column;">
+
+  <div style="flex:1;padding-top:28px;">
+
+    <!-- HEADER -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
+
+      <!-- COL 1: Title + Status + Vendor -->
+      <div style="flex:1;">
+        <h1 style="font-size:${f + 11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px 0;letter-spacing:-0.3px;white-space:nowrap;">Payment Voucher</h1>
+        ${s.showStatusBadge && data.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f - 1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(data.status)}</span></div>` : ''}
+        ${s.showCustomerName && vendor.name ? `<div>
+          <p style="font-weight:700;font-size:${f - 0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Paid To</p>
+          <p style="font-weight:700;font-size:${f + 1}px;margin-bottom:2px;">${esc(vendor.name)}</p>
+          ${s.showCustomerCode && vendor.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${esc(vendor.code)}</p>` : ''}
+          ${s.showCustomerAddress && vendor.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:2px 0 0;">${esc(vendor.address)}</p>` : ''}
+          ${s.showCustomerPhone && vendor.phone ? `<p style="margin-top:2px;color:#555;">${esc(vendor.phone)}</p>` : ''}
+          ${s.showCustomerEmail && vendor.email ? `<p style="margin-top:1px;color:#555;">${esc(vendor.email)}</p>` : ''}
+          ${s.showCustomerTRN && vendor.taxId ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">TRN: ${esc(vendor.taxId)}</p>` : ''}
+          ${s.showVATNumber && vendor.crn ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">CR: ${esc(vendor.crn)}</p>` : ''}
+        </div>` : ''}
+      </div>
+
+      <!-- COL 2: Voucher meta -->
+      ${metaGridHtml}
+
+      <!-- COL 3: Logo + Company -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        ${logoHtml}
+        ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
+          <p style="font-weight:700;font-size:${f + 1}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
+          ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${esc(co.address)}</p>` : ''}
+          ${s.showCompanyPhone && co.phone ? `<p style="margin:0;">${esc(co.phone)}</p>` : ''}
+          ${s.showCompanyEmail && co.email ? `<p style="margin:0;">${esc(co.email)}</p>` : ''}
+          ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;">TRN · ${esc(co.trn)}</p>` : ''}
+        </div>` : ''}
+      </div>
+    </div>
+
+    <!-- AMOUNT PAID (hero) -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:20px;">
+      <div style="text-align:right;">
+        <p style="margin:0;font-size:${f - 0.5}px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.8px;">Amount Paid</p>
+        <p style="margin:4px 0 0;font-size:${f + 17}px;font-weight:800;color:#1a1a2e;letter-spacing:-1px;">${currHtml} ${fmt(amountPaid)}</p>
+        ${s.showAmountInWords && amountPaid ? `<p style="margin:4px 0 0;font-size:${f}px;color:#64748b;font-style:italic;">${formatAmountInWords(amountPaid, co.currency)}</p>` : ''}
+      </div>
+    </div>
+
+    <!-- PAYMENT DETAILS TABLE -->
+    ${payDetailRows ? `
+    <div style="font-size:${f - 0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Payment Details</div>
+    <table style="margin-bottom:20px;width:auto;">
+      <tbody>${payDetailRows}</tbody>
+    </table>` : ''}
+
+  </div><!-- end flex:1 -->
+
+  <!-- FOOTER GROUP -->
+  <div style="margin-top:auto;">
+
+    <!-- NOTE -->
+    ${s.showNote && data.notes ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.notes)}</div>` : ''}
+
+    <!-- AUTHORISATION LINES -->
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;gap:40px;">
+      <div style="flex:1;text-align:center;">
+        <div style="border-top:1px solid #94a3b8;padding-top:6px;font-size:${f - 0.5}px;color:#64748b;">Prepared By</div>
+      </div>
+      <div style="flex:1;text-align:center;">
+        <div style="border-top:1px solid ${gold};padding-top:6px;font-size:${f - 0.5}px;color:#64748b;">Approved By</div>
+      </div>
+    </div>
+
+    <!-- STAMP + QR -->
+    ${(s.showCompanyStamp || s.showQRCode) ? `
+    <div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
+      ${stampHtml}
+      ${qrHtml}
+    </div>` : ''}
+
+    <!-- FOOTER STRIP -->
+    ${(s.showGeneratedBy || s.showReceivedByLine) ? `
+    <div style="border-top:2px solid ${gold};padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f - 0.5}px;color:#64748b;">
+      <div>${s.showGeneratedBy ? `BillBull ERP · Generated: ${esc(generatedStr)}${generatedUser ? ` · User: ${esc(generatedUser)}` : ''}` : ''}</div>
+      ${s.showReceivedByLine ? `<div style="display:flex;align-items:center;gap:6px;">Received by: <span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
+    </div>` : ''}
+
+  </div><!-- end footer group -->
+
+</div>
+</body></html>`;
+};
+
 export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
@@ -5045,6 +5226,9 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
+    }
+    if (template?.category === 'Payment Voucher') {
+        return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'print');
 };
@@ -5061,6 +5245,9 @@ export const generateDocumentEmailHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
+    }
+    if (template?.category === 'Payment Voucher') {
+        return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'email');
 };

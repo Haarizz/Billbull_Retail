@@ -746,6 +746,8 @@ const Quotations = () => {
             sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
+            billDiscountType: data.billDiscountType || 'percent',
+            billDiscountAmount: data.billDiscountAmount || 0,
             vatMode: data.vatMode || 'EXCLUSIVE',
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
@@ -774,7 +776,12 @@ const Quotations = () => {
             items: data.items.map(i => calculateRow({
                 id: i.id || Math.random(),
                 code: i.itemCode,
-                name: i.itemName || i.name || '',
+                name: i.itemName || i.productName || i.name || '',
+                sku: i.sku || i.skuCode || i.productSku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || i.shortDescription || '',
+                detailedDesc: i.detailedDesc || i.detailedDescription || '',
+                localName: i.localName || i.arabicName || '',
                 barcode: i.barcode || '',
                 image: i.primaryImage || i.image || '',
                 desc: i.description,
@@ -1544,7 +1551,12 @@ const Quotations = () => {
                     focUnit: i.focUnit || 'PCS',
                     taxAmount: itemTax,
                     lineTotal: itemNet + itemTax,
-                    remarks: i.remarks
+                    remarks: i.remarks,
+                    sku: i.sku || '',
+                    brandName: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
+                    detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || ''
                 };
             })
         };
@@ -2192,6 +2204,9 @@ const Quotations = () => {
                     qtnNo: getQuotationNo(),
                     customer: customer,
                     billDiscount,
+                    billDiscountType,
+                    billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
+                    billDiscountAmount: billDiscountAmount,
                     items: items
                 }
             }
@@ -2227,6 +2242,9 @@ const Quotations = () => {
                     customerCode: matched?.code ?? '',
                     customerName: matched?.name ?? qtn.customer,
                     billDiscount: qtn.billDiscount,
+                    billDiscountType: qtn.billDiscountType,
+                    billDiscountFixed: qtn.billDiscountFixed,
+                    billDiscountAmount: qtn.billDiscountAmount,
                     shippingAddress: qtn.shippingAddress || '',
                     items: qtn.items
                 }
@@ -2248,7 +2266,7 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
-            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedBillDiscount = makeFooterDiscount(qtn.billDiscountType || 'percent', qtn.billDiscountType === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const printData = {
@@ -2290,7 +2308,7 @@ const Quotations = () => {
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
                     currency: getDisplayCurrencyProps(qtn.currency).currency,
-                    billDiscount: resolvedBillDiscount,
+                    billDiscount: resolvedSummary.footerDiscValue,
                     billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                     discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                 },
@@ -2325,10 +2343,10 @@ const Quotations = () => {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
             if (!defaultTemplate) return;
-            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedBillDiscount = makeFooterDiscount(qtn.billDiscountType || 'percent', qtn.billDiscountType === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0) }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscValue, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0) }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
             await downloadPdf(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
@@ -3431,6 +3449,30 @@ const Quotations = () => {
                                                 className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-slate-50"
                                             />
                                         </div>
+
+                                        {/* Payment Terms */}
+                                        <div className="flex flex-col relative col-span-2">
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Payment Terms</label>
+                                            <div
+                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-[#F5C742]'}`}
+                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
+                                            >
+                                                {paymentTerm} <ChevronDown size={14} className="text-slate-400" />
+                                            </div>
+                                            {isPaymentTermOpen && !isViewMode && (
+                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden">
+                                                    {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
+                                                        <div
+                                                            key={opt}
+                                                            onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
+                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
+                                                        >
+                                                            {opt} {paymentTerm === opt && <Check size={12} />}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
@@ -3489,32 +3531,7 @@ const Quotations = () => {
                                     onCustomerCreated={refreshData}
                                 />
 
-                                {/* Payment Terms */}
-                                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative">
-                                    <h3 className="text-xs font-bold text-slate-700 mb-3">Payment Terms</h3>
-                                    <div className="flex flex-col relative">
-                                        <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
-                                        <div
-                                            className={`w-full text-xs p-2 border border-slate-200 rounded-lg text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
-                                            onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
-                                        >
-                                            {paymentTerm} <ChevronDown size={12} className="text-slate-400" />
-                                        </div>
-                                        {isPaymentTermOpen && !isViewMode && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
-                                                {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
-                                                    <div
-                                                        key={opt}
-                                                        onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
-                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
-                                                    >
-                                                        {opt} {paymentTerm === opt && <Check size={12} />}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+
 
                             </div> {/* End Left Column */}
 

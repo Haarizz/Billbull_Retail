@@ -52,9 +52,9 @@ class ReconciliationServiceTest {
 
     @Test
     void finalizeReconciliationRejectsCashAccount() {
-        ReconciliationRequest request = request("SYS-1101");
-        when(accountRepository.findById("SYS-1101")).thenReturn(Optional.of(account(
-                "SYS-1101", "1101", "Cash on Hand", "Assets", "Asset", false, "active")));
+        ReconciliationRequest request = request("SYS-1001");
+        when(accountRepository.findById("SYS-1001")).thenReturn(Optional.of(account(
+                "SYS-1001", "1001", "Cash in Hand", "Assets", "Asset", false, "active")));
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
                 () -> service.finalizeReconciliation(request));
@@ -65,32 +65,32 @@ class ReconciliationServiceTest {
 
     @Test
     void finalizeReconciliationPersistsOnlyForBankAccount() {
-        ReconciliationRequest request = request("SYS-1102");
-        Account bankAccount = account("SYS-1102", "1102", "Bank Account", "Assets", "Asset", false, "active");
+        ReconciliationRequest request = request("SYS-1010");
+        Account bankAccount = account("SYS-1010", "1010", "Bank Account (Main)", "Assets", "Asset", false, "active");
 
-        when(accountRepository.findById("SYS-1102")).thenReturn(Optional.of(bankAccount));
+        when(accountRepository.findById("SYS-1010")).thenReturn(Optional.of(bankAccount));
         when(sessionRepository.save(any(ReconciliationSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         service.finalizeReconciliation(request);
 
         ArgumentCaptor<ReconciliationSession> sessionCaptor = ArgumentCaptor.forClass(ReconciliationSession.class);
         verify(sessionRepository).save(sessionCaptor.capture());
-        assertEquals("SYS-1102", sessionCaptor.getValue().getBankAccountId());
+        assertEquals("SYS-1010", sessionCaptor.getValue().getBankAccountId());
         assertEquals(LocalDate.of(2026, 5, 21), sessionCaptor.getValue().getStatementDate());
         assertEquals(new BigDecimal("2500.00"), sessionCaptor.getValue().getStatementBalance());
     }
 
     @Test
     void finalizeReconciliationRejectsEntriesFromAnotherAccount() {
-        ReconciliationRequest request = request("SYS-1102");
+        ReconciliationRequest request = request("SYS-1010");
         request.setLedgerEntryIds(List.of("L-1"));
-        Account bankAccount = account("SYS-1102", "1102", "Bank Account", "Assets", "Asset", false, "active");
+        Account bankAccount = account("SYS-1010", "1010", "Bank Account (Main)", "Assets", "Asset", false, "active");
         LedgerEntry receivableEntry = new LedgerEntry();
         receivableEntry.setId("L-1");
-        receivableEntry.setAccountCode("1110");
+        receivableEntry.setAccountCode("1100");
         receivableEntry.setAccountName("Accounts Receivable");
 
-        when(accountRepository.findById("SYS-1102")).thenReturn(Optional.of(bankAccount));
+        when(accountRepository.findById("SYS-1010")).thenReturn(Optional.of(bankAccount));
         when(sessionRepository.save(any(ReconciliationSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(ledgerEntryRepository.findAllById(List.of("L-1"))).thenReturn(List.of(receivableEntry));
 

@@ -314,16 +314,15 @@ const UserRoleConfig = () => {
 
     // 2. Cascade to resources if this is a parent module
     const parentModule = MODULES.find(m => m.key === key);
-    const childPromises = [];
+    const childEntries = []; // { resKey, promise }
     if (parentModule && parentModule.resources) {
       parentModule.resources.forEach(res => {
         const resCurrent = permMap[res.key] || {};
         setPermMap(prev => ({ ...prev, [res.key]: { ...resCurrent, ...nextValues } }));
-        if (resCurrent.id) {
-          childPromises.push(rolePermissionsApi.update(resCurrent.id, nextValues));
-        } else {
-          childPromises.push(rolePermissionsApi.create({ roleName: selectedRole.name, module: res.key, ...nextValues }));
-        }
+        const promise = resCurrent.id
+          ? rolePermissionsApi.update(resCurrent.id, nextValues)
+          : rolePermissionsApi.create({ roleName: selectedRole.name, module: res.key, ...nextValues });
+        childEntries.push({ resKey: res.key, promise });
       });
     }
 
@@ -335,11 +334,19 @@ const UserRoleConfig = () => {
         result = await rolePermissionsApi.create({ roleName: selectedRole.name, module: key, ...nextValues });
       }
 
-      // Wait for all child saves and surface any failures
-      if (childPromises.length > 0) {
-        const childResults = await Promise.allSettled(childPromises);
-        const failed = childResults.filter(r => r.status === 'rejected');
-        if (failed.length > 0) {
+      // Wait for all child saves; store returned ids so future toggles use update()
+      if (childEntries.length > 0) {
+        const childResults = await Promise.allSettled(childEntries.map(e => e.promise));
+        let anyFailed = false;
+        childResults.forEach((res, i) => {
+          if (res.status === 'fulfilled' && res.value?.id) {
+            const resKey = childEntries[i].resKey;
+            setPermMap(prev => ({ ...prev, [resKey]: { id: res.value.id, ...nextValues } }));
+          } else if (res.status === 'rejected') {
+            anyFailed = true;
+          }
+        });
+        if (anyFailed) {
           setSaveStatus(prev => ({ ...prev, [key]: 'err' }));
           setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 3000);
           setSaving(prev => ({ ...prev, [key]: false }));

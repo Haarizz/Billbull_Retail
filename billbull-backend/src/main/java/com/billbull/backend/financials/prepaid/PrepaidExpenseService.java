@@ -38,7 +38,7 @@ public class PrepaidExpenseService {
 
     @Transactional
     public PrepaidExpense save(PrepaidExpense pe) {
-        if (pe.getExpenseAccountCode() == null) pe.setExpenseAccountCode("5403");
+        if (pe.getExpenseAccountCode() == null) pe.setExpenseAccountCode("6099");
         return repository.save(pe);
     }
 

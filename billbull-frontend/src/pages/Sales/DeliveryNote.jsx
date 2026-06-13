@@ -1244,6 +1244,10 @@ const DeliveryNote = () => {
                 ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
                 : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
             setShippingAddress(_resolvedAddr);
+
+        // Auto-fill warehouse from customer default
+        if (cust.warehouse) setWarehouse(cust.warehouse);
+
         setLinkedSO('');
         setLinkedPI('');
         setLinkedSI('');
@@ -3345,7 +3349,7 @@ const DeliveryNote = () => {
                                                                                     disabled={!item.binCode || requiredQty <= 0}
                                                                                     className="px-3 py-2 rounded-md bg-[#F5C742] text-slate-900 text-[11px] font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
                                                                                 >
-                                                                                    {hasInheritedBatchSelection(item) ? 'View Batches' : 'Select Batch'}
+                                                                                    {hasInheritedBatchSelection(item) || Number(item.batchSelectedQuantity || 0) >= Number(item.baseRequiredQuantity || requiredQty || 0) ? 'View Batch' : 'Select Batch'}
                                                                                 </button>
                                                                             </div>
                                                                         ) : (

@@ -43,6 +43,8 @@ public class PurchaseInvoiceResponse {
     private BigDecimal subTotal;
     private BigDecimal grandTotal;
     private BigDecimal taxTotal;
+    private BigDecimal landedCost;
+    private List<LandedCostRequest> landedCosts;
     private BigDecimal amountPaid;
     private BigDecimal balanceDue;
 
@@ -342,6 +344,22 @@ public class PurchaseInvoiceResponse {
 
     public void setOtherCosts(BigDecimal otherCosts) {
         this.otherCosts = otherCosts;
+    }
+
+    public BigDecimal getLandedCost() {
+        return landedCost;
+    }
+
+    public void setLandedCost(BigDecimal landedCost) {
+        this.landedCost = landedCost;
+    }
+
+    public List<LandedCostRequest> getLandedCosts() {
+        return landedCosts;
+    }
+
+    public void setLandedCosts(List<LandedCostRequest> landedCosts) {
+        this.landedCosts = landedCosts;
     }
 
     public LocalDate getDueDate() {

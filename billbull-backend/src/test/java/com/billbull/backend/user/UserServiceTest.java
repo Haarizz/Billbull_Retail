@@ -62,17 +62,22 @@ class UserServiceTest {
 
     @Test
     void createPendingEmployeeAccessCreatesInactiveLinkedUser() {
+        com.billbull.backend.settings.branch.Branch branch = new com.billbull.backend.settings.branch.Branch();
+        branch.setCode("HO");
+        branch.setName("Head Office");
+
         Employee employee = new Employee();
         employee.setId(15L);
         employee.setFirstName("Jane");
         employee.setLastName("Doe");
         employee.setEmail("jane@example.com");
         employee.setPhone("9999999999");
+        employee.setBranch("HO");
 
         EmployeeLoginAccessRequest request = new EmployeeLoginAccessRequest();
         request.setCreateAccess(true);
         request.setLoginUsername("jane.login");
-        request.setTemporaryPassword("Temp123");
+        request.setTemporaryPassword("Temp1234!");
         request.setRoleId(3L);
 
         Role role = new Role();
@@ -81,7 +86,8 @@ class UserServiceTest {
         when(userRepository.findByLinkedEmployee_Id(15L)).thenReturn(Optional.empty());
         when(userRepository.findByUsername("jane.login")).thenReturn(Optional.empty());
         when(roleRepository.findById(3L)).thenReturn(Optional.of(role));
-        when(passwordEncoder.encode("Temp123")).thenReturn("encoded-password");
+        when(passwordEncoder.encode("Temp1234!")).thenReturn("encoded-password");
+        when(branchRepository.findByCodeIgnoreCase("HO")).thenReturn(Optional.of(branch));
 
         userService.createPendingEmployeeAccess(employee, request);
 
@@ -108,7 +114,7 @@ class UserServiceTest {
         EmployeeLoginAccessRequest request = new EmployeeLoginAccessRequest();
         request.setCreateAccess(true);
         request.setLoginUsername("existing.user");
-        request.setTemporaryPassword("Temp123");
+        request.setTemporaryPassword("Temp1234!");
         request.setRoleId(4L);
 
         when(userRepository.findByLinkedEmployee_Id(22L)).thenReturn(Optional.empty());

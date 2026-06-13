@@ -57,36 +57,39 @@ import com.billbull.backend.financials.pdc.PdcStatus;
 @Slf4j
 public class PostingEngineService {
 
-        public static final String ACC_CASH                = "1101";
-        public static final String ACC_BANK                = "1102";
-        public static final String ACC_PETTY_CASH          = "1103";
-        public static final String ACC_MERCHANT_CLEARING   = "1104";
-        public static final String ACC_ACCOUNTS_RECEIVABLE = "1110";
-        public static final String ACC_INVENTORY           = "1120";
-        public static final String ACC_VAT_INPUT           = "1130";
-        public static final String ACC_ACCOUNTS_PAYABLE    = "2101";
-        public static final String ACC_VAT_OUTPUT          = "2102";
-        public static final String ACC_GRN_CLEARING        = "2103";
-        public static final String ACC_CUSTOMER_ADVANCE    = "2104";
-        public static final String ACC_DEFERRED_REVENUE    = "2107";
-        public static final String ACC_SALES_REVENUE       = "4101";
-        public static final String ACC_SALES_RETURNS       = "4102";
-        public static final String ACC_DELIVERY_INCOME     = "4103";
-        public static final String ACC_COGS                = "5101";
-        public static final String ACC_EXPENSE_GENERAL     = "5403";
-        public static final String ACC_ROUNDING            = "5999";
+        // ── BillBull Standard COA codes (PDF key account codes table) ─────────
+        public static final String ACC_CASH                = "1001";  // Cash in Hand
+        public static final String ACC_BANK                = "1010";  // Bank Account (Main)
+        public static final String ACC_BANK_COLLECTION     = "1011";  // Bank Account (Collection)
+        public static final String ACC_PETTY_CASH          = "1012";  // Petty Cash
+        public static final String ACC_MERCHANT_CLEARING   = "1013";  // Merchant Clearing
+        public static final String ACC_ACCOUNTS_RECEIVABLE = "1100";  // Accounts Receivable Control
+        public static final String ACC_CUC                 = "1101";  // AR – Post-Dated Cheques (Cheques Under Collection)
         public static final String ACC_VENDOR_ADVANCES     = "1105";  // Vendor Advances Paid
-        public static final String ACC_SALARY_ADVANCES     = "1106";  // Employee salary advances (current asset)
-        public static final String ACC_CUC                 = "1107";  // Cheques Under Collection
-        public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Settlement discount granted to customer
-        public static final String ACC_DISCOUNT_RECEIVED   = "7001";  // Settlement discount received from vendor
-        public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary / wage expense
-        public static final String ACC_SALARY_PAYABLE      = "2200";  // Salary payable (net to employee)
-        public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other deductions payable
-        public static final String ACC_BANK_CHARGES        = "7501";  // Bank service charges (expense)
-        public static final String ACC_INTEREST_INCOME     = "7002";  // Bank interest income
-        public static final String ACC_INVENTORY_WRITEOFF  = "7502";  // Inventory write-off / shrinkage expense (Other Expenses)
-        public static final String ACC_VAT_PAYABLE         = "2108";  // Net VAT payable to FTA (VAT settlement account)
+        public static final String ACC_SALARY_ADVANCES     = "1106";  // Salary Advances – Employees
+        public static final String ACC_INVENTORY           = "1200";  // Inventory – Raw / Retail
+        public static final String ACC_VAT_INPUT           = "1310";  // VAT Input Tax
+        public static final String ACC_ACCOUNTS_PAYABLE    = "2001";  // Accounts Payable Control
+        public static final String ACC_GRN_CLEARING        = "2002";  // GRN Clearing
+        public static final String ACC_CUSTOMER_ADVANCE    = "2060";  // Customer Advances Received
+        public static final String ACC_DEFERRED_REVENUE    = "2051";  // Deferred Revenue
+        public static final String ACC_VAT_OUTPUT          = "2100";  // VAT Output Tax
+        public static final String ACC_VAT_PAYABLE         = "2101";  // VAT Payable (Net) — FTA settlement account
+        public static final String ACC_SALARY_PAYABLE      = "2200";  // Salary Payable
+        public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other Deductions Payable
+        public static final String ACC_SALES_REVENUE       = "4001";  // Sales Revenue
+        public static final String ACC_SALES_RETURNS       = "4002";  // Sales Returns
+        public static final String ACC_TRADE_DISC_GIVEN    = "4003";  // Trade Discounts Given (contra-revenue)
+        public static final String ACC_DELIVERY_INCOME     = "4004";  // Delivery Income
+        public static final String ACC_DISCOUNT_RECEIVED   = "7001";  // Discount Received (Purchase)
+        public static final String ACC_INTEREST_INCOME     = "7002";  // Interest Income
+        public static final String ACC_COGS                = "5001";  // Purchase / COGS
+        public static final String ACC_EXPENSE_GENERAL     = "6099";  // General Expense
+        public static final String ACC_ROUNDING            = "5999";  // Rounding Adjustment
+        public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Discount Allowed (Sales)
+        public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary Expense
+        public static final String ACC_BANK_CHARGES        = "7501";  // Bank Charges
+        public static final String ACC_INVENTORY_WRITEOFF  = "7502";  // Inventory Write-off / Shrinkage
 
         /** Max |Σdebit − Σcredit| absorbed into the rounding account instead of rejected. */
         private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
@@ -178,7 +181,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromPurchaseInvoice(PurchaseInvoice invoice) {
                 String ref = invoice.getInvoiceNumber();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
                                 "Purchase Invoice " + ref, TX_PURCHASE_INVOICE, invoice.getBranchEntity());
@@ -192,19 +195,20 @@ public class PostingEngineService {
 
                 if (isAgainstGrn) {
                         // GRN value = what was accrued at receipt time (GRN grandTotal).
-                        // PI net = what the vendor charges (grandTotal - taxTotal).
-                        // Variance = PI net - GRN value → posted to Purchase Price Variance (5103).
+                        // piNetGoods = vendor goods charge excluding VAT and landed costs.
+                        // PPV = difference between piNetGoods and GRN accrual (goods-only variance).
+                        // Landed cost is capitalised separately to Inventory; must not inflate piNet
+                        // used for PPV or the journal will be out of balance by the landed cost amount.
                         BigDecimal grnValue = BigDecimal.ZERO;
                         com.billbull.backend.purchase.grn.GrnEntity grn =
                                         grnRepository.findById(invoice.getGrnId()).orElse(null);
                         if (grn != null && grn.getGrandTotal() != null) {
                                 grnValue = grn.getGrandTotal();
                         }
-                        BigDecimal piNet   = grandTotal.subtract(taxTotal);
-                        BigDecimal ppv     = piNet.subtract(grnValue);
+                        BigDecimal piNetGoods = grandTotal.subtract(taxTotal).subtract(landedCost);
+                        BigDecimal ppv        = piNetGoods.subtract(grnValue);
 
-                        BigDecimal grnClearingAmt = grnValue; // clear exactly what was accrued
-                        if (grnClearingAmt.compareTo(BigDecimal.ZERO) < 0) grnClearingAmt = BigDecimal.ZERO;
+                        BigDecimal grnClearingAmt = grnValue.max(BigDecimal.ZERO);
 
                         addLine(entry, "GRN Clearing", ACC_GRN_CLEARING,
                                         "Clear GRN Liability - " + ref,
@@ -213,10 +217,10 @@ public class PostingEngineService {
                         // PPV: positive → invoice higher than GRN (extra cost); negative → invoice lower (gain)
                         if (ppv.abs().compareTo(new BigDecimal("0.005")) > 0) {
                                 if (ppv.signum() > 0) {
-                                        addLine(entry, "Purchase Price Variance", "5103",
+                                        addLine(entry, "Purchase Price Variance", "5003",
                                                         "PPV - " + ref, ppv, BigDecimal.ZERO);
                                 } else {
-                                        addLine(entry, "Purchase Price Variance", "5103",
+                                        addLine(entry, "Purchase Price Variance", "5003",
                                                         "PPV gain - " + ref, BigDecimal.ZERO, ppv.abs());
                                 }
                         }
@@ -268,7 +272,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromInvoicePosting(SalesInvoice invoice) {
                 String ref = invoice.getInvoiceNumber();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 // Credit-limit guard: only enforce when the policy is BLOCK; NO_IMPACT and
                 // WARNING both allow posting (WARNING UX is handled in SalesInvoiceService).
@@ -375,10 +379,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "FS-" + invoice.getInvoiceNumber();
-                if (isDuplicate(ref)) {
-                        log.warn("[PostingEngine] Fast Sale journal {} already posted — skipping.", ref);
-                        return null;
-                }
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 LocalDate date = invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : LocalDate.now();
                 JournalEntry entry = createBaseEntry(date, ref,
@@ -526,7 +527,7 @@ public class PostingEngineService {
         @Transactional
         public void reverseJournalFromInvoiceCancellation(SalesInvoice invoice) {
                 String refKey = "CANCEL-" + invoice.getInvoiceNumber();
-                if (isDuplicate(refKey)) return;
+                if (findDuplicate(refKey) != null) return;
 
                 BigDecimal subTotal     = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
                 BigDecimal taxTotal     = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
@@ -621,7 +622,7 @@ public class PostingEngineService {
                         BigDecimal cogs) {
 
                 String refKey = "REV-DN-" + dnNumber;
-                if (isDuplicate(refKey)) return;
+                if (findDuplicate(refKey) != null) return;
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry revenueRev = createBaseEntry(date, refKey,
@@ -662,7 +663,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromGRN(GrnEntity grn) {
                 String ref = grn.getGrnNo();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 // Use subtotal (ex-VAT) for inventory; separate VAT Input line if tax is present.
                 // grandTotal includes VAT — using it would overstate inventory (PDF §09 / GAP-006).
@@ -716,7 +717,7 @@ public class PostingEngineService {
                 }
 
                 String ref = "ST-SEND-" + transfer.getTransferNo();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 String sourceCostCenter = resolveWarehouseCostCenter(transfer.getFromWarehouse());
                 String transitCostCenter = resolveTransitCostCenter(transfer);
@@ -757,7 +758,7 @@ public class PostingEngineService {
                 }
 
                 String ref = "ST-RECV-" + transfer.getTransferNo();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 String destinationCostCenter = resolveWarehouseCostCenter(transfer.getToWarehouse());
                 JournalEntry entry = createBaseEntry(
@@ -801,7 +802,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromExpense(Expense expense) {
                 String ref = "EXP-" + expense.getId();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 // Resolve the selected GL account; fall back to the default expense account
                 String expenseAccountCode = ACC_EXPENSE_GENERAL;
@@ -875,7 +876,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromPaymentVoucher(PaymentVoucher voucher, String vendorName) {
                 String ref = voucher.getVoucherNumber();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 AccountSelection settlementAccount = resolveOutgoingPaymentAccount(voucher);
                 JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
@@ -915,7 +916,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromReceiptVoucher(ReceiptVoucher receipt) {
                 String ref = receipt.getVoucherId();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
@@ -931,25 +932,31 @@ public class PostingEngineService {
                 addLine(entry, settlementAccount.name, settlementAccount.code,
                                 "Receipt - " + ref, received, BigDecimal.ZERO);
 
-                // Settlement discount (PDF §7 / Phase 4.3): Dr Discount Allowed / Cr AR for discount portion
+                // Settlement discount (PDF §7 / Phase 4.3).
+                // F-11: UAE FTA requires VAT Output reduction when consideration is reduced.
+                // VAT component of discount = discount * 5/105 (tax-inclusive gross discount).
+                // Net discount = discount - vatOnDiscount.
+                // Entry: Dr Discount Allowed (net) + Dr VAT Output (reduce liability) / both balanced by Cr AR.
                 if (discount.compareTo(BigDecimal.ZERO) > 0) {
-                        addLine(entry, "Discount Allowed", ACC_DISCOUNT_ALLOWED,
-                                        "Early payment discount - " + ref, discount, BigDecimal.ZERO);
-                        // F-11: UAE FTA requires VAT Output adjustment when consideration is reduced by
-                        // a settlement discount. VAT component of the discount = discount * 5/105.
-                        // Dr VAT Output (reduces liability) / Cr AR (reduces the amount owed).
-                        // Only applies to standard-rated (5%) non-advance receipts.
                         if (receipt.getPurpose() != com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED) {
                                 BigDecimal vatOnDiscount = discount
                                                 .multiply(new BigDecimal("5"))
                                                 .divide(new BigDecimal("105"), 2, java.math.RoundingMode.HALF_UP);
+                                BigDecimal netDiscount = discount.subtract(vatOnDiscount);
+                                if (netDiscount.compareTo(BigDecimal.ZERO) > 0) {
+                                        addLine(entry, "Discount Allowed", ACC_DISCOUNT_ALLOWED,
+                                                        "Early payment discount (net) - " + ref, netDiscount, BigDecimal.ZERO);
+                                }
                                 if (vatOnDiscount.compareTo(BigDecimal.ZERO) > 0) {
+                                        // Debit VAT Output to reduce the output tax liability
                                         addLine(entry, "VAT Output (Discount Adj)", ACC_VAT_OUTPUT,
                                                         "VAT adjustment on settlement discount - " + ref,
                                                         vatOnDiscount, BigDecimal.ZERO);
-                                        // Contra: reduce AR by the same amount so entry stays balanced
-                                        totalAR = totalAR.subtract(vatOnDiscount);
                                 }
+                        } else {
+                                // Advance receipts: no VAT adjustment, full discount to Discount Allowed
+                                addLine(entry, "Discount Allowed", ACC_DISCOUNT_ALLOWED,
+                                                "Early payment discount - " + ref, discount, BigDecimal.ZERO);
                         }
                 }
 
@@ -965,6 +972,101 @@ public class PostingEngineService {
                 addLine(entry, creditName, creditAccount,
                                 "Customer payment - " + receipt.getPurpose(), BigDecimal.ZERO, totalAR);
                 return post(entry);
+        }
+
+        /**
+         * Reverses the original GL posting for a receipt voucher and re-posts it
+         * with the updated amount. Called when a completed receipt is edited.
+         *
+         * Reversal entry ref: VOID-{voucherId}
+         * New entry ref:      {voucherId} (original ref is freed by voiding the old entry's reference)
+         */
+        /**
+         * Posts a corrective adjustment when a completed receipt's amount is edited.
+         *
+         * Rather than voiding and reposting (which compounds across multiple edits),
+         * this computes the net amount already in the GL for this RV (original + all
+         * prior adjustments) and posts a single delta entry to bring the balance to
+         * the new amount.
+         *
+         * Corrective entry ref: ADJ-{voucherId}-{n} where n increments per edit.
+         */
+        @Transactional
+        public void reverseAndRepostReceiptVoucher(ReceiptVoucher receipt, BigDecimal previousAmount) {
+                String originalRef = receipt.getVoucherId();
+                BigDecimal newAmount = receipt.getAmount() != null ? receipt.getAmount() : BigDecimal.ZERO;
+
+                // Compute the net cash/bank debit already posted for this RV across
+                // the original entry + all prior ADJ entries.
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                boolean isAdvance = receipt.getPurpose() ==
+                                com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED;
+                String creditAccount = isAdvance ? ACC_CUSTOMER_ADVANCE : ACC_ACCOUNTS_RECEIVABLE;
+                String creditName    = isAdvance ? "Customer Advance"   : "Accounts Receivable";
+
+                // Sum net debit on the settlement account across the original entry,
+                // legacy VOID-*/REPOST-* entries (from the old reversal scheme), and
+                // any ADJ-* entries created by this scheme.
+                BigDecimal alreadyPosted = BigDecimal.ZERO;
+                for (String ref : new String[]{ originalRef, "VOID-" + originalRef, "REPOST-" + originalRef }) {
+                        java.util.Optional<JournalEntry> e = journalEntryRepository.findByReference(ref);
+                        if (e.isPresent()) alreadyPosted = alreadyPosted.add(netDebitForAccount(e.get(), settlementAccount.code));
+                }
+                for (int i = 1; i <= 99; i++) {
+                        String adjRef = "ADJ-" + originalRef + "-" + i;
+                        java.util.Optional<JournalEntry> adjEntry = journalEntryRepository.findByReference(adjRef);
+                        if (adjEntry.isEmpty()) break;
+                        alreadyPosted = alreadyPosted.add(netDebitForAccount(adjEntry.get(), settlementAccount.code));
+                }
+
+                BigDecimal delta = newAmount.subtract(alreadyPosted).setScale(2, java.math.RoundingMode.HALF_UP);
+                if (delta.compareTo(BigDecimal.ZERO) == 0) return;
+
+                // Find the next unused ADJ-{n} sequence number
+                String adjRef = null;
+                for (int i = 1; i <= 99; i++) {
+                        String candidate = "ADJ-" + originalRef + "-" + i;
+                        if (!journalEntryRepository.existsByReference(candidate)) {
+                                adjRef = candidate;
+                                break;
+                        }
+                }
+                if (adjRef == null) {
+                        log.warn("[PostingEngine] Cannot create adjustment for {} — ADJ sequence exhausted.", originalRef);
+                        return;
+                }
+
+                JournalEntry adj = createBaseEntry(receipt.getDate(), adjRef,
+                                "Amount adjustment - " + originalRef, TX_RECEIPT_VOUCHER,
+                                receipt.getBranchEntity());
+
+                if (delta.compareTo(BigDecimal.ZERO) > 0) {
+                        // Amount increased — Dr settlement, Cr liability
+                        addLine(adj, settlementAccount.name, settlementAccount.code,
+                                        "Adjustment - " + originalRef, delta, BigDecimal.ZERO);
+                        addLine(adj, creditName, creditAccount,
+                                        "Adjustment - " + originalRef, BigDecimal.ZERO, delta);
+                } else {
+                        // Amount decreased — Cr settlement, Dr liability
+                        BigDecimal abs = delta.abs();
+                        addLine(adj, settlementAccount.name, settlementAccount.code,
+                                        "Adjustment - " + originalRef, BigDecimal.ZERO, abs);
+                        addLine(adj, creditName, creditAccount,
+                                        "Adjustment - " + originalRef, abs, BigDecimal.ZERO);
+                }
+                post(adj);
+        }
+
+        /** Sum of (debit - credit) for a given account code across all lines in an entry. */
+        private BigDecimal netDebitForAccount(JournalEntry entry, String accountCode) {
+                return entry.getLines().stream()
+                                .filter(l -> accountCode.equals(l.getAccountCode()))
+                                .map(l -> {
+                                        BigDecimal d = l.getDebit()  != null ? l.getDebit()  : BigDecimal.ZERO;
+                                        BigDecimal c = l.getCredit() != null ? l.getCredit() : BigDecimal.ZERO;
+                                        return d.subtract(c);
+                                })
+                                .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
 
         // =========================================================
@@ -1001,7 +1103,7 @@ public class PostingEngineService {
                         boolean revenueWasRecognized) {
 
                 String ref = salesReturn.getReturnNumber();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
                                 "Sales Return " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
@@ -1021,18 +1123,18 @@ public class PostingEngineService {
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Return Credit Note", BigDecimal.ZERO, totalAmount);
 
-                // COGS reversal — only if we have an actual cost
-                if (costOfGoodsReturned != null && costOfGoodsReturned.compareTo(BigDecimal.ZERO) > 0) {
-                        JournalEntry invEntry = createBaseEntry(salesReturn.getReturnDate(),
-                                        ref + "-INV",
-                                        "Stock return - " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
-                        addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
-                        addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
-                        post(invEntry);
-                } else {
-                        log.warn("[PostingEngine] Sales Return {}: COGS reversal skipped — no product cost available. " +
-                                         "Post a manual journal to adjust COGS and Inventory.", ref);
+                // COGS reversal — cost is required; reject the return if unavailable to prevent BS/PL imbalance.
+                if (costOfGoodsReturned == null || costOfGoodsReturned.compareTo(BigDecimal.ZERO) <= 0) {
+                        throw new PostingException(PostingErrorCode.UNBALANCED_ENTRY,
+                                "Sales Return " + ref + ": cannot post without product cost — COGS and Inventory "
+                                + "would be left unreconciled. Resolve the product WAC before approving this return.");
                 }
+                JournalEntry invEntry = createBaseEntry(salesReturn.getReturnDate(),
+                                ref + "-INV",
+                                "Stock return - " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
+                addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
+                addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
+                post(invEntry);
 
                 return post(entry);
         }
@@ -1049,7 +1151,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromCardSettlement(CardSettlement settlement) {
                 String ref = "SETTLE-" + settlement.getId();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(settlement.getSettlementDate(), ref,
                                 "Card Settlement", TX_CARD_SETTLEMENT);
@@ -1078,7 +1180,7 @@ public class PostingEngineService {
         public void createJournalFromPdcTransition(PdcEntry pdc, PdcStatus oldStatus, PdcStatus newStatus) {
                 if (newStatus == PdcStatus.RECEIVED) {
                         String ref = "PDC-RECV-" + pdc.getId();
-                        if (!isDuplicate(ref)) {
+                        if (findDuplicate(ref) == null) {
                                 JournalEntry entry = createBaseEntry(pdc.getReceivedDate(), ref,
                                                 "PDC received - cheque " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
                                 addLine(entry, "Cheques Under Collection", ACC_CUC, "PDC received",
@@ -1089,7 +1191,7 @@ public class PostingEngineService {
                         }
                 } else if (newStatus == PdcStatus.CLEARED) {
                         String ref = "PDC-CLEAR-" + pdc.getId();
-                        if (!isDuplicate(ref)) {
+                        if (findDuplicate(ref) == null) {
                                 JournalEntry entry = createBaseEntry(pdc.getChequeDate(), ref,
                                                 "PDC cleared - cheque " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
                                 addLine(entry, "Bank",                    ACC_BANK, "PDC cleared to bank",
@@ -1102,7 +1204,7 @@ public class PostingEngineService {
                         // Reverse CLEARED if it was posted
                         String clearRef   = "PDC-CLEAR-"  + pdc.getId();
                         String bounceRef  = "PDC-BOUNCE-" + pdc.getId();
-                        if (journalEntryRepository.existsByReference(clearRef) && !isDuplicate(bounceRef + "-CLEAR")) {
+                        if (journalEntryRepository.existsByReference(clearRef) && findDuplicate(bounceRef + "-CLEAR") == null) {
                                 JournalEntry rev = createBaseEntry(LocalDate.now(), bounceRef + "-CLEAR",
                                                 "Reverse cleared PDC - " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
                                 addLine(rev, "Cheques Under Collection", ACC_CUC,  "Reverse CUC",
@@ -1112,7 +1214,7 @@ public class PostingEngineService {
                                 post(rev);
                         }
                         // Reverse RECEIVED: re-open AR
-                        if (!isDuplicate(bounceRef)) {
+                        if (findDuplicate(bounceRef) == null) {
                                 JournalEntry bounce = createBaseEntry(LocalDate.now(), bounceRef,
                                                 "Bounced PDC - " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
                                 addLine(bounce, "Accounts Receivable",   ACC_ACCOUNTS_RECEIVABLE, "AR re-opened",
@@ -1142,7 +1244,7 @@ public class PostingEngineService {
                         Long advanceReceiptId, String invoiceNumber,
                         BigDecimal amount, java.time.LocalDate appliedDate) {
                 String ref = "APPLY-ADV-" + advanceReceiptId + "-INV-" + invoiceNumber;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(
                                 appliedDate != null ? appliedDate : LocalDate.now(),
@@ -1162,7 +1264,7 @@ public class PostingEngineService {
         public JournalEntry createJournalFromAdvanceRefund(
                         Long advanceReceiptId, BigDecimal refundAmount, String paymentMode) {
                 String ref = "REFUND-ADV-" + advanceReceiptId;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 AccountSelection settlement = resolveIncomingPaymentAccount(paymentMode);
                 JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
@@ -1195,7 +1297,7 @@ public class PostingEngineService {
                         int year, int month, String costCenter, LocalDate paymentDate) {
 
                 String ref = "PAYROLL-" + employeeId + "-" + year + "-" + String.format("%02d", month);
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 BigDecimal gross = grossSalary  != null ? grossSalary  : BigDecimal.ZERO;
                 BigDecimal net   = netPayable   != null ? netPayable   : BigDecimal.ZERO;
@@ -1232,7 +1334,7 @@ public class PostingEngineService {
                         Long advanceId, String employeeId, String employeeName,
                         BigDecimal amount, String paymentMode, LocalDate advanceDate) {
                 String ref = "SADV-" + advanceId;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 AccountSelection settlement = resolveOutgoingPaymentAccount(paymentMode);
                 JournalEntry entry = createBaseEntry(advanceDate != null ? advanceDate : LocalDate.now(), ref,
@@ -1254,7 +1356,7 @@ public class PostingEngineService {
                         String wpsRunId, String periodLabel,
                         BigDecimal totalNet, LocalDate disbursementDate) {
                 String ref = "WPS-" + wpsRunId + "-" + disbursementDate;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(disbursementDate != null ? disbursementDate : LocalDate.now(),
                                 ref, "WPS disbursement - " + periodLabel, TX_PAYROLL);
@@ -1272,7 +1374,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromBankCharge(
                         String ref, BigDecimal amount, String description, LocalDate date) {
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
                 JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
                                 description != null ? description : "Bank charge", TX_MANUAL_JOURNAL);
                 addLine(entry, "Bank Charges", ACC_BANK_CHARGES, description, amount, BigDecimal.ZERO);
@@ -1284,7 +1386,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromBankInterest(
                         String ref, BigDecimal amount, String description, LocalDate date) {
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
                 JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
                                 description != null ? description : "Bank interest", TX_MANUAL_JOURNAL);
                 addLine(entry, "Bank",            ACC_BANK,            description, amount, BigDecimal.ZERO);
@@ -1314,7 +1416,7 @@ public class PostingEngineService {
                         BigDecimal cost, LocalDate postingDate) {
                 if (cost == null || cost.compareTo(BigDecimal.ZERO) <= 0) return null;
                 String ref = "WRITEOFF-" + stockTakeId + "-" + lineId;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(postingDate != null ? postingDate : LocalDate.now(), ref,
                                 "Inventory write-off: " + description, TX_MANUAL_JOURNAL);
@@ -1344,7 +1446,7 @@ public class PostingEngineService {
                         BigDecimal originalInventoryCost) {
 
                 String ref = "DN-" + purchaseReturn.getDebitNoteNumber();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 BigDecimal taxTotal   = purchaseReturn.getTaxTotal()   != null ? purchaseReturn.getTaxTotal()   : BigDecimal.ZERO;
                 BigDecimal grandTotal = purchaseReturn.getGrandTotal() != null ? purchaseReturn.getGrandTotal() : BigDecimal.ZERO;
@@ -1368,13 +1470,13 @@ public class PostingEngineService {
                                 "AP reduction - " + ref, grandTotal, BigDecimal.ZERO);
                 addLine(entry, "Inventory", ACC_INVENTORY,
                                 "Inventory returned to vendor at GRN cost - " + ref, BigDecimal.ZERO, inventoryCost);
-                // Absorb variance between return price and original GRN cost in PPV (5103)
+                // Absorb variance between return price and original GRN cost in PPV-Returns (5004)
                 if (ppvVariance.abs().compareTo(new BigDecimal("0.005")) > 0) {
                         if (ppvVariance.compareTo(BigDecimal.ZERO) > 0) {
-                                addLine(entry, "Purchase Price Variance", "5103",
+                                addLine(entry, "Purchase Price Variance", "5004",
                                         "Return price > GRN cost variance - " + ref, ppvVariance, BigDecimal.ZERO);
                         } else {
-                                addLine(entry, "Purchase Price Variance", "5103",
+                                addLine(entry, "Purchase Price Variance", "5004",
                                         "Return price < GRN cost variance - " + ref, BigDecimal.ZERO, ppvVariance.negate());
                         }
                 }
@@ -1397,7 +1499,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromVendorAdvancePay(com.billbull.backend.purchase.advance.VendorAdvance advance) {
                 String ref = "VADV-" + advance.getId();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
                 JournalEntry entry = createBaseEntry(advance.getPaidDate(), ref,
                                 "Vendor advance - " + advance.getVendorName(), TX_VENDOR_ADVANCE);
                 addLine(entry, "Vendor Advances Paid", ACC_VENDOR_ADVANCES, "Advance paid", advance.getAmount(), BigDecimal.ZERO);
@@ -1414,7 +1516,7 @@ public class PostingEngineService {
                         com.billbull.backend.purchase.advance.VendorAdvance advance,
                         String piNumber, BigDecimal amount) {
                 String ref = "APPLY-VADV-" + advance.getId() + "-PI-" + piNumber;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
                 JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
                                 "Advance applied to " + piNumber, TX_VENDOR_ADVANCE);
                 addLine(entry, "Accounts Payable",     ACC_ACCOUNTS_PAYABLE, "Apply advance", amount, BigDecimal.ZERO);
@@ -1429,7 +1531,7 @@ public class PostingEngineService {
         @Transactional
         public JournalEntry createJournalFromVendorAdvanceRefund(com.billbull.backend.purchase.advance.VendorAdvance advance) {
                 String ref = "REFUND-VADV-" + advance.getId();
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
                 JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
                                 "Vendor advance refund - " + advance.getVendorName(), TX_VENDOR_ADVANCE);
                 addLine(entry, "Bank",                 ACC_BANK,            "Advance refunded", advance.getAmount(), BigDecimal.ZERO);
@@ -1470,10 +1572,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "VATSETTL-" + period;
-                if (isDuplicate(ref)) {
-                        log.warn("[PostingEngine] VAT settlement for period {} already posted.", period);
-                        return null;
-                }
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 BigDecimal output = outputVat != null ? outputVat.abs() : BigDecimal.ZERO;
                 BigDecimal input  = inputVat  != null ? inputVat.abs()  : BigDecimal.ZERO;
@@ -1523,10 +1622,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "VATPAY-" + period;
-                if (isDuplicate(ref)) {
-                        log.warn("[PostingEngine] VAT payment for period {} already posted.", period);
-                        return null;
-                }
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
 
@@ -1568,10 +1664,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "CONT-" + contraNumber;
-                if (isDuplicate(ref)) {
-                        log.warn("[PostingEngine] Contra voucher {} already posted.", ref);
-                        return null;
-                }
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
 
@@ -1617,10 +1710,7 @@ public class PostingEngineService {
                 if (requests == null || requests.isEmpty()) return null;
 
                 String ref = "OB-" + asOfDate.getYear();
-                if (isDuplicate(ref)) {
-                        log.warn("[PostingEngine] Opening balance journal for {} already posted. Skipping.", asOfDate.getYear());
-                        return null;
-                }
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(asOfDate, ref,
                                 "Opening Balances " + asOfDate.getYear(), TX_MANUAL_JOURNAL);
@@ -1661,11 +1751,11 @@ public class PostingEngineService {
                         // Net debit > net credit → equity = credit side plug (normal for profitable entity)
                         // Net credit > net debit → equity = debit side plug (accumulated losses)
                         if (diff.signum() > 0) {
-                                addLine(entry, "Retained Earnings", "3000",
+                                addLine(entry, "Retained Earnings", "3100",
                                                 "Plug - Opening Entry " + asOfDate.getYear(),
                                                 BigDecimal.ZERO, diff);
                         } else {
-                                addLine(entry, "Retained Earnings", "3000",
+                                addLine(entry, "Retained Earnings", "3100",
                                                 "Plug - Opening Entry " + asOfDate.getYear(),
                                                 diff.abs(), BigDecimal.ZERO);
                         }
@@ -1705,16 +1795,20 @@ public class PostingEngineService {
         // =========================================================
 
         /**
-         * Returns true and logs a warning when the reference already has a journal.
-         * Callers should return early without creating a new entry.
+         * Returns the existing journal when the reference is already in the GL, or null
+         * when no duplicate exists (caller should proceed with posting).
+         *
+         * Callers use the idiom:
+         * <pre>
+         *   JournalEntry dup = findDuplicate(ref);
+         *   if (dup != null) return dup;   // idempotent — already posted
+         * </pre>
+         * This makes retries (network timeouts, double-clicks, scheduler re-runs) safe:
+         * callers receive the real journal entry instead of null, so downstream state
+         * updates (e.g. amortization counters, prepaid status) are not skipped.
          */
-        private boolean isDuplicate(String reference) {
-                if (journalEntryRepository.existsByReference(reference)) {
-                        log.warn("[PostingEngine] Duplicate posting blocked — reference '{}' already exists in GL. " +
-                                         "No new journal created.", reference);
-                        return true;
-                }
-                return false;
+        private JournalEntry findDuplicate(String reference) {
+                return journalEntryRepository.findByReference(reference).orElse(null);
         }
 
         private boolean isControlAccount(String accountCode) {
@@ -1793,13 +1887,14 @@ public class PostingEngineService {
                         }
                 }
                 // F-20: Resolve FX rate from CurrencyService for dated, multi-currency support.
-                // Falls back to 1.0 if the currency is AED or no rate exists (AED-only fallback).
                 String txCurrency = (currency == null || currency.isBlank()) ? "AED" : currency.trim().toUpperCase();
                 BigDecimal fxRate = BigDecimal.ONE;
                 if (!"AED".equals(txCurrency)) {
                         LocalDate rateDate = entry.getDate() != null ? entry.getDate() : LocalDate.now();
                         fxRate = currencyService.getRate(txCurrency, "AED", rateDate)
-                                        .orElse(BigDecimal.ONE);
+                                        .orElseThrow(() -> new PostingException(PostingErrorCode.INVALID_FX_RATE,
+                                                "No exchange rate found for " + txCurrency + " → AED on " + rateDate
+                                                + " (ref=" + entry.getReference() + "). Add the rate before posting."));
                 }
                 line.setCurrency(txCurrency);
                 line.setFxRate(fxRate);
@@ -2091,9 +2186,9 @@ public class PostingEngineService {
         // Reference: "DEP-{assetCode}-{YYYY-MM}" — idempotent
         // =========================================================
 
-        private static final String ACC_DEPRECIATION_EXPENSE = "6030";
-        private static final String ACC_ACCUM_DEPRECIATION   = "1450";
-        private static final String ACC_FIXED_ASSET          = "1400";
+        private static final String ACC_DEPRECIATION_EXPENSE = "6030";  // unchanged
+        private static final String ACC_ACCUM_DEPRECIATION   = "1450";  // unchanged
+        private static final String ACC_FIXED_ASSET          = "1400";  // unchanged
         private static final String TX_DEPRECIATION          = "DEP";
         private static final String TX_ASSET_DISPOSAL        = "DISP";
 
@@ -2104,7 +2199,7 @@ public class PostingEngineService {
                         String depExpenseCode, String accumDeprecCode,
                         String costCenter,
                         com.billbull.backend.settings.branch.Branch branch) {
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(runDate, ref,
                                 "Depreciation — " + assetName, TX_DEPRECIATION, branch);
@@ -2132,7 +2227,7 @@ public class PostingEngineService {
                         BigDecimal gainLoss,
                         String assetAccountCode, String accumDeprecCode,
                         com.billbull.backend.settings.branch.Branch branch) {
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(disposalDate, ref,
                                 "Asset Disposal — " + assetName, TX_ASSET_DISPOSAL, branch);
@@ -2157,7 +2252,7 @@ public class PostingEngineService {
                 // Gain or Loss on disposal
                 if (gainLoss != null && gainLoss.compareTo(BigDecimal.ZERO) != 0) {
                         if (gainLoss.compareTo(BigDecimal.ZERO) > 0) {
-                                addLine(entry, "Gain on Disposal", "4302",
+                                addLine(entry, "Gain on Disposal", "7004",
                                                 "Gain on disposal " + assetName, BigDecimal.ZERO, gainLoss, null);
                         } else {
                                 addLine(entry, "Loss on Disposal", "6040",
@@ -2182,7 +2277,7 @@ public class PostingEngineService {
                         String ref, java.time.LocalDate runDate, String description,
                         BigDecimal amount, String expenseAccountCode, String costCenter,
                         com.billbull.backend.settings.branch.Branch branch) {
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(runDate, ref,
                                 "Prepaid Amortization — " + description, TX_PREPAID_AMORT, branch);
@@ -2203,8 +2298,8 @@ public class PostingEngineService {
         // Reference: "GRAT-{employeeId}-{year}-{month}" — idempotent
         // =========================================================
 
-        public static final String ACC_GRATUITY_EXPENSE = "6020";
-        public static final String ACC_GRATUITY_PAYABLE = "2210";
+        public static final String ACC_GRATUITY_EXPENSE = "6020";  // unchanged
+        public static final String ACC_GRATUITY_PAYABLE = "2210";  // unchanged
         private static final String TX_GRATUITY = "GRAT";
 
         /**
@@ -2228,7 +2323,7 @@ public class PostingEngineService {
                         String costCenter, LocalDate provisionDate) {
 
                 String ref = "GRAT-" + employeeId + "-" + year + "-" + String.format("%02d", month);
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 if (monthlyProvision == null || monthlyProvision.compareTo(BigDecimal.ZERO) <= 0) return null;
 
@@ -2255,7 +2350,7 @@ public class PostingEngineService {
                         BigDecimal settlementAmount, String paymentMode, LocalDate settlementDate) {
 
                 String ref = "GRATSETL-" + employeeId;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 if (settlementAmount == null || settlementAmount.compareTo(BigDecimal.ZERO) <= 0) return null;
 
@@ -2303,7 +2398,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "EV-" + voucherId;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 if (lines == null || lines.isEmpty()) return null;
 
@@ -2346,7 +2441,7 @@ public class PostingEngineService {
         // Reference: "CLOSE-{year}-{month}" — idempotent
         // =========================================================
 
-        public static final String ACC_RETAINED_EARNINGS = "3000";
+        public static final String ACC_RETAINED_EARNINGS = "3100";  // Retained Earnings (PDF §03)
         private static final String TX_PERIOD_CLOSE = "CLOS";
 
         /**
@@ -2370,7 +2465,7 @@ public class PostingEngineService {
                         com.billbull.backend.settings.branch.Branch branch) {
 
                 String ref = "CLOSE-" + periodLabel;
-                if (isDuplicate(ref)) return null;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
                 BigDecimal rev = nvl(revenueTotal);
                 BigDecimal exp = nvl(expenseTotal);
@@ -2421,7 +2516,7 @@ public class PostingEngineService {
                         BigDecimal amount, String paymentMode,
                         com.billbull.backend.settings.branch.Branch branch) {
                 String fullRef = "EQ-" + ref;
-                if (isDuplicate(fullRef)) return null;
+                { JournalEntry _dup = findDuplicate(fullRef); if (_dup != null) return _dup; }
 
                 JournalEntry entry = createBaseEntry(date, fullRef, narration, TX_EQUITY, branch);
 

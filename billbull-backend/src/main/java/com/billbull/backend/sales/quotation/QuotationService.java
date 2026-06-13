@@ -956,6 +956,27 @@ public class QuotationService {
             i.setBatchControlled(!isService && p.isBatch());
             i.setFefoEnabled(p.isFefoEnabled());
             i.setMinExpiryDaysForSale(p.getMinExpiryDaysForSale());
+            // Hydrate transient product identity fields so print templates can
+            // render Brand, SKU, Product Name, Short Desc, Detailed Desc, and
+            // Arabic Name without requiring an extra client-side fetch.
+            if (i.getBrandName() == null && p.getBrand() != null) {
+                i.setBrandName(p.getBrand().getName());
+            }
+            if (i.getProductName() == null) {
+                i.setProductName(p.getName());
+            }
+            if (i.getSku() == null) {
+                i.setSku(p.getSku());
+            }
+            if (i.getShortDesc() == null) {
+                i.setShortDesc(p.getShortDesc());
+            }
+            if (i.getDetailedDesc() == null && p.getDetailedDesc() != null) {
+                i.setDetailedDesc(p.getDetailedDesc());
+            }
+            if (i.getLocalName() == null) {
+                i.setLocalName(p.getLocalName());
+            }
         });
     }
 }

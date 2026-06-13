@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
@@ -24,6 +25,7 @@ public class BinStockService {
     private final ProductRepository productRepository;
     private final WarehouseStockService warehouseStockService;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
+    private final BatchMasterRepository batchMasterRepository;
 
     public BinStockService(StockMovementRepository stockMovementRepository,
             BinRepository binRepository,
@@ -31,12 +33,14 @@ public class BinStockService {
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
             com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
-            WarehouseStockService warehouseStockService) {
+            WarehouseStockService warehouseStockService,
+            BatchMasterRepository batchMasterRepository) {
         this.stockMovementRepository = stockMovementRepository;
         this.binRepository = binRepository;
         this.productRepository = productRepository;
         this.deliveryNoteRepo = deliveryNoteRepo;
         this.warehouseStockService = warehouseStockService;
+        this.batchMasterRepository = batchMasterRepository;
     }
 
     private int safeInt(BigDecimal value) {
@@ -134,6 +138,12 @@ public class BinStockService {
         List<Product> products = productRepository.findAllById(productIds);
         Map<Long, Product> productDetails = products.stream().collect(Collectors.toMap(Product::getId, product -> product));
 
+        // For batch-controlled products: use the BatchMaster.status=RESERVED set for this bin
+        // (exact per-unit match). For non-batch products: fall back to the heuristic
+        // total-count allocation across the warehouse bin breakdown.
+        java.util.Set<String> reservedBatchNumbers = new java.util.HashSet<>(
+                batchMasterRepository.findReservedBatchNumbersByBin(binId));
+
         Map<Long, List<Object[]>> warehouseBinRowsByProduct = stockMovementRepository
                 .findStockByWarehouseAndBins(warehouseId)
                 .stream()
@@ -141,20 +151,20 @@ public class BinStockService {
 
         Map<Long, Integer> remainingReservedByProduct = new HashMap<>();
         for (Long productId : productIds) {
+            Product product = productDetails.get(productId);
+            if (product != null && product.isBatch()) {
+                // Batch products: per-unit reserved count is derived from the
+                // reservedBatchNumbers set below; no heuristic total needed here.
+                continue;
+            }
             List<Object[]> warehouseBinRows = warehouseBinRowsByProduct.getOrDefault(productId, List.of());
-
             int warehouseSoReserved = warehouseStockService.getSalesOrderReservedForWarehouse(warehouseId, productId);
             int allocatedSoReserved = allocateReservedToSelectedBin(binId, warehouseBinRows, warehouseSoReserved);
-
             int warehouseUnassignedDnReserved = safeInt(
                     deliveryNoteRepo.sumUnassignedReservedQtyInDispatchedNotes(productId, warehouseId));
             int allocatedUnassignedDnReserved = allocateReservedToSelectedBin(
-                    binId,
-                    warehouseBinRows,
-                    warehouseUnassignedDnReserved);
-
+                    binId, warehouseBinRows, warehouseUnassignedDnReserved);
             int binDnReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId));
-
             remainingReservedByProduct.put(productId,
                     allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
         }
@@ -189,10 +199,17 @@ public class BinStockService {
                 response.setProductName(product.getName());
             }
 
-            int remainingReserved = remainingReservedByProduct.getOrDefault(productId, 0);
-            int rowReserved = Math.min(binOnHand, Math.max(remainingReserved, 0));
+            int rowReserved;
+            if (product != null && product.isBatch()) {
+                // Each per-unit batch row maps to exactly one BatchMaster record.
+                // BatchMaster.status=RESERVED is authoritative — no greedy heuristic needed.
+                rowReserved = reservedBatchNumbers.contains(batchNumber) ? 1 : 0;
+            } else {
+                int remainingReserved = remainingReservedByProduct.getOrDefault(productId, 0);
+                rowReserved = Math.min(binOnHand, Math.max(remainingReserved, 0));
+                remainingReservedByProduct.put(productId, remainingReserved - rowReserved);
+            }
             response.setReservedQuantity(rowReserved);
-            remainingReservedByProduct.put(productId, remainingReserved - rowReserved);
             resultList.add(response);
         }
 

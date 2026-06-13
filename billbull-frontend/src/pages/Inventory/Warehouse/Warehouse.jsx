@@ -985,6 +985,7 @@ const LocatorDetail = ({ locator, bins, onEdit, onAddBin, onEditBin, onDeleteBin
 const BinDetail = ({ bin, onEdit }) => {
   const [binStock, setBinStock] = useState([]);
   const [stockLoading, setStockLoading] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
 
   useEffect(() => {
     if (bin?.id) {
@@ -999,6 +1000,42 @@ const BinDetail = ({ bin, onEdit }) => {
   const skuCount    = new Set(binStock.map(r => r.productCode)).size;
   const capacityPct = bin.capacity ? Math.min(100, Math.round((currentQty / bin.capacity) * 100)) : 0;
   const capColor    = capacityPct > 85 ? 'bg-red-500' : capacityPct > 60 ? 'bg-[#F5C742]' : 'bg-emerald-500';
+
+  // Natural comparison: splits strings into text/number chunks for proper numeric ordering
+  const naturalCompare = (strA, strB) => {
+    const a = (strA || '').toLowerCase();
+    const b = (strB || '').toLowerCase();
+    const re = /(\d+|\D+)/g;
+    const partsA = a.match(re) || [];
+    const partsB = b.match(re) || [];
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      if (i >= partsA.length) return -1;
+      if (i >= partsB.length) return 1;
+      const pA = partsA[i], pB = partsB[i];
+      const nA = Number(pA), nB = Number(pB);
+      const bothNum = !isNaN(nA) && !isNaN(nB);
+      const cmp = bothNum ? nA - nB : pA.localeCompare(pB);
+      if (cmp !== 0) return cmp;
+    }
+    return 0;
+  };
+
+  // Sort stock by product name, then product code, then batch number (all with natural ordering)
+  const sortedAndFilteredStock = [...binStock]
+    .sort((a, b) => {
+      return naturalCompare(a.productName, b.productName)
+          || naturalCompare(a.productCode, b.productCode)
+          || naturalCompare(a.batchNumber, b.batchNumber);
+    })
+    .filter(s => {
+      if (!stockSearch.trim()) return true;
+      const term = stockSearch.toLowerCase().trim();
+      return (
+        (s.productCode || '').toLowerCase().includes(term) ||
+        (s.productName || '').toLowerCase().includes(term) ||
+        (s.batchNumber || '').toLowerCase().includes(term)
+      );
+    });
 
   return (
     <div className="space-y-5">
@@ -1054,7 +1091,30 @@ const BinDetail = ({ bin, onEdit }) => {
       </div>
 
       {/* Stock snapshot */}
-      <SectionCard title="Stock Snapshot" subtitle="Current inventory in this bin">
+      <SectionCard
+        title="Stock Snapshot"
+        subtitle="Current inventory in this bin"
+        action={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by SKU, name, or batch…"
+              value={stockSearch}
+              onChange={e => setStockSearch(e.target.value)}
+              className="w-64 pl-9 pr-8 py-1.5 text-xs bg-[#F7F7FA] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 focus:border-[#F5C742] transition-all"
+            />
+            {stockSearch && (
+              <button
+                onClick={() => setStockSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        }
+      >
         {stockLoading ? (
           <div className="flex items-center justify-center py-12 gap-3">
             <div className="w-6 h-6 border-2 border-[#F5C742] border-t-transparent rounded-full animate-spin" />
@@ -1073,7 +1133,7 @@ const BinDetail = ({ bin, onEdit }) => {
               { key: 'available', label: 'Available' },
               { key: 'status', label: 'Status' },
             ]}
-            rows={binStock.map((s, idx) => {
+            rows={sortedAndFilteredStock.map((s, idx) => {
               const onHand   = s.quantity || 0;
               const res      = s.reservedQuantity || 0;
               const avail    = onHand - res;
@@ -1114,7 +1174,7 @@ const BinDetail = ({ bin, onEdit }) => {
                 </tr>
               );
             })}
-            empty="No stock in this bin"
+            empty={stockSearch ? `No items matching "${stockSearch}"` : "No stock in this bin"}
           />
         )}
       </SectionCard>

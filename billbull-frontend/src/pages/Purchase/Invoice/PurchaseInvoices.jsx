@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import ProductSelector from "../../../components/ProductSelector";
 import SearchableDropdown from "../../../components/SearchableDropdown";
+import LocationSelector from "../../../components/common/LocationSelector";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
@@ -726,11 +727,10 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
                   <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
                   <td className="px-6 py-4 text-slate-600 text-[11px]">
-                    {row.branchName ? (
-                      <>
-                        <div className="font-medium">{row.branchName}</div>
-                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                      </>
+                    {row.branchCode ? (
+                      <div className="font-medium">{row.branchCode}</div>
+                    ) : row.branchName ? (
+                      <div className="font-medium">{row.branchName}</div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
@@ -1058,14 +1058,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         otherCosts: Number(editInvoice.otherCosts || 0)
       });
 
-      setLandedCostItems([
-        { id: "freight", type: "Freight", name: "Freight", desc: "", cost: Number(editInvoice.freight || 0) },
-        { id: "customsDuty", type: "Customs Duty", name: "Customs Duty", desc: "", cost: Number(editInvoice.customsDuty || 0) },
-        { id: "handling", type: "Handling", name: "Handling", desc: "", cost: Number(editInvoice.handling || 0) },
-        { id: "clearing", type: "Clearing", name: "Clearing", desc: "", cost: Number(editInvoice.clearing || 0) },
-        { id: "insurance", type: "Insurance", name: "Insurance", desc: "", cost: Number(editInvoice.insurance || 0) },
-        { id: "otherCosts", type: "Other", name: "Other", desc: "", cost: Number(editInvoice.otherCosts || 0) }
-      ].filter((costItem) => Number(costItem.cost) > 0));
+      if (editInvoice.landedCosts && editInvoice.landedCosts.length > 0) {
+        setLandedCostItems(editInvoice.landedCosts.map((lc, idx) => ({
+          id: `lc-${idx}`,
+          type: lc.costName || "Other",
+          name: lc.costName || "Other",
+          desc: lc.description || "",
+          cost: Number(lc.amount || 0)
+        })));
+      } else {
+        setLandedCostItems([
+          { id: "freight", type: "Freight", name: "Freight", desc: "", cost: Number(editInvoice.freight || 0) },
+          { id: "customsDuty", type: "Customs Duty", name: "Customs Duty", desc: "", cost: Number(editInvoice.customsDuty || 0) },
+          { id: "handling", type: "Handling", name: "Handling", desc: "", cost: Number(editInvoice.handling || 0) },
+          { id: "clearing", type: "Clearing", name: "Clearing", desc: "", cost: Number(editInvoice.clearing || 0) },
+          { id: "insurance", type: "Insurance", name: "Insurance", desc: "", cost: Number(editInvoice.insurance || 0) },
+          { id: "otherCosts", type: "Other", name: "Other", desc: "", cost: Number(editInvoice.otherCosts || 0) }
+        ].filter((costItem) => Number(costItem.cost) > 0));
+      }
 
       // 4. Set Selects
       if (type === SOURCE.LPO) {
@@ -1796,6 +1806,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
   };
 
+  const handleLocationChange = (payload) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseId: payload.warehouseId,
+      warehouse: payload.warehouseName,
+      zoneId: payload.zoneId,
+      locatorId: payload.locatorId,
+      binId: payload.binId
+    }));
+  };
+
   return (
     <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 pb-20 relative">
       {isViewMode && (
@@ -2032,90 +2053,20 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Default Warehouse</label>
-                  <SearchableDropdown
-                    options={warehouseList.map(w => ({ value: w.id, label: w.name }))}
-                    value={formData.warehouseId}
-                    onChange={(whId) => {
-                      const wh = warehouseList.find(w => w.id == whId);
-                      setFormData({
-                        ...formData,
-                        warehouseId: whId,
-                        warehouse: wh ? wh.name : "",
-                        zoneId: null, locatorId: null, binId: null
-                      });
-                      if (whId) {
-                        getWarehouseZones(whId).then(setZoneList).catch(console.error);
-                      } else {
-                        setZoneList([]);
-                      }
+                  <label className="text-[10px] text-slate-500 mb-1 block">Delivery Location</label>
+                  <LocationSelector
+                    value={{
+                      warehouseId: formData.warehouseId,
+                      warehouseName: formData.warehouse,
+                      zoneId: formData.zoneId,
+                      locatorId: formData.locatorId,
+                      binId: formData.binId
                     }}
-                    placeholder="Select Warehouse..."
+                    onChange={handleLocationChange}
                     disabled={isFormLocked}
-                    menuPlacement="auto"
-                    menuZIndexClass="z-[120]"
                     className="w-full"
                   />
                 </div>
-
-                {/* Zone Selector — always show when warehouse is selected */}
-                {formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Zone</label>
-                    <SearchableDropdown
-                      options={zoneList.map(z => ({ value: z.id, label: z.name }))}
-                      value={formData.zoneId}
-                      onChange={(zId) => {
-                        setFormData({ ...formData, zoneId: zId, locatorId: null, binId: null });
-                        if (zId) getZoneLocators(zId).then(setLocatorList).catch(console.error);
-                        else { setLocatorList([]); setBinList([]); }
-                      }}
-                      placeholder="Select Zone..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Locator Selector — always show when zone is selected */}
-                {(formData.zoneId || locatorList.length > 0) && formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Locator</label>
-                    <SearchableDropdown
-                      options={locatorList.map(l => ({ value: l.id, label: l.name }))}
-                      value={formData.locatorId}
-                      onChange={(lId) => {
-                        setFormData({ ...formData, locatorId: lId, binId: null });
-                        if (lId) getLocatorBins(lId).then(setBinList).catch(console.error);
-                        else setBinList([]);
-                      }}
-                      placeholder="Select Locator..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Bin Selector — always show when locator is selected */}
-                {(formData.locatorId || binList.length > 0) && formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Bin</label>
-                    <SearchableDropdown
-                      options={binList.map(b => ({ value: b.id, label: b.name }))}
-                      value={formData.binId}
-                      onChange={(bId) => setFormData({ ...formData, binId: bId })}
-                      placeholder="Select Bin..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>

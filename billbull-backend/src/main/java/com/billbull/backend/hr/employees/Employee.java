@@ -90,6 +90,43 @@ public class Employee {
     private String emiratesId;
     private LocalDate emiratesIdExpiry;
 
+    private String passportNumber;
+    private LocalDate passportIssueDate;
+    private LocalDate passportExpiryDate;
+
+    private String visaType;
+    private String visaNumber;
+    private LocalDate visaExpiryDate;
+
+    // =========================
+    // EMERGENCY CONTACT
+    // =========================
+    private String emergencyContactName;
+    private String emergencyContactRelation;
+    private String emergencyContactPhone;
+
+    // =========================
+    // ATTENDANCE / SHIFT
+    // =========================
+    private String shiftType;        // Morning / Evening / Night / Flexible
+    private String workDays;         // e.g. "Mon-Fri"
+    private Integer weeklyOffDays;
+    private String leavePolicy;
+
+    // =========================
+    // ADDITIONAL BRANCH ACCESS
+    // =========================
+    private String additionalBranchIds;  // comma-separated branch IDs
+    private String additionalWarehouseIds; // comma-separated warehouse IDs
+
+    // =========================
+    // NOTES & TAGS
+    // =========================
+    @Column(length = 2000)
+    private String hrNotes;
+
+    private String tags;             // comma-separated, e.g. "Keyholder,Night Shift"
+
     // =========================
     // WORKFLOW
     // =========================
@@ -203,6 +240,24 @@ public class Employee {
     public LocalDate getEmiratesIdExpiry() { return emiratesIdExpiry; }
     public void setEmiratesIdExpiry(LocalDate emiratesIdExpiry) { this.emiratesIdExpiry = emiratesIdExpiry; }
 
+    public String getPassportNumber() { return passportNumber; }
+    public void setPassportNumber(String passportNumber) { this.passportNumber = passportNumber; }
+
+    public LocalDate getPassportIssueDate() { return passportIssueDate; }
+    public void setPassportIssueDate(LocalDate passportIssueDate) { this.passportIssueDate = passportIssueDate; }
+
+    public LocalDate getPassportExpiryDate() { return passportExpiryDate; }
+    public void setPassportExpiryDate(LocalDate passportExpiryDate) { this.passportExpiryDate = passportExpiryDate; }
+
+    public String getVisaType() { return visaType; }
+    public void setVisaType(String visaType) { this.visaType = visaType; }
+
+    public String getVisaNumber() { return visaNumber; }
+    public void setVisaNumber(String visaNumber) { this.visaNumber = visaNumber; }
+
+    public LocalDate getVisaExpiryDate() { return visaExpiryDate; }
+    public void setVisaExpiryDate(LocalDate visaExpiryDate) { this.visaExpiryDate = visaExpiryDate; }
+
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
@@ -214,4 +269,37 @@ public class Employee {
 
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    public String getEmergencyContactName() { return emergencyContactName; }
+    public void setEmergencyContactName(String emergencyContactName) { this.emergencyContactName = emergencyContactName; }
+
+    public String getEmergencyContactRelation() { return emergencyContactRelation; }
+    public void setEmergencyContactRelation(String emergencyContactRelation) { this.emergencyContactRelation = emergencyContactRelation; }
+
+    public String getEmergencyContactPhone() { return emergencyContactPhone; }
+    public void setEmergencyContactPhone(String emergencyContactPhone) { this.emergencyContactPhone = emergencyContactPhone; }
+
+    public String getShiftType() { return shiftType; }
+    public void setShiftType(String shiftType) { this.shiftType = shiftType; }
+
+    public String getWorkDays() { return workDays; }
+    public void setWorkDays(String workDays) { this.workDays = workDays; }
+
+    public Integer getWeeklyOffDays() { return weeklyOffDays; }
+    public void setWeeklyOffDays(Integer weeklyOffDays) { this.weeklyOffDays = weeklyOffDays; }
+
+    public String getLeavePolicy() { return leavePolicy; }
+    public void setLeavePolicy(String leavePolicy) { this.leavePolicy = leavePolicy; }
+
+    public String getAdditionalBranchIds() { return additionalBranchIds; }
+    public void setAdditionalBranchIds(String additionalBranchIds) { this.additionalBranchIds = additionalBranchIds; }
+
+    public String getAdditionalWarehouseIds() { return additionalWarehouseIds; }
+    public void setAdditionalWarehouseIds(String additionalWarehouseIds) { this.additionalWarehouseIds = additionalWarehouseIds; }
+
+    public String getHrNotes() { return hrNotes; }
+    public void setHrNotes(String hrNotes) { this.hrNotes = hrNotes; }
+
+    public String getTags() { return tags; }
+    public void setTags(String tags) { this.tags = tags; }
 }

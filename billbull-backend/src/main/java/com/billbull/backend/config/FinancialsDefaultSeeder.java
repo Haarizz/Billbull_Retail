@@ -82,7 +82,7 @@ public class FinancialsDefaultSeeder implements ApplicationRunner {
         vat.setType("VAT");
         vat.setFrequency("Quarterly");
         vat.setRate("5");
-        vat.setAccounts(List.of("1130", "2102"));
+        vat.setAccounts(List.of("1310", "2100"));
         vat.setStatus("Active");
         taxRepo.save(vat);
 
