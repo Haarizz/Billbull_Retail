@@ -98,6 +98,8 @@ const defaultSettings = {
   showItemsTable: true,
   showLineNumber: true,
   showItemDescription: true,
+  showShortDescription: true,
+  showDetailedDescription: true,
   showBarcode: true,
   showOrderedQty: true,
   showReceivedQty: true,
@@ -258,7 +260,7 @@ function GRNPreview({ settings: s }) {
               <tbody>
                 {ITEMS.map((item, i) => <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafbfc", borderBottom: "1px solid #dde2e8" }}>
                     {s.showLineNumber && <td style={{ padding: "10px", textAlign: "center", color: "#a0aab4", fontSize: "10px" }}>{item.n}</td>}
-                    {s.showItemDescription && <td style={{ padding: "10px", verticalAlign: "top" }}><div style={{ fontWeight: 600, fontSize: "12px", color: "#0f1923" }}>{item.name}</div><div style={{ fontFamily: "monospace", fontSize: "10px", color: "#1040b0", marginTop: "1px" }}>SKU: {item.sku} · Part: {item.part}</div><div style={{ fontSize: "10px", color: "#6b7a8a", marginTop: "1px" }}>Category: {item.cat}</div><div style={{ fontSize: "10px", color: "#a0aab4", fontStyle: "italic", marginTop: "1px" }}>{item.spec}</div></td>}
+                    {s.showItemDescription && <td style={{ padding: "10px", verticalAlign: "top" }}><div style={{ fontWeight: 600, fontSize: "12px", color: "#0f1923" }}>{item.name}</div><div style={{ fontFamily: "monospace", fontSize: "10px", color: "#1040b0", marginTop: "1px" }}>SKU: {item.sku} · Part: {item.part}</div>{s.showShortDescription !== false && <div style={{ fontSize: "10px", color: "#6b7a8a", marginTop: "1px" }}>Category: {item.cat}</div>}{s.showDetailedDescription !== false && <div style={{ fontSize: "10px", color: "#a0aab4", fontStyle: "italic", marginTop: "1px" }}>{item.spec}</div>}</td>}
                     {s.showBarcode && <td style={{ padding: "10px", textAlign: "center", verticalAlign: "top" }}><div style={{ display: "inline-block", height: "22px", width: "68px", background: "repeating-linear-gradient(90deg,#1a1a1a 0,#1a1a1a 2px,#fff 2px,#fff 4px,#1a1a1a 4px,#1a1a1a 5px,#fff 5px,#fff 8px,#1a1a1a 8px,#1a1a1a 9px,#fff 9px,#fff 12px,#1a1a1a 12px,#1a1a1a 14px,#fff 14px,#fff 16px,#1a1a1a 16px,#1a1a1a 17px,#fff 17px,#fff 20px,#1a1a1a 20px,#1a1a1a 22px,#fff 22px,#fff 24px,#1a1a1a 24px,#1a1a1a 25px,#fff 25px,#fff 28px)", borderRadius: "2px" }} /><div style={{ fontFamily: "monospace", fontSize: "9px", color: "#6b7a8a", marginTop: "2px" }}>{item.barcode}</div></td>}
                     {s.showOrderedQty && <td style={{ padding: "10px", textAlign: "right", fontFamily: "monospace", color: "#3b4a58" }}>{item.ord}</td>}
                     {s.showReceivedQty && <td style={{ padding: "10px", textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: "#0d7a4e" }}>{item.rec}</td>}
@@ -772,6 +774,8 @@ function GRNTemplateDesigner({ templateName, initialSettings, onClose, onSave })
     { key: "showItemsTable", label: "Show Items Table" },
     { key: "showLineNumber", label: "Line Number (#)" },
     { key: "showItemDescription", label: "Item Description" },
+    { key: "showShortDescription", label: "Short Description" },
+    { key: "showDetailedDescription", label: "Detailed Description" },
     { key: "showBarcode", label: "Barcode" },
     { key: "showOrderedQty", label: "Ordered Qty" },
     { key: "showReceivedQty", label: "Received Qty" },

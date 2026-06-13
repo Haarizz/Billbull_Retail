@@ -31,11 +31,11 @@ const MOCK = {
     zones: 4
   },
   items: [
-    { seq: 1, zone: "A01", description: "Brake Pad Premium Grade Heavy Duty", brand: "Brembo", barcode: "123456789", sku: "SKU-882", qtyRequired: "5 PCS", pickedQty: "5 PCS", batch: "PU29042026-L01-102-1", pickBatch: "PU29042026-L01-102-1", binLocation: "R1-S2-B4" },
-    { seq: 2, zone: "A04", description: "Oil Filter Standard 8L", brand: "Mann Filter", barcode: "998877665", sku: "SKU-118", qtyRequired: "8 PCS", pickedQty: "8 PCS", batch: "PU29042026-L01-105-2", pickBatch: "PU29042026-L01-105-2", binLocation: "R2-S1-B3" },
-    { seq: 3, zone: "B02", description: "Engine Coolant 5L Bottle", brand: "Prestone", barcode: "554433221", sku: "SKU-307", qtyRequired: "12 PCS", pickedQty: "10 PCS", batch: "PU30042026-L02-201-1", pickBatch: "PU30042026-L02-201-1", binLocation: "R1-S3-B2" },
-    { seq: 4, zone: "B02", description: "Windshield Wiper Blade 22 inch", brand: "Bosch", barcode: "776655443", sku: "SKU-441", qtyRequired: "20 PCS", pickedQty: "20 PCS", batch: "PU01052026-L01-089-3", pickBatch: "PU01052026-L01-089-3", binLocation: "R3-S1-B6" },
-    { seq: 5, zone: "C03", description: "Spark Plug Iridium Set of 4", brand: "NGK", barcode: "332211009", sku: "SKU-659", qtyRequired: "10 SET", pickedQty: "10 SET", batch: "PU28042026-L03-112-2", pickBatch: "PU28042026-L03-112-2", binLocation: "R2-S4-B1" }
+    { seq: 1, zone: "A01", description: "Brake Pad Premium Grade Heavy Duty", shortDesc: "Ceramic brake pad set", detailedDesc: "Front axle fitment\nLow-dust compound", brand: "Brembo", barcode: "123456789", sku: "SKU-882", qtyRequired: "5 PCS", pickedQty: "5 PCS", batch: "PU29042026-L01-102-1", pickBatch: "PU29042026-L01-102-1", binLocation: "R1-S2-B4" },
+    { seq: 2, zone: "A04", description: "Oil Filter Standard 8L", shortDesc: "Standard spin-on oil filter", detailedDesc: "Check gasket before packing", brand: "Mann Filter", barcode: "998877665", sku: "SKU-118", qtyRequired: "8 PCS", pickedQty: "8 PCS", batch: "PU29042026-L01-105-2", pickBatch: "PU29042026-L01-105-2", binLocation: "R2-S1-B3" },
+    { seq: 3, zone: "B02", description: "Engine Coolant 5L Bottle", shortDesc: "Ready-mix coolant bottle", detailedDesc: "Pack upright\nAvoid dented containers", brand: "Prestone", barcode: "554433221", sku: "SKU-307", qtyRequired: "12 PCS", pickedQty: "10 PCS", batch: "PU30042026-L02-201-1", pickBatch: "PU30042026-L02-201-1", binLocation: "R1-S3-B2" },
+    { seq: 4, zone: "B02", description: "Windshield Wiper Blade 22 inch", shortDesc: "Universal 22 inch blade", detailedDesc: "Left side application", brand: "Bosch", barcode: "776655443", sku: "SKU-441", qtyRequired: "20 PCS", pickedQty: "20 PCS", batch: "PU01052026-L01-089-3", pickBatch: "PU01052026-L01-089-3", binLocation: "R3-S1-B6" },
+    { seq: 5, zone: "C03", description: "Spark Plug Iridium Set of 4", shortDesc: "Iridium plug pack", detailedDesc: "Set of four\nVerify heat range", brand: "NGK", barcode: "332211009", sku: "SKU-659", qtyRequired: "10 SET", pickedQty: "10 SET", batch: "PU28042026-L03-112-2", pickBatch: "PU28042026-L03-112-2", binLocation: "R2-S4-B1" }
   ],
   pickRoute: ["A01", "A04", "B02", "Packing Area"]
 };
@@ -74,6 +74,8 @@ function defaultPickListSettings(name = "Default Pick List") {
     colSubBinLocation: true,
     colSeq: true,
     colDescription: true,
+    showShortDescription: true,
+    showDetailedDescription: true,
     colQtyRequired: true,
     colBatch: true,
     colPickedQty: true,
@@ -296,6 +298,8 @@ function PickListPreview({ s }) {
 
             {s.colDescription && <td style={tdS()}>
               <p style={{ margin: 0, fontWeight: 700, color: "#1a1a2e", fontSize: `${f}px` }}>{item.description}</p>
+              {s.showShortDescription !== false && item.shortDesc && <p style={{ margin: "2px 0 0", color: "#475569", fontSize: `${f - 1}px` }}>{item.shortDesc}</p>}
+              {s.showDetailedDescription !== false && item.detailedDesc && <p style={{ margin: "2px 0 0", color: "#94a3b8", fontSize: `${f - 1}px`, fontStyle: "italic", whiteSpace: "pre-line" }}>{item.detailedDesc}</p>}
               <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 2 }}>
                 {s.colSubZone && <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontSize: `${f - 1.5}px`, color: "#9CA3AF", fontWeight: 600, width: 42, flexShrink: 0 }}>Zone</span>
@@ -538,6 +542,8 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
             <SLabel>Table Columns</SLabel>
             <Toggle label="Seq #" checked={s.colSeq} onChange={(v) => set({ colSeq: v })} />
             <Toggle label="Item Name" checked={s.colDescription} onChange={(v) => set({ colDescription: v })} />
+            <Toggle label="Short Description" checked={s.showShortDescription !== false} onChange={(v) => set({ showShortDescription: v })} />
+            <Toggle label="Detailed Description" checked={s.showDetailedDescription !== false} onChange={(v) => set({ showDetailedDescription: v })} />
             <Toggle label="Qty Required" checked={s.colQtyRequired} onChange={(v) => set({ colQtyRequired: v })} />
             <Toggle label="Batch / Lot" checked={s.colBatch} onChange={(v) => set({ colBatch: v })} />
             <Toggle label="Picked Qty" checked={s.colPickedQty} onChange={(v) => set({ colPickedQty: v })} />

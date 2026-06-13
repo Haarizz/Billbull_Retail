@@ -67,6 +67,8 @@ const flattenItems = (rawItems = []) => {
             flat.push({
                 seq,
                 description: item.name || item.desc || item.description?.title || '-',
+                shortDesc: item.shortDesc || item.shortDescription || '',
+                detailedDesc: item.detailedDesc || item.detailedDescription || '',
                 brand: item.brand || item.brandName || '',
                 sku: item.sku || item.skuCode || '',
                 barcode: item.barcode || '',
@@ -86,6 +88,8 @@ const flattenItems = (rawItems = []) => {
                 flat.push({
                     seq,
                     description: item.name || item.desc || item.description?.title || '-',
+                    shortDesc: item.shortDesc || item.shortDescription || '',
+                    detailedDesc: item.detailedDesc || item.detailedDescription || '',
                     brand: item.brand || item.brandName || '',
                     sku: item.sku || item.skuCode || '',
                     barcode: item.barcode || '',
@@ -253,6 +257,8 @@ export const generatePickListHtml = (template, data, options = {}) => {
                   ${s.colDescription ? `
                     <td style="${tdS()}">
                       <p style="margin:0;font-weight:700;color:#1a1a2e;font-size:${f}px;">${escapeHtml(item.description)}</p>
+                      ${s.showShortDescription !== false && item.shortDesc ? `<p style="margin:2px 0 0;color:#475569;font-size:${f - 1}px;">${escapeHtml(item.shortDesc)}</p>` : ''}
+                      ${s.showDetailedDescription !== false && item.detailedDesc ? `<p style="margin:2px 0 0;color:#94a3b8;font-size:${f - 1}px;font-style:italic;white-space:pre-line;">${escapeHtml(item.detailedDesc)}</p>` : ''}
                       <div style="margin-top:5px;display:flex;flex-direction:column;gap:2px;">
                         ${s.colSubZone && item.zone && item.zone !== '-' ? `
                           <div style="display:flex;align-items:center;gap:5px;">

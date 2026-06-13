@@ -538,6 +538,8 @@ const applyDesignerColumnVisibility = (columns = {}, settings = {}) => ({
     showItemIdentity: visibleWhen(settings, ['colItemCode', 'showItemCode'], true),
     uom: visibleWhen(settings, ['colUOM', 'showUOM'], Boolean(columns.uom)),
     description: visibleWhen(settings, ['colDescription', 'showItemDescription'], columns.description !== false),
+    shortDesc: visibleWhen(settings, ['showShortDescription', 'colShortDescription'], columns.shortDesc !== false),
+    detailedDesc: visibleWhen(settings, ['showDetailedDescription', 'colDetailedDescription'], Boolean(columns.detailedDesc)),
     qty: visibleWhen(settings, ['colQty', 'showQty'], columns.qty !== false),
     unitPrice: visibleWhen(settings, ['colUnitPrice', 'showUnitPrice'], columns.unitPrice !== false),
     taxableAmount: visibleWhen(settings, ['colTaxableAmount', 'showTaxableAmount'], Boolean(columns.taxableAmount)),
@@ -844,19 +846,18 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
     `;
 };
 
-// QA-029: Description column = short desc (italic bullet) + detailed desc
-// rendered line-by-line as bullets. The "Detailed Description" checkbox in
-// the template designer gates the detailed bullets; short desc always shows
-// when present.
+// QA-029: Description column = short desc + detailed desc rendered as bullets.
 const buildDetailsCell = (item, columnOptions = {}) => {
     const shortDesc = asText(item.shortDesc).trim();
     const detailedDesc = asText(item.detailedDesc).trim();
+    const showShortDesc = columnOptions.shortDesc !== false;
+    const showDetailedDesc = columnOptions.detailedDesc !== false;
     const bullets = [];
 
-    if (shortDesc) {
+    if (showShortDesc && shortDesc) {
         bullets.push(`<li class="desc-bullet desc-bullet-short">${escapeHtml(shortDesc)}</li>`);
     }
-    if (columnOptions.detailedDesc !== false && detailedDesc) {
+    if (showDetailedDesc && detailedDesc) {
         detailedDesc
             .split(/\r?\n/)
             .map((line) => line.trim())
@@ -866,7 +867,7 @@ const buildDetailsCell = (item, columnOptions = {}) => {
             });
     }
 
-    if (bullets.length === 0) {
+    if (bullets.length === 0 && (showShortDesc || showDetailedDesc)) {
         const lines = buildItemDetailLines(item);
         lines.forEach((line) => bullets.push(`<li class="desc-bullet">${escapeHtml(line)}</li>`));
     }
@@ -4327,10 +4328,13 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
                     return `<td style="padding:10px;text-align:center;color:#a0aab4;font-size:10px;">${escapeHtml(String(it.rowNo || i + 1).padStart(2, '0'))}</td>`;
                 case 'desc': {
                     const idLine = [it.code && `${txt(it.code)}`, it.sku && it.sku !== it.code ? `SKU: ${txt(it.sku)}` : ''].filter(Boolean).join(' · ');
+                    const shortDetail = firstNonEmpty(it.shortDesc, it.desc);
+                    const detailedDetail = firstNonEmpty(it.detailedDesc);
                     return `<td style="padding:10px;vertical-align:top;">
                         <div style="font-weight:600;font-size:12px;color:#0f1923;">${txt(it.name) || '-'}</div>
                         ${idLine ? `<div style="font-family:monospace;font-size:10px;color:#1040b0;margin-top:1px;">${idLine}</div>` : ''}
-                        ${it.desc ? `<div style="font-size:10px;color:#6b7a8a;margin-top:1px;">${txt(it.desc)}</div>` : ''}
+                        ${on('showShortDescription') && shortDetail ? `<div style="font-size:10px;color:#6b7a8a;margin-top:1px;">${txt(shortDetail)}</div>` : ''}
+                        ${on('showDetailedDescription') && detailedDetail ? `<div style="font-size:10px;color:#a0aab4;font-style:italic;margin-top:1px;white-space:pre-line;">${txt(detailedDetail)}</div>` : ''}
                     </td>`;
                 }
                 case 'barcode':
