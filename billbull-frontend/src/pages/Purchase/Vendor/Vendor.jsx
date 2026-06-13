@@ -480,6 +480,50 @@ const PayInvoices = ({ vendors, initialVendor }) => {
     }
   };
 
+  const handlePrintPaymentVoucher = async (payment = lastSavedPayment, linkedInvoice = lastSavedInvoice) => {
+    if (!payment) {
+      toast.error("Please process a payment first, then print the voucher.");
+      return;
+    }
+
+    const loadingToast = toast.loading('Preparing payment voucher print layout...');
+    setIsPaymentPrinting(true);
+
+    try {
+      const templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+      const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
+      const voucherForPrint = {
+        ...payment,
+        voucherNumber: payment.voucherNumber || payment.paymentNumber || payment.id || nextVoucherNo,
+        paymentDate: payment.paymentDate || payment.date || paymentDate,
+        paymentMode: payment.paymentMode || payment.mode || paymentMethod,
+        referenceNumber: payment.referenceNumber || payment.ref || reference,
+        vendorName: payment.vendorName || selectedVendor?.name,
+        vendorId: payment.vendorId || selectedVendor?.code,
+        bankAccount: payment.bankAccount || bankAccount,
+        chequeDate: payment.chequeDate || chequeDate,
+      };
+      const printData = buildPaymentVoucherPrintData(
+        voucherForPrint,
+        selectedVendor || { name: voucherForPrint.vendorName, code: voucherForPrint.vendorId },
+        company,
+        linkedInvoice
+      );
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: company,
+        billBullLogo,
+      });
+
+      printHtml(html);
+    } catch (error) {
+      console.error('Failed to print payment voucher', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate payment voucher print layout');
+    } finally {
+      toast.dismiss(loadingToast);
+      setIsPaymentPrinting(false);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
       {/* LEFT COLUMN - 2/3 width */}
@@ -910,50 +954,6 @@ const VendorSoA = ({ vendors }) => {
     } finally {
       toast.dismiss(loadingToast);
       setIsPrinting(false);
-    }
-  };
-
-  const handlePrintPaymentVoucher = async (payment = lastSavedPayment, linkedInvoice = lastSavedInvoice) => {
-    if (!payment) {
-      toast.error("Please process a payment first, then print the voucher.");
-      return;
-    }
-
-    const loadingToast = toast.loading('Preparing payment voucher print layout...');
-    setIsPaymentPrinting(true);
-
-    try {
-      const templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
-      const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
-      const voucherForPrint = {
-        ...payment,
-        voucherNumber: payment.voucherNumber || payment.paymentNumber || payment.id || nextVoucherNo,
-        paymentDate: payment.paymentDate || payment.date || paymentDate,
-        paymentMode: payment.paymentMode || payment.mode || paymentMethod,
-        referenceNumber: payment.referenceNumber || payment.ref || reference,
-        vendorName: payment.vendorName || selectedVendor?.name,
-        vendorId: payment.vendorId || selectedVendor?.code,
-        bankAccount: payment.bankAccount || bankAccount,
-        chequeDate: payment.chequeDate || chequeDate,
-      };
-      const printData = buildPaymentVoucherPrintData(
-        voucherForPrint,
-        selectedVendor || { name: voucherForPrint.vendorName, code: voucherForPrint.vendorId },
-        company,
-        linkedInvoice
-      );
-      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: company,
-        billBullLogo,
-      });
-
-      printHtml(html);
-    } catch (error) {
-      console.error('Failed to print payment voucher', error);
-      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate payment voucher print layout');
-    } finally {
-      toast.dismiss(loadingToast);
-      setIsPaymentPrinting(false);
     }
   };
 

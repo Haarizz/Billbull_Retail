@@ -1560,7 +1560,7 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
         summaryAmount: buildSummaryAmount("Amount Paid", amount, companyProfile, vendor),
         notes: firstValue(voucher?.notes),
         paymentDetails: [
-            { label: "Payment Mode", value: voucher?.paymentMode || voucher?.mode },
+            { label: "Payment Mode", value: ((v) => v ? v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : v)(voucher?.paymentMode || voucher?.mode) },
             { label: "Reference Number", value: voucher?.referenceNumber || voucher?.ref },
             { label: "Bank Account", value: voucher?.bankAccount },
             { label: "Cheque Date", value: voucher?.chequeDate },

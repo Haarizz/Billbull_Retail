@@ -1772,12 +1772,12 @@ const DeliveryNote = () => {
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
-                const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+                const title = generateDocFilename('Delivery Note', dnNumber, selectedCustomer?.name, dnDate, company?.currency || 'AED');
                 print(title);
             }
         } catch (error) {
             console.error("Print error:", error);
-            const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+            const title = generateDocFilename('Delivery Note', dnNumber, selectedCustomer?.name, dnDate, company?.currency || 'AED');
             print(title);
         } finally {
             setIsPrinting(false);

@@ -541,7 +541,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onDownload, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -789,6 +789,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
   const [vendorList, setVendorList] = useState([]);
+  const [locationError, setLocationError] = useState(null);
   const [productList, setProductList] = useState([]);
 
   // UI State
@@ -1815,6 +1816,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       locatorId: payload.locatorId,
       binId: payload.binId
     }));
+    if (payload.binId) setLocationError(null);
+    else if (payload.locatorId) setLocationError("Select a bin to complete the location");
+    else if (payload.zoneId) setLocationError("Select a locator, then a bin");
+    else if (payload.warehouseId) setLocationError("Select a zone, locator, and bin");
+    else setLocationError(null);
   };
 
   return (
@@ -2053,7 +2059,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Delivery Location</label>
+                  <label className="text-[10px] mb-1 flex items-center gap-1">
+                    <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                    {locationError && <span className="text-red-500">*</span>}
+                    {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+                  </label>
                   <LocationSelector
                     value={{
                       warehouseId: formData.warehouseId,
@@ -2065,6 +2075,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     onChange={handleLocationChange}
                     disabled={isFormLocked}
                     className="w-full"
+                    error={locationError}
                   />
                 </div>
               </div>
@@ -2524,6 +2535,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       alert("Vendor invoice number is required.");
                       return;
                     }
+                    const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                      : !formData.zoneId ? "Select a zone within the warehouse"
+                      : !formData.locatorId ? "Select a locator (aisle / rack)"
+                      : !formData.binId ? "Select a bin to complete the delivery location"
+                      : null;
+                    if (locErr) { setLocationError(locErr); return; }
+                    setLocationError(null);
                     onSaveDraft(getInvoicePayload());
                   }}
                   className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
@@ -2549,13 +2567,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       return;
                     }
 
-                    // 4. Direct Invoice Location Guard
-                    if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
-                      alert("Warehouse is required for Direct Invoices to post stock.");
-                      return;
+                    // 4. Location Guard (bin required for all invoice types)
+                    {
+                      const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                        : !formData.zoneId ? "Select a zone within the warehouse"
+                        : !formData.locatorId ? "Select a locator (aisle / rack)"
+                        : !formData.binId ? "Select a bin to complete the delivery location"
+                        : null;
+                      if (locErr) { setLocationError(locErr); return; }
+                      setLocationError(null);
                     }
 
-                    // 4. NLC Validation
+                    // 5. NLC Validation
                     const totalNLC = isLandedCostAllowed ? landedCost : 0;
                     if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
                       // User said "Invoice Total", usually implies Goods Value.
@@ -2963,10 +2986,7 @@ const PurchaseInvoices = () => {
   };
 
   const handleSubmitApproval = async (payload) => {
-    if (!payload.warehouseId) { alert("Please select a warehouse before submitting."); return; }
-    if (!payload.zoneId) { alert("Please select a zone before submitting."); return; }
-    if (!payload.locatorId) { alert("Please select a locator before submitting."); return; }
-    if (!payload.binId) { alert("Please select a bin before submitting."); return; }
+    if (!payload.binId) return; // field-level validation already shown in CreateEditView
 
     try {
       const invoiceId = await handleSaveDraft(payload);

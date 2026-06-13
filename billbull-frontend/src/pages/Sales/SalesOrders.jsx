@@ -2161,33 +2161,36 @@ const SalesOrders = () => {
               onExpectedDispatchChange={setExpectedDelivery}
               isReadOnly={isLocked}
               currency={orderCurrency}
+              creditAlert={
+                selectedCustomer && selectedCustomer.creditLimitAmount > 0 &&
+                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount
+                  ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                    ? (
+                      <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                        <p>
+                          <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                          (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                          credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                          Saving this order is blocked until the balance is within limit.
+                        </p>
+                      </div>
+                    )
+                    : salesSettings?.creditLimitPolicy === 'WARNING'
+                      ? (
+                        <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                          <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                          <p>
+                            <strong>Credit Warning:</strong> The projected outstanding balance
+                            (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                            credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                          </p>
+                        </div>
+                      )
+                      : null
+                  : null
+              }
             />
-
-            {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
-              selectedCustomer.creditLimitAmount > 0 &&
-              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
-                <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                  <p>
-                    <strong>Credit Warning:</strong> The projected outstanding balance
-                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                  </p>
-                </div>
-              )}
-            {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-              selectedCustomer.creditLimitAmount > 0 &&
-              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
-                <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                  <p>
-                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                    Saving this order is blocked until the balance is within limit.
-                  </p>
-                </div>
-              )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector

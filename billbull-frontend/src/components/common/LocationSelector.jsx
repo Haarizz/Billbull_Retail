@@ -12,7 +12,8 @@ const LocationSelector = ({
   className = "",
   placeholder = "Select Location...",
   menuPlacement = "auto",
-  menuZIndexClass = "z-50"
+  menuZIndexClass = "z-50",
+  error = null // validation error message
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -225,7 +226,7 @@ const LocationSelector = ({
   return (
     <div className={`relative overflow-visible ${className}`} ref={dropdownRef}>
       <div
-        className={`${dropdownStyle} ${disabled ? 'bg-slate-50 cursor-not-allowed text-slate-500 hover:border-slate-200' : ''} ${isOpen ? 'ring-1 ring-[#F5C742] border-[#F5C742]' : ''}`}
+        className={`${dropdownStyle} ${disabled ? 'bg-slate-50 cursor-not-allowed text-slate-500 hover:border-slate-200' : ''} ${isOpen ? 'ring-1 ring-[#F5C742] border-[#F5C742]' : ''} ${error && !isOpen ? 'border-red-400 bg-red-50 ring-1 ring-red-300' : ''}`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
       >
         <div className={`text-sm truncate flex-1 pr-2 ${hasValue ? 'text-slate-900' : 'text-slate-400'}`}>
@@ -243,6 +244,15 @@ const LocationSelector = ({
           <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </div>
       </div>
+
+      {error && !isOpen && (
+        <div className="flex items-center gap-1 mt-1 text-xs text-red-600">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <span>{error}</span>
+        </div>
+      )}
 
       {isOpen && !disabled && (
         <div className={`absolute left-0 ${menuZIndexClass} w-full min-w-[320px] bg-white border border-slate-200 rounded-md shadow-lg max-h-80 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100 ${openUpward ? 'bottom-full mb-1' : 'top-full mt-1'}`}>

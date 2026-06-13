@@ -46,6 +46,8 @@ const InvoiceSettlementModal = ({
 
     const [phase, setPhase] = useState('input'); // 'input' | 'done'
     const [recorded, setRecorded] = useState([]);
+    // Snapshot alreadyPaid at confirm time so parent re-fetch doesn't corrupt done-phase cards
+    const [snapshotAlreadyPaid, setSnapshotAlreadyPaid] = useState(null);
     const [nextVoucherNo, setNextVoucherNo] = useState('—');
     // No pre-selection — user must explicitly choose a pay mode
     const [quickMode, setQuickMode] = useState(null);
@@ -152,6 +154,7 @@ const InvoiceSettlementModal = ({
         if (valid.length === 0) return;
         const result = await onConfirm?.(valid);
         if (result && Array.isArray(result.receipts)) {
+            setSnapshotAlreadyPaid(alreadyPaid);
             setRecorded(result.receipts);
             setPhase('done');
         }
@@ -190,12 +193,18 @@ const InvoiceSettlementModal = ({
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Paid</p>
                             <p className="text-base font-bold text-emerald-700 mt-1">
-                                {money(alreadyPaid + (phase === 'done' ? recordedTotal : totalSettled))}
+                                {phase === 'done'
+                                    ? money((snapshotAlreadyPaid ?? alreadyPaid) + recordedTotal)
+                                    : money(alreadyPaid + totalSettled)}
                             </p>
                         </div>
                         <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-center">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Balance Due</p>
-                            <p className="text-base font-bold text-orange-700 mt-1">{money(Math.max(invoiceAmount - (phase === 'done' ? recordedTotal : totalSettled), 0))}</p>
+                            <p className="text-base font-bold text-orange-700 mt-1">
+                                {phase === 'done'
+                                    ? money(Math.max(displayTotal - (snapshotAlreadyPaid ?? alreadyPaid) - recordedTotal, 0))
+                                    : money(Math.max(invoiceAmount - totalSettled, 0))}
+                            </p>
                         </div>
                     </div>
 

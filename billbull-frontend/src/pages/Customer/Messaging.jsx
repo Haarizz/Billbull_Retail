@@ -13,7 +13,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 // --- MOCK DATA ---
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getInquiries } from '../../api/customerApi';
-import { getTemplates, createTemplate, useTemplate, getMessageLogs, logMessage, updateTemplate, deleteTemplate } from '../../api/messagingApi';
+import { getTemplates, createTemplate, markTemplateUsed, getMessageLogs, logMessage, updateTemplate, deleteTemplate } from '../../api/messagingApi';
 
 // --- MOCK DATA ---
 
@@ -298,7 +298,7 @@ const Messaging = () => {
             });
 
             if (composeType && composeType.title === 'Template' && composeType.id) {
-                useTemplate(composeType.id).then(() => {
+                markTemplateUsed(composeType.id).then(() => {
                     // Refresh templates to show updated usage count
                     getTemplates().then(data => {
                         if (data) setTemplates(data);
