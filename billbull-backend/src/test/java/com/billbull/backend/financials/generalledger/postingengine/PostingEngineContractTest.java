@@ -186,11 +186,18 @@ class PostingEngineContractTest {
     }
 
     @Test
-    void duplicateReferenceBlocksSecondPosting() {
-        when(journalEntryRepository.existsByReference("GRN-DUP")).thenReturn(true);
+    void duplicateReferenceReturnsExistingEntry() {
+        JournalEntry existing = new JournalEntry();
+        existing.setReference("GRN-DUP");
+        existing.setId(99L);
+        when(journalEntryRepository.findByReference("GRN-DUP")).thenReturn(Optional.of(existing));
         GrnEntity grn = grn("GRN-DUP", 100.0);
+
         JournalEntry result = service.createJournalFromGRN(grn);
-        assertNull(result, "Duplicate posting should return null without creating a new entry");
+
+        assertNotNull(result, "Duplicate posting must return the existing entry (not null)");
+        assertEquals(99L, result.getId(), "Must be the pre-existing entry, not a new one");
+        verify(journalEntryRepository, never()).save(any());
     }
 
     // =========================================================
@@ -372,14 +379,18 @@ class PostingEngineContractTest {
 
     @Test
     void customerReceiptWithDiscountPostsThreeLines() {
-        // Bank Dr (net 980) + Discount Allowed Dr (20) / AR Cr (1000 full)
+        // Gross discount = 20 (tax-inclusive). VAT portion = 20 * 5/105 = 0.95.
+        // Net discount (ex-VAT) = 19.05. Entry:
+        //   Dr Cash 980 + Dr Discount Allowed 19.05 + Dr VAT Output 0.95 / Cr AR 1000
         ReceiptVoucher rv = receiptVoucher("RV-DISC-001", "CUST-1", 980.0, new BigDecimal("20.00"),
                 ReceiptPurpose.AGAINST_INVOICE);
         JournalEntry result = service.createJournalFromReceiptVoucher(rv);
 
         assertBalanced(result);
-        // Discount Allowed debit (20)
-        assertLineExists(result, PostingEngineService.ACC_DISCOUNT_ALLOWED, new BigDecimal("20.00"), true);
+        // Net discount debit (19.05 = 20 - 0.95 VAT)
+        assertLineExists(result, PostingEngineService.ACC_DISCOUNT_ALLOWED, new BigDecimal("19.05"), true);
+        // VAT Output debit (0.95 = reduces output tax liability)
+        assertLineExists(result, PostingEngineService.ACC_VAT_OUTPUT, new BigDecimal("0.95"), true);
         // AR credit = 980 + 20 = 1000 full
         assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_RECEIVABLE, new BigDecimal("1000.00"), false);
     }
@@ -498,8 +509,8 @@ class PostingEngineContractTest {
                 new BigDecimal("350.00"), LocalDate.now());
 
         assertBalanced(result);
-        assertLineExists(result, "5005",                              new BigDecimal("350.00"), true);
-        assertLineExists(result, PostingEngineService.ACC_INVENTORY,  new BigDecimal("350.00"), false);
+        assertLineExists(result, PostingEngineService.ACC_INVENTORY_WRITEOFF, new BigDecimal("350.00"), true);
+        assertLineExists(result, PostingEngineService.ACC_INVENTORY,          new BigDecimal("350.00"), false);
     }
 
     @Test
@@ -652,6 +663,8 @@ class PostingEngineContractTest {
         grn.setGrnNo(grnNo);
         grn.setGrnDate(LocalDate.of(2026, 6, 1));
         grn.setGrandTotal(new BigDecimal(String.valueOf(grandTotal)));
+        // createJournalFromGRN uses subtotal (ex-VAT); set it equal to grandTotal for tests with no VAT
+        grn.setSubtotal(new BigDecimal(String.valueOf(grandTotal)));
         return grn;
     }
 

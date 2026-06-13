@@ -64,6 +64,7 @@ class StockTakeServiceTest {
     @Mock private StockTakeExpectedUnitRepository expectedUnitRepo;
     @Mock private StockTakeUnitScanRepository unitScanRepo;
     @Mock private BatchMasterRepository batchMasterRepo;
+    @Mock private com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
 
     private StockTakeService service;
 
@@ -83,7 +84,7 @@ class StockTakeServiceTest {
                 expectedUnitRepo,
                 unitScanRepo,
                 batchMasterRepo,
-                null); // postingEngineService — null for unit tests (no GL posting in test scope)
+                postingEngineService);
     }
 
     @Test

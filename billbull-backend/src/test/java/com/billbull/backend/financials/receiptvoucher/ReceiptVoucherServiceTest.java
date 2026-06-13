@@ -89,7 +89,6 @@ class ReceiptVoucherServiceTest {
 
         AtomicReference<ReceiptVoucher> savedReceipt = new AtomicReference<>();
 
-        when(repository.count()).thenReturn(0L);
         when(openingInvoiceRepository.findById(9L)).thenReturn(Optional.of(openingInvoice));
         when(repository.findByOpeningInvoiceId(9L))
                 .thenAnswer(invocation -> savedReceipt.get() == null ? List.of() : List.of(savedReceipt.get()));
@@ -136,7 +135,6 @@ class ReceiptVoucherServiceTest {
 
         AtomicReference<ReceiptVoucher> savedReceipt = new AtomicReference<>();
 
-        when(repository.count()).thenReturn(0L);
         when(openingInvoiceRepository.findById(9L)).thenReturn(Optional.of(openingInvoice));
         when(repository.findByOpeningInvoiceId(9L))
                 .thenAnswer(invocation -> savedReceipt.get() == null ? List.of() : List.of(savedReceipt.get()));

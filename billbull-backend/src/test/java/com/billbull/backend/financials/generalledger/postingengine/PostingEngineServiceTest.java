@@ -128,8 +128,8 @@ class PostingEngineServiceTest {
         grn.setGrnNo("GRN-1");
         grn.setGrnDate(LocalDate.of(2026, 5, 10));
         grn.setGrandTotal(new BigDecimal("105.00"));
+        grn.setSubtotal(new BigDecimal("105.00")); // createJournalFromGRN uses subtotal, not grandTotal
 
-        when(journalEntryRepository.existsByReference("GRN-1")).thenReturn(false);
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());
         when(voucherSequenceService.nextVoucherNumber(eq("GRN"), anyString(), any()))
                 .thenReturn("GRN-HO-2026-000001");
