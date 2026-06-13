@@ -337,7 +337,7 @@ public class InventoryReportDataService {
 
         // GL reconciliation: sum all GlAccountBalance rows for account 1120 (Inventory).
         // A non-zero variance indicates an unposted adjustment or WAC drift — flag it for review.
-        java.math.BigDecimal glInventoryBalance = glBalanceRepo.findByAccountCode("1120").stream()
+        java.math.BigDecimal glInventoryBalance = glBalanceRepo.findByAccountCode("1200").stream()
                 .map(b -> b.getClosingBalance() != null ? b.getClosingBalance() : java.math.BigDecimal.ZERO)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
         java.math.BigDecimal wacTotal = sum(rows, "value");

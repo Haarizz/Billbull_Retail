@@ -165,11 +165,11 @@ class PostingEngineContractTest {
     @Test
     void inactiveAccountBlocksPosting() {
         Account inactive = new Account();
-        inactive.setCode("1101");
+        inactive.setCode("1001");
         inactive.setStatus("archived");
-        when(accountRepository.findByCode("1101")).thenReturn(inactive);
+        when(accountRepository.findByCode("1001")).thenReturn(inactive);
 
-        JournalEntry entry = entryWith(line("1101", "100.00", "0.00"), line("4101", "0.00", "100.00"));
+        JournalEntry entry = entryWith(line("1001", "100.00", "0.00"), line("4001", "0.00", "100.00"));
         PostingException ex = assertThrows(PostingException.class, () -> service.validate(entry));
         assertEquals(PostingErrorCode.ACCOUNT_INACTIVE, ex.getCode());
     }
@@ -330,7 +330,7 @@ class PostingEngineContractTest {
         // GRN Clearing Dr (1000 = GRN value)
         assertLineExists(result, PostingEngineService.ACC_GRN_CLEARING, new BigDecimal("1000.00"), true);
         // PPV Dr (50 = (1100-50) piNet - 1000 GRN, positive variance → Dr expense)
-        assertLineExists(result, "5103", new BigDecimal("50.00"), true);
+        assertLineExists(result, "5003", new BigDecimal("50.00"), true);
         // Cr AP (full PI grandTotal)
         assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_PAYABLE, new BigDecimal("1100.00"), false);
     }
@@ -498,7 +498,7 @@ class PostingEngineContractTest {
                 new BigDecimal("350.00"), LocalDate.now());
 
         assertBalanced(result);
-        assertLineExists(result, "5104",                              new BigDecimal("350.00"), true);
+        assertLineExists(result, "5005",                              new BigDecimal("350.00"), true);
         assertLineExists(result, PostingEngineService.ACC_INVENTORY,  new BigDecimal("350.00"), false);
     }
 

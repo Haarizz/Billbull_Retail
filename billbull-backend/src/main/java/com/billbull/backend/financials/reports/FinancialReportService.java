@@ -432,12 +432,12 @@ public class FinancialReportService {
 
         // Cash flow tie-back (PDF §15 / Phase 7.3):
         // Closing cash on the statement should equal Cash (1101) + Bank (1102) on the Balance Sheet.
-        BigDecimal bsCash = safe(ledgerEntryRepository.netBalanceByAccountCode("1101"))
-                .add(safe(ledgerEntryRepository.netBalanceByAccountCode("1102")));
-        // Opening cash = cumulative Cash (1101) + Bank (1102) GL balance before the period start date.
+        BigDecimal bsCash = safe(ledgerEntryRepository.netBalanceByAccountCode("1001"))
+                .add(safe(ledgerEntryRepository.netBalanceByAccountCode("1010")));
+        // Opening cash = cumulative Cash (1001) + Bank (1010) GL balance before the period start date.
         final LocalDate periodStart = startDate;
-        BigDecimal openingCash = safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1101", periodStart))
-                .add(safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1102", periodStart)));
+        BigDecimal openingCash = safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1001", periodStart))
+                .add(safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1010", periodStart)));
         BigDecimal closingCF  = openingCash.add(netCashFlow);
         dto.setOpeningCash(openingCash);
         dto.setClosingCashFromBalanceSheet(bsCash);
@@ -898,10 +898,10 @@ public class FinancialReportService {
 
         for (LedgerEntry e : entries) {
             String code = e.getAccountCode();
-            if ("2102".equals(code)) {
+            if ("2100".equals(code)) {
                 outputTax = outputTax.add(safe(e.getCreditAmount()));
                 outputAdj = outputAdj.add(safe(e.getDebitAmount()));
-            } else if ("1130".equals(code)) {
+            } else if ("1310".equals(code)) {
                 inputTax = inputTax.add(safe(e.getDebitAmount()));
                 inputAdj = inputAdj.add(safe(e.getCreditAmount()));
             }

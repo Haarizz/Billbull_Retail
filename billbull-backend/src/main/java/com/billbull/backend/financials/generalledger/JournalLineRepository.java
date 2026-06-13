@@ -14,12 +14,12 @@ public interface JournalLineRepository extends JpaRepository<JournalLine, Long> 
 
     /**
      * Used by bank reconciliation auto-match: find unreconciled bank account lines
-     * (account 1102) with a matching amount and date within a given range.
+     * (account 1010 Bank Main, 1011 Bank Collection) with a matching amount and date within a given range.
      */
     @Query("""
         SELECT jl FROM JournalLine jl
         JOIN jl.journalEntry je
-        WHERE (jl.accountCode = '1102' OR jl.accountCode = '1101')
+        WHERE (jl.accountCode = '1010' OR jl.accountCode = '1011')
           AND (jl.debit = :amount OR jl.credit = :amount)
           AND je.date BETWEEN :fromDate AND :toDate
           AND (jl.reconciled IS NULL OR jl.reconciled = false)
