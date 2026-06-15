@@ -29,14 +29,14 @@ public class PurchaseInvoiceController {
     }
 
     @GetMapping("/draft/from-grn/{grnId}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> draftFromGrn(
             @PathVariable Long grnId) {
         return ResponseEntity.ok(service.createDraftFromGrn(grnId));
     }
 
     @GetMapping("/draft/from-lpo/{lpoId}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> draftFromLpo(
             @PathVariable Long lpoId) {
         return ResponseEntity.ok(service.createDraftFromLpo(lpoId));
@@ -60,13 +60,13 @@ public class PurchaseInvoiceController {
     }
 
     @GetMapping("/posted-for-payment")
-    // @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')") // Temporarily disabled for testing
+    // @PreAuthorize("isAuthenticated()") // Temporarily disabled for testing
     public ResponseEntity<List<PurchaseInvoiceResponse>> getPostedInvoicesForPayment() {
         return ResponseEntity.ok(service.getPostedInvoicesForPayment());
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> update(
             @PathVariable Long id,
             @RequestBody PurchaseInvoiceRequest request) {
@@ -75,7 +75,7 @@ public class PurchaseInvoiceController {
     }
 
     @PostMapping("/{id}/submit")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> submit(@PathVariable Long id) {
         String username = SecurityContextHolder
                 .getContext()
@@ -99,7 +99,7 @@ public class PurchaseInvoiceController {
     }
 
     @PostMapping("/{id}/payment")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> recordPayment(
             @PathVariable Long id,
             @RequestParam BigDecimal amount,

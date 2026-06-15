@@ -255,7 +255,7 @@ public class UserService {
         User user = findUserById(userId);
 
         boolean hadAdminRole = user.getRoles().stream()
-                .anyMatch(r -> r.getName().equals("ADMIN"));
+                .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
 
         Set<Role> newRoles = new HashSet<>();
         for (Long roleId : roleIds) {
@@ -265,9 +265,9 @@ public class UserService {
         }
 
         boolean hasAdminRoleInNew = newRoles.stream()
-                .anyMatch(r -> r.getName().equals("ADMIN"));
+                .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
 
-        // If removing ADMIN role, validate not last admin
+        // If removing all admin roles, validate not last admin
         if (hadAdminRole && !hasAdminRoleInNew) {
             adminSafeguardService.validateRemoveAdminRole(user);
         }

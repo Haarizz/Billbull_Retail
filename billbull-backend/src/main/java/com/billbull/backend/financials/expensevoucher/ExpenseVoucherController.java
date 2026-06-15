@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/expense-vouchers")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class ExpenseVoucherController {
 
     private static final String MODULE = "finance";

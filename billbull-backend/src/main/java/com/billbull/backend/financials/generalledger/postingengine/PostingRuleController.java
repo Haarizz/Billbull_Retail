@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/financials/posting-rules")
-@PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class PostingRuleController {
 
     private static final String MODULE = "finance";

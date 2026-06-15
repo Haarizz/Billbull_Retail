@@ -250,7 +250,7 @@ class BillBullDashboardService {
   // Health check is intentionally non-blocking — returns connected immediately
   // and verifies auth silently in the background.
   async healthCheck(): Promise<ServiceResponse<any>> {
-    api.get("/api/auth/me").catch(() => {});
+    api.get("/api/auth/profile").catch(() => {});
     return { success: true, status: "ok", data: { server: "BillBull API", timestamp: new Date().toISOString() } };
   }
 

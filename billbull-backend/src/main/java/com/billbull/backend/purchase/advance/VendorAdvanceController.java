@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/purchase/vendor-advances")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT', 'MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class VendorAdvanceController {
 
     private static final String MODULE = "purchases";

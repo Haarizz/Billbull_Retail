@@ -18,7 +18,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales/sales-orders")
-@PreAuthorize("hasAnyRole('ADMIN','SALES')")
+@PreAuthorize("isAuthenticated()")
 public class SalesOrderController {
 
     private static final String MODULE = "sales";

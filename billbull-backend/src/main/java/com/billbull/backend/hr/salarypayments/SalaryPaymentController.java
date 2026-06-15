@@ -27,7 +27,7 @@ public class SalaryPaymentController {
 
     // 1. Get List for Table - ACCOUNTANT can view for reconciliation
     @GetMapping("/list")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR', 'ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<SalaryPayment>> getPayrollList(
             @RequestParam(defaultValue = "10") int month,
             @RequestParam(defaultValue = "2025") int year,
@@ -39,7 +39,7 @@ public class SalaryPaymentController {
 
     // 2. Get Dashboard Stats - ACCOUNTANT can view for reconciliation
     @GetMapping("/stats")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR', 'ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PayrollStatsDTO> getPayrollStats(
             @RequestParam(defaultValue = "10") int month,
             @RequestParam(defaultValue = "2025") int year,
@@ -51,7 +51,7 @@ public class SalaryPaymentController {
 
     // 3. Get Recent Transactions (History) - ADMIN/HR only
     @GetMapping("/transactions")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<SalaryPayment>> getTransactionHistory(HttpServletRequest request) {
         modulePermissionService.requireCanView(MODULE);
         auditLogService.logAllowedAccess("/api/payroll/transactions", "GET", request);
@@ -60,7 +60,7 @@ public class SalaryPaymentController {
 
     // 4. Create New Payment Record (Manual Add) - ADMIN/HR only
     @PostMapping("/create-record")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalaryPayment> createPaymentRecord(@RequestBody SalaryPaymentRequest request,
             HttpServletRequest httpRequest) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -70,7 +70,7 @@ public class SalaryPaymentController {
 
     // 5. Process Single Payment - ADMIN/HR only
     @PostMapping("/pay")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalaryPayment> processPayment(@RequestBody ProcessPaymentRequest request,
             HttpServletRequest httpRequest) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -80,7 +80,7 @@ public class SalaryPaymentController {
 
     // 6. Process Bulk Payment - ADMIN/HR only
     @PostMapping("/pay/bulk")
-    @PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> processBulkPayment(@RequestBody BulkPaymentRequest request,
             HttpServletRequest httpRequest) {
         modulePermissionService.requireCanCreate(MODULE);

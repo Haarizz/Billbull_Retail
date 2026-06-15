@@ -9,7 +9,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/locators/{locatorId}/bins")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class BinController {
 
     private static final String MODULE = "inventory";
@@ -23,14 +23,14 @@ public class BinController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<BinResponse>> getBins(@PathVariable Long locatorId) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(binService.getBinResponsesByLocator(locatorId));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BinResponse> getBin(@PathVariable Long locatorId, @PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(binService.getBinResponseById(id));

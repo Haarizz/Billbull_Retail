@@ -9,7 +9,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/zones/{zoneId}/locators")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class LocatorController {
 
     private static final String MODULE = "inventory";
@@ -23,14 +23,14 @@ public class LocatorController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<LocatorResponse>> getLocators(@PathVariable Long zoneId) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(locatorService.getLocatorResponsesByZone(zoneId));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<LocatorResponse> getLocator(@PathVariable Long zoneId, @PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(locatorService.getLocatorResponseById(id));

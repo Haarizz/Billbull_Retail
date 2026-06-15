@@ -11,7 +11,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/messaging")
-@PreAuthorize("hasAnyRole('ADMIN', 'SALES', 'SALES')")
+@PreAuthorize("isAuthenticated()")
 public class MessagingController {
 
     private static final String MODULE = "customer";

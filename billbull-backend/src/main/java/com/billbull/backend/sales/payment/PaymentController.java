@@ -32,14 +32,14 @@ public class PaymentController {
     // GET ALL
     // ==========================================
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<Payment> getAllPayments() {
         modulePermissionService.requireCanView(MODULE);
         return paymentService.getAllPayments();
     }
 
     @GetMapping("/page")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public com.billbull.backend.util.PageResponse<Payment> getPaymentsPage(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
@@ -59,7 +59,7 @@ public class PaymentController {
     // GET BY ID
     // ==========================================
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public Payment getPaymentById(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return paymentService.getPaymentById(id);
@@ -91,7 +91,7 @@ public class PaymentController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public Payment savePayment(@RequestBody Payment payment) {
         modulePermissionService.requireCanCreate(MODULE);
         String mode = payment.getPaymentMode();
@@ -104,7 +104,7 @@ public class PaymentController {
     }
 
     @PutMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public Payment updateStatus(@PathVariable Long id, @RequestParam PaymentStatus status) {
         modulePermissionService.requireCanEdit(MODULE);
         return paymentService.updateStatus(id, status);

@@ -36,7 +36,7 @@ public class PurchaseReportController {
             @RequestParam(required = false) String vendor,
             @RequestParam(required = false) String branch,
             @RequestParam(required = false) String search) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(reportId, dateFrom, dateTo, vendor, branch, search));
     }
 }

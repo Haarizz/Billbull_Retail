@@ -15,7 +15,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/vouchers")
-@PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class PaymentVoucherController {
 
     private static final String MODULE = "purchases";

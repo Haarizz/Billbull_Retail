@@ -34,14 +34,14 @@ public class DepartmentController {
     // ================= DEPARTMENTS =================
 
     @GetMapping("/departments")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<DepartmentResponse> getDepartments() {
         modulePermissionService.requireCanView(MODULE);
         return service.getAll();
     }
 
     @GetMapping("/departments/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportDepartmentsToExcel() {
         modulePermissionService.requireCanExport(MODULE);
         List<DepartmentResponse> departments = service.getAll();
@@ -58,7 +58,7 @@ public class DepartmentController {
     }
 
     @PostMapping("/departments")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DepartmentResponse createDepartment(
             @RequestBody DepartmentRequest request) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -66,7 +66,7 @@ public class DepartmentController {
     }
 
     @PutMapping("/departments/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DepartmentResponse updateDepartment(
             @PathVariable Long id,
             @RequestBody DepartmentRequest request) {

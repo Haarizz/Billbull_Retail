@@ -28,7 +28,7 @@ public class CustomerInquiryController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public List<CustomerInquiryResponse> list(HttpServletRequest request) {
         modulePermissionService.requireCanView(MODULE);
         auditLogService.logAllowedAccess("/api/inquiries", "GET", request);
@@ -36,7 +36,7 @@ public class CustomerInquiryController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CustomerInquiryResponse> create(
             @Valid @RequestBody CustomerInquiryRequestDto req,
             HttpServletRequest request) {
@@ -46,7 +46,7 @@ public class CustomerInquiryController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CustomerInquiryResponse> get(@PathVariable Long id, HttpServletRequest request) {
         modulePermissionService.requireCanView(MODULE);
         auditLogService.logAllowedAccess("/api/inquiries/" + id, "GET", request);
@@ -54,7 +54,7 @@ public class CustomerInquiryController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id, HttpServletRequest request) {
         modulePermissionService.requireCanEdit(MODULE);
         auditLogService.logAllowedAccess("/api/inquiries/" + id, "DELETE", request);
@@ -63,7 +63,7 @@ public class CustomerInquiryController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CustomerInquiryResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody CustomerInquiryRequestDto req,
@@ -74,7 +74,7 @@ public class CustomerInquiryController {
     }
 
     @PostMapping("/{id}/follow-up")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> addFollowUp(
             @PathVariable Long id,
             @RequestBody FollowUpRequestDto req,
@@ -86,7 +86,7 @@ public class CustomerInquiryController {
     }
 
     @PutMapping("/{id}/reassign")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CustomerInquiryResponse> reassignRep(
             @PathVariable Long id,
             @RequestParam String assignedTo,
@@ -97,7 +97,7 @@ public class CustomerInquiryController {
     }
 
     @PutMapping("/follow-up/{followUpId}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> updateFollowUp(
             @PathVariable Long followUpId,
             @RequestBody FollowUpRequestDto req,

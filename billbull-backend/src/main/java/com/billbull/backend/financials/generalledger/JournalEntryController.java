@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/generalledger/journal-entries")
-@PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class JournalEntryController {
 
     private static final String MODULE = "finance";

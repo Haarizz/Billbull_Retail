@@ -29,28 +29,28 @@ public class BarcodeTemplateController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<BarcodeTemplate>> list() {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAll());
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BarcodeTemplate> create(@RequestBody BarcodeTemplate template) {
         modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(template));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BarcodeTemplate> update(@PathVariable Long id, @RequestBody BarcodeTemplate template) {
         modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, template));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);

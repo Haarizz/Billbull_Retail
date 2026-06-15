@@ -20,7 +20,7 @@ public class StockAvailabilityController {
     }
 
     @GetMapping("/by-code/{itemCode}")
-    @PreAuthorize("hasAnyRole('SALES','INVENTORY','ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<StockAvailabilityResponse> getStockAvailability(
             @PathVariable String itemCode,
             @RequestParam(required = false) Long warehouseId,

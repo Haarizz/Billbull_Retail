@@ -33,14 +33,14 @@ public class SubDepartmentController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<SubDepartmentResponse> list() {
         modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
     @GetMapping("/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportSubDepartmentsToExcel() {
         modulePermissionService.requireCanExport(MODULE);
         List<SubDepartmentResponse> subDepartments = service.list();
@@ -57,7 +57,7 @@ public class SubDepartmentController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SubDepartmentResponse> create(
             @Valid @RequestBody SubDepartmentRequest req) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -65,7 +65,7 @@ public class SubDepartmentController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SubDepartmentResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody SubDepartmentRequest req) {
@@ -74,7 +74,7 @@ public class SubDepartmentController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/sales/advance-applications")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT', 'MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class AdvanceApplicationController {
 
     private static final String MODULE = "sales";

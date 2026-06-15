@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/financials/currencies")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class CurrencyController {
 
     private static final String MODULE = "finance";

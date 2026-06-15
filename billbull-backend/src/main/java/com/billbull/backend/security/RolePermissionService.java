@@ -141,7 +141,8 @@ public class RolePermissionService {
         }
 
         boolean hasAdminRole = authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority())
+                        || "ROLE_BRANCH_ADMIN".equals(authority.getAuthority()));
         if (hasAdminRole) {
             return true;
         }

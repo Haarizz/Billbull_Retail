@@ -12,7 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/expenses")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class ExpenseController {
 
     private static final String MODULE = "finance";

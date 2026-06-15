@@ -12,7 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/vendors")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class VendorController {
 
     private static final String MODULE = "purchases";

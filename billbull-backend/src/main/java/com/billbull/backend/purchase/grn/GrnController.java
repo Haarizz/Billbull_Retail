@@ -12,7 +12,7 @@ import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/grns")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class GrnController {
 
     private static final String MODULE = "purchases";
@@ -51,14 +51,14 @@ public class GrnController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public GrnDetailResponse create(@RequestBody @Valid GrnSaveRequest req) {
         modulePermissionService.requireCanCreate(MODULE);
         return service.saveOrUpdate(null, req);
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public GrnDetailResponse update(
             @PathVariable Long id,
             @RequestBody @Valid GrnSaveRequest req) {
@@ -76,14 +76,14 @@ public class GrnController {
     /* QC FLOW */
 
     @PostMapping("/{id}/submit-qc")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public void submitQc(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.submitQc(id);
     }
 
     @PostMapping("/{id}/approve-qc")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public void approveQc(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.approveQc(id);
@@ -92,7 +92,7 @@ public class GrnController {
     /* STOCK POST — ONLY HERE */
 
     @PostMapping("/{id}/post")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public void post(@PathVariable Long id, @RequestBody(required = false) GrnPostRequest req) {
         modulePermissionService.requireCanEdit(MODULE);
         service.postGrn(id, req);

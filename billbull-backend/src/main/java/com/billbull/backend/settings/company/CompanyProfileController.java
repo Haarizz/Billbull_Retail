@@ -2,6 +2,7 @@ package com.billbull.backend.settings.company;
 
 import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -23,12 +24,12 @@ public class CompanyProfileController {
 
     /**
      * GET /api/settings/company-profile
-     * Returns the client's company profile. Always succeeds — returns
-     * an empty default if no row exists yet.
+     * Returns the client's company profile. Open to all authenticated users —
+     * needed by every module that renders the company logo/name.
      */
     @GetMapping
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CompanyProfile> getProfile() {
-        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getProfile());
     }
 

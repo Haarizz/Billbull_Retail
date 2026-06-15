@@ -147,7 +147,7 @@ public class SalesInvoiceController {
     }
 
     @PutMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> updateStatus(
             @PathVariable Long id,
             @RequestParam SalesInvoiceStatus status) {
@@ -156,7 +156,7 @@ public class SalesInvoiceController {
     }
 
     @PostMapping("/{id}/payment")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice recordPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Double> payload) {
@@ -165,7 +165,7 @@ public class SalesInvoiceController {
     }
 
     @PostMapping("/{id}/payment-detailed")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice recordDetailedPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
@@ -197,7 +197,7 @@ public class SalesInvoiceController {
     }
 
     @GetMapping("/price-history/{itemCode}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<PriceHistoryDTO> getPriceHistory(
             @PathVariable String itemCode,
             @RequestParam(required = false) String customerCode) {

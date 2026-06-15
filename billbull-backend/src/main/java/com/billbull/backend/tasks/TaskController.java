@@ -25,7 +25,6 @@ public class TaskController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public List<TaskResponse> getMyTasks() {
-        modulePermissionService.requireCanView(MODULE);
         return service.getMyTasks();
     }
 
