@@ -56,6 +56,8 @@ public class Payment {
     private String createdBy;
     private LocalDate createdDate;
 
+    private String splitGroupId; // shared UUID for all entries in the same split payment
+
     /* ===== GETTERS & SETTERS ===== */
 
     public Long getId() {
@@ -211,5 +213,13 @@ public class Payment {
 
     public void setCreatedDate(LocalDate createdDate) {
         this.createdDate = createdDate;
+    }
+
+    public String getSplitGroupId() {
+        return splitGroupId;
+    }
+
+    public void setSplitGroupId(String splitGroupId) {
+        this.splitGroupId = splitGroupId;
     }
 }

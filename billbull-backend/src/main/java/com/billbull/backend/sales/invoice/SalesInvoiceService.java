@@ -17,6 +17,7 @@ import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.sales.settings.SalesMode;
 import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -135,6 +136,41 @@ public class SalesInvoiceService {
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
         this.notifPublisher = notifPublisher;
+    }
+
+    // ----------------------------
+    // STARTUP MIGRATION
+    // ----------------------------
+    @PostConstruct
+    @Transactional
+    public void fixSplitPaymentModesOnStartup() {
+        java.util.List<com.billbull.backend.sales.payment.Payment> splitPayments =
+                paymentService.getAllWithSplitGroupId();
+        java.util.Map<String, java.util.List<com.billbull.backend.sales.payment.Payment>> byGroup =
+                splitPayments.stream()
+                        .collect(java.util.stream.Collectors.groupingBy(
+                                com.billbull.backend.sales.payment.Payment::getSplitGroupId));
+        for (java.util.Map.Entry<String, java.util.List<com.billbull.backend.sales.payment.Payment>> entry : byGroup.entrySet()) {
+            java.util.List<com.billbull.backend.sales.payment.Payment> group = entry.getValue();
+            java.util.List<String> modes = group.stream()
+                    .map(com.billbull.backend.sales.payment.Payment::getPaymentMode)
+                    .filter(m -> m != null && !m.isBlank() && !m.equalsIgnoreCase("Credit"))
+                    .distinct()
+                    .collect(java.util.stream.Collectors.toList());
+            if (modes.size() <= 1) continue;
+            String combinedMode = String.join(" + ", modes);
+            String linkedInvoice = group.stream()
+                    .map(com.billbull.backend.sales.payment.Payment::getLinkedInvoice)
+                    .filter(s -> s != null && !s.isBlank())
+                    .findFirst().orElse(null);
+            if (linkedInvoice == null) continue;
+            invoiceRepo.findByInvoiceNumber(linkedInvoice).ifPresent(invoice -> {
+                if (!combinedMode.equals(invoice.getPaymentMode())) {
+                    invoice.setPaymentMode(combinedMode);
+                    invoiceRepo.save(invoice);
+                }
+            });
+        }
     }
 
     // ----------------------------
@@ -921,13 +957,26 @@ public class SalesInvoiceService {
     @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, String combinedPaymentMode) {
         SalesInvoice invoice = getById(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
 
         // syncLinkedInvoice (called inside ReceiptVoucherService.createReceipt) already
         // updated amountPaid/balance/status from the full ReceiptVoucher sum — which
@@ -937,7 +986,12 @@ public class SalesInvoiceService {
         // We only need to stamp paymentMode if provided.
         if (paymentMode != null && !paymentMode.isBlank()) {
             SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
-            toUpdate.setPaymentMode(paymentMode);
+            // Use the combined mode string sent by the frontend for split payments (e.g. "Cash + Card").
+            // This avoids any mid-transaction DB query timing issues.
+            String stampMode = (combinedPaymentMode != null && !combinedPaymentMode.isBlank())
+                    ? combinedPaymentMode
+                    : paymentMode;
+            toUpdate.setPaymentMode(stampMode);
             invoiceRepo.save(toUpdate);
         }
 
@@ -946,6 +1000,11 @@ public class SalesInvoiceService {
 
     private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
+    }
+
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
         Payment p = new Payment();
         p.setPaymentType(PaymentType.RECEIVED);
         p.setCustomerCode(invoice.getCustomerCode());
@@ -959,14 +1018,15 @@ public class SalesInvoiceService {
         p.setBankName(bankAccount);
         p.setChequeDate(chequeDate);
         p.setPaymentDate(paymentDate != null ? paymentDate : LocalDate.now());
-        
+        p.setSplitGroupId(splitGroupId);
+
         // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
         if (paymentAmount >= (invoice.getBalance() != null ? invoice.getBalance() : invoice.getInvoiceTotal())) {
             p.setStatus(PaymentStatus.COMPLETED);
         } else {
             p.setStatus(PaymentStatus.PARTIAL);
         }
-        
+
         // Numbering is handled either by frontend passing it, or backend if left null
         // Currently PaymentController expects the client to pass the paymentNumber if manual,
         // or uses NumberingService if null. We will let PaymentService generate the number if null.

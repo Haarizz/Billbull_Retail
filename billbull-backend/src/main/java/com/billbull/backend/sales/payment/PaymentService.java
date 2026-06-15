@@ -102,6 +102,17 @@ public class PaymentService {
         return payments;
     }
 
+    public List<Payment> getPaymentsBySplitGroupId(String splitGroupId) {
+        if (splitGroupId == null || splitGroupId.isBlank()) return java.util.Collections.emptyList();
+        List<Payment> payments = new ArrayList<>(paymentRepository.findBySplitGroupId(splitGroupId));
+        payments.sort(java.util.Comparator.comparing(Payment::getId));
+        return payments;
+    }
+
+    public List<Payment> getAllWithSplitGroupId() {
+        return paymentRepository.findBySplitGroupIdIsNotNull();
+    }
+
     public List<Payment> getPaymentsByInvoice(String invoiceNumber) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByLinkedInvoice(invoiceNumber));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(

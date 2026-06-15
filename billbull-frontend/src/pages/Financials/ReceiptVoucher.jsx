@@ -39,6 +39,7 @@ import {
 
 import { employeesApi } from '../../api/employeesApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { getSalesInvoiceById } from '../../api/salesInvoiceApi';
 import { receiptVoucherApi, sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -692,6 +693,12 @@ const ReceiptVoucher = () => {
                 }
             }
 
+            // Fetch linked sales invoice details for the invoice table row
+            let linkedInvoice = null;
+            if (receipt.salesInvoiceId) {
+                try { linkedInvoice = await getSalesInvoiceById(receipt.salesInvoiceId); } catch { /* ignore */ }
+            }
+
             const rvData = {
                 voucherNumber: receipt.id || receipt.voucherId,
                 date: receipt.date ? formatDisplayDate(receipt.date) : '',
@@ -706,12 +713,17 @@ const ReceiptVoucher = () => {
                 amountInWords: '',
                 preparedBy: receipt.preparedBy || currentUserDisplay,
                 currency,
-                invoices: receipt.source ? [{
+                invoices: linkedInvoice ? [{
+                    ref: linkedInvoice.invoiceNumber || '',
+                    date: linkedInvoice.invoiceDate ? formatDisplayDate(linkedInvoice.invoiceDate) : (receipt.date ? formatDisplayDate(receipt.date) : ''),
+                    total: linkedInvoice.invoiceTotal || rawAmt,
+                    paid: rawAmt,
+                }] : (receipt.source ? [{
                     ref: receipt.source,
                     date: receipt.date ? formatDisplayDate(receipt.date) : '',
                     total: rawAmt,
                     paid: rawAmt,
-                }] : [],
+                }] : []),
             };
 
             // Render the same React component used in the designer preview

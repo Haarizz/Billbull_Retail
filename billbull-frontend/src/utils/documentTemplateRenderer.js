@@ -4931,7 +4931,7 @@ const defaultPaymentReceiptSettings = () => ({
     showReceiptNumber: true, showReceiptDate: true, showCurrencyField: true, showReceiptSession: true,
     showInvoiceCount: true, showAccountCurrency: true, showBankAccount: true,
     showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
-    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true,
+    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true, showPayMode: true,
     showTotalOutstanding: true, showDiscountAllowed: true, showRemainingBalance: true, showTotalReceivedBold: true,
     showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: true,
     showAmountInWords: true, showPaymentDetails: true,
@@ -5004,6 +5004,7 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
             ${s.showOutstanding ? `<td style="${tdRight}">${currHtml} ${fmt(inv.outstanding)}</td>` : ''}
             ${s.showReceivedNow ? `<td style="${tdRight}font-weight:700;color:#1a1a2e;">${currHtmlGold} ${fmt(inv.received)}</td>` : ''}
             ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
+            ${s.showPayMode ? `<td style="padding:5px 8px;text-align:center;white-space:nowrap;">${inv.mode ? `<span style="font-size:${f - 1}px;font-weight:600;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:1px 7px;">${esc(inv.mode)}</span>` : '—'}</td>` : ''}
         </tr>`;
     }).join('');
 
@@ -5100,6 +5101,7 @@ table { width: 100%; border-collapse: collapse; }
           ${s.showOutstanding ? `<th style="${thStyle}text-align:right;">Outstanding</th>` : ''}
           ${s.showReceivedNow ? `<th style="${thStyle}text-align:right;color:#92400e;">Received now</th>` : ''}
           ${s.showBalanceAfter ? `<th style="${thStyle}text-align:right;">Balance after</th>` : ''}
+          ${s.showPayMode ? `<th style="${thStyle}text-align:center;">Pay mode</th>` : ''}
         </tr>
       </thead>
       <tbody>${invoiceRows}</tbody>
@@ -5117,6 +5119,7 @@ table { width: 100%; border-collapse: collapse; }
           ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Total outstanding</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalOutstanding)}</span></td></tr>` : ''}
           ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Discount allowed</td><td style="padding:3px 0;text-align:right;color:#e11d48;white-space:nowrap;min-width:100px;">${currHtmlInherit} <span style="display:inline-block;min-width:70px;text-align:right;">—${fmt(sum.discount || 0)}</span></td></tr>` : ''}
           ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Remaining balance</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.remaining)}</span></td></tr>` : ''}
+          ${pay.isSplit && Array.isArray(pay.entries) && pay.entries.length > 0 ? pay.entries.map(e => `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">${esc(e.method)}</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(e.amount)}</span></td></tr>`).join('') : ''}
           ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;white-space:nowrap;">Total received now</td><td style="padding:6px 0;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalReceived)}</span></td></tr>` : ''}
         </tbody>
       </table>
@@ -5133,10 +5136,13 @@ table { width: 100%; border-collapse: collapse; }
     <!-- PAYMENT DETAILS -->
     ${s.showPaymentMethod && pay.method ? `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
+      ${pay.isSplit && Array.isArray(pay.entries) && pay.entries.length > 0 ? `
+      <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;flex-shrink:0;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
+      <div></div>` : `
       <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
       ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : '<div></div>'}
       ${s.showDepositedTo && pay.depositedTo ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Deposited to</span><span style="font-weight:600;">${esc(pay.depositedTo)}</span></div>` : ''}
-      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
+      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}`}
     </div>` : ''}
 
     <!-- NOTE -->

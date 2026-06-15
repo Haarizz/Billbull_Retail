@@ -24,10 +24,10 @@ const MOCK = {
   session: { ref: "CRS-2025-000188", invoiceCount: "4 invoices \xB7 1 partially settled" },
   account: { currency: "AED \u2013 Receivables Control", bank: "ENBD Bank \xB7 Main account" },
   invoices: [
-    { ref: "SI-2025-005980", soRef: "SO-2025-003641", date: "22 Apr 2025", total: 31200, outstanding: 31200, received: 31200, balance: 0, status: "Fully paid" },
-    { ref: "SI-2025-006011", soRef: "SO-2025-003680", date: "28 Apr 2025", total: 14750, outstanding: 14750, received: 14750, balance: 0, status: "Fully paid" },
-    { ref: "SI-2025-006088", soRef: "SO-2025-003710", date: "05 May 2025", total: 8900, outstanding: 8900, received: 8900, balance: 0, status: "Fully paid" },
-    { ref: "SI-2025-006190", soRef: "SO-2025-003798", date: "14 May 2025", total: 22500, outstanding: 22500, received: 5150, balance: 17350, status: "Partial" }
+    { ref: "SI-2025-005980", soRef: "SO-2025-003641", date: "22 Apr 2025", total: 31200, outstanding: 31200, received: 31200, balance: 0, status: "Fully paid", mode: "Cheque" },
+    { ref: "SI-2025-006011", soRef: "SO-2025-003680", date: "28 Apr 2025", total: 14750, outstanding: 14750, received: 14750, balance: 0, status: "Fully paid", mode: "Cheque" },
+    { ref: "SI-2025-006088", soRef: "SO-2025-003710", date: "05 May 2025", total: 8900, outstanding: 8900, received: 8900, balance: 0, status: "Fully paid", mode: "Cheque" },
+    { ref: "SI-2025-006190", soRef: "SO-2025-003798", date: "14 May 2025", total: 22500, outstanding: 22500, received: 5150, balance: 17350, status: "Partial", mode: "Cheque" }
   ],
   summary: { totalOutstanding: 77350, discount: 0, remaining: 17350, totalReceived: 6e4 },
   payment: { method: "Cheque", depositedTo: "FAB \u2014 A/C XXXX-2291", chequeRef: "CHQ-CU-00019284", chequeDate: "22 May 2025", clearing: "3 days" },
@@ -77,6 +77,7 @@ function defaultSettings() {
     showBalanceAfter: true,
     showInvoiceStatus: true,
     showLinkedSO: true,
+    showPayMode: true,
     showTotalOutstanding: true,
     showDiscountAllowed: true,
     showRemainingBalance: true,
@@ -213,6 +214,7 @@ function ReceiptPreview({ s }) {
             {s.showOutstanding && <th style={{ ...thStyle, textAlign: "right" }}>Outstanding</th>}
             {s.showReceivedNow && <th style={{ ...thStyle, textAlign: "right", color: "#92400e" }}>Received now</th>}
             {s.showBalanceAfter && <th style={{ ...thStyle, textAlign: "right" }}>Balance after</th>}
+            {s.showPayMode && <th style={{ ...thStyle, textAlign: "center" }}>Pay mode</th>}
           </tr>
         </thead>
         <tbody>
@@ -240,6 +242,9 @@ function ReceiptPreview({ s }) {
               {s.showReceivedNow && <td style={{ ...tdStyle(true), fontWeight: 700, color: "#1a1a2e" }}><CurrSym /> {fmt(inv.received)}</td>}
               {s.showBalanceAfter && <td style={tdStyle(true)}>
                   {inv.balance > 0 ? <span style={{ fontWeight: 600 }}><CurrSym /> {fmt(inv.balance)}</span> : <span style={{ color: "#94a3b8" }}><CurrSym /> 0.00</span>}
+                </td>}
+              {s.showPayMode && <td style={{ ...tdStyle(true), textAlign: "center" }}>
+                  <span style={{ fontSize: `${f - 1}px`, fontWeight: 600, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "1px 7px", whiteSpace: "nowrap" }}>{inv.mode || '—'}</span>
                 </td>}
             </tr>)}
         </tbody>
@@ -579,6 +584,7 @@ function PaymentReceiptDesigner({ templateName, initialSettings, onClose, onSave
               <Row label="Balance After"><Toggle value={s.showBalanceAfter} onChange={(v) => upd("showBalanceAfter", v)} /></Row>
               <Row label="Status Badge"><Toggle value={s.showInvoiceStatus} onChange={(v) => upd("showInvoiceStatus", v)} /></Row>
               <Row label="Linked SO"><Toggle value={s.showLinkedSO} onChange={(v) => upd("showLinkedSO", v)} /></Row>
+              <Row label="Pay Mode"><Toggle value={s.showPayMode} onChange={(v) => upd("showPayMode", v)} /></Row>
 
               <SLabel label="Summary Block" />
               <Row label="Total Outstanding"><Toggle value={s.showTotalOutstanding} onChange={(v) => upd("showTotalOutstanding", v)} /></Row>
