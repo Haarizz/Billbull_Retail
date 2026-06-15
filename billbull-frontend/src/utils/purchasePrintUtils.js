@@ -1522,22 +1522,46 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
 
 export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, linkedInvoice) => {
     const amount = toNumber(voucher?.amount);
+    const allocated = toNumber(voucher?.allocated ?? amount);
+    const unallocated = toNumber(voucher?.unallocated ?? 0);
+    const discount = toNumber(voucher?.discountAmount ?? 0);
     const totals = buildTotals(
-        {
-            subTotal: amount,
-            tax: 0,
-            grandTotal: amount,
-        },
+        { subTotal: amount, tax: 0, grandTotal: amount },
         companyProfile,
         vendor
     );
 
-    const invoiceReference =
+    const invoiceRef =
         firstValue(
             linkedInvoice?.invoiceNumber,
-            linkedInvoice?.id,
+            linkedInvoice?.id ? String(linkedInvoice.id) : null,
             voucher?.invoiceId ? `Invoice #${voucher.invoiceId}` : ""
         );
+
+    const fmtMode = (v) => v ? v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : v;
+
+    // Build a single-invoice row from the linked purchase invoice (if any)
+    const invoiceTotal = toNumber(linkedInvoice?.grandTotal ?? linkedInvoice?.totalAmount ?? 0);
+    const invoiceOutstanding = toNumber(
+        linkedInvoice?.balanceDue ?? linkedInvoice?.outstandingAmount ?? invoiceTotal
+    );
+    const invoiceBalance = Math.max(0, invoiceOutstanding - allocated);
+    const invoiceStatus = invoiceBalance <= 0 ? "Fully paid" : "Partial";
+    const invoiceDate = firstValue(linkedInvoice?.invoiceDate, linkedInvoice?.date, "");
+    const lpoRef = voucher?.lpoId ? String(voucher.lpoId) : (linkedInvoice?.lpoNumber || "");
+
+    const invoiceRow = invoiceRef ? {
+        ref: invoiceRef,
+        lpoRef,
+        date: invoiceDate,
+        total: invoiceTotal || amount,
+        outstanding: invoiceOutstanding || amount,
+        paid: allocated,
+        balance: invoiceBalance,
+        status: invoiceStatus,
+    } : null;
+
+    const invoices = invoiceRow ? [invoiceRow] : [];
 
     return {
         title: "PAYMENT VOUCHER",
@@ -1551,20 +1575,44 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
             { label: "Status", value: voucher?.status },
         ].filter((item) => trimValue(item.value)),
         references: [
-            { label: "LPO Reference", value: voucher?.lpoId ? String(voucher.lpoId) : null },
-            { label: "Invoice Ref", value: invoiceReference },
+            { label: "LPO Reference", value: lpoRef || null },
+            { label: "Invoice Ref", value: invoiceRef },
             { label: "Reference No", value: voucher?.referenceNumber || voucher?.ref },
         ].filter((item) => trimValue(item.value)),
         items: [],
         totals,
         summaryAmount: buildSummaryAmount("Amount Paid", amount, companyProfile, vendor),
         notes: firstValue(voucher?.notes),
+        // Structured data for the new invoice-table renderer
+        invoices,
+        summary: {
+            totalOutstanding: invoiceOutstanding || amount,
+            discount,
+            remaining: unallocated,
+            totalPaid: allocated,
+        },
+        voucherData: {
+            voucherNumber: firstValue(voucher?.voucherNumber, voucher?.id),
+            date: voucher?.paymentDate || voucher?.date,
+            status: firstValue(voucher?.status, "PENDING_APPROVAL"),
+            session: null,
+            invoiceCount: invoices.length > 0 ? `${invoices.length} invoice${invoices.length !== 1 ? "s" : ""}` : null,
+            account: "AED – Payables Control",
+            bankAccount: firstValue(voucher?.bankAccount),
+        },
+        vendorData: resolveParty(vendor, voucher?.vendorName || voucher?.vendor),
+        payment: {
+            method: fmtMode(voucher?.paymentMode || voucher?.mode),
+            depositedFrom: firstValue(voucher?.bankAccount),
+            chequeRef: firstValue(voucher?.referenceNumber, voucher?.ref),
+            chequeDate: voucher?.chequeDate ? String(voucher.chequeDate) : null,
+        },
         paymentDetails: [
-            { label: "Payment Mode", value: ((v) => v ? v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : v)(voucher?.paymentMode || voucher?.mode) },
+            { label: "Payment Mode", value: fmtMode(voucher?.paymentMode || voucher?.mode) },
             { label: "Reference Number", value: voucher?.referenceNumber || voucher?.ref },
             { label: "Bank Account", value: voucher?.bankAccount },
             { label: "Cheque Date", value: voucher?.chequeDate },
-            { label: "Invoice Reference", value: invoiceReference },
+            { label: "Invoice Reference", value: invoiceRef },
             { label: "Allocated", value: voucher?.allocated ? formatMoney(voucher.allocated) : "" },
             { label: "Unallocated", value: voucher?.unallocated ? formatMoney(voucher.unallocated) : "" },
         ].filter((item) => trimValue(item.value)),

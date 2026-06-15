@@ -151,36 +151,36 @@ export const generatePickListHtml = (template, data, options = {}) => {
     ].filter(Boolean);
 
     const headerMetaHtml = metaItems.length
-        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;padding:0;min-width:0;overflow:hidden;">
             ${metaItems.map(([label, value]) => `
-                <div>
-                  <p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${escapeHtml(label)}</p>
-                  <p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${escapeHtml(value)}</p>
+                <div style="min-width:0;overflow:hidden;">
+                  <p style="margin:0;font-size:${f - 2}px;color:#999;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">${escapeHtml(label)}</p>
+                  <p style="margin:0;font-size:${f - 1}px;font-weight:700;color:#1a1a2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(value)}</p>
                 </div>
             `).join('')}
           </div>`
         : '';
 
     const customerBlock = s.showCustomerName ? `
-        <div>
-          <p style="font-weight:700;font-size:${f - 0.5}px;margin:0 0 4px 0;color:#888;letter-spacing:0.5px;text-transform:uppercase;">Delivering To</p>
-          <p style="font-weight:700;font-size:${f + 1}px;margin:0 0 2px 0;">${escapeHtml(customer.name || '-')}</p>
-          ${s.showCustomerCode && customer.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${escapeHtml(customer.code)}</p>` : ''}
-          ${s.showDeliveryAddress && (customer.address || customer.shippingAddress) ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:0;">${escapeHtml(customer.address || customer.shippingAddress)}</p>` : ''}
-          ${s.showCustomerPhone && customer.phone ? `<p style="margin:3px 0 0;color:#555;">${escapeHtml(customer.phone)}</p>` : ''}
+        <div style="min-width:0;overflow:hidden;">
+          <p style="font-weight:700;font-size:${f - 2}px;margin:0 0 2px 0;color:#888;letter-spacing:0.6px;text-transform:uppercase;">Delivering To</p>
+          <p style="font-weight:700;font-size:${f + 1}px;margin:0 0 2px 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(customer.name || '-')}</p>
+          ${s.showCustomerCode && customer.code ? `<p style="color:#64748b;font-size:${f - 1}px;margin:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(customer.code)}</p>` : ''}
+          ${s.showDeliveryAddress && (customer.address || customer.shippingAddress) ? `<p style="color:#555;margin:1px 0 0;font-size:${f - 1}px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((customer.address || customer.shippingAddress || '').replace(/\n/g, ', '))}</p>` : ''}
+          ${s.showCustomerPhone && customer.phone ? `<p style="margin:1px 0 0;color:#555;font-size:${f - 1}px;white-space:nowrap;">${escapeHtml(customer.phone)}</p>` : ''}
         </div>
     ` : '';
 
     const companyBlock = `
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:0;max-width:32%;flex-shrink:0;">
           ${logoHtml}
           ${s.showCompanyName ? `
-            <div style="text-align:right;line-height:1.55;">
-              <p style="font-weight:700;font-size:${f + 3}px;color:#1a1a2e;margin:0;">${escapeHtml(company.companyName || '')}</p>
-              ${s.showCompanyAddress && company.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${escapeHtml(company.address)}</p>` : ''}
-              ${s.showCompanyPhone && company.phone ? `<p style="margin:0;">${escapeHtml(company.phone)}</p>` : ''}
-              ${s.showCompanyEmail && company.email ? `<p style="margin:0;">${escapeHtml(company.email)}</p>` : ''}
-              ${s.showTRN && company.trn ? `<p style="margin:0;color:#666;">TRN · ${escapeHtml(company.trn)}</p>` : ''}
+            <div style="text-align:right;line-height:1.35;min-width:0;">
+              <p style="font-weight:700;font-size:${f - 0.5}px;color:#1a1a2e;margin:0;word-break:break-word;">${escapeHtml(company.companyName || '')}</p>
+              ${s.showCompanyAddress && company.address ? `<p style="margin:2px 0 0;color:#555;font-size:${f - 1}px;line-height:1.35;word-break:break-word;">${escapeHtml(company.address.replace(/\n/g, ', '))}</p>` : ''}
+              ${s.showCompanyPhone && company.phone ? `<p style="margin:1px 0 0;font-size:${f - 1}px;">${escapeHtml(company.phone)}</p>` : ''}
+              ${s.showCompanyEmail && company.email ? `<p style="margin:1px 0 0;font-size:${f - 1}px;">${escapeHtml(company.email)}</p>` : ''}
+              ${s.showTRN && company.trn ? `<p style="margin:1px 0 0;font-size:${f - 1}px;color:#666;">TRN · ${escapeHtml(company.trn)}</p>` : ''}
             </div>
           ` : ''}
         </div>
@@ -455,12 +455,18 @@ export const generatePickListHtml = (template, data, options = {}) => {
         </head>
         <body>
           <div class="pick-list-doc">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
-              <div style="flex:1;">
-                <h1 style="font-size:${f + 17}px;font-weight:700;color:#1a1a2e;margin:0 0 14px 0;letter-spacing:-0.5px;">PICK LIST</h1>
+            <!-- Header row: title+customer | meta | company+logo -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">
+              <!-- Left: title + customer -->
+              <div style="flex:0 0 auto;min-width:0;max-width:36%;">
+                <h1 style="font-size:${f + 14}px;font-weight:700;color:#1a1a2e;margin:0 0 6px 0;letter-spacing:-0.5px;white-space:nowrap;">PICK LIST</h1>
                 ${customerBlock}
               </div>
-              ${headerMetaHtml}
+              <!-- Center: meta grid -->
+              <div style="flex:1 1 0;min-width:0;">
+                ${headerMetaHtml}
+              </div>
+              <!-- Right: logo + company -->
               ${companyBlock}
             </div>
             <div style="height:3px;background:${gold};border-radius:2px;margin-bottom:14px;"></div>

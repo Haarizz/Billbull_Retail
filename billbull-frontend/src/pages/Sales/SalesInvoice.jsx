@@ -1987,8 +1987,12 @@ const SalesInvoice = () => {
             return;
         }
 
+        const freshSettings = await getSalesSettings().catch(() => salesSettings);
+        if (freshSettings) setSalesSettings(freshSettings);
+        const activeSettings = freshSettings || salesSettings;
+
         // Zero-price policy check
-        const zeroPricePolicy = salesSettings?.zeroPricePolicy ?? 'BLOCK';
+        const zeroPricePolicy = activeSettings?.zeroPricePolicy ?? 'BLOCK';
         if (zeroPricePolicy !== 'ALLOW') {
             const zeroPriceItems = items.filter(i => (i.code || i.name) && Number(i.qty) > 0 && !(Number(i.price) > 0));
             if (zeroPriceItems.length > 0) {
@@ -2091,7 +2095,7 @@ const SalesInvoice = () => {
 
         // Stock check enforcement (skip for Draft saves)
         const isSourceLinkedInvoice = Boolean((linkedSO || '').trim() || (linkedDN || '').trim());
-        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
+        if (newStatus !== 'Draft' && activeSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
@@ -2118,7 +2122,7 @@ const SalesInvoice = () => {
         }
 
         // Credit limit BLOCK enforcement
-        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+        if (activeSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomer.creditLimitAmount > 0 &&
             (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount) {
             toast.error(`Credit Limit Blocked: The projected outstanding balance (${formatCurrencyDisplay(customerOutstanding + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}. Please collect payment first or adjust the credit limit in the customer profile.`, { duration: 6000 });
@@ -2788,9 +2792,11 @@ const SalesInvoice = () => {
                 tax: resolvedSummary.tax,
                 grandTotal: resolvedSummary.grandTotal,
                 currency: company?.currencySymbol || company?.currency || 'AED',
-                billDiscount: resolvedBillDiscount,
+                billDiscount: billDiscountType === 'percent' ? resolvedBillDiscount : 0,
                 billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                 discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                footerDiscountAmount: resolvedSummary.billDiscountAmount || 0,
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
             },
@@ -2865,8 +2871,12 @@ const SalesInvoice = () => {
         if (!defaultTemplate) return null;
 
         {
-            const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
-            const resolvedBillDiscountType = dataToPrint.billDiscountType || 'percent';
+            // Only treat as percent-type when explicitly flagged — null/missing defaults to amount-safe (no % label).
+            const resolvedBillDiscountType = dataToPrint.billDiscountType === 'percent' ? 'percent' : 'amount';
+            // For percent-type, billDiscount is the percentage. For amount-type (or unknown), use billDiscountAmount.
+            const resolvedBillDiscount = resolvedBillDiscountType === 'percent'
+                ? Number(dataToPrint.billDiscount) || 0
+                : Number(dataToPrint.billDiscountAmount) || 0;
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
             const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
@@ -2930,10 +2940,13 @@ const SalesInvoice = () => {
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
-                        billDiscount: resolvedBillDiscount,
-                        // Total discount = item-level discounts + bill-level discount — matches ClassicPreview
-                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
-                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                        // Only show % label when type is explicitly percent; amount-type has no % label.
+                        billDiscount: resolvedBillDiscountType === 'percent' ? resolvedBillDiscount : 0,
+                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
+                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
+                        itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                        // Use API-stored amount (always correct AED value) rather than re-computed value.
+                        footerDiscountAmount: Number(dataToPrint.billDiscountAmount) || 0,
                         deliveryCharge: resolvedDeliveryCharge,
                         roundOff: resolvedRoundOff
                     },

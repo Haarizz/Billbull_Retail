@@ -559,6 +559,8 @@ const ProformaInvoice = () => {
         billDiscount: Number(billDiscount) || 0,
         billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
         discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+        itemDiscountAmount: totalItemDiscount || 0,
+        footerDiscountAmount: billDiscountAmount || 0,
       },
       meta: {
         validTill: validUntil,
@@ -1024,6 +1026,32 @@ const ProformaInvoice = () => {
     }
     if (!proformaAutoNumbering && !piNumber.trim()) {
       return alert('Please enter a proforma invoice number.');
+    }
+
+    const freshSettings = await getSalesSettings().catch(() => salesSettings);
+    if (freshSettings) setSalesSettings(freshSettings);
+    const activeSettings = freshSettings || salesSettings;
+
+    if (activeSettings?.stockCheckRequired) {
+      const stockIssues = [];
+      for (const item of items) {
+        if (!item.code) continue;
+        if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
+        try {
+          const stockData = await getStockAvailability(item.code);
+          const locs = stockData?.locations || [];
+          const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
+          if (Number(item.qty) > available) {
+            stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+          }
+        } catch {
+          // skip items where stock check fails
+        }
+      }
+      if (stockIssues.length > 0) {
+        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Configure & customize.`);
+        return;
+      }
     }
 
     setIsSaving(true);

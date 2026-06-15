@@ -142,6 +142,7 @@ public class SalesOrderService {
         double tax = 0;
         SalesOrderStatus requestedStatus = order.getStatus();
         boolean confirmingOrder = requestedStatus != SalesOrderStatus.DRAFT;
+        boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
         Map<Long, List<DeliveryBatchSelectionResponse>> existingBatchSelections =
                 order.getId() != null
                         ? batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, order.getId())
@@ -152,9 +153,6 @@ public class SalesOrderService {
                 item.setSalesOrder(order);
                 hydrateOrderItemDisplayData(item);
 
-                // 🏗️ HARD VALIDATION: Sales Orders are Hard Reservations
-                // Check if the business has enough available stock (which deducts previous SOs)
-                // before confirming this SO
                 if (order.getWarehouse() != null && item.getItemCode() != null && item.getQuantity() != null) {
                     com.billbull.backend.inventory.product.Product product = productRepo
                             .findByCodeAndIsActiveTrue(item.getItemCode())
@@ -182,7 +180,7 @@ public class SalesOrderService {
                             available = available.add(BigDecimal.valueOf(sumActiveBatchSelections(
                                     existingBatchSelections.getOrDefault(item.getId(), List.of()))));
                         }
-                        if (available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
+                        if (stockCheckRequired && available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
                             throw new IllegalStateException(
                                     "Insufficient available stock for item " + item.getItemCode() +
                                             ". Available: " + available + ", Required (base units): " + baseRequired);

@@ -176,7 +176,10 @@ const SearchableDropdown = ({
                                             </div>
                                         </div>
                                     ) : (
-                                        option.label
+                                        <div className="flex flex-col gap-0.5">
+                                            <span className="text-sm font-medium text-slate-900">{option.label}</span>
+                                            {option.subtitle && <span className="text-xs text-slate-500">{option.subtitle}</span>}
+                                        </div>
                                     )}
                                 </div>
                             ))

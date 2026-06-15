@@ -1064,9 +1064,11 @@ const SalesOrders = () => {
         tax: totalTax,
         grandTotal: orderTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
-        billDiscount: Number(billDiscount) || 0,
+        billDiscount: billDiscountType === 'percent' ? Number(billDiscount) || 0 : 0,
         billDiscountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
         discountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
+        itemDiscountAmount: totalDiscount || 0,
+        footerDiscountAmount: billDiscountAmount || 0,
       },
       meta: (() => {
         const printBranchId = loadedSoBranchId ?? activeBranch?.id;
@@ -1730,22 +1732,31 @@ const SalesOrders = () => {
         {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
         {activeTab === 'create' && canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
-            {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-              <button key={label} onClick={
-                label === 'Print' ? handlePrintClick
-                  : label === 'Email' ? () => {
-                    if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
-                    setIsEmailModalOpen(true);
-                  }
-                  : undefined
-              } disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
-                {label === 'Email' && <Mail size={14} />}
-                {label === 'WhatsApp' && <MessageCircle size={14} />}
-                {label === 'SMS' && <Smartphone size={14} />}
-                {label === 'Print' && <Printer size={14} />}
-                {label === 'Print' && isPrinting ? 'Printing...' : label}
-              </button>
-            ))}
+            <button onClick={() => {
+              if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+              setIsEmailModalOpen(true);
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <Mail size={14} /> Email
+            </button>
+            <button onClick={() => {
+              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+              const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
+              if (phone) window.open(`https://wa.me/${phone}`, '_blank');
+              else alert('No phone number found for this customer.');
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <MessageCircle size={14} /> WhatsApp
+            </button>
+            <button onClick={() => {
+              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+              const phone = fullCustomer?.mobile || fullCustomer?.phone || '';
+              if (phone) window.open(`sms:${phone}`, '_self');
+              else alert('No phone number found for this customer.');
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <Smartphone size={14} /> SMS
+            </button>
+            <button onClick={handlePrintClick} disabled={isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+              <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+            </button>
           </div>
         )}
       </div>

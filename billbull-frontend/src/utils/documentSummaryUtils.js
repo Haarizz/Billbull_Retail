@@ -66,15 +66,27 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}) =
             ? toNumber(item.discountAmount)
             : preDiscountAmount * (discountPercent / 100);
         let taxableAmount = explicitTaxableAmount;
+        // Track whether taxableAmount was derived from explicitLineTotal, which
+        // may already have footer-discount allocation baked in (e.g. saved
+        // invoice items from the API). In that case we must NOT recalculate
+        // discountAmount from (preDiscountAmount - taxableAmount), because that
+        // would inflate the item discount to include footer discount too.
+        let taxableDerivedFromLineTotal = false;
 
         // Only trust stored lineTotal when it is genuinely non-zero.
         if (!hasValue(taxableAmount) && explicitLineTotal > 0) {
             taxableAmount = Math.max(0, explicitLineTotal - (explicitTaxAmount || 0));
+            taxableDerivedFromLineTotal = true;
         }
         if (!hasValue(taxableAmount)) {
             taxableAmount = preDiscountAmount - discountAmount;
         }
-        if (!hasValue(item.discountAmount) && preDiscountAmount > 0) {
+        // Recalculate discountAmount from (grossAmount - taxableAmount) only
+        // when taxableAmount came from an explicit item field (e.g. item.taxableAmount)
+        // and NOT when it was derived from the line total. Line totals from saved
+        // documents may include footer-discount allocation, which would cause
+        // discountAmount to be inflated (item discount + footer discount).
+        if (!hasValue(item.discountAmount) && preDiscountAmount > 0 && !taxableDerivedFromLineTotal) {
             discountAmount = Math.max(0, preDiscountAmount - taxableAmount);
         }
 

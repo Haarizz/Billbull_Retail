@@ -69,7 +69,7 @@ const ExportDropdown = ({
 
             {/* Dropdown panel */}
             {open && (
-                <div className="absolute right-0 bottom-full mb-1.5 w-48 bg-white rounded-lg border border-slate-200 shadow-lg z-200 overflow-hidden">
+                <div className="absolute right-0 top-full mt-1.5 w-48 bg-white rounded-lg border border-slate-200 shadow-lg z-200 overflow-hidden">
                     {/* PDF */}
                     <MenuItem
                         icon={<FileText className="h-3.5 w-3.5 text-red-500" />}

@@ -553,6 +553,8 @@ const SalesReturn = () => {
                currency: company?.currencySymbol || company?.currency || 'AED',
                billDiscount: 0,
                billDiscountAmount: 0,
+               itemDiscountAmount: 0,
+               footerDiscountAmount: 0,
             },
             meta: {
                status: ret.status || '',
