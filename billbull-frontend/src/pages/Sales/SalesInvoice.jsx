@@ -2340,6 +2340,13 @@ const SalesInvoice = () => {
         try {
             const paidEntries = entries.filter(e => e.mode !== 'Credit' && Number(e.amount) > 0);
             const hasCreditEntry = entries.some(e => e.mode === 'Credit');
+            // One shared UUID links all entries of the same split transaction
+            const splitGroupId = paidEntries.length > 1 ? crypto.randomUUID() : null;
+            // Build combined label upfront (e.g. "Cash + Card") so the backend can
+            // stamp it on the invoice without relying on a mid-transaction DB query.
+            const combinedPaymentMode = splitGroupId
+                ? paidEntries.map(e => e.mode).join(' + ')
+                : null;
 
             // Post each real-money entry through /payment-detailed
             for (const e of paidEntries) {
@@ -2350,6 +2357,8 @@ const SalesInvoice = () => {
                     paymentDate: todayStr,
                     ...(e.bankAccount ? { bankAccount: e.bankAccount } : {}),
                     ...(e.mode === 'Cheque' && e.chequeDate ? { chequeDate: e.chequeDate } : {}),
+                    ...(splitGroupId ? { splitGroupId } : {}),
+                    ...(combinedPaymentMode ? { combinedPaymentMode } : {}),
                 });
             }
             // Credit entry: stamp paymentMode=Credit on the invoice (no amount)

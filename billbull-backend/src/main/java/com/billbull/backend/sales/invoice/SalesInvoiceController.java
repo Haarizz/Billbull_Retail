@@ -186,12 +186,14 @@ public class SalesInvoiceController {
         if (chequeDateStr != null && !chequeDateStr.isBlank()) {
             try { chequeDate = LocalDate.parse(chequeDateStr); } catch (Exception ignored) {}
         }
+        String splitGroupId = payload.get("splitGroupId") != null ? payload.get("splitGroupId").toString() : null;
+        String combinedPaymentMode = payload.get("combinedPaymentMode") != null ? payload.get("combinedPaymentMode").toString() : null;
         // Credit-only settlement: no money changes hands — just stamp the invoice
         // paymentMode so it's visible in history and leave status as CONFIRMED.
         if ("Credit".equalsIgnoreCase(paymentMode) && (amount == null || amount <= 0)) {
             return service.markAsCreditSettled(id);
         }
-        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, combinedPaymentMode);
     }
 
     @GetMapping("/price-history/{itemCode}")
