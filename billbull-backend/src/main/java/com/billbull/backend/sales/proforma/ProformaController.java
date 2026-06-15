@@ -13,7 +13,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/proforma")
-@PreAuthorize("hasAnyRole('ADMIN','SALES')")
+@PreAuthorize("isAuthenticated()")
 public class ProformaController {
 
     private static final String MODULE = "sales";

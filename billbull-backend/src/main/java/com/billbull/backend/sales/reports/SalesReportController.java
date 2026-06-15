@@ -46,7 +46,7 @@ public class SalesReportController {
             @RequestParam(required = false) String salesperson,
             @RequestParam(required = false) String valuationMethod,
             @RequestParam(required = false) String search) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
                 dateFrom,

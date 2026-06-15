@@ -11,7 +11,7 @@ import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/financials/statement")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT', 'SALES', 'PURCHASE')")
+@PreAuthorize("isAuthenticated()")
 public class StatementController {
 
     private static final String MODULE = "finance";

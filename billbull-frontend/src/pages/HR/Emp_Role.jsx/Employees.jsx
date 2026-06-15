@@ -790,6 +790,7 @@ const AddEmployeeModal = ({
       temporaryPassword,
       systemRoleId,
       additionalBranchIds,
+      additionalWarehouseIds,
       ...employeeFields
     } = formData;
 
@@ -797,8 +798,8 @@ const AddEmployeeModal = ({
       ...employeeFields,
       emiratesIdExpiry: expiryDate || null,
       tags: formData.tags || null,
-      // store additional branch IDs as comma-separated string
       additionalBranchIds: additionalBranchIds.length > 0 ? additionalBranchIds.join(',') : null,
+      additionalWarehouseIds: additionalWarehouseIds.length > 0 ? additionalWarehouseIds.join(',') : null,
     };
 
     if (employeeToEdit) {
@@ -2367,6 +2368,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   // Role badge colours
   const roleBadge = {
     ADMIN:             'bg-purple-100 text-purple-700',
+    BRANCH_ADMIN:      'bg-indigo-100 text-indigo-700',
     HR:                'bg-blue-100 text-blue-700',
     ACCOUNTANT:        'bg-green-100 text-green-700',
     SALES:             'bg-yellow-100 text-yellow-700',

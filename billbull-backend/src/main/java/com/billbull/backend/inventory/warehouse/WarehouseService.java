@@ -171,7 +171,7 @@ public class WarehouseService {
     }
 
     private Branch resolveBranchForWrite(Long requestedBranchId, Branch existingBranch) {
-        if (!branchAccessService.currentUserHasRole("ADMIN")) {
+        if (!branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
             if (requestedBranchId != null && !Objects.equals(requestedBranchId, currentBranch.getId())) {
                 throw new ResponseStatusException(
@@ -204,7 +204,7 @@ public class WarehouseService {
     }
 
     private void assertWarehouseWritable(Warehouse warehouse) {
-        if (branchAccessService.currentUserHasRole("ADMIN")) {
+        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             return;
         }
 
@@ -221,7 +221,7 @@ public class WarehouseService {
     }
 
     private List<Warehouse> getAccessibleWarehouses(Long requestedBranchId) {
-        if (branchAccessService.currentUserHasRole("ADMIN")) {
+        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             if (requestedBranchId != null) {
                 return repository.findByBranch_Id(requestedBranchId);
             }

@@ -40,7 +40,7 @@ public class CustomerController {
     // BBQA52-024: optional branchName filters by branch allocation
     // =========================
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<Customer>> getAllCustomers(
             @RequestParam(required = false) String branchName) {
         modulePermissionService.requireCanView(MODULE);
@@ -48,7 +48,7 @@ public class CustomerController {
     }
 
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<Customer>> search(
             @RequestParam(defaultValue = "") String q,
             @RequestParam(defaultValue = "5") int size) {
@@ -57,14 +57,14 @@ public class CustomerController {
     }
 
     @GetMapping("/next-code")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(java.util.Map.of("customerCode", numberingService.preview(SalesDocumentType.CUSTOMER)));
     }
 
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> importCustomers(@RequestParam("file") MultipartFile file) {
         modulePermissionService.requireCanCreate(MODULE);
         try {
@@ -78,7 +78,7 @@ public class CustomerController {
     // GET CUSTOMER BY ID
     // =========================
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<CustomerDTO> getCustomerById(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         CustomerDTO customerDTO = service.getCustomerDtoById(id);
@@ -89,7 +89,7 @@ public class CustomerController {
     // CREATE / UPDATE CUSTOMER
     // =========================
     @PostMapping(consumes = "application/json", produces = "application/json")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Customer> createOrUpdateCustomer(
             @RequestBody CustomerDTO customerDTO) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -102,7 +102,7 @@ public class CustomerController {
     // QA-002: used by Receive Money to show outstanding opening invoices
     // =========================
     @GetMapping("/by-code/{customerCode}/opening-invoices")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<OpeningInvoice>> getOpeningInvoicesByCode(
             @PathVariable String customerCode) {
         modulePermissionService.requireCanView(MODULE);
@@ -115,7 +115,7 @@ public class CustomerController {
     // screen so users don't have to bounce out to the Customer Registry.
     // =========================
     @PostMapping("/{customerId}/saved-addresses")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<SavedAddress>> addSavedAddress(
             @PathVariable Long customerId,
             @RequestBody SavedAddress address) {

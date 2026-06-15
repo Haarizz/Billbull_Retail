@@ -32,28 +32,28 @@ public class InventoryReportController {
     @GetMapping("/stock-on-hand")
     public ResponseEntity<List<StockReportResponse>> getStockOnHand(
             @RequestParam(required = false) Long warehouseId) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getStockOnHand(warehouseId));
     }
 
     @GetMapping("/low-stock")
     public ResponseEntity<List<StockReportResponse>> getLowStock(
             @RequestParam(required = false) Long warehouseId) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getLowStock(warehouseId));
     }
 
     @GetMapping("/out-of-stock")
     public ResponseEntity<List<StockReportResponse>> getOutOfStock(
             @RequestParam(required = false) Long warehouseId) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getOutOfStock(warehouseId));
     }
 
     @GetMapping("/stock-valuation")
     public ResponseEntity<List<StockReportResponse>> getStockValuation(
             @RequestParam(required = false) Long warehouseId) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getStockValuation(warehouseId));
     }
 
@@ -67,7 +67,7 @@ public class InventoryReportController {
             @RequestParam(required = false) String brand,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String stockCondition) {
-        modulePermissionService.requireCanExport(MODULE);
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
                 warehouseId,

@@ -79,15 +79,18 @@ public class BranchAccessService {
         return branchRepository.findByNameIgnoreCase(name).orElse(null);
     }
 
-    public boolean currentUserHasRole(String roleName) {
+    public boolean currentUserHasRole(String... roleNames) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null) {
             return false;
         }
-
-        String expected = "ROLE_" + roleName;
         return authentication.getAuthorities().stream()
-                .anyMatch(authority -> expected.equals(authority.getAuthority()));
+                .anyMatch(authority -> {
+                    for (String roleName : roleNames) {
+                        if (("ROLE_" + roleName).equals(authority.getAuthority())) return true;
+                    }
+                    return false;
+                });
     }
 
     /**
@@ -129,7 +132,8 @@ public class BranchAccessService {
             return false;
         }
         boolean isAdmin = user.getRoles() != null && user.getRoles().stream()
-                .anyMatch(role -> "ADMIN".equals(role.getName()) || "SUPER_ADMIN".equals(role.getName()));
+                .anyMatch(role -> "ADMIN".equals(role.getName()) || "SUPER_ADMIN".equals(role.getName())
+                        || "BRANCH_ADMIN".equals(role.getName()));
         if (isAdmin) {
             return true;
         }

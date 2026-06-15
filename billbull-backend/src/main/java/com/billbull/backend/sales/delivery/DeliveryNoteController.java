@@ -13,7 +13,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/delivery-notes")
-@PreAuthorize("hasAnyRole('ADMIN','SALES')")
+@PreAuthorize("isAuthenticated()")
 public class DeliveryNoteController {
 
     private static final String MODULE = "sales";
@@ -114,13 +114,13 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/dispatch")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse dispatch(@PathVariable Long id) {
         return service.markDispatched(id);
     }
 
     @PostMapping("/{id}/deliver")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse deliver(
             @PathVariable Long id,
             @RequestParam(required = false) String receivedBy) {
@@ -128,7 +128,7 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/advance-status")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse advanceStatus(
             @PathVariable Long id,
             @RequestParam(required = false) String receivedBy) {
@@ -136,13 +136,13 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse cancel(@PathVariable Long id) {
         return service.cancel(id);
     }
 
     @PostMapping("/{dnId}/items/{itemId}/batch-selection")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse saveBatchSelection(
             @PathVariable Long dnId,
             @PathVariable Long itemId,
@@ -151,7 +151,7 @@ public class DeliveryNoteController {
     }
 
     @DeleteMapping("/{dnId}/items/{itemId}/batch-selection")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse deleteBatchSelection(
             @PathVariable Long dnId,
             @PathVariable Long itemId) {

@@ -35,14 +35,14 @@ public class UnitController {
     // LIST
     // ------------------------
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public List<UnitResponse> list() {
         modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
     @GetMapping("/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportUnitsToExcel() {
         modulePermissionService.requireCanExport(MODULE);
         List<UnitResponse> units = service.list();

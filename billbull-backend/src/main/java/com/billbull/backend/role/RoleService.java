@@ -14,7 +14,7 @@ import java.util.Set;
 public class RoleService {
 
     private static final Set<String> SYSTEM_ROLES = Set.of(
-        "ADMIN", "MANAGER", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR"
+        "ADMIN", "BRANCH_ADMIN", "MANAGER", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR"
     );
 
     private final RoleRepository roleRepository;

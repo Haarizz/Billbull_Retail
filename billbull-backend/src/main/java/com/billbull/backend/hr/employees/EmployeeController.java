@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/employees")
-@PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+@PreAuthorize("isAuthenticated()")
 public class EmployeeController {
 
     private final EmployeeService service;
@@ -195,7 +195,8 @@ public class EmployeeController {
         }
 
         boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority())
+                        || "ROLE_BRANCH_ADMIN".equals(authority.getAuthority()));
 
         if (!isAdmin) {
             throw new AccessDeniedException("Only ADMIN can provision employee login access.");

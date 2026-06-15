@@ -32,21 +32,21 @@ public class WarehouseController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<WarehouseResponse> list(@RequestParam(required = false) Long branchId) {
         modulePermissionService.requireCanView(MODULE);
         return service.list(branchId);
     }
 
     @GetMapping("/tree")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public WarehouseService.WarehouseTree tree(@RequestParam(required = false) Long branchId) {
         modulePermissionService.requireCanView(MODULE);
         return service.getTree(branchId);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WarehouseResponse> create(
             @Valid @RequestBody WarehouseRequestDto req) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -54,7 +54,7 @@ public class WarehouseController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WarehouseResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody WarehouseRequestDto req) {
@@ -71,7 +71,7 @@ public class WarehouseController {
     }
 
     @GetMapping("/{id}/bins")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<BinResponse> getBins(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return binService.getBinResponsesByWarehouse(id);
@@ -80,28 +80,28 @@ public class WarehouseController {
     // --- STOCK ENDPOINTS (Moved from WarehouseStockController) ---
 
     @GetMapping("/{id}/stock")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<WarehouseStockResponse> stock(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return stockService.getStock(id);
     }
 
     @GetMapping("/stock/product/{productCode}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<WarehouseStockResponse> getStockByProduct(@PathVariable String productCode) {
         modulePermissionService.requireCanView(MODULE);
         return stockService.getStockByProduct(productCode);
     }
 
     @GetMapping("/{id}/stock/summary")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public WarehouseStockSummary getStockSummary(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return stockService.getStockSummary(id);
     }
 
     @GetMapping("/{id}/stock/product/{productId}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public java.math.BigDecimal getProductStock(
             @PathVariable Long id,
             @PathVariable Long productId,
@@ -113,7 +113,7 @@ public class WarehouseController {
     }
 
     @GetMapping("/{id}/stock/aggregate")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public java.math.BigDecimal getAggregateLocationStock(
             @PathVariable Long id,
             @RequestParam(required = false) Long zoneId,
@@ -130,7 +130,7 @@ public class WarehouseController {
      * Used by the Stock Transfer batch picker.
      */
     @GetMapping("/{id}/stock/product/{productId}/batches")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<BatchStockRow> getProductBatches(
             @PathVariable Long id,
             @PathVariable Long productId,

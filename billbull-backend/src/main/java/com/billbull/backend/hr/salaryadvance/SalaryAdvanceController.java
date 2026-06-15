@@ -14,7 +14,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/salary-advances")
-@PreAuthorize("hasAnyRole('ADMIN', 'HR')")
+@PreAuthorize("isAuthenticated()")
 public class SalaryAdvanceController {
 
     private static final String MODULE = "hr";

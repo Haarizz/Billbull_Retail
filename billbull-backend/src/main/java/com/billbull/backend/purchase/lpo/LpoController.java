@@ -32,7 +32,7 @@ public class LpoController {
 
     /* CREATE */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<LpoDetailResponse> create(@RequestBody @Valid LpoRequest request) {
         modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(request));
@@ -40,7 +40,7 @@ public class LpoController {
 
     /* READ LIST */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<LpoListResponse>> list(
             @RequestParam(required = false) LpoStatus status) {
         modulePermissionService.requireCanView(MODULE);
@@ -48,7 +48,7 @@ public class LpoController {
     }
 
     @GetMapping("/page")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<com.billbull.backend.util.PageResponse<LpoListResponse>> page(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
@@ -62,7 +62,7 @@ public class LpoController {
     }
 
     @GetMapping("/counts")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Long>> counts() {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.statusCounts());
@@ -70,7 +70,7 @@ public class LpoController {
 
     /* READ SINGLE */
     @GetMapping("/{lpoNumber}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<LpoDetailResponse> getByNumber(
             @PathVariable String lpoNumber) {
         modulePermissionService.requireCanView(MODULE);
@@ -79,7 +79,7 @@ public class LpoController {
 
     /* UPDATE */
     @PutMapping("/{lpoNumber}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<LpoDetailResponse> update(
             @PathVariable String lpoNumber,
             @RequestBody @Valid LpoRequest request) {
@@ -99,7 +99,7 @@ public class LpoController {
     /* ================= WORKFLOW ================= */
 
     @PostMapping("/{id}/submit")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> submit(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.submitForApproval(id);
@@ -107,7 +107,7 @@ public class LpoController {
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> approve(
             @PathVariable Long id,
             @RequestBody(required = false) java.util.Map<String, String> payload,
@@ -125,7 +125,7 @@ public class LpoController {
     }
 
     @PostMapping("/{id}/reject")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> reject(
             @PathVariable Long id,
             @RequestBody(required = false) java.util.Map<String, String> payload,
@@ -143,7 +143,7 @@ public class LpoController {
     }
 
     @PostMapping("/{id}/revert")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> revert(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.revertToDraft(id);
@@ -152,14 +152,14 @@ public class LpoController {
 
     /* Suggestions (safe placeholder) */
     @GetMapping("/suggestions")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<String>> suggestions() {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(List.of());
     }
 
     @PostMapping("/{id}/post-stock")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> postStock(@PathVariable Long id) {
         modulePermissionService.requireCanEdit(MODULE);
         service.postStockFromLpo(id);
@@ -169,7 +169,7 @@ public class LpoController {
     /* ================= ADVANCE PAYMENT ================= */
 
     @PostMapping("/{id}/advance-payment")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PaymentVoucher> createAdvancePayment(
             @PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
@@ -183,7 +183,7 @@ public class LpoController {
     }
 
     @GetMapping("/{id}/payment-vouchers")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PaymentVoucher>> getPaymentVouchers(@PathVariable Long id) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAdvancePayments(id));

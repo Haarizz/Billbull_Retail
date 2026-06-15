@@ -31,10 +31,17 @@ public class RolePermissionInitializer implements ApplicationRunner {
         // ADMIN: seed full access only if no row exists yet (first deployment).
         // Using seedIfAbsent so UI changes to ADMIN permissions are preserved across restarts.
         // The AdminSafeguardService prevents complete lockout of the ADMIN role.
+        String[] allModules = {"sales", "inventory", "purchases", "finance",
+                               "hr", "customer", "dashboard", "userManagement",
+                               "batch_manual_select", "notification"};
         roleRepository.findByName("ADMIN").ifPresent(role -> {
-            String[] allModules = {"sales", "inventory", "purchases", "finance",
-                                   "hr", "customer", "dashboard", "userManagement",
-                                   "batch_manual_select", "notification"};
+            for (String module : allModules) {
+                seedIfAbsent(role, module, true, true, true, true, true);
+            }
+        });
+
+        // BRANCH_ADMIN: same full module access as ADMIN but branch-scoped (not in ALL_BRANCH_ROLES).
+        roleRepository.findByName("BRANCH_ADMIN").ifPresent(role -> {
             for (String module : allModules) {
                 seedIfAbsent(role, module, true, true, true, true, true);
             }
@@ -101,6 +108,12 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
         });
         roleRepository.findByName("ADMIN").ifPresent(role -> {
+            seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+        });
+        roleRepository.findByName("BRANCH_ADMIN").ifPresent(role -> {
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);

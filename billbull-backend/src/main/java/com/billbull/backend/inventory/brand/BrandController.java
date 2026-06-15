@@ -32,14 +32,14 @@ public class BrandController {
     // LIST (ONLY ONE GET)
     // ---------------------------
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','ACCOUNTANT','PURCHASE_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<BrandResponse> list() {
         modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
     @GetMapping("/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportBrandsToExcel() {
         modulePermissionService.requireCanExport(MODULE);
         List<BrandResponse> brands = service.list(); // Changed from getAll() to list() to match existing method
@@ -59,7 +59,7 @@ public class BrandController {
     // CREATE
     // ---------------------------
     @PostMapping(consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BrandResponse> create(
             @RequestPart("data") BrandRequest req,
             @RequestPart(value = "logo", required = false) MultipartFile logo) {
@@ -71,7 +71,7 @@ public class BrandController {
     // UPDATE
     // ---------------------------
     @PutMapping(value = "/{id}", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BrandResponse> update(
             @PathVariable Long id,
             @RequestPart("data") BrandRequest req,

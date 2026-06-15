@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/financials/payment-terms")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT', 'MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class PaymentTermsController {
 
     private static final String MODULE = "finance";
@@ -37,14 +37,14 @@ public class PaymentTermsController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PaymentTerms> save(@RequestBody PaymentTerms terms) {
         modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.save(terms));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PaymentTerms> update(@PathVariable Long id, @RequestBody PaymentTerms terms) {
         modulePermissionService.requireCanEdit(MODULE);
         terms.setId(id);

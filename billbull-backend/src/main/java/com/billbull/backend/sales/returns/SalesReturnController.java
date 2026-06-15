@@ -14,7 +14,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales/returns")
-@PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class SalesReturnController {
 
     private static final String MODULE = "sales";

@@ -9,7 +9,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/stock-transfers")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class StockTransferController {
 
     private static final String MODULE = "inventory";

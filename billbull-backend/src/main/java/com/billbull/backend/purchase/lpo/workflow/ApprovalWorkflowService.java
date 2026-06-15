@@ -69,7 +69,7 @@ public class ApprovalWorkflowService {
                         "No pending approval steps found. This document might already be approved or rejected."));
 
         // Validate Role
-        if (!userRoles.contains(currentStep.getRoleCode()) && !userRoles.contains("ADMIN")) {
+        if (!userRoles.contains(currentStep.getRoleCode()) && !userRoles.contains("ADMIN") && !userRoles.contains("BRANCH_ADMIN")) {
             throw new IllegalStateException("User does not have required role: " + currentStep.getRoleCode());
         }
 
@@ -107,7 +107,7 @@ public class ApprovalWorkflowService {
                         "No pending approval steps found. This document might already be approved or rejected."));
 
         // Validate Role
-        if (!userRoles.contains(currentStep.getRoleCode()) && !userRoles.contains("ADMIN")) {
+        if (!userRoles.contains(currentStep.getRoleCode()) && !userRoles.contains("ADMIN") && !userRoles.contains("BRANCH_ADMIN")) {
             throw new IllegalStateException("User does not have required role: " + currentStep.getRoleCode());
         }
 
