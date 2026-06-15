@@ -17,17 +17,21 @@ public class CorsConfig {
                 CorsConfiguration config = new CorsConfiguration();
 
                 config.setAllowedOrigins(List.of(
-                                "http://localhost:5173",
-                                "http://77.37.49.42",
-				"https://client1.billbull.app",
-				"https://client2.billbull.app",
-				"https://client3.billbull.app",
-                                "https://hilite.billbull.app",
-                                "https://client4.billbull.app",
-                                "https://client5.billbull.app",
-                                "https://client6.billbull.app",
-                                "https://qa.billbull.app",
-                                "https://geebu.billbull.app"));
+                "http://localhost:5173",
+                "http://77.37.49.42",
+
+                // Client domains
+                "https://nest.billbull.app",
+                "https://max.billbull.app",
+                "https://hilite.billbull.app",
+                "https://albadar.billbull.app",
+                "https://agi.billbull.app",
+                "https://helenz.billbull.app",
+
+                // Internal environments
+                "https://qa.billbull.app",
+                "https://geebu.billbull.app"
+                ));
                 config.setAllowedMethods(List.of(
                                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                 config.setAllowedHeaders(List.of("*"));
