@@ -1609,7 +1609,10 @@ const Quotations = () => {
             setShowToast(true);
             return;
         }
-        const validationMessage = getQuotationValidationMessage(items, salesSettings);
+        const freshSettings = await getSalesSettings().catch(() => salesSettings);
+        if (freshSettings) setSalesSettings(freshSettings);
+        const activeSettings = freshSettings || salesSettings;
+        const validationMessage = getQuotationValidationMessage(items, activeSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -1618,7 +1621,7 @@ const Quotations = () => {
         }
 
         // Stock check enforcement
-        if (salesSettings?.stockCheckRequired) {
+        if (activeSettings?.stockCheckRequired) {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
@@ -1645,7 +1648,7 @@ const Quotations = () => {
         }
 
         // Credit limit BLOCK enforcement
-        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+        if (activeSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomerData?.creditLimitAmount > 0 &&
             (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount) {
             const projectedOutstanding = Number(selectedCustomerData.balance || 0) + grandTotal;
@@ -1700,13 +1703,17 @@ const Quotations = () => {
         }
 
         try {
-            const stock = await checkQuotationStock(editingId);
-            const insufficient = stock.filter(i => !i.sufficient);
+            if (salesSettings?.stockCheckRequired) {
+                const stock = await checkQuotationStock(editingId);
+                const insufficient = stock.filter(i => !i.sufficient);
 
-            if (insufficient.length > 0) {
-                setStockCheckResult(insufficient);
-                setShowStockModal(true);
-                return;
+                if (insufficient.length > 0) {
+                    const itemNames = insufficient.map(i => i.itemCode || 'Unknown Item').join(', ');
+                    setToastMessage(`Insufficient stock for: ${itemNames}`);
+                    setToastType("info");
+                    setShowToast(true);
+                    return;
+                }
             }
 
             await updateQuotationStatus(editingId, "APPROVED");
@@ -2269,7 +2276,8 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
-            const resolvedBillDiscount = makeFooterDiscount(qtn.billDiscountType || 'percent', qtn.billDiscountType === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
+            const _qtnDiscType1 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
+            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType1, _qtnDiscType1 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const printData = {
@@ -2311,9 +2319,11 @@ const Quotations = () => {
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
                     currency: getDisplayCurrencyProps(qtn.currency).currency,
-                    billDiscount: resolvedSummary.footerDiscValue,
+                    billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0,
                     billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
                     discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                    itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                    footerDiscountAmount: resolvedSummary.billDiscountAmount || 0,
                 },
                 meta: {
                     validTill: qtn.validTill,
@@ -2346,10 +2356,11 @@ const Quotations = () => {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
             if (!defaultTemplate) return;
-            const resolvedBillDiscount = makeFooterDiscount(qtn.billDiscountType || 'percent', qtn.billDiscountType === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
+            const _qtnDiscType2 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
+            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType2, _qtnDiscType2 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscValue, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0) }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
             await downloadPdf(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
@@ -2561,9 +2572,11 @@ const Quotations = () => {
             tax: totalTax,
             grandTotal,
             currency: displayCurrencyProps.currency,
-            billDiscount,
+            billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
             billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
             discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+            itemDiscountAmount: totalItemDiscount || 0,
+            footerDiscountAmount: billDiscountAmount || 0,
         },
         meta: {
             validTill,
@@ -2875,13 +2888,21 @@ const Quotations = () => {
                             )}
                             {activeTab !== 'list' && (
                                 <>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={handleOpenEmailModal} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Mail className="h-4 w-4" /> Email
                                     </button>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={() => {
+                                        const phone = (selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '').replace(/\D/g, '');
+                                        if (phone) window.open(`https://wa.me/${phone}`, '_blank');
+                                        else alert('No phone number found for this customer.');
+                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <MessageCircle className="h-4 w-4" /> WhatsApp
                                     </button>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={() => {
+                                        const phone = selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '';
+                                        if (phone) window.open(`sms:${phone}`, '_self');
+                                        else alert('No phone number found for this customer.');
+                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Smartphone className="h-4 w-4" /> SMS
                                     </button>
                                     <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">

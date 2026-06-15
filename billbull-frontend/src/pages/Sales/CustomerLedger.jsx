@@ -2215,6 +2215,7 @@ const CustomerSOAView = ({ customers = [] }) => {
     const defaultEndDate = new Date().toISOString().split('T')[0];
 
     const [selectedCustomerCode, setSelectedCustomerCode] = useState('');
+    const [customerSearch, setCustomerSearch] = useState('');
     const [startDate, setStartDate] = useState(defaultStartDate);
     const [endDate, setEndDate] = useState(defaultEndDate);
     const [statementData, setStatementData] = useState(null);
@@ -2318,6 +2319,18 @@ const CustomerSOAView = ({ customers = [] }) => {
         [customers, selectedCustomerCode]
     );
 
+    const filteredSoACustomers = useMemo(() => {
+        const term = customerSearch.toLowerCase().trim();
+        if (!term) return customers;
+        return customers.filter(c =>
+            (c.name && c.name.toLowerCase().includes(term)) ||
+            (c.code && c.code.toLowerCase().includes(term)) ||
+            (c.phone && c.phone.toLowerCase().includes(term)) ||
+            (c.mobile && c.mobile.toLowerCase().includes(term)) ||
+            (c.contact && c.contact.toLowerCase().includes(term))
+        );
+    }, [customers, customerSearch]);
+
     return (
         <div className="space-y-6">
             {/* Filter & Action Bar */}
@@ -2329,17 +2342,48 @@ const CustomerSOAView = ({ customers = [] }) => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                     <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-700">Select Customer *</label>
-                        <SearchableDropdown
-                            options={customers.map(c => ({
-                                value: c.code,
-                                label: `${c.code} - ${c.name}`,
-                                subtitle: c.phone || c.mobile || 'No Phone'
-                            }))}
-                            value={selectedCustomerCode}
-                            onChange={(val) => setSelectedCustomerCode(val)}
-                            placeholder="Search by Name, Code or Phone..."
-                            className="w-full"
-                        />
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                            <input
+                                type="text"
+                                value={selectedCustomerDetails
+                                    ? `${selectedCustomerDetails.code} - ${selectedCustomerDetails.name}`
+                                    : customerSearch}
+                                onChange={(e) => {
+                                    setCustomerSearch(e.target.value);
+                                    setSelectedCustomerCode('');
+                                }}
+                                onFocus={() => {
+                                    if (selectedCustomerDetails) {
+                                        setCustomerSearch('');
+                                        setSelectedCustomerCode('');
+                                    }
+                                }}
+                                placeholder="Search by name, code or phone..."
+                                className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50"
+                            />
+                            {customerSearch && !selectedCustomerCode && (
+                                <div className="absolute z-20 top-full mt-1 left-0 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-52 overflow-y-auto">
+                                    {filteredSoACustomers.length === 0 ? (
+                                        <div className="px-4 py-3 text-sm text-slate-400 text-center">No customers found</div>
+                                    ) : filteredSoACustomers.slice(0, 50).map(c => (
+                                        <div
+                                            key={c.code}
+                                            className="px-4 py-2.5 cursor-pointer hover:bg-amber-50 border-b border-slate-50 last:border-0"
+                                            onClick={() => {
+                                                setSelectedCustomerCode(c.code);
+                                                setCustomerSearch('');
+                                            }}
+                                        >
+                                            <div className="text-sm font-medium text-slate-800">{c.code} — {c.name}</div>
+                                            {(c.phone || c.mobile || c.contact) && (
+                                                <div className="text-xs text-slate-500 mt-0.5">{c.phone || c.mobile || c.contact}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-700">From Date</label>

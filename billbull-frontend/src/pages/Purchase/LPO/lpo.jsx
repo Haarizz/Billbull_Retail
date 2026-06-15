@@ -668,22 +668,6 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
                         >
                           <Download className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
-                          title="Advance Payment"
-                          onClick={(e) => { e.stopPropagation(); onAdvancePayment && onAdvancePayment(row); }}
-                        >
-                          <DollarSign className="h-3.5 w-3.5" />
-                        </button>
-                        {Number(row.advancePaid) > 0 && (
-                          <button
-                            className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
-                            title="Print Payment Voucher"
-                            onClick={(e) => { e.stopPropagation(); onPrintPaymentVoucher && onPrintPaymentVoucher(row); }}
-                          >
-                            <FileDown className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -2842,6 +2826,13 @@ const LPOList = () => {
                 </button>
               )}
 
+              {activeNavTab === 'editor' && currentEditorData?.lpoNumber && (
+                <ExportDropdown
+                  onExportPdf={() => handleDownloadLPO(currentEditorData)}
+                  onExportExcel={() => handleExportLpoExcel(currentEditorData)}
+                  onPrint={() => handlePrintLPO(currentEditorData)}
+                />
+              )}
               <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <Upload className="h-4 w-4" /> Import
               </button>

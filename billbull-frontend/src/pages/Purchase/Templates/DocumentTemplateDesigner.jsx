@@ -209,8 +209,9 @@ function ClassicPreview({ s, currencyConfig }) {
   const items = MOCK.items;
   const subtotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100), 0);
   const discTotal = items.reduce((sum, i) => sum + i.qty * i.price * (i.disc / 100), 0);
+  const mockFooterDiscount = 500; // sample footer (bill-level) discount for preview
   const vatTotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100) * (i.vat / 100), 0);
-  const grandTotal = subtotal + vatTotal;
+  const grandTotal = subtotal - mockFooterDiscount + vatTotal;
   const currencyMode = s.currencyDisplay === "code" ? "code" : "symbol";
   const f = s.fontSize;
   const b = s.borderColor;
@@ -426,18 +427,25 @@ function ClassicPreview({ s, currencyConfig }) {
                   {subtotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
-            {s.showDiscountTotal && discTotal > 0 && <tr>
+            {s.showDiscountTotal !== false && discTotal > 0 && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#e11d48", textAlign: "right" }}>Discount</td>
                 <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48", fontWeight: 700, width: 110 }}>
                   - {discTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
+            {s.showDiscountTotal !== false && mockFooterDiscount > 0 && <tr>
+                <td style={{ padding: "3px 16px 3px 0", color: "#e11d48", textAlign: "right" }}>Footer Discount</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
+                <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48", fontWeight: 700, width: 110 }}>
+                  - {mockFooterDiscount.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>}
             {s.showTaxableTotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Taxable Amount</td>
                 <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
-                  {(subtotal - discTotal).toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+                  {(subtotal - discTotal - mockFooterDiscount).toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showVATTotal && <tr>
@@ -863,7 +871,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <SectionLabel icon={<CreditCard className="h-3 w-3" />} label="Totals Block" />
               <Row label="Taxable Amount"><Toggle value={s.showTaxableTotal} onChange={(v) => upd("showTaxableTotal", v)} /></Row>
               <Row label="Sub Total"><Toggle value={s.showSubtotal} onChange={(v) => upd("showSubtotal", v)} /></Row>
-              <Row label="Discount Total"><Toggle value={s.showDiscountTotal} onChange={(v) => upd("showDiscountTotal", v)} /></Row>
+              <Row label="Discount Total"><Toggle value={s.showDiscountTotal !== false} onChange={(v) => upd("showDiscountTotal", v)} /></Row>
               <Row label="VAT Total"><Toggle value={s.showVATTotal} onChange={(v) => upd("showVATTotal", v)} /></Row>
               <Row label="Grand Total"><Toggle value={s.showGrandTotal} onChange={(v) => upd("showGrandTotal", v)} /></Row>
               <Row label="Amount in Words"><Toggle value={s.showAmountInWords} onChange={(v) => upd("showAmountInWords", v)} /></Row>

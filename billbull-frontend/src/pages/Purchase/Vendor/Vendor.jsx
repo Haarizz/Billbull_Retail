@@ -883,6 +883,7 @@ const VendorSoA = ({ vendors }) => {
   const defaultEndDate = new Date().toISOString().split('T')[0];
 
   const [selectedVendorName, setSelectedVendorName] = useState('');
+  const [vendorSearch, setVendorSearch] = useState('');
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [statementData, setStatementData] = useState(null);
@@ -918,6 +919,18 @@ const VendorSoA = ({ vendors }) => {
   }, [selectedVendorName]);
 
   const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
+
+  const filteredSoAVendors = useMemo(() => {
+    const term = vendorSearch.toLowerCase().trim();
+    if (!term) return vendors;
+    return vendors.filter(v =>
+      (v.name && v.name.toLowerCase().includes(term)) ||
+      (v.code && v.code.toLowerCase().includes(term)) ||
+      (v.phone && v.phone.toLowerCase().includes(term)) ||
+      (v.mobile && v.mobile.toLowerCase().includes(term)) ||
+      (v.contact && v.contact.toLowerCase().includes(term))
+    );
+  }, [vendors, vendorSearch]);
 
   const handlePrint = async () => {
     if (!selectedVendorName || !startDate || !endDate) {
@@ -980,17 +993,48 @@ const VendorSoA = ({ vendors }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700">Select Vendor *</label>
-            <SearchableDropdown
-              options={vendors.map(v => ({
-                value: v.name,
-                label: `${v.code} - ${v.name}`,
-                subtitle: v.phone || v.mobile || 'No Phone'
-              }))}
-              value={selectedVendorName}
-              onChange={(val) => setSelectedVendorName(val)}
-              placeholder="Search by Name, Code or Phone..."
-              className="w-full"
-            />
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={selectedVendorDetails
+                  ? `${selectedVendorDetails.code} - ${selectedVendorDetails.name}`
+                  : vendorSearch}
+                onChange={(e) => {
+                  setVendorSearch(e.target.value);
+                  setSelectedVendorName('');
+                }}
+                onFocus={() => {
+                  if (selectedVendorDetails) {
+                    setVendorSearch('');
+                    setSelectedVendorName('');
+                  }
+                }}
+                placeholder="Search by name, code or phone..."
+                className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50"
+              />
+              {vendorSearch && !selectedVendorName && (
+                <div className="absolute z-20 top-full mt-1 left-0 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-52 overflow-y-auto">
+                  {filteredSoAVendors.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-slate-400 text-center">No vendors found</div>
+                  ) : filteredSoAVendors.slice(0, 50).map(v => (
+                    <div
+                      key={v.code || v.name}
+                      className="px-4 py-2.5 cursor-pointer hover:bg-amber-50 border-b border-slate-50 last:border-0"
+                      onClick={() => {
+                        setSelectedVendorName(v.name);
+                        setVendorSearch('');
+                      }}
+                    >
+                      <div className="text-sm font-medium text-slate-800">{v.code} — {v.name}</div>
+                      {(v.phone || v.mobile || v.contact) && (
+                        <div className="text-xs text-slate-500 mt-0.5">{v.phone || v.mobile || v.contact}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700">From Date</label>
