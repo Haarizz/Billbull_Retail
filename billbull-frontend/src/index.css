@@ -1,5 +1,62 @@
 @import "tailwindcss";
 
+/* ── shadcn/ui design tokens (required for bg-background, bg-card, etc.) ── */
+:root {
+  --background: #ffffff;
+  --foreground: #1E293B;
+  --card: #ffffff;
+  --card-foreground: #1E293B;
+  --popover: #ffffff;
+  --popover-foreground: #1E293B;
+  --primary: #F5C742;
+  --primary-foreground: #1a1a1a;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1E293B;
+  --muted: #f8f9fa;
+  --muted-foreground: #64748b;
+  --accent: #fef9e7;
+  --accent-foreground: #1a1a1a;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #F5C742;
+  --radius: 0.5rem;
+  --sidebar: #F7F7FA;
+  --sidebar-foreground: #1E1E1E;
+  --sidebar-border: #E2E8F0;
+}
+
+/* ── Map CSS vars to Tailwind v4 color utilities ── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 /* App-wide compact mode that mimics ~90% browser zoom on desktop. */
 :root {
   --bb-ui-scale: 0.9;
