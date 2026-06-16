@@ -75,6 +75,7 @@ import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
+import POSSales from "./pages/Sales/POSSales";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
@@ -439,6 +440,15 @@ function App() {
                       element={
                         <ResourceGuard module="sales.invoice">
                           <SalesReturn />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/sales/pos"
+                      element={
+                        <ResourceGuard module="sales.invoice">
+                          <POSSales />
                         </ResourceGuard>
                       }
                     />
