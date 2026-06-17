@@ -53,6 +53,7 @@ public class GrnService {
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -69,7 +70,8 @@ public class GrnService {
             ProductBarcodeRepository productBarcodeRepo,
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepository,
-            PurchaseBatchCreationService purchaseBatchCreationService) {
+            PurchaseBatchCreationService purchaseBatchCreationService,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -86,6 +88,7 @@ public class GrnService {
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
+        this.notifPublisher = notifPublisher;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -512,6 +515,13 @@ public class GrnService {
         // updated cost is immediately visible to COGS lookups after this transaction commits.
         // Dr. Inventory (1120), Cr. GRN Clearing (2103)
         postingEngineService.createJournalFromGRN(grn);
+
+        // Notify
+        notifPublisher.grnCompleted(
+                grn.getGrnNo(),
+                grn.getVendorName(),
+                grn.getReceivedBy() != null ? grn.getReceivedBy() : "System"
+        );
     }
 
     /* ================= MAPPER ================= */

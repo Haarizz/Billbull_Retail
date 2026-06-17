@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.payment;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -14,9 +15,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/vouchers")
-@CrossOrigin(origins = "*") // Adjust for production security
-@PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class PaymentVoucherController {
+
+    private static final String MODULE = "purchases";
 
     @Autowired
     private PaymentVoucherService service;
@@ -24,11 +26,15 @@ public class PaymentVoucherController {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private ModulePermissionService modulePermissionService;
+
     // --------------------
     // GET ALL
     // --------------------
     @GetMapping
     public ResponseEntity<List<PaymentVoucher>> getAllVouchers() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllVouchers());
     }
 
@@ -38,6 +44,7 @@ public class PaymentVoucherController {
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String status) {
+        modulePermissionService.requireCanView(MODULE);
         // `status` may be a single status or a comma-separated group (e.g. the
         // History tab = POSTED,REJECTED,CLEARED). Blank/absent → all statuses.
         java.util.List<PaymentStatus> statuses = new java.util.ArrayList<>();
@@ -57,6 +64,7 @@ public class PaymentVoucherController {
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, BigDecimal>> getStats() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.statsByMode());
     }
 
@@ -65,6 +73,7 @@ public class PaymentVoucherController {
     // --------------------
     @GetMapping("/{id}")
     public ResponseEntity<PaymentVoucher> getVoucherById(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return service.getVoucherById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -75,6 +84,7 @@ public class PaymentVoucherController {
     // --------------------
     @PostMapping
     public ResponseEntity<PaymentVoucher> createVoucher(@RequestBody Map<String, Object> payload) {
+        modulePermissionService.requireCanCreate(MODULE);
         try {
             PaymentVoucher voucher = new PaymentVoucher();
 
@@ -122,14 +132,27 @@ public class PaymentVoucherController {
     // UPDATE STATUS
     // --------------------
     @PutMapping("/{id}/status")
-    public ResponseEntity<PaymentVoucher> updateStatus(
+    public ResponseEntity<?> updateStatus(
             @PathVariable Long id,
             @RequestParam String status) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             PaymentStatus newStatus = PaymentStatus.valueOf(status.toUpperCase());
-            return ResponseEntity.ok(service.updateStatus(id, newStatus));
+            PaymentVoucher updated = service.updateStatus(id, newStatus);
+            Map<String, Object> response = new java.util.LinkedHashMap<>();
+            response.put("id", updated.getId());
+            response.put("voucherNumber", updated.getVoucherNumber());
+            response.put("status", updated.getStatus() != null ? updated.getStatus().name() : null);
+            response.put("message", "Payment voucher status updated");
+            return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(Map.of("message", "Invalid status: " + status));
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("message", e.getReason() != null ? e.getReason() : e.getMessage()));
+        } catch (com.billbull.backend.financials.generalledger.postingengine.PostingException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage() != null ? e.getMessage() : "Failed to update payment status"));
         }
     }
 
@@ -138,6 +161,7 @@ public class PaymentVoucherController {
     // --------------------
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteVoucher(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteVoucher(id);
         return ResponseEntity.noContent().build();
     }

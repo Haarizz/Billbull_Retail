@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 // Import API Methods
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getImageUrl } from "../../../utils/urlUtils";
 import {
   getProductsList,
@@ -38,25 +38,29 @@ import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
-import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
 import { useBranch } from '../../../context/BranchContext';
+import { getCompanyProfile } from '../../../api/companyProfileApi';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
+// pdfWidth values are in jsPDF points and are tuned to fit all columns
+// on a single A4 landscape page (available width ≈ 798pt after margins).
 const PRODUCT_COLUMNS = [
-  { header: 'S.No.', key: 'sNo', width: 8 },
-  { header: 'Photo', key: 'image', width: 12, type: 'image', imageWidth: 48, imageHeight: 48 },
-  { header: 'Product', key: 'name', width: 30 },
-  { header: 'Item Description', key: 'description', width: 35 },
-  { header: 'Code', key: 'code', width: 15 },
-  { header: 'SKU', key: 'sku', width: 15 },
-  { header: 'Brand', key: 'brandName', width: 15 },
-  { header: 'Department', key: 'departmentName', width: 20 },
-  { header: 'Cost', key: 'cost', width: 12 },
-  { header: 'Retail Price', key: 'retailPrice', width: 15 },
-  { header: 'Status', key: 'status', width: 12 }
+  { header: 'S.No.',           key: 'sNo',            width: 8,  pdfWidth: 42  },
+  { header: 'Photo',           key: 'image',          width: 12, type: 'image', imageWidth: 32, imageHeight: 32 },
+  { header: 'Product',         key: 'name',           width: 30, pdfWidth: 95  },
+  { header: 'Item Description',key: 'description',    width: 35, pdfWidth: 115 },
+  { header: 'Code',            key: 'code',           width: 15, pdfWidth: 55  },
+  { header: 'SKU',             key: 'sku',            width: 15, pdfWidth: 55  },
+  { header: 'Item Barcode',    key: 'barcode',        width: 22, pdfWidth: 72  },
+  { header: 'Brand',           key: 'brandName',      width: 15, pdfWidth: 58  },
+  { header: 'Department',      key: 'departmentName', width: 20, pdfWidth: 70  },
+  { header: 'Cost',            key: 'cost',           width: 12, pdfWidth: 44  },
+  { header: 'Retail Price',    key: 'retailPrice',    width: 15, pdfWidth: 55  },
+  { header: 'Status',          key: 'status',         width: 12, pdfWidth: 48  },
 ];
 
 const mapProductListItem = (d) => ({
@@ -75,6 +79,7 @@ const mapProductListItem = (d) => ({
   retailPrice: d.retailPrice ?? 0,
   image: d.image ? getImageUrl(d.image) : null,
   packings: d.packings || [],
+  barcode: d.packings?.find(p => p.barcode)?.barcode || '',
 });
 
 const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
@@ -314,9 +319,10 @@ const buildProductPayload = (formData) => {
 };
 
 const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands, departments: initialDepts, units: initialUnits, warehouses, vendors, branches }) => {
-  const { hasAnyRole } = usePermissions();
+  const { hasAnyRole, canApprove } = usePermissions();
   const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
+  const canSetNegativeStock = canApprove('inventory');
   const [currentStep, setCurrentStep] = useState(1);
   const [subDepartments, setSubDepartments] = useState([]);
   const [zones, setZones] = useState([]);
@@ -1259,9 +1265,18 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     <input type="number" value={formData.maxStock} onChange={(e) => handleInputChange('maxStock', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
                   </div>
                   <div className="pt-2">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600">
-                      <input type="checkbox" checked={formData.allowNegative} onChange={(e) => handleInputChange('allowNegative', e.target.checked)} className="rounded text-[#F5C742] focus:ring-[#F5C742]" />
+                    <label className={`flex items-center gap-2 text-sm ${canSetNegativeStock ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-400'}`}>
+                      <input
+                        type="checkbox"
+                        checked={formData.allowNegative}
+                        onChange={(e) => canSetNegativeStock && handleInputChange('allowNegative', e.target.checked)}
+                        disabled={!canSetNegativeStock}
+                        className="rounded text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
                       Allow Negative Stock (Role Based)
+                      {!canSetNegativeStock && (
+                        <span className="text-xs text-slate-400">(Requires Inventory Approve permission)</span>
+                      )}
                     </label>
                   </div>
                 </div>
@@ -1273,10 +1288,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Default Vendor</label>
-                    <select value={formData.defaultVendor} onChange={(e) => handleInputChange('defaultVendor', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                      <option value="">Select Vendor</option>
-                      {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </select>
+                    <ClassificationDropdown
+                      options={vendors.map(v => ({ value: v.id, label: v.name }))}
+                      value={formData.defaultVendor}
+                      onChange={(val) => handleInputChange('defaultVendor', val)}
+                      placeholder="Select Vendor…"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Procurement Type</label>
@@ -2154,10 +2171,13 @@ const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose
 
 const Products = () => {
   const navigate = useNavigate();
-  const { hasAnyRole } = usePermissions();
-  const { activeBranchId } = useBranch();
+  const location = useLocation();
+  const { hasAnyRole, canApprove } = usePermissions();
+  const { activeBranchId, activeBranch } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
+  const canSetNegativeStock = canApprove('inventory');
   const [currentView, setCurrentView] = useState('list');
+  const [companyProfile, setCompanyProfile] = useState(null);
   const [products, setProducts] = useState([]);
   const [brands, setBrands] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -2189,6 +2209,15 @@ const Products = () => {
 
   // Pagination state
   const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    const shouldOpenCreate = location.state?.openCreate || location.state?.mode === 'create';
+    if (!shouldOpenCreate) return;
+
+    setEditingProduct(null);
+    setCurrentView('add');
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.pathname, location.state, navigate]);
   const [currentPage, setCurrentPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
@@ -2216,6 +2245,10 @@ const Products = () => {
     setCurrentPage(0);
     fetchProducts(0, debouncedSearch);
   }, [filterDepartment, filterBrand, activeBranchId]);
+
+  useEffect(() => {
+    getCompanyProfile().then(res => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   const fetchMasters = async () => {
     try {
@@ -2301,8 +2334,9 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = withListSerialNumbers(exportRows);
-      await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products');
+      const exportRowsWithSNo = withExportSerialNumbers(exportRows);
+      const meta = { companyProfile, branch: activeBranch?.name || '' };
+      await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products', meta);
     } catch (err) {
       console.error("Failed to export products to Excel", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");
@@ -2315,8 +2349,9 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = withListSerialNumbers(exportRows);
-      await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products');
+      const exportRowsWithSNo = withExportSerialNumbers(exportRows);
+      const meta = { companyProfile, branch: activeBranch?.name || '' };
+      await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products', meta);
     } catch (err) {
       console.error("Failed to export products to PDF", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");
@@ -2406,14 +2441,15 @@ const Products = () => {
       await fetchProducts();
     } catch (err) {
       console.error('Import failed', err);
-      const errMsg = err.response?.data || err.message || 'Failed to import products.';
-      setImportModal({ fileName: file.name, status: 'error', message: errMsg, progress: null });
+      const errData = err.response?.data;
+      const errMsg = (typeof errData === 'string' ? errData : errData?.message) || err.message || 'Failed to import products.';
+      setImportModal({ fileName: file.name, status: 'error', message: errMsg, progress: {} });
     } finally {
       e.target.value = null;
     }
   };
 
-  const handleEdit = async (productInfo) => {
+  const handleEdit = async (productInfo, { silent = false } = {}) => {
     try {
       setLoading(true);
       const fullProductData = await getProductById(productInfo.id);
@@ -2521,11 +2557,25 @@ const Products = () => {
       setCurrentView('add');
     } catch (err) {
       console.error("Failed to fetch product details", err);
-      alert("Failed to load product details for editing.");
+      if (!silent) alert("Failed to load product details for editing.");
     } finally {
       setLoading(false);
     }
   };
+
+  // Open a specific product by ID navigated from another page (e.g. dashboard top-selling items)
+  useEffect(() => {
+    const targetId = location.state?.productId;
+    if (!targetId) return;
+    navigate(location.pathname, { replace: true, state: {} });
+    // Only treat as a DB id when it has no leading zeros (numeric ids never have them)
+    const numericStr = String(targetId);
+    const numId = Number(numericStr);
+    const looksLikeDbId = Number.isInteger(numId) && numId > 0 && String(numId) === numericStr;
+    if (looksLikeDbId) {
+      handleEdit({ id: numId }, { silent: true });
+    }
+  }, [location.state?.productId]);
 
   const handleScanInput = (e) => {
     if (e.key === "Enter") {

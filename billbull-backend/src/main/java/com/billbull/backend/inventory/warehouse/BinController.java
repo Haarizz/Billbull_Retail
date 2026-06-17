@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.warehouse;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -8,24 +9,30 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/locators/{locatorId}/bins")
-@PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER')")
+@PreAuthorize("isAuthenticated()")
 public class BinController {
 
-    private final BinService binService;
+    private static final String MODULE = "inventory";
 
-    public BinController(BinService binService) {
+    private final BinService binService;
+    private final ModulePermissionService modulePermissionService;
+
+    public BinController(BinService binService, ModulePermissionService modulePermissionService) {
         this.binService = binService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<BinResponse>> getBins(@PathVariable Long locatorId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(binService.getBinResponsesByLocator(locatorId));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BinResponse> getBin(@PathVariable Long locatorId, @PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(binService.getBinResponseById(id));
     }
 
@@ -33,6 +40,7 @@ public class BinController {
     public ResponseEntity<BinResponse> createBin(
             @PathVariable Long locatorId,
             @RequestBody BinRequest request) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(binService.createBinAndGetResponse(locatorId, request));
     }
 
@@ -41,11 +49,13 @@ public class BinController {
             @PathVariable Long locatorId,
             @PathVariable Long id,
             @RequestBody BinRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(binService.updateBinAndGetResponse(id, request));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteBin(@PathVariable Long locatorId, @PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         binService.deleteBin(id);
         return ResponseEntity.noContent().build();
     }

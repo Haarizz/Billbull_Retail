@@ -1,12 +1,19 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import {
-    DollarSign, TrendingUp, Filter, Search, Plus, MapPin, Tag,
-    MoreHorizontal, Download, Upload, FileText, ChevronLeft,
-    PieChart, Briefcase, Trash, Edit, X
+    DollarSign, TrendingUp, TrendingDown, Plus, Search, MoreHorizontal,
+    Download, FileText, ChevronLeft, Trash, Edit, X, ChevronDown,
+    Printer as PrintIcon, Building2, CreditCard, Banknote, CheckSquare, Mail
 } from 'lucide-react';
 import { getVendors } from '../../api/vendorsApi';
-import { getCostCenters, getAccounts, getBankAccounts, getTransactions } from '../../api/ledgerApi';
+import { getCostCenters, getAccounts, getBankAccounts } from '../../api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
+import { printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { ExpensePreview } from './FinancialVoucherDesigner';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -16,898 +23,1107 @@ import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreat
 import PaginationFooter from '../../components/common/PaginationFooter';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
+const PAYMENT_MODES = ['Cash', 'Card', 'Credit', 'Bank Transfer', 'Cheque', 'Online Payment'];
+const TAX_RATES = [0, 5];
+const CATEGORIES = ['Utilities', 'Rent', 'Marketing', 'Operational', 'Office Supplies', 'Travel', 'Entertainment', 'Transport', 'Other'];
 
-const Expenses = () => {
+const fmt = (v) => (parseFloat(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const PayIcon = ({ mode }) => {
+    const icons = {
+        Cash: <Banknote size={12} />,
+        Card: <CreditCard size={12} />,
+        Cheque: <CheckSquare size={12} />,
+        'Bank Transfer': <Building2 size={12} />,
+        'Online Payment': <Building2 size={12} />,
+        Credit: <CreditCard size={12} />,
+    };
+    return icons[mode] || <DollarSign size={12} />;
+};
+
+const StatusBadge = ({ status }) => {
+    const styles = {
+        Paid:      'bg-[#F5C742] text-slate-900 border-[#F5C742]',
+        Submitted: 'bg-blue-50 text-blue-700 border-blue-200',
+        Draft:     'bg-slate-100 text-slate-600 border-slate-200',
+        Cancelled: 'bg-red-50 text-red-600 border-red-200',
+    };
+    return (
+        <span className={`px-1.5 py-[1px] rounded text-[9px] font-bold tracking-wide border ${styles[status] || styles.Draft}`}>
+            {status?.toUpperCase()}
+        </span>
+    );
+};
+
+const emptyLine = () => ({ _backendId: null, glAccountId: '', glAccountName: '', description: '', category: '', costCenter: '', amount: '', taxRate: 0 });
+const emptyForm = () => ({
+    date: new Date().toISOString().split('T')[0],
+    vendor: '',
+    vendorId: null,
+    paymentMode: 'Cash',
+    paymentAccountId: '',
+    branchId: null,
+    narration: '',
+    status: 'Draft',
+    lines: [emptyLine()],
+});
+
+export default function Expenses() {
     const { company } = useCompany();
-    useBranch(); // for refetch listener context
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
-    // --- MOCK DATA REMOVED ---
 
-
-    const [categories, setCategories] = useState(['Utilities', 'Rent', 'Marketing', 'Operational', 'Office Supplies', 'Travel']);
-    // const costCenters = ['Electric', 'Facility', 'Digital Marketing', 'Cleaning', 'Admin', 'Sales'];
-    const [locations, setLocations] = useState(['Downtown', 'Mall Branch', 'All Locations']);
-    const taxRates = [0, 5];
-
-    // --- DATA FETCHING ---
-    const [vendors, setVendors] = useState([]);
+    // --- DATA ---
+    const [vouchers, setVouchers]       = useState([]);
+    const [vendors, setVendors]         = useState([]);
     const [costCenters, setCostCenters] = useState([]);
-    // BB-034A: GL accounts for expense account ledger selector
-    const [glAccounts, setGlAccounts] = useState([]);
-    const [allAccounts, setAllAccounts] = useState([]);
-    const [glAccountSearch, setGlAccountSearch] = useState('');
-    const [glAccountOpen, setGlAccountOpen] = useState(false);
-    const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
-    const glAccountRef = useRef(null);
-
-    const isSelectableExpenseAccount = (account) => {
-        if (!account || account.status === 'archived' || account.isGroup === true) return false;
-        return (account.accountGroup || '').toLowerCase() === 'expenses'
-            || (account.accountType || '').toLowerCase() === 'expense';
-    };
-
-    const loadReferenceData = async () => {
-        const [vendorData, costCenterData, glData] = await Promise.all([
-            getVendors(),
-            getCostCenters(),
-            getAccounts()
-        ]);
-        const accountData = Array.isArray(glData) ? glData : [];
-        setVendors(Array.isArray(vendorData) ? vendorData : []);
-        setCostCenters(Array.isArray(costCenterData) ? costCenterData : []);
-        setAllAccounts(accountData);
-        setGlAccounts(accountData.filter(isSelectableExpenseAccount));
-        return accountData;
-    };
-
-    useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const [vendorData, costCenterData, glData, bankData] = await Promise.all([
-    getVendors(),
-    getCostCenters(),
-    getAccounts(),
-    getBankAccounts().catch(() => [])
-]);
-
-setVendors(vendorData);
-setCostCenters(costCenterData);
-
-// Filter to expense-type accounts for the selector
-setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
-
-setPayAccounts(Array.isArray(bankData) ? bankData : []);
-
-// Needed by develop branch fallback expense loader
-setAllAccounts(Array.isArray(glData) ? glData : []);
-            } catch (error) {
-                console.error("Failed to fetch data", error);
-            }
-        };
-        fetchData();
-    }, []);
-
-    const [expenses, setExpenses] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-
-    // --- STATE ---
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [activeActionId, setActiveActionId] = useState(null);
-    const [editingId, setEditingId] = useState(null);
-
-    const [newExpense, setNewExpense] = useState({
-        date: new Date().toISOString().split('T')[0],
-        vendor: '',
-        category: '',
-        glAccountId: '',
-        costCenter: '',
-        location: '',
-        amount: '',
-        taxRate: 5,
-        status: 'Pending',
-        paymentMode: 'Cash',
-        paymentAccountId: '',
-        notes: ''
-    });
-
-    // QA-054: cash & bank ledgers loaded from the COA so the user can pick
-    // which account funded the expense. List is filtered by paymentMode in
-    // the dropdown (Cash → cash accounts, others → bank accounts).
+    const [glAccounts, setGlAccounts]   = useState([]);
     const [payAccounts, setPayAccounts] = useState([]);
-    const PAYMENT_MODES = ['Cash', 'Card', 'Credit', 'Bank Transfer', 'Online Payment'];
-    const [searchTerm, setSearchTerm] = useState('');
-    const [filterDate, setFilterDate] = useState('This Month');
-    const [filterLocation, setFilterLocation] = useState('All Locations');
-    const [filterCategory, setFilterCategory] = useState('All Categories');
-    const [filterCostCenter, setFilterCostCenter] = useState('All Cost Centers');
-    const [filterTax, setFilterTax] = useState('All Tax Rates');
+    const [isLoading, setIsLoading]     = useState(false);
 
-    // --- EFFECTS ---
+    // --- VIEW STATE ---
+    const [viewMode, setViewMode]         = useState('list'); // 'list' | 'create' | 'edit'
+    const [editingId, setEditingId]       = useState(null);
+    const [editingGroupIds, setEditingGroupIds]   = useState([]);
+    const [editingGroupId, setEditingGroupId]     = useState(null);
+    const [form, setForm]               = useState(emptyForm());
+    const [expandedIds, setExpandedIds] = useState(new Set());
+    const [activeMenuId, setActiveMenuId] = useState(null);
+    const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
+    const [accountCreateTargetLine, setAccountCreateTargetLine] = useState(null);
+
+    // --- FILTERS ---
+    const [searchTerm, setSearchTerm]   = useState('');
+    const [filterStatus, setFilterStatus] = useState('All Status');
+    const [filterPayMode, setFilterPayMode] = useState('All Pay Modes');
+    const [listPage, setListPage]       = useState(0);
+    const PAGE_SIZE = 20;
+
+    useEffect(() => { loadAll(); }, []);
     useEffect(() => {
-        loadExpenses();
+        const h = () => loadAll();
+        window.addEventListener('billbull:branch-changed', h);
+        return () => window.removeEventListener('billbull:branch-changed', h);
     }, []);
 
-    // Refetch when the global Branch Selector changes the active branch.
-    useEffect(() => {
-        const handler = () => loadExpenses();
-        window.addEventListener('billbull:branch-changed', handler);
-        return () => window.removeEventListener('billbull:branch-changed', handler);
-    }, []);
-
-    useEffect(() => {
-        const handleClickOutside = (e) => {
-            if (glAccountRef.current && !glAccountRef.current.contains(e.target)) {
-                setGlAccountOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const loadExpenses = async () => {
+    const loadAll = async () => {
         setIsLoading(true);
         try {
-            let data = await fetchExpenses();
-            
-            // Fallback: If no expenses from dedicated API, try filtering from global transactions
-            if (!data || data.length === 0) {
-                console.warn("Expenses API returned empty. Attempting fallback from ledger transactions...");
-                const allTransactions = await getTransactions();
-                
-                // We define expenses as transactions associated with expense-type accounts 
-                // OR specific transaction types like 'EXPENSE', 'PURCHASE_INVOICE'.
-                const expAccounts = glAccounts.filter(a => 
-                    (a.accountType || '').toLowerCase().includes('expense') || 
-                    (a.accountGroup || '').toLowerCase().includes('expense')
-                );
-                const expAccountCodes = new Set(expAccounts.map(a => a.code));
+            const [vndData, ccData, glData, bankData, expData] = await Promise.all([
+                getVendors(),
+                getCostCenters(),
+                getAccounts(),
+                getBankAccounts().catch(() => []),
+                fetchExpenses().catch(() => []),
+            ]);
+            setVendors(Array.isArray(vndData) ? vndData : []);
+            setCostCenters(Array.isArray(ccData) ? ccData : []);
+            setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
+            setPayAccounts(Array.isArray(bankData) ? bankData : []);
 
-                const expenseTransactions = allTransactions.filter(t => 
-                    t.type === 'EXPENSE' || 
-                    t.type === 'PURCHASE_INVOICE' ||
-                    t.type === 'PAYMENT_VOUCHER' ||
-                    expAccountCodes.has(t.accountCode)
-                );
+            const allGl = Array.isArray(glData) ? glData : [];
 
-                if (expenseTransactions.length > 0) {
-                    data = expenseTransactions.map(t => ({
-                        id: t.id,
-                        date: t.transactionDate,
-                        vendor: t.accountName || 'Miscellaneous',
-                        category: t.accountGroup || 'Operational',
-                        glAccountId: expAccounts.find(a => a.code === t.accountCode)?.id || '',
-                        costCenter: t.costCenterName || '',
-                        location: t.branch || 'Head Office',
-                        amount: parseFloat(t.debitAmount || 0),
-                        taxRate: 0, // Placeholder
-                        taxAmount: 0,
-                        total: parseFloat(t.debitAmount || 0),
-                        status: 'Paid',
-                        notes: t.description || ''
-                    }));
+            // Map each raw expense to an intermediate shape with a resolved line.
+            // Location format: "" (single) | "GRP-{ts}" (legacy group) | "GRP-{ts}|{narration}" (grouped with narration).
+            const expArr = (Array.isArray(expData) ? expData : []).map(e => {
+                const glAcct = allGl.find(a => a.id === e.glAccountId);
+                const loc = e.location || '';
+                let groupId = null;
+                let narration = e.notes || '';
+                let lineDescription = '';
+
+                if (loc.startsWith('GRP-')) {
+                    const pipeIdx = loc.indexOf('|');
+                    groupId     = pipeIdx > -1 ? loc.substring(0, pipeIdx) : loc;
+                    narration   = pipeIdx > -1 ? loc.substring(pipeIdx + 1) : '';
+                    lineDescription = e.notes || '';
                 }
-            }
-            
-            setExpenses(data);
-        } catch (error) {
-            console.error("Failed to load expenses", error);
+
+                return {
+                    id:               e.id,
+                    date:             e.date,
+                    vendor:           e.vendor || '',
+                    paymentMode:      e.paymentMode || 'Cash',
+                    paymentAccountId: e.paymentAccountId || '',
+                    branch:           e.branch || null,
+                    narration,
+                    status:           e.status || 'Draft',
+                    groupId,
+                    line: {
+                        _backendId:    e.id,
+                        glAccountId:   e.glAccountId  || '',
+                        glAccountName: glAcct?.name   || '',
+                        glAccountCode: glAcct?.code   || '',
+                        description:   lineDescription,
+                        category:      e.category     || '',
+                        costCenter:    e.costCenter   || '',
+                        amount:        e.amount       || 0,
+                        taxRate:       e.taxRate      || 0,
+                        taxAmount:     e.taxAmount    || 0,
+                        lineTotal:     e.total        || 0,
+                    },
+                };
+            });
+
+            // Group expenses sharing a GRP-* location into one voucher
+            const groupMap = {};
+            const singleList = [];
+            expArr.forEach(e => {
+                if (e.groupId) {
+                    if (!groupMap[e.groupId]) groupMap[e.groupId] = [];
+                    groupMap[e.groupId].push(e);
+                } else {
+                    singleList.push(e);
+                }
+            });
+
+            const makeVoucher = (first, lines, groupExpIds) => ({
+                id:               first.id,
+                voucherNumber:    `EXP-${first.id}`,
+                date:             first.date,
+                vendor:           first.vendor,
+                paymentMode:      first.paymentMode,
+                paymentAccountId: first.paymentAccountId,
+                branch:           first.branch,
+                narration:        first.narration,
+                status:           first.status,
+                groupId:          first.groupId,
+                groupExpIds,
+                lines,
+                subTotal:   lines.reduce((s, l) => s + (l.amount    || 0), 0),
+                totalTax:   lines.reduce((s, l) => s + (l.taxAmount || 0), 0),
+                grandTotal: lines.reduce((s, l) => s + (l.lineTotal || 0), 0),
+            });
+
+            const mapped = [
+                ...Object.values(groupMap).map(items => {
+                    items.sort((a, b) => a.id - b.id);
+                    const first = items[0];
+                    return makeVoucher(first, items.map(i => i.line), items.map(i => i.id));
+                }),
+                ...singleList.map(e => makeVoucher(e, [e.line], [e.id])),
+            ].sort((a, b) => b.id - a.id);
+
+            setVouchers(mapped);
+        } catch (e) {
+            console.error(e);
+            toast.error('Failed to load expenses');
         } finally {
             setIsLoading(false);
         }
     };
 
     // --- COMPUTED ---
-    const filteredExpenses = useMemo(() => {
-        return expenses.filter(item => {
-            const matchesSearch = (item.vendor || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (item.notes || '').toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesLocation = filterLocation === 'All Locations' || item.location === filterLocation;
-            const matchesCategory = filterCategory === 'All Categories' || item.category === filterCategory;
-            const matchesCostCenter = filterCostCenter === 'All Cost Centers' || item.costCenter === filterCostCenter;
-            const matchesTax = filterTax === 'All Tax Rates' || (item.taxRate || 0).toString() === filterTax;
-
-            return matchesSearch && matchesLocation && matchesCategory && matchesCostCenter && matchesTax;
+    const filtered = useMemo(() => {
+        return vouchers.filter(v => {
+            const q = searchTerm.toLowerCase();
+            const matchSearch = !q
+                || (v.voucherNumber || '').toLowerCase().includes(q)
+                || (v.vendor || '').toLowerCase().includes(q)
+                || (v.narration || '').toLowerCase().includes(q);
+            const matchStatus  = filterStatus === 'All Status'    || v.status === filterStatus;
+            const matchPayMode = filterPayMode === 'All Pay Modes' || v.paymentMode === filterPayMode;
+            return matchSearch && matchStatus && matchPayMode;
         });
-    }, [expenses, searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
+    }, [vouchers, searchTerm, filterStatus, filterPayMode]);
 
-    const LIST_PAGE_SIZE = 30;
-    const [listPage, setListPage] = useState(0);
-    useEffect(() => { setListPage(0); }, [searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
-    const pagedExpenses = useMemo(
-        () => filteredExpenses.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-        [filteredExpenses, listPage]
+    const paged = useMemo(
+        () => filtered.slice(listPage * PAGE_SIZE, (listPage + 1) * PAGE_SIZE),
+        [filtered, listPage]
     );
+    useEffect(() => setListPage(0), [searchTerm, filterStatus, filterPayMode]);
 
     const stats = useMemo(() => {
-        const totalExpenses = filteredExpenses.reduce((sum, item) => sum + (item.total || 0), 0);
-        const totalTax = filteredExpenses.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
+        const grandTotal = vouchers.reduce((s, v) => s + parseFloat(v.grandTotal || 0), 0);
+        const totalTax   = vouchers.reduce((s, v) => s + parseFloat(v.totalTax   || 0), 0);
+        const branchSet  = new Set(vouchers.map(v => v.branch?.id).filter(Boolean));
+        return { grandTotal, totalTax, count: vouchers.length, branches: branchSet.size };
+    }, [vouchers]);
 
-        // Find top category
-        const catCounts = {};
-        let maxCount = 0;
-        let topCat = 'None';
-        let topCatAmount = 0;
-
-        filteredExpenses.forEach(item => {
-            if (item.category) {
-                catCounts[item.category] = (catCounts[item.category] || 0) + (item.total || 0);
-                if (catCounts[item.category] > maxCount) {
-                    maxCount = catCounts[item.category];
-                    topCat = item.category;
-                    topCatAmount = maxCount;
-                }
-            }
+    // --- FORM LINE HELPERS ---
+    const setLine = (idx, field, value) =>
+        setForm(f => {
+            const lines = f.lines.map((l, i) => {
+                if (i !== idx) return l;
+                const updated = { ...l, [field]: value };
+                const amt = parseFloat(updated.amount) || 0;
+                const tax = parseFloat(updated.taxRate) || 0;
+                updated.taxAmount = ((amt * tax) / 100).toFixed(2);
+                updated.lineTotal = (amt + parseFloat(updated.taxAmount)).toFixed(2);
+                return updated;
+            });
+            return { ...f, lines };
         });
 
-        const activeLocations = new Set(filteredExpenses.map(e => e.location).filter(Boolean)).size;
+    const addLine    = () => setForm(f => ({ ...f, lines: [...f.lines, emptyLine()] }));
+    const removeLine = (idx) => setForm(f => ({ ...f, lines: f.lines.filter((_, i) => i !== idx) }));
 
-        return {
-            totalExpenses: totalExpenses.toFixed(2),
-            count: filteredExpenses.length,
-            totalTax: totalTax.toFixed(2),
-            topCategory: topCat,
-            topCategoryAmount: topCatAmount.toFixed(2),
-            activeLocations
-        };
-    }, [filteredExpenses]);
+    const formTotals = useMemo(() => {
+        const subTotal   = form.lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const totalTax   = form.lines.reduce((s, l) => s + (parseFloat(l.taxAmount) || 0), 0);
+        const grandTotal = subTotal + totalTax;
+        return { subTotal, totalTax, grandTotal };
+    }, [form.lines]);
 
-    // --- HANDLERS ---
-    const handleAddExpense = async () => {
-        const amount = parseFloat(newExpense.amount) || 0;
-        // tax and total are handled by backend, but we can send them if needed or rely on backend calc
-        // Backend handles calc based on service logic, sending raw inputs is best.
-
-        try {
-            if (editingId) {
-                // Update Existing
-                const updated = await updateExpense(editingId, newExpense);
-                setExpenses(expenses.map(e => e.id === editingId ? updated : e));
-            } else {
-                // Create New
-                const created = await createExpense(newExpense);
-                setExpenses([created, ...expenses]);
-            }
-            closeModal();
-        } catch (error) {
-            console.error("Failed to save expense", error);
-            toast.error("Failed to save expense. Please try again.");
-        }
-    };
-
-    const handleEdit = (expense) => {
-        setNewExpense({
-            date: expense.date,
-            vendor: expense.vendor,
-            category: expense.category,
-            glAccountId: expense.glAccountId || '',
-            costCenter: expense.costCenter,
-            location: expense.location,
-            amount: expense.amount,
-            taxRate: expense.taxRate,
-            status: expense.status || 'Pending',
-            paymentMode: expense.paymentMode || 'Cash',
-            paymentAccountId: expense.paymentAccountId || '',
-            notes: expense.notes
-        });
-        setGlAccountSearch('');
-        setEditingId(expense.id);
-        setIsModalOpen(true);
-        setActiveActionId(null);
-    };
-
-    const handleDelete = async (id) => {
-        if (window.confirm("Are you sure you want to delete this expense?")) {
-            try {
-                await deleteExpense(id);
-                setExpenses(expenses.filter(e => e.id !== id));
-                setActiveActionId(null);
-            } catch (error) {
-                console.error("Failed to delete expense", error);
-                toast.error("Failed to delete expense.");
-            }
-        }
-    };
-
-    const closeModal = () => {
-        setIsModalOpen(false);
+    // --- ACTIONS ---
+    const handleCreate = () => {
+        setForm({ ...emptyForm(), branchId: activeBranch?.id || null });
         setEditingId(null);
-        setGlAccountSearch('');
-        setGlAccountOpen(false);
-        setNewExpense({
-            date: new Date().toISOString().split('T')[0],
-            vendor: '',
-            category: '',
-            glAccountId: '',
-            costCenter: '',
-            location: '',
-            amount: '',
-            taxRate: 5,
-            status: 'Pending',
-            paymentMode: 'Cash',
-            paymentAccountId: '',
-            notes: ''
-        });
+        setEditingGroupIds([]);
+        setEditingGroupId(null);
+        setViewMode('create');
     };
 
-    const handleLedgerAccountCreated = async (createdAccount) => {
-        let account = createdAccount;
+    const handleEdit = (v) => {
+        setForm({
+            date: v.date || new Date().toISOString().split('T')[0],
+            vendor: v.vendor || '',
+            vendorId: v.vendorId || null,
+            paymentMode: v.paymentMode || 'Cash',
+            paymentAccountId: v.paymentAccountId || '',
+            branchId: v.branch?.id || null,
+            narration: v.narration || '',
+            status: v.status || 'Draft',
+            lines: (v.lines || []).map(l => ({
+                _backendId:    l._backendId    || null,
+                glAccountId:   l.glAccountId   || '',
+                glAccountName: l.glAccountName || '',
+                description:   l.description   || '',
+                category:      l.category      || '',
+                costCenter:    l.costCenter    || '',
+                amount:        l.amount        != null ? String(l.amount) : '',
+                taxRate:       l.taxRate       != null ? String(l.taxRate) : '0',
+                taxAmount:     l.taxAmount     != null ? String(l.taxAmount) : '0',
+                lineTotal:     l.lineTotal     != null ? String(l.lineTotal) : '0',
+            })),
+        });
+        setEditingId(v.id);
+        setEditingGroupIds(v.groupExpIds || [v.id]);
+        setEditingGroupId(v.groupId || null);
+        setViewMode('edit');
+        setActiveMenuId(null);
+    };
+
+    const handleSave = async (targetStatus) => {
+        if (!form.vendor) { toast.error('Vendor / Payee is required'); return; }
+        if (!form.date)   { toast.error('Date is required'); return; }
+        const validLines = form.lines.filter(l => l.glAccountId || parseFloat(l.amount));
+        if (!validLines.length) { toast.error('Add at least one expense line'); return; }
+
+        const status = targetStatus || form.status;
+
+        // Use a shared group ID when there are multiple lines so they
+        // can be re-grouped into one voucher on the next load.
+        const needsGroup = validLines.length > 1;
+
         try {
-            const refreshedAccounts = await loadReferenceData();
-            account = refreshedAccounts.find(item => item.id === createdAccount?.id) || createdAccount;
-        } catch (error) {
-            console.error("Failed to refresh expense ledger accounts", error);
-            if (createdAccount?.id) {
-                setAllAccounts(prev => [...prev, createdAccount]);
-                if (isSelectableExpenseAccount(createdAccount)) {
-                    setGlAccounts(prev => [...prev, createdAccount]);
+            // Build location value:
+            // - single line  → '' (no group)
+            // - multi-line   → 'GRP-{ts}|{narration}'  (pipe separates groupId from narration)
+            const buildLocation = (groupId) =>
+                needsGroup ? `${groupId}|${form.narration || ''}` : '';
+
+            // For multi-line vouchers, each line's notes = its own description.
+            // For single-line, notes = narration (legacy-compatible).
+            const lineNotes = (l) =>
+                needsGroup ? (l.description || '') : (form.narration || '');
+
+            if (editingId) {
+                const groupId = needsGroup
+                    ? (editingGroupId || `GRP-${Date.now()}`)
+                    : '';
+                const location = buildLocation(groupId);
+
+                const basePayload = {
+                    date: form.date, vendor: form.vendor,
+                    paymentMode: form.paymentMode || '',
+                    paymentAccountId: form.paymentAccountId || '',
+                    location,
+                    status,
+                    ...(form.branchId ? { branch: { id: form.branchId } } : {}),
+                };
+
+                const prevIds = [...editingGroupIds];
+                const usedIds = [];
+
+                for (const l of validLines) {
+                    const linePayload = {
+                        ...basePayload,
+                        notes:       lineNotes(l),
+                        glAccountId: l.glAccountId || '',
+                        category:    l.category    || '',
+                        costCenter:  l.costCenter  || '',
+                        amount:      parseFloat(l.amount)  || 0,
+                        taxRate:     parseFloat(l.taxRate) || 0,
+                    };
+                    if (l._backendId && prevIds.includes(l._backendId)) {
+                        await updateExpense(l._backendId, linePayload);
+                        usedIds.push(l._backendId);
+                    } else {
+                        const created = await createExpense(linePayload);
+                        usedIds.push(created.id);
+                    }
                 }
+
+                // Delete any lines that were removed from the form
+                for (const id of prevIds.filter(id => !usedIds.includes(id))) {
+                    try { await deleteExpense(id); } catch { /* ignore — may be Paid */ }
+                }
+
+                toast.success('Expense updated');
+            } else {
+                const groupId = needsGroup ? `GRP-${Date.now()}` : '';
+                const location = buildLocation(groupId);
+
+                const basePayload = {
+                    date: form.date, vendor: form.vendor,
+                    paymentMode: form.paymentMode || '',
+                    paymentAccountId: form.paymentAccountId || '',
+                    location,
+                    status,
+                    ...(form.branchId ? { branch: { id: form.branchId } } : {}),
+                };
+
+                for (const l of validLines) {
+                    await createExpense({
+                        ...basePayload,
+                        notes:       lineNotes(l),
+                        glAccountId: l.glAccountId || '',
+                        category:    l.category    || '',
+                        costCenter:  l.costCenter  || '',
+                        amount:      parseFloat(l.amount)  || 0,
+                        taxRate:     parseFloat(l.taxRate) || 0,
+                    });
+                }
+                toast.success(`${validLines.length} expense line${validLines.length > 1 ? 's' : ''} saved`);
+            }
+            await loadAll();
+            setViewMode('list');
+        } catch (e) {
+            console.error(e);
+            const msg = e?.response?.data?.message
+                || e?.response?.data
+                || e?.message
+                || 'Failed to save expense';
+            toast.error(String(msg));
+        }
+    };
+
+    const handleDelete = async (voucher) => {
+        const ids = voucher.groupExpIds || [voucher.id];
+        if (!window.confirm(`Delete this expense voucher${ids.length > 1 ? ` (${ids.length} lines)` : ''}?`)) return;
+        try {
+            for (const id of ids) {
+                await deleteExpense(id);
+            }
+            setVouchers(vs => vs.filter(v => v.id !== voucher.id));
+            setActiveMenuId(null);
+            toast.success('Deleted');
+        } catch (e) {
+            const msg = e?.response?.data?.message
+                || e?.response?.data
+                || e?.message
+                || 'Failed to delete expense';
+            toast.error(String(msg));
+        }
+    };
+
+    const handlePrint = async (v) => {
+        let template = null;
+        try {
+            const templates = await getTemplatesByCategory('Expense Voucher');
+            template = templates?.find(t => t.isDefault) || templates?.[0] || null;
+        } catch { /* use defaults */ }
+
+        const settings = resolveVoucherSettings('expense-voucher', template);
+
+        const coProfile = buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: v.branch?.id || null,
+        });
+
+        const payAccount = payAccounts.find(a => a.id === v.paymentAccountId);
+        const evData = {
+            voucherNumber: v.voucherNumber,
+            date: v.date ? formatDisplayDate(v.date) : '',
+            branch: v.branch?.name || '',
+            paymentMode: v.paymentMode || '',
+            paymentAccount: payAccount?.name || payAccount?.accountName || '',
+            narration: v.narration || '',
+            currency,
+            claimant: v.vendor || '',
+            items: (v.lines || []).map(l => {
+                const acct = glAccounts.find(a => a.id === l.glAccountId);
+                const acctLabel = acct
+                    ? (acct.code ? `${acct.code} - ${acct.name || ''}` : (acct.name || ''))
+                    : (l.glAccountName || '');
+                return {
+                    accountCode:   acctLabel,
+                    glAccountName: acctLabel,
+                    description:   l.description || '',
+                    category:      l.category    || '',
+                    costCenter:    l.costCenter   || '',
+                    amount:        parseFloat(l.lineTotal || l.amount) || 0,
+                };
+            }),
+        };
+
+        const PAPER_PX = { A4: 794, A5: 559, Letter: 816 };
+        const paperWidthPx = PAPER_PX[settings.paperSize] || PAPER_PX.A4;
+        const PAPER_CSS = { A4: '210mm 297mm', A5: '148mm 210mm', Letter: '8.5in 11in' };
+        const paper = PAPER_CSS[settings.paperSize] || PAPER_CSS.A4;
+
+        const container = document.createElement('div');
+        container.style.cssText = `width:${paperWidthPx}px;position:absolute;top:-9999px;left:-9999px;visibility:hidden;`;
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        flushSync(() => {
+            root.render(
+                <ExpensePreview
+                    s={settings}
+                    currency={currency}
+                    company={coProfile}
+                    data={evData}
+                />
+            );
+        });
+        const bodyHtml = container.innerHTML;
+        root.unmount();
+        document.body.removeChild(container);
+
+        printHtml(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Expense Voucher ${v.voucherNumber || ''}</title>
+<style>
+@page { size: ${paper}; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`);
+        setActiveMenuId(null);
+    };
+
+    const toggleExpand = (key) =>
+        setExpandedIds(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+
+    const handleAccountCreated = (account) => {
+        if (account?.id) {
+            setGlAccounts(prev => [...prev, account]);
+            if (accountCreateTargetLine != null) {
+                setLine(accountCreateTargetLine, 'glAccountId', String(account.id));
+                setLine(accountCreateTargetLine, 'glAccountName', account.name || '');
             }
         }
-
-        if (account?.id) {
-            setNewExpense(prev => ({ ...prev, glAccountId: String(account.id) }));
-            setGlAccountSearch('');
-            setGlAccountOpen(false);
-        }
+        setIsAccountCreateOpen(false);
+        setAccountCreateTargetLine(null);
     };
 
-    const StatusBadge = ({ status }) => {
-        const styles = {
-            Paid: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-            Pending: 'bg-yellow-50 text-yellow-700 border-yellow-100',
-            Draft: 'bg-slate-50 text-slate-600 border-slate-200'
-        };
+    // ── FORM VIEW ──────────────────────────────────────────────────────────────
+    if (viewMode === 'create' || viewMode === 'edit') {
         return (
-            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${styles[status] || styles.Draft}`}>
-                {status?.toLowerCase()}
-            </span>
-        );
-    };
+            <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+                {/* Top bar */}
+                <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setViewMode('list')} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 font-medium">
+                            <ChevronLeft size={15} /> Back
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <div>
+                            <p className="text-sm font-bold text-slate-800">
+                                {editingId ? `Edit Voucher` : 'New Expense Voucher'}
+                            </p>
+                            <p className="text-[10px] text-slate-400">Add multiple expense lines under one voucher</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => setViewMode('list')} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded">
+                            <X size={13} className="inline mr-1" />Cancel
+                        </button>
+                        <button onClick={() => handleSave('Draft')} className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50">
+                            Save as Draft
+                        </button>
+                        <button onClick={() => handleSave('Paid')} className="px-4 py-1.5 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830]">
+                            Submit &amp; Mark Paid
+                        </button>
+                    </div>
+                </div>
 
+                <div className="w-full px-6 py-6 space-y-6">
+                    {/* Voucher Header */}
+                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-4">Voucher Header — shared for all expense lines</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">DATE *</label>
+                                <input type="date" value={form.date}
+                                    onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none" />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">VENDOR / PAYEE *</label>
+                                <VendorSelect vendors={vendors} value={form.vendor}
+                                    onChange={v => setForm(f => ({ ...f, vendor: v.name || v, vendorId: v.id || null }))} />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">PAYMENT MODE *</label>
+                                <select value={form.paymentMode} onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value }))}
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                                    {PAYMENT_MODES.map(m => <option key={m}>{m}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">PAYMENT ACCOUNT</label>
+                                <select value={form.paymentAccountId} onChange={e => setForm(f => ({ ...f, paymentAccountId: e.target.value }))}
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                                    <option value="">Select account</option>
+                                    {payAccounts.map(a => <option key={a.id} value={String(a.id)}>{a.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">BRANCH / LOCATION *</label>
+                                <select value={form.branchId || ''} onChange={e => setForm(f => ({ ...f, branchId: e.target.value ? Number(e.target.value) : null }))}
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                                    <option value="">Select branch</option>
+                                    {(availableBranches || []).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">NARRATION / REMARKS</label>
+                                <input type="text" value={form.narration} placeholder="e.g. Daily operational expenses"
+                                    onChange={e => setForm(f => ({ ...f, narration: e.target.value }))}
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Expense Lines */}
+                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+                            <p className="text-xs font-bold text-slate-700">Expense Lines</p>
+                            <button onClick={addLine} className="flex items-center gap-1.5 text-xs font-bold text-[#B88A1A] hover:text-[#F5C742]">
+                                <Plus size={13} /> Add Line
+                            </button>
+                        </div>
+                        <div className="overflow-visible">
+                            <table className="w-full text-xs">
+                                <thead>
+                                    <tr className="bg-[#FFF8E7] border-b border-[#FDE6A9]">
+                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-500 w-6">#</th>
+                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-500 min-w-[180px]">EXPENSE LEDGER ACCOUNT *</th>
+                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-500 min-w-[160px]">DESCRIPTION</th>
+                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-500 w-28">CATEGORY</th>
+                                        <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-500 w-32">COST CENTER</th>
+                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-slate-500 w-24">AMOUNT (<CurrencySymbol currency={currency} />) *</th>
+                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-slate-500 w-20">TAX %</th>
+                                        <th className="px-3 py-2 text-right text-[10px] font-bold text-slate-500 w-24">LINE TOTAL</th>
+                                        <th className="w-8" />
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {form.lines.map((line, idx) => (
+                                        <ExpenseLineRow
+                                            key={idx}
+                                            idx={idx}
+                                            line={line}
+                                            glAccounts={glAccounts}
+                                            costCenters={costCenters}
+                                            onChange={(field, val) => setLine(idx, field, val)}
+                                            onRemove={() => removeLine(idx)}
+                                            canRemove={form.lines.length > 1}
+                                            onNewAccount={() => { setAccountCreateTargetLine(idx); setIsAccountCreateOpen(true); }}
+                                        />
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        {/* Footer totals */}
+                        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-slate-50">
+                            <span className="text-[10px] text-slate-400 font-medium">LINES: {form.lines.filter(l => l.glAccountId || l.amount).length}</span>
+                            <div className="flex items-center gap-6 text-xs">
+                                <span className="text-slate-500">Sub-total: <CurrencyAmount value={formTotals.subTotal} currency={currency} className="font-bold text-slate-700" /></span>
+                                <span className="text-slate-500">Tax: <CurrencyAmount value={formTotals.totalTax} currency={currency} className="font-bold text-slate-700" /></span>
+                                <span className="text-slate-600 text-sm">Grand Total: <CurrencyAmount value={formTotals.grandTotal} currency={currency} className="font-bold text-[#1a1a2e] text-base" /></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Bottom action row */}
+                    <div className="flex justify-end gap-3">
+                        <button onClick={() => setViewMode('list')} className="px-4 py-2 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded">
+                            <X size={13} className="inline mr-1" />Cancel
+                        </button>
+                        <button onClick={() => handleSave('Draft')} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50">
+                            Save as Draft
+                        </button>
+                        <button onClick={() => handleSave('Paid')} className="px-5 py-2 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830]">
+                            Submit &amp; Mark Paid
+                        </button>
+                    </div>
+                </div>
+
+                {isAccountCreateOpen && (
+                    <LedgerAccountCreateModal
+                        isOpen={isAccountCreateOpen}
+                        onClose={() => { setIsAccountCreateOpen(false); setAccountCreateTargetLine(null); }}
+                        onAccountCreated={handleAccountCreated}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    // ── LIST VIEW ──────────────────────────────────────────────────────────────
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-6">
-
             {/* HEADER */}
             <div className="flex justify-between items-center mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <DollarSign className="text-[#F5C742]" size={28} />
-                        Expenses / Ledgers
+                    <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-[#FFF8E7] flex items-center justify-center border border-[#FDE6A9]">
+                            <TrendingDown className="text-[#B88A1A]" size={20} />
+                        </div>
+                        Expense Vouchers
                     </h1>
-                    <p className="text-xs text-slate-500 mt-1">Track and categorize all business expenses with tax management</p>
+                    <p className="text-xs text-slate-500 mt-1">Multi-line vouchers grouped by vendor &amp; payment</p>
                 </div>
                 <div className="flex gap-2">
                     <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
-                        <Download size={16} /> Export
+                        <Download size={14} /> Export
                     </button>
-                    <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-md text-xs font-bold shadow-sm hover:bg-emerald-700">
-                        <Plus size={16} /> Add Expense
+                    <button onClick={handleCreate} className="flex items-center gap-2 px-4 py-2 bg-[#F5C742] text-white rounded-md text-xs font-bold shadow-sm hover:bg-[#e6b830]">
+                        <Plus size={14} /> Add Expense Voucher
                     </button>
                 </div>
             </div>
 
-            {/* STATS CARDS */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs text-slate-500 font-medium mb-1">Total Expenses</p>
-                        <CurrencyAmount value={stats.totalExpenses} currency={currency} className="text-2xl font-bold text-slate-800" />
-                        <p className="text-[10px] text-slate-400 mt-1">{stats.count} transactions</p>
+            {/* STATS */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                {[
+                    { label: 'Grand Total',  value: <CurrencyAmount value={stats.grandTotal} currency={currency} className="text-2xl font-bold text-slate-800" />, sub: 'incl. tax',           icon: <DollarSign size={20} /> },
+                    { label: 'Tax Paid',     value: <CurrencyAmount value={stats.totalTax}   currency={currency} className="text-2xl font-bold text-slate-800" />, sub: 'VAT',                icon: <FileText size={20} /> },
+                    { label: 'Vouchers',     value: <span className="text-2xl font-bold text-slate-800">{stats.count}</span>,    sub: `${vouchers.reduce((s,v)=>s+(v.lines||[]).length,0)} expense lines`, icon: <FileText size={20} /> },
+                    { label: 'Branches',     value: <span className="text-2xl font-bold text-slate-800">{stats.branches}</span>, sub: 'active',             icon: <Building2 size={20} /> },
+                ].map(({ label, value, sub, icon }) => (
+                    <div key={label} className="bg-white p-5 rounded-lg border border-slate-200 border-t-2 border-t-[#F5C742] shadow-sm flex flex-col justify-between h-full">
+                        <div className="flex justify-between items-start mb-4">
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{label}</p>
+                            <div className="text-[#B88A1A] opacity-70">{React.cloneElement(icon, { size: 14 })}</div>
+                        </div>
+                        <div>
+                            {value}
+                            <p className="text-[10px] text-slate-400 mt-1">{sub}</p>
+                        </div>
                     </div>
-                    <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
-                        <DollarSign size={20} />
+                ))}
+            </div>
+
+            {/* FILTERS */}
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 mb-4">
+                <div className="flex flex-wrap gap-3 items-center">
+                    <div className="relative flex-1 min-w-[200px]">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                        <input type="text" placeholder="Search voucher, vendor, narration..."
+                            value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                            className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded focus:outline-none focus:border-[#F5C742]" />
+                    </div>
+                    <select value={filterPayMode} onChange={e => setFilterPayMode(e.target.value)}
+                        className="px-3 py-2 text-xs border border-slate-200 rounded focus:outline-none focus:border-[#F5C742] bg-white">
+                        <option>All Pay Modes</option>
+                        {PAYMENT_MODES.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                    <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                        className="px-3 py-2 text-xs border border-slate-200 rounded focus:outline-none focus:border-[#F5C742] bg-white">
+                        <option>All Status</option>
+                        {['Draft','Submitted','Paid','Cancelled'].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                </div>
+            </div>
+
+            {/* VOUCHER LIST */}
+            <div className="space-y-3">
+                {isLoading ? (
+                    <TableSkeleton rows={5} />
+                ) : paged.length === 0 ? (
+                    <div className="bg-white rounded-lg border border-slate-200 p-12 text-center">
+                        <FileText className="mx-auto text-slate-300 mb-3" size={40} />
+                        <p className="text-sm font-bold text-slate-500">No expense vouchers found</p>
+                        <p className="text-xs text-slate-400 mt-1">Click "Add Expense Voucher" to create your first one</p>
+                    </div>
+                ) : paged.map(v => {
+                    const uniqueKey = v.isLegacy ? `legacy-${v.id}` : `new-${v.id}`;
+                    return (
+                        <VoucherCard
+                            key={uniqueKey}
+                            voucher={v}
+                            currency={currency}
+                            payAccounts={payAccounts}
+                            expanded={expandedIds.has(uniqueKey)}
+                            onToggle={() => toggleExpand(uniqueKey)}
+                            menuOpen={activeMenuId === uniqueKey}
+                            onMenuToggle={() => setActiveMenuId(id => id === uniqueKey ? null : uniqueKey)}
+                            onEdit={() => handleEdit(v)}
+                            onDelete={() => handleDelete(v)}
+                            onPrint={() => handlePrint(v)}
+                        />
+                    );
+                })}
+            </div>
+
+            {filtered.length > PAGE_SIZE && (
+                <PaginationFooter
+                    page={listPage} pageSize={PAGE_SIZE}
+                    total={filtered.length}
+                    onPageChange={setListPage}
+                />
+            )}
+
+            {isAccountCreateOpen && (
+                <LedgerAccountCreateModal
+                    isOpen={isAccountCreateOpen}
+                    onClose={() => { setIsAccountCreateOpen(false); setAccountCreateTargetLine(null); }}
+                    onAccountCreated={handleAccountCreated}
+                />
+            )}
+        </div>
+    );
+}
+
+// ── VOUCHER CARD ──────────────────────────────────────────────────────────────
+function VoucherCard({ voucher: v, currency, payAccounts, expanded, onToggle, menuOpen, onMenuToggle, onEdit, onDelete, onPrint }) {
+    const menuRef = useRef(null);
+    useEffect(() => {
+        const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) onMenuToggle(); };
+        if (menuOpen) document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
+    }, [menuOpen]);
+
+    const lines = v.lines || [];
+
+    const borderColor = v.status === 'Paid' ? 'border-l-[#F5C742]' : 'border-l-slate-300';
+    return (
+        <div className={`bg-white rounded-lg border border-slate-200 border-l-4 ${borderColor} shadow-sm`}>
+            {/* Voucher header row */}
+            <div className={`flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-slate-50 select-none ${expanded ? 'rounded-t-lg' : 'rounded-lg'}`}
+                onClick={onToggle}>
+                
+                {/* LEFT SIDE */}
+                <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-800">{v.voucherNumber || `EV-${v.id}`}</span>
+                        <StatusBadge status={v.status} />
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                        <span>{formatDisplayDate(v.date)}</span>
+                        {v.vendor && (
+                            <>
+                                <span className="text-slate-300">|</span>
+                                <span className="font-medium text-slate-700">{v.vendor}</span>
+                            </>
+                        )}
+                        {v.narration && (
+                            <>
+                                <span className="text-slate-300">|</span>
+                                <span className="truncate max-w-[250px]">{v.narration}</span>
+                            </>
+                        )}
                     </div>
                 </div>
 
-                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs text-slate-500 font-medium mb-1">Total Tax Paid</p>
-                        <CurrencyAmount value={stats.totalTax} currency={currency} className="text-2xl font-bold text-slate-800" />
-                        <p className="text-[10px] text-slate-400 mt-1">VAT & other taxes</p>
+                {/* RIGHT SIDE */}
+                <div className="flex items-center gap-6 flex-shrink-0">
+                    {/* Pay mode */}
+                    <div className="flex items-center gap-1.5 text-xs text-[#B88A1A] font-medium whitespace-nowrap border border-[#FDE6A9] bg-[#FFF8E7] px-2 py-0.5 rounded-full">
+                        <PayIcon mode={v.paymentMode} />
+                        {v.paymentMode}
                     </div>
-                    <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
-                        <FileText size={20} />
+                    
+                    {/* Branch */}
+                    {v.branch && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 whitespace-nowrap">
+                            <Building2 size={12} />
+                            <span className="truncate max-w-[120px]">{v.branch.name}</span>
+                        </div>
+                    )}
+                    
+                    {/* Lines count */}
+                    <span className="text-xs text-slate-400 whitespace-nowrap w-12 text-right">{lines.length} {lines.length === 1 ? 'line' : 'lines'}</span>
+                    
+                    {/* Grand total */}
+                    <div className="text-right min-w-[100px]">
+                        <span className="block text-sm font-bold text-slate-800">
+                            <CurrencyAmount value={v.grandTotal} currency={currency} />
+                        </span>
+                        {parseFloat(v.totalTax) > 0 && (
+                            <span className="block text-[10px] text-slate-400 mt-0.5">
+                                incl. <CurrencyAmount value={v.totalTax} currency={currency} /> tax
+                            </span>
+                        )}
                     </div>
-                </div>
 
-                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs text-slate-500 font-medium mb-1">Top Category</p>
-                        <h3 className="text-xl font-bold text-slate-800">{stats.topCategory}</h3>
-                        <p className="text-[10px] text-slate-400 mt-1"><CurrencyAmount value={stats.topCategoryAmount} currency={currency} /></p>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
-                        <PieChart size={20} />
-                    </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-xs text-slate-500 font-medium mb-1">Locations</p>
-                        <h3 className="text-2xl font-bold text-slate-800">{stats.activeLocations}</h3>
-                        <p className="text-[10px] text-slate-400 mt-1">Active locations</p>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
-                        <MapPin size={20} />
+                    {/* Actions & Expand */}
+                    <div className="flex items-center gap-2 ml-2">
+                        <div className="relative flex-shrink-0" ref={menuRef} onClick={e => e.stopPropagation()}>
+                            <button onClick={onMenuToggle}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded">
+                                <MoreHorizontal size={15} />
+                            </button>
+                            {menuOpen && (
+                                <div className="absolute right-0 top-8 z-50 w-48 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-xs">
+                                    <button onClick={onPrint} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700">
+                                        <PrintIcon size={13} /> Print
+                                    </button>
+                                    <button onClick={onPrint} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700">
+                                        <Download size={13} /> Download PDF
+                                    </button>
+                                    <button className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700 border-b border-slate-100">
+                                        <Mail size={13} /> Send Mail
+                                    </button>
+                                    <button onClick={onEdit} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-slate-700">
+                                        <Edit size={13} /> Edit Voucher
+                                    </button>
+                                    <button onClick={onDelete} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 text-red-600">
+                                        <Trash size={13} /> Delete
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        <ChevronDown size={16} className={`text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                     </div>
                 </div>
             </div>
 
-            {/* FILTERS & LIST */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-
-                {/* FILTERS */}
-                <div className="mb-6">
-                    <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Filters & Search</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
-                        <div className="md:col-span-2 relative">
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
-                            <Search className="absolute left-3 top-[26px] text-slate-400" size={14} />
-                            <input
-                                type="text"
-                                placeholder="Search expenses..."
-                                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
+            {/* Expanded lines */}
+            {expanded && lines.length > 0 && (
+                <div className="border-t border-[#FDE6A9] bg-[#FFFCF5] rounded-b-lg overflow-hidden">
+                    <div className="grid grid-cols-4 gap-4 px-5 py-4 bg-[#FFF8E7] border-b border-[#FDE6A9]">
+                        <div>
+                            <p className="text-[9px] font-bold text-[#B88A1A] uppercase mb-1">VENDOR / PAYEE</p>
+                            <span className="inline-block text-xs font-bold text-slate-800">{v.vendor || '—'}</span>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
-                            <select
-                                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium bg-white"
-                                value={filterDate}
-                                onChange={(e) => setFilterDate(e.target.value)}
-                            >
-                                <option>This Month</option>
-                                <option>Last Month</option>
-                                <option>This Year</option>
-                            </select>
+                            <p className="text-[9px] font-bold text-[#B88A1A] uppercase mb-1">PAYMENT MODE</p>
+                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                                <PayIcon mode={v.paymentMode} />
+                                {v.paymentMode}
+                            </span>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Location</label>
-                            <select
-                                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium bg-white"
-                                value={filterLocation}
-                                onChange={(e) => setFilterLocation(e.target.value)}
-                            >
-                                <option>All Locations</option>
-                                {locations.map(l => <option key={l}>{l}</option>)}
-                            </select>
+                            <p className="text-[9px] font-bold text-[#B88A1A] uppercase mb-1">ACCOUNT</p>
+                            <span className="inline-block text-xs font-bold text-slate-800 truncate max-w-full">
+                                {payAccounts?.find(a => String(a.id) === String(v.paymentAccountId))?.name || (v.paymentMode === 'Cash' ? 'Petty Cash' : v.paymentMode)}
+                            </span>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Category</label>
-                            <select
-                                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium bg-white"
-                                value={filterCategory}
-                                onChange={(e) => setFilterCategory(e.target.value)}
-                            >
-                                <option>All Categories</option>
-                                {categories.map(c => <option key={c}>{c}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Cost Center</label>
-                            <select
-                                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium bg-white"
-                                value={filterCostCenter}
-                                onChange={(e) => setFilterCostCenter(e.target.value)}
-                            >
-                                <option>All Cost Centers</option>
-                                {costCenters.map(c => (
-                                    <option key={c.id} value={c.name}>{c.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Tax Rate</label>
-                            <select
-                                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 font-medium bg-white"
-                                value={filterTax}
-                                onChange={(e) => setFilterTax(e.target.value)}
-                            >
-                                <option>All Tax Rates</option>
-                                {taxRates.map(t => <option key={t} value={t}>{t}%</option>)}
-                            </select>
+                            <p className="text-[9px] font-bold text-[#B88A1A] uppercase mb-1">BRANCH</p>
+                            <span className="inline-block text-xs font-bold text-slate-800 truncate max-w-full">
+                                {v.branch?.name || '—'}
+                            </span>
                         </div>
                     </div>
-                </div>
 
-                {/* TABLE */}
-                <h3 className="text-sm font-bold text-slate-700 mb-4">Expense Ledger</h3>
-                <div className="overflow-x-auto border border-slate-100 rounded-lg min-h-[300px]">
-                    <div onClick={() => setActiveActionId(null)} className={`fixed inset-0 z-0 ${activeActionId ? 'block' : 'hidden'}`} />
-
-                    <table className="bb-nowrap-table w-full relative z-10">
-                        <thead className="bg-[#F7F7FA] border-b border-slate-100">
+                    <table className="w-full text-xs">
+                        <thead>
                             <tr>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vendor / Payee</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Category</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">GL Account</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Cost Center</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Location</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Branch</th>
-                                <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Amount</th>
-                                <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tax %</th>
-                                <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total</th>
-                                <th className="px-4 py-3 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Notes</th>
-                                <th className="px-4 py-3 text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-bold text-[#B88A1A] w-6">#</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-bold text-[#B88A1A]">LEDGER ACCOUNT</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-bold text-[#B88A1A]">DESCRIPTION</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-bold text-[#B88A1A]">CATEGORY</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-bold text-[#B88A1A]">COST CENTER</th>
+                                <th className="px-4 py-2 text-right text-[10px] font-bold text-[#B88A1A]">AMOUNT</th>
+                                <th className="px-4 py-2 text-right text-[10px] font-bold text-[#B88A1A]">TAX</th>
+                                <th className="px-4 py-2 text-right text-[10px] font-bold text-[#B88A1A]">LINE TOTAL</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {isLoading && <TableSkeleton cols={7} rows={8} />}
-                            {pagedExpenses.map((expense) => (
-                                <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
-                                    <td className="px-4 py-3 text-xs font-semibold text-slate-700">{expense.vendor}</td>
-                                    <td className="px-4 py-3">
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${expense.category === 'Utilities' ? 'bg-blue-50 text-blue-600' :
-                                            expense.category === 'Rent' ? 'bg-green-50 text-green-600' :
-                                                expense.category === 'Marketing' ? 'bg-pink-50 text-pink-600' :
-                                                    'bg-purple-50 text-purple-600'
-                                            }`}>{expense.category}</span>
-                                    </td>
-                                    <td className="px-4 py-3 text-xs text-slate-600">
-                                        {(() => { const a = allAccounts.find(acc => String(acc.id) === String(expense.glAccountId)); return a ? <span className="font-mono text-[10px]">{a.code}<span className="font-sans font-normal ml-1 text-slate-500">{a.name}</span></span> : <span className="text-slate-300">-</span>; })()}
-                                    </td>
-                                    <td className="px-4 py-3 text-xs text-slate-600">{expense.costCenter}</td>
-                                    <td className="px-4 py-3 text-xs text-slate-600">{expense.location}</td>
-                                    <td className="px-4 py-3 text-xs text-slate-600">
-                                        {expense.branch?.name ? (
-                                            <>
-                                                <div className="font-medium">{expense.branch.name}</div>
-                                                {expense.branch.code && <div className="text-[10px] text-slate-400">{expense.branch.code}</div>}
-                                            </>
-                                        ) : (
-                                            <span className="text-slate-300">—</span>
+                        <tbody>
+                            {lines.map((l, i) => (
+                                <tr key={i} className="border-t border-slate-100 hover:bg-white">
+                                    <td className="px-4 py-2 text-slate-400">{i + 1}</td>
+                                    <td className="px-4 py-2 font-medium text-slate-700">{l.glAccountName || l.glAccountId}</td>
+                                    <td className="px-4 py-2 text-slate-500">{l.description}</td>
+                                    <td className="px-4 py-2">
+                                        {l.category && (
+                                            <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] text-[#B88A1A] border border-[#FDE6A9] text-[10px] font-bold">{l.category}</span>
                                         )}
                                     </td>
-                                    <td className="px-4 py-3 text-xs text-slate-600 text-right"><CurrencyAmount value={expense.amount || 0} currency={currency} /></td>
-                                    <td className="px-4 py-3 text-xs text-slate-600 text-right">{expense.taxRate}%</td>
-                                    <td className="px-4 py-3 text-xs font-bold text-slate-800 text-right"><CurrencyAmount value={expense.total || 0} currency={currency} /></td>
-                                    <td className="px-4 py-3 text-center"><StatusBadge status={expense.status} /></td>
-                                    <td className="px-4 py-3 text-xs text-slate-500 max-w-[200px] truncate">{expense.notes}</td>
-                                    <td className="px-4 py-3 text-center relative">
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setActiveActionId(activeActionId === expense.id ? null : expense.id);
-                                            }}
-                                            className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200"
-                                        >
-                                            <MoreHorizontal size={14} />
-                                        </button>
-
-                                        {/* DROPDOWN */}
-                                        {activeActionId === expense.id && (
-                                            <div className="absolute right-8 top-0 mt-8 w-32 bg-white border border-slate-200 rounded-md shadow-lg z-50 text-left overflow-hidden">
-                                                <button
-                                                    onClick={() => handleEdit(expense)}
-                                                    className="w-full px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-2 border-b border-slate-50"
-                                                >
-                                                    <Edit size={14} className="text-blue-500" /> Edit
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDelete(expense.id)}
-                                                    className="w-full px-4 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"
-                                                >
-                                                    <Trash size={14} /> Delete
-                                                </button>
-                                            </div>
-                                        )}
-                                    </td>
+                                    <td className="px-4 py-2 text-slate-500">{l.costCenter}</td>
+                                    <td className="px-4 py-2 text-right font-medium text-slate-700">{fmt(l.amount)}</td>
+                                    <td className="px-4 py-2 text-right text-slate-400">{parseFloat(l.taxAmount) > 0 ? fmt(l.taxAmount) : '—'}</td>
+                                    <td className="px-4 py-2 text-right font-bold text-slate-800">{fmt(l.lineTotal)}</td>
                                 </tr>
                             ))}
                         </tbody>
+                        <tfoot>
+                            <tr className="border-t border-[#FDE6A9] bg-[#FFF8E7]">
+                                <td colSpan={5} className="px-4 py-2 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wide">Voucher Total</td>
+                                <td className="px-4 py-2 text-right font-bold text-slate-700">{fmt(v.subTotal)}</td>
+                                <td className="px-4 py-2 text-right font-bold text-slate-500">{fmt(v.totalTax)}</td>
+                                <td className="px-4 py-2 text-right font-bold text-[#B88A1A]">
+                                    <CurrencyAmount value={v.grandTotal} currency={currency} />
+                                </td>
+                            </tr>
+                        </tfoot>
                     </table>
-                    <PaginationFooter
-                        page={listPage}
-                        size={LIST_PAGE_SIZE}
-                        totalElements={filteredExpenses.length}
-                        totalPages={Math.ceil(filteredExpenses.length / LIST_PAGE_SIZE)}
-                        onPageChange={setListPage}
-                    />
-                </div>
-            </div>
-
-            {/* ADD / EDIT EXPENSE MODAL */}
-            {isModalOpen && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-hidden">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-800">{editingId ? 'Edit Expense' : 'Add New Expense'}</h3>
-                                <p className="text-xs text-slate-500">{editingId ? 'Update expense details' : 'Create a new expense entry with tax calculation and cost center allocation.'}</p>
-                            </div>
-                            <button onClick={closeModal} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                        </div>
-
-                        <div className="p-6 grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Date</label>
-                                <input
-                                    type="date"
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600"
-                                    value={newExpense.date}
-                                    onChange={(e) => setNewExpense({ ...newExpense, date: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Vendor / Payee</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.vendor}
-                                    onChange={(e) => {
-                                        const selectedName = e.target.value;
-                                        const selectedVendor = vendors.find(v => v.name === selectedName);
-
-                                        if (selectedVendor) {
-                                            const vCategory = selectedVendor.category || '';
-                                            const vLocation = selectedVendor.country || '';
-
-                                            // Dynamically add category if missing
-                                            if (vCategory && !categories.includes(vCategory)) {
-                                                setCategories(prev => [...prev, vCategory]);
-                                            }
-                                            // Dynamically add location if missing
-                                            if (vLocation && !locations.includes(vLocation)) {
-                                                setLocations(prev => [...prev, vLocation]);
-                                            }
-
-                                            setNewExpense({
-                                                ...newExpense,
-                                                vendor: selectedName,
-                                                category: vCategory,
-                                                location: vLocation
-                                            });
-                                        } else {
-                                            setNewExpense({ ...newExpense, vendor: selectedName });
-                                        }
-                                    }}
-                                >
-                                    <option value="">Select Vendor</option>
-                                    {vendors.map(v => (
-                                        <option key={v.id} value={v.name}>{v.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Category</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.category}
-                                    onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
-                                >
-                                    <option value="">Select category</option>
-                                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Cost Center</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.costCenter}
-                                    onChange={(e) => setNewExpense({ ...newExpense, costCenter: e.target.value })}
-                                >
-                                    <option value="">Select cost center</option>
-                                    {costCenters.map(c => (
-                                        <option key={c.id} value={c.name}>{c.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {/* BB-034A: GL Account searchable selector */}
-                            <div ref={glAccountRef} className="relative">
-                                <div className="mb-1 flex items-center justify-between gap-2">
-                                    <label className="block text-xs font-bold text-slate-500">
-                                        Expense Account Ledger <span className="text-red-400">*</span>
-                                    </label>
-                                    <button
-                                        type="button"
-                                        title="Create account ledger"
-                                        onClick={() => { setGlAccountOpen(false); setIsAccountCreateOpen(true); }}
-                                        className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:border-emerald-500 hover:text-emerald-700"
-                                    >
-                                        <Plus size={13} />
-                                    </button>
-                                </div>
-                                {newExpense.glAccountId ? (
-                                    <div className="w-full px-3 py-2 text-xs border border-emerald-400 rounded-md bg-emerald-50 text-slate-700 font-medium flex items-center justify-between">
-                                        <span className="truncate flex-1">
-                                            {(() => { const a = allAccounts.find(acc => String(acc.id) === String(newExpense.glAccountId)); return a ? `${a.code} - ${a.name}` : newExpense.glAccountId; })()}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => { setNewExpense({ ...newExpense, glAccountId: '' }); setGlAccountSearch(''); }}
-                                            className="ml-2 text-slate-400 hover:text-red-500 shrink-0"
-                                        >
-                                            <X size={12} />
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <div className="relative">
-                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
-                                        <input
-                                            type="text"
-                                            placeholder="Search by code or account name..."
-                                            value={glAccountSearch}
-                                            onChange={e => { setGlAccountSearch(e.target.value); setGlAccountOpen(true); }}
-                                            onFocus={() => setGlAccountOpen(true)}
-                                            className="w-full pl-7 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600"
-                                        />
-                                    </div>
-                                )}
-                                {glAccountOpen && !newExpense.glAccountId && (
-                                    <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-                                        {glAccounts
-                                            .filter(a => {
-                                                if (!glAccountSearch) return true;
-                                                const q = glAccountSearch.toLowerCase();
-                                                return a.code?.toLowerCase().includes(q) || a.name?.toLowerCase().includes(q);
-                                            })
-                                            .map(acc => (
-                                                <div
-                                                    key={acc.id}
-                                                    onMouseDown={() => { setNewExpense({ ...newExpense, glAccountId: String(acc.id) }); setGlAccountSearch(''); setGlAccountOpen(false); }}
-                                                    className="px-3 py-2 text-xs cursor-pointer hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2"
-                                                >
-                                                    <span className="font-mono font-bold text-slate-500 w-16 shrink-0">{acc.code}</span>
-                                                    <span className="text-slate-700 truncate">{acc.name}</span>
-                                                    {acc.accountGroup && <span className="ml-auto text-[10px] text-slate-400 shrink-0">{acc.accountGroup}</span>}
-                                                </div>
-                                            ))}
-                                        {glAccounts.filter(a => {
-                                            if (!glAccountSearch) return true;
-                                            const q = glAccountSearch.toLowerCase();
-                                            return a.code?.toLowerCase().includes(q) || a.name?.toLowerCase().includes(q);
-                                        }).length === 0 && (
-                                            <div className="px-3 py-2 text-xs text-slate-400">No accounts found</div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Location</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.location}
-                                    onChange={(e) => setNewExpense({ ...newExpense, location: e.target.value })}
-                                >
-                                    <option value="">Select location</option>
-                                    {locations.map(l => <option key={l} value={l}>{l}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Amount (<CurrencySymbol currency={currency} />)</label>
-                                <input
-                                    type="number"
-                                    placeholder="0.00"
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600"
-                                    value={newExpense.amount}
-                                    onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Tax Rate (%)</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.taxRate}
-                                    onChange={(e) => setNewExpense({ ...newExpense, taxRate: parseFloat(e.target.value) })}
-                                >
-                                    {taxRates.map(t => <option key={t} value={t}>{t}%</option>)}
-                                </select>
-                            </div>
-
-                            {/* STATUS FIELD */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Status</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.status}
-                                    onChange={(e) => setNewExpense({ ...newExpense, status: e.target.value })}
-                                >
-                                    <option value="Draft">Draft</option>
-                                    <option value="Pending">Pending</option>
-                                    <option value="Paid">Paid</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Total Amount (<CurrencySymbol currency={currency} />)</label>
-                                <input
-                                    type="text"
-                                    readOnly
-                                    className="w-full px-3 py-2 text-xs border border-emerald-200 bg-emerald-50 rounded-md text-emerald-700 font-bold"
-                                    value={((parseFloat(newExpense.amount) || 0) * (1 + newExpense.taxRate / 100)).toFixed(2)}
-                                />
-                            </div>
-
-                            {/* QA-054: PAYMENT MODE */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Payment Mode</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.paymentMode || ''}
-                                    onChange={(e) => {
-                                        const mode = e.target.value;
-                                        // Reset the pay-account when the mode changes so the user
-                                        // doesn't accidentally keep a bank account selected after
-                                        // switching to Cash (or vice-versa).
-                                        setNewExpense({ ...newExpense, paymentMode: mode, paymentAccountId: '' });
-                                    }}
-                                >
-                                    {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                            </div>
-
-                            {/* QA-054: AUTO-PAY LEDGER */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Pay From Account</label>
-                                <select
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
-                                    value={newExpense.paymentAccountId || ''}
-                                    onChange={(e) => setNewExpense({ ...newExpense, paymentAccountId: e.target.value })}
-                                >
-                                    <option value="">Auto (use default for {newExpense.paymentMode || 'mode'})</option>
-                                    {payAccounts
-                                        // Filter accounts to those that look right for the mode.
-                                        // Cash mode → only Cash-named ledgers; everything else
-                                        // (Card / Bank Transfer / Online Payment / Credit) → all
-                                        // cash & bank-flagged accounts (the bank-accounts endpoint
-                                        // already excludes archived rows for us).
-                                        .filter(acc => {
-                                            if (newExpense.paymentMode === 'Cash') {
-                                                const name = (acc.name || '').toLowerCase();
-                                                return name.includes('cash');
-                                            }
-                                            return true;
-                                        })
-                                        .map(acc => (
-                                            <option key={acc.id} value={acc.id}>
-                                                {acc.code ? `${acc.code} — ` : ''}{acc.name}
-                                            </option>
-                                        ))}
-                                </select>
-                            </div>
-
-                            <div className="col-span-2">
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Notes / Description</label>
-                                <textarea
-                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 resize-none"
-                                    rows="3"
-                                    placeholder="Add notes or description..."
-                                    value={newExpense.notes}
-                                    onChange={(e) => setNewExpense({ ...newExpense, notes: e.target.value })}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-                            <button onClick={closeModal} className="px-4 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-100">
-                                Cancel
-                            </button>
-                            <button onClick={handleAddExpense} className="px-4 py-2 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-700 shadow-sm">
-                                {editingId ? 'Update Expense' : 'Add Expense'}
-                            </button>
-                        </div>
-                    </div>
                 </div>
             )}
-            <LedgerAccountCreateModal
-                isOpen={isAccountCreateOpen}
-                onClose={() => setIsAccountCreateOpen(false)}
-                onCreated={handleLedgerAccountCreated}
-                existingAccounts={allAccounts}
-                defaultGroup="Expenses"
-                fixedGroup
-                initialName={glAccountSearch}
-            />
         </div>
     );
-};
+}
 
-export default Expenses;
+// ── EXPENSE LINE ROW (form) ───────────────────────────────────────────────────
+function ExpenseLineRow({ idx, line, glAccounts, costCenters, onChange, onRemove, canRemove, onNewAccount }) {
+    const [acctOpen, setAcctOpen] = useState(false);
+    const [acctQ, setAcctQ]       = useState('');
+    const acctRef = useRef(null);
+
+    useEffect(() => {
+        const h = e => { if (acctRef.current && !acctRef.current.contains(e.target)) setAcctOpen(false); };
+        document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
+    }, []);
+
+    const filteredAccts = useMemo(() => {
+        const q = acctQ.toLowerCase();
+        if (!q) return glAccounts.slice(0, 60);
+        return glAccounts.filter(a =>
+            (a.name || '').toLowerCase().includes(q) || (a.code || '').toLowerCase().includes(q)
+        ).slice(0, 60);
+    }, [glAccounts, acctQ]);
+
+    const selectedAcct = glAccounts.find(a => String(a.id) === String(line.glAccountId));
+    const displayAcct  = acctOpen ? acctQ : (selectedAcct ? `${selectedAcct.code ? selectedAcct.code + ' - ' : ''}${selectedAcct.name}` : line.glAccountName || '');
+
+    const lineTotal = (parseFloat(line.amount) || 0) + (parseFloat(line.taxAmount) || 0);
+
+    return (
+        <tr className="border-t border-slate-100 hover:bg-slate-50/50">
+            <td className="px-3 py-2 text-slate-400 text-center">{idx + 1}</td>
+            {/* Ledger Account */}
+            <td className="px-3 py-2 min-w-[180px]">
+                <div ref={acctRef} className="relative">
+                    <input type="text" value={displayAcct} placeholder="Select ledger..."
+                        className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none"
+                        onFocus={() => { setAcctOpen(true); setAcctQ(''); }}
+                        onChange={e => { setAcctQ(e.target.value); setAcctOpen(true); }} />
+                    {acctOpen && (
+                        <div className="absolute left-0 right-0 top-full z-50 mt-0.5 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded shadow-lg">
+                            {filteredAccts.map(a => (
+                                <button key={a.id} type="button"
+                                    className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-yellow-50"
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => {
+                                        onChange('glAccountId', String(a.id));
+                                        onChange('glAccountName', a.name || '');
+                                        setAcctOpen(false); setAcctQ('');
+                                    }}>
+                                    {a.code && <span className="font-mono text-[10px] text-slate-400 shrink-0">{a.code}</span>}
+                                    <span className="truncate">{a.name}</span>
+                                </button>
+                            ))}
+                            <button type="button" onMouseDown={e => e.preventDefault()}
+                                onClick={() => { setAcctOpen(false); onNewAccount(); }}
+                                className="w-full flex items-center gap-1 px-2 py-1.5 text-xs text-[#B88A1A] hover:bg-yellow-50 border-t border-slate-100">
+                                <Plus size={11} /> Create new account
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </td>
+            {/* Description */}
+            <td className="px-3 py-2 min-w-[160px]">
+                <input type="text" value={line.description} placeholder="Details / narration..."
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none"
+                    onChange={e => onChange('description', e.target.value)} />
+            </td>
+            {/* Category */}
+            <td className="px-3 py-2 w-28">
+                <select value={line.category} onChange={e => onChange('category', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                    <option value="">Category</option>
+                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+            </td>
+            {/* Cost Center */}
+            <td className="px-3 py-2 w-32">
+                <select value={line.costCenter} onChange={e => onChange('costCenter', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                    <option value="">Cost center</option>
+                    {costCenters.map(c => <option key={c.id || c} value={c.name || c}>{c.name || c}</option>)}
+                </select>
+            </td>
+            {/* Amount */}
+            <td className="px-3 py-2 w-24">
+                <input type="number" value={line.amount} min="0" step="0.01" placeholder="0.00"
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none text-right"
+                    onChange={e => onChange('amount', e.target.value)} />
+            </td>
+            {/* Tax % */}
+            <td className="px-3 py-2 w-20">
+                <select value={line.taxRate} onChange={e => onChange('taxRate', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none bg-white">
+                    {TAX_RATES.map(t => <option key={t} value={t}>{t}%</option>)}
+                </select>
+            </td>
+            {/* Line Total */}
+            <td className="px-3 py-2 w-24 text-right font-bold text-slate-700 tabular-nums">
+                {fmt(lineTotal)}
+            </td>
+            {/* Remove */}
+            <td className="px-2 py-2 w-8">
+                {canRemove && (
+                    <button onClick={onRemove} className="text-slate-300 hover:text-red-500 transition-colors">
+                        <X size={14} />
+                    </button>
+                )}
+            </td>
+        </tr>
+    );
+}
+
+// ── VENDOR SELECT ─────────────────────────────────────────────────────────────
+function VendorSelect({ vendors, value, onChange }) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ]       = useState('');
+    const ref             = useRef(null);
+
+    useEffect(() => {
+        const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
+    }, []);
+
+    const filtered = useMemo(() => {
+        const t = q.toLowerCase();
+        if (!t) return vendors.slice(0, 50);
+        return vendors.filter(v => (v.name || '').toLowerCase().includes(t)).slice(0, 50);
+    }, [vendors, q]);
+
+    const display = open ? q : value;
+
+    return (
+        <div ref={ref} className="relative">
+            <input type="text" value={display} placeholder="Select vendor or payee"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-[#F5C742] focus:outline-none"
+                onFocus={() => { setOpen(true); setQ(''); }}
+                onChange={e => { setQ(e.target.value); setOpen(true); onChange(e.target.value); }} />
+            {open && (
+                <div className="absolute left-0 right-0 top-full z-50 mt-0.5 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded shadow-lg">
+                    {filtered.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No vendors found</div>}
+                    {filtered.map(v => (
+                        <button key={v.id} type="button"
+                            className="w-full px-3 py-2 text-left text-xs hover:bg-yellow-50 text-slate-700"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => { onChange(v); setOpen(false); setQ(''); }}>
+                            {v.name}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}

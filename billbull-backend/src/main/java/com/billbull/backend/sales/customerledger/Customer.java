@@ -20,6 +20,7 @@ import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 
 @Entity
 @Table(
@@ -114,6 +115,10 @@ public class Customer {
     private BigDecimal balance = BigDecimal.ZERO;
     private BigDecimal totalSales = BigDecimal.ZERO;
 
+    /** Computed at list-load time: openingBalance + invoiceTotal - receipts. Not persisted. */
+    @jakarta.persistence.Transient
+    private BigDecimal currentBalance;
+
     // =========================
     // RELATIONSHIPS (IGNORED IN JSON)
     // =========================
@@ -124,6 +129,7 @@ public class Customer {
             orphanRemoval = true,
             fetch = FetchType.LAZY
     )
+    @BatchSize(size = 50)
     private List<SavedAddress> savedAddresses = new ArrayList<>();
 
     @OneToMany(
@@ -152,6 +158,16 @@ public class Customer {
     )
     @JsonIgnore
     private List<CustomerDocument> documents = new ArrayList<>();
+
+    @OneToMany(
+            mappedBy = "customer",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
+    @BatchSize(size = 50)
+    @JsonIgnore
+    private List<CustomerBranchAllocation> branchAllocations = new ArrayList<>();
 
     // =========================
     // GETTERS & SETTERS
@@ -268,6 +284,9 @@ public class Customer {
     public BigDecimal getTotalSales() { return totalSales; }
     public void setTotalSales(BigDecimal totalSales) { this.totalSales = totalSales; }
 
+    public BigDecimal getCurrentBalance() { return currentBalance; }
+    public void setCurrentBalance(BigDecimal currentBalance) { this.currentBalance = currentBalance; }
+
     public List<SavedAddress> getSavedAddresses() { return savedAddresses; }
     public void setSavedAddresses(List<SavedAddress> savedAddresses) { this.savedAddresses = savedAddresses; }
 
@@ -279,4 +298,7 @@ public class Customer {
 
     public List<CustomerDocument> getDocuments() { return documents; }
     public void setDocuments(List<CustomerDocument> documents) { this.documents = documents; }
+
+    public List<CustomerBranchAllocation> getBranchAllocations() { return branchAllocations; }
+    public void setBranchAllocations(List<CustomerBranchAllocation> branchAllocations) { this.branchAllocations = branchAllocations; }
 }

@@ -30,6 +30,7 @@ import {
 import { GRNTemplateDesigner } from "./Templates/GRNTemplateDesigner";
 import { GRVTemplateDesigner } from "./Templates/GRVTemplateDesigner";
 import { PaymentReceiptDesigner } from "./Templates/PaymentReceiptDesigner";
+import VendorPaymentVoucherDesigner from "./Templates/VendorPaymentVoucherDesigner";
 import {
     VendorSoATemplateDesigner,
     defaultVendorSoaTemplateSettings
@@ -166,6 +167,8 @@ const getDesignerSettings = (template, meta) => {
         colBarcode: !!columns.barcode,
         colBrand: !!columns.brand,
         colDescription: columns.description !== false,
+        showShortDescription: columns.shortDesc !== false,
+        showDetailedDescription: !!columns.detailedDesc,
         colQty: columns.qty !== false,
         colUnitPrice: columns.unitPrice !== false,
         colTaxableAmount: !!columns.taxableAmount,
@@ -227,6 +230,8 @@ const defaultSettingsFor = (typeId, name) => {
         showTerms: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
         showTermsConditions: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
         colDescription: true,
+        showShortDescription: true,
+        showDetailedDescription: true,
         colQty: typeId !== "vendor-payment" && typeId !== "cheque-printing",
         colUnitPrice: typeId !== "vendor-payment" && typeId !== "cheque-printing",
         colVAT: typeId === "purchase-invoice",
@@ -261,7 +266,8 @@ const buildRendererColumns = (settings = {}, typeId) => {
         sku: !!settings.colSKU,
         barcode: !!(settings.colBarcode || settings.showBarcode),
         brand: !!settings.colBrand,
-        detailedDesc: !!settings.colDescription,
+        shortDesc: settings.showShortDescription !== false,
+        detailedDesc: !!settings.showDetailedDescription,
         description: settings.colDescription !== false && settings.showItemDescription !== false,
         qty: settings.colQty ?? settings.showReceivedQty ?? !isVoucherLike,
         unitPrice: settings.colUnitPrice ?? !isVoucherLike,
@@ -340,19 +346,23 @@ export default function PurchasePrintEmailTemplates() {
                     (type) => !rows.some((row) => row.type === type.id)
                 );
                 if (missingTypes.length > 0) {
-                    await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
-                        typeId: type.id,
-                        name: `Default ${type.label}`,
-                        isDefault: true,
-                        settings: defaultSettingsFor(type.id, `Default ${type.label}`)
-                    }))));
-                    const refreshed = await getPrintTemplates();
-                    setTemplates(
-                        (refreshed || [])
-                            .filter((template) => CATEGORY_SET.has(template.category))
-                            .map(templateToRow)
-                    );
-                    return;
+                    try {
+                        await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
+                            typeId: type.id,
+                            name: `Default ${type.label}`,
+                            isDefault: true,
+                            settings: defaultSettingsFor(type.id, `Default ${type.label}`)
+                        }))));
+                        const refreshed = await getPrintTemplates();
+                        setTemplates(
+                            (refreshed || [])
+                                .filter((template) => CATEGORY_SET.has(template.category))
+                                .map(templateToRow)
+                        );
+                        return;
+                    } catch (seedError) {
+                        console.warn("Failed to seed default purchase templates", seedError);
+                    }
                 }
             }
 
@@ -365,7 +375,10 @@ export default function PurchasePrintEmailTemplates() {
         }
     }, []);
 
+    const hasSeeded = useRef(false);
     useEffect(() => {
+        if (hasSeeded.current) return;
+        hasSeeded.current = true;
         refresh({ seedMissing: true });
     }, [refresh]);
 
@@ -537,7 +550,7 @@ export default function PurchasePrintEmailTemplates() {
         }
         if (meta.designer === "grn") return <GRNTemplateDesigner {...commonProps} />;
         if (meta.designer === "grv") return <GRVTemplateDesigner {...commonProps} />;
-        if (meta.designer === "payment") return <PaymentReceiptDesigner {...commonProps} />;
+        if (meta.designer === "payment") return <VendorPaymentVoucherDesigner {...commonProps} />;
         if (meta.designer === "cheque") return <ChequePrintingDesigner {...commonProps} />;
         if (meta.designer === "soa") {
             return (

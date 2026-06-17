@@ -46,6 +46,8 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import {
     getAllQuotations,
     getQuotationsPage,
+    getQuotationStats,
+    getQuotationById,
     saveQuotation,
     updateQuotationStatus,
     createRevision,
@@ -100,7 +102,7 @@ import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
@@ -114,6 +116,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import KpiCards from '../../components/common/KpiCards';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -179,7 +182,7 @@ const isBlankQuotationItem = (item = {}) =>
 const getSubmittableQuotationItems = (items = []) =>
     items.filter(item => !isBlankQuotationItem(item));
 
-const getQuotationValidationMessage = (items = []) => {
+const getQuotationValidationMessage = (items = [], salesSettings = null) => {
     const activeItems = getSubmittableQuotationItems(items);
 
     if (activeItems.length === 0) {
@@ -195,7 +198,7 @@ const getQuotationValidationMessage = (items = []) => {
         if (asNumber(item.qty ?? item.quantity) <= 0) {
             issues.push(`Line ${lineNo}: quantity must be greater than 0.00.`);
         }
-        if (asNumber(item.price) <= 0) {
+        if (asNumber(item.price) <= 0 && salesSettings?.zeroPricePolicy !== 'ALLOW') {
             issues.push(`Line ${lineNo}: price must be greater than 0.00.`);
         }
     });
@@ -287,7 +290,14 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                         </div>
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-800 text-sm">{qtn.qtnNo}</h4>
+                        <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 flex-wrap">
+                            {qtn.qtnNo}
+                            {qtn.revisions && qtn.revisions.length > 0 && (
+                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded">
+                                    Rev {qtn.revisions.length}
+                                </span>
+                            )}
+                        </h4>
                         <span className="text-xs text-slate-500">{formatDisplayDate(qtn.date)}</span>
                     </div>
                 </div>
@@ -310,17 +320,20 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
         {isExpanded && qtn.revisions && qtn.revisions.length > 0 && (
             <div className="bg-slate-50/50 border-t border-slate-100 divide-y divide-slate-100">
                 {qtn.revisions.map(rev => (
-                    <div key={`mob-rev-${rev.revId}`} className="p-3 pl-12 flex justify-between items-center text-xs">
-                        <div>
+                    <div key={`mob-rev-${rev.revId}`} className="p-3 pl-12 flex justify-between items-start text-xs">
+                        <div className="flex-1 min-w-0 mr-2">
                             <div className="font-bold text-slate-600 flex items-center gap-1.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></div>
                                 {rev.qtnNoDisplay}
                             </div>
                             <div className="text-slate-500 mt-0.5">{formatDisplayDate(rev.date)}</div>
+                            {rev.note && (
+                                <div className="text-slate-400 italic mt-1 leading-tight line-clamp-2">{rev.note}</div>
+                            )}
                         </div>
-                        <div className="text-right flex flex-col items-end gap-1">
+                        <div className="text-right flex flex-col items-end gap-1 shrink-0">
                             <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
-                            <div className="scale-90 origin-right">{renderStatusBadge(rev.status)}</div>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full">Superseded</span>
                         </div>
                     </div>
                 ))}
@@ -451,17 +464,22 @@ const Quotations = () => {
     const [listPage, setListPage] = useState(0);
     const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [isListLoading, setIsListLoading] = useState(false);
+    const [qtnStats, setQtnStats] = useState(null);
+    const [isStatsLoading, setIsStatsLoading] = useState(false);
 
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
     const [sourceInquiry, setSourceInquiry] = useState(null);
 
-    const createBranchSnapshot = () => ({
-        id: defaultBranch?.id ?? null,
-        name: defaultBranch?.name || '',
-        code: defaultBranch?.code || '',
-        location: defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
-    });
+    const createBranchSnapshot = () => {
+        const src = activeBranch || defaultBranch;
+        return {
+            id: src?.id ?? null,
+            name: src?.name || '',
+            code: src?.code || '',
+            location: src?.defaultWarehouseName || src?.address || ''
+        };
+    };
 
     const [quotationBranch, setQuotationBranch] = useState(createBranchSnapshot);
 
@@ -529,6 +547,7 @@ const Quotations = () => {
 
     // ✅ BILL DISCOUNT STATE (New)
     const [billDiscount, setBillDiscount] = useState(0);
+    const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
 
     // ✅ PRICE HISTORY STATE
     const [priceHistory, setPriceHistory] = useState([]);
@@ -565,6 +584,8 @@ const Quotations = () => {
 
         setQuotationBranch(createBranchSnapshot());
     }, [
+        activeBranch?.id,
+        activeBranch?.name,
         defaultBranch?.id,
         defaultBranch?.name,
         defaultBranch?.code,
@@ -725,6 +746,8 @@ const Quotations = () => {
             sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
+            billDiscountType: data.billDiscountType || 'percent',
+            billDiscountAmount: data.billDiscountAmount || 0,
             vatMode: data.vatMode || 'EXCLUSIVE',
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
@@ -753,7 +776,12 @@ const Quotations = () => {
             items: data.items.map(i => calculateRow({
                 id: i.id || Math.random(),
                 code: i.itemCode,
-                name: i.itemName || i.name || '',
+                name: i.itemName || i.productName || i.name || '',
+                sku: i.sku || i.skuCode || i.productSku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || i.shortDescription || '',
+                detailedDesc: i.detailedDesc || i.detailedDescription || '',
+                localName: i.localName || i.arabicName || '',
                 barcode: i.barcode || '',
                 image: i.primaryImage || i.image || '',
                 desc: i.description,
@@ -767,6 +795,7 @@ const Quotations = () => {
                 tax: i.taxRate,
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
+                taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
                 remarks: i.remarks,
                 isProductSelected: !!i.itemCode,
                 // QA-001: preserve the product-master hints the backend enriches
@@ -857,8 +886,8 @@ const Quotations = () => {
                     foc: 0,
                     focUnit: item.unit || 'PCS',
                     availableUnits: [item.unit || 'PCS'],
-                    disc: Number(item.discount) ?? incomingDiscount,
-                    tax: Number(item.taxRate) ?? incomingTax,
+                    disc: Number.isFinite(Number(item.discount)) ? Number(item.discount) : incomingDiscount,
+                    tax: Number.isFinite(Number(item.taxRate)) ? Number(item.taxRate) : incomingTax,
                     taxAmt: Number(item.taxAmount) || 0,
                     total: Number(item.lineTotal) || 0,
                     remarks: '',
@@ -898,6 +927,16 @@ const Quotations = () => {
     // ✅ FETCH REAL DATA ON MOUNT
     useEffect(() => {
         refreshData();
+    }, []);
+
+    // Open a specific quotation by ID (from dashboard search navigation)
+    useEffect(() => {
+        const quotationId = location.state?.quotationId;
+        if (!quotationId) return;
+        window.history.replaceState({}, document.title);
+        getQuotationById(quotationId)
+            .then(qtn => { if (qtn) handleEditQuotation(qtn, 'view'); })
+            .catch(err => console.error('Failed to open quotation', err));
     }, []);
 
     useEffect(() => {
@@ -952,6 +991,7 @@ const Quotations = () => {
 
             // List uses paginated endpoint; see fetchQuotationsList + effect below.
             await fetchQuotationsList();
+            fetchQtnStats();
 
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
@@ -974,11 +1014,11 @@ const Quotations = () => {
     // Server-driven paginated fetch for the Quotation list tab. Filters
     // (search + status) and the current page are pushed to the backend; the
     // response hydrates both the visible list and the footer meta.
-    const fetchQuotationsList = async () => {
+    const fetchQuotationsList = async (pageOverride) => {
         setIsListLoading(true);
         try {
             const data = await getQuotationsPage({
-                page: listPage,
+                page: pageOverride !== undefined ? pageOverride : listPage,
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
@@ -1000,15 +1040,56 @@ const Quotations = () => {
         }
     };
 
-    // Reset to first page whenever filter inputs change.
-    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
+    const fetchQtnStats = async () => {
+        setIsStatsLoading(true);
+        try {
+            const data = await getQuotationStats();
+            setQtnStats(data);
+        } catch (err) {
+            console.error('Failed to load quotation stats', err);
+        } finally {
+            setIsStatsLoading(false);
+        }
+    };
 
-    // Refetch whenever the user opens the list tab, changes filters, or pages.
+    const isInitialMount = useRef(true);
+    const isPageInitialMount = useRef(true);
+    // When true the next listPage change is a filter-driven reset — not a user
+    // page-navigation click — so the listPage-only effect should skip its fetch
+    // (the filter effect already issued one with page 0 passed directly).
+    const filterResetInFlight = useRef(false);
+
+    // Effect 1: fires when filters or tab change. Resets to page 0 and fetches
+    // immediately using page=0, bypassing the listPage state for this one call.
     useEffect(() => {
+        if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+        }
         if (activeTab !== 'list') return;
-        fetchQuotationsList();
+
+        // Mark that the upcoming setListPage(0) is our own reset, not a user click.
+        filterResetInFlight.current = true;
+        setListPage(0);
+        fetchQuotationsList(0); // pass override page so we don't read stale state
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+    }, [activeTab, searchTerm, filterStatus, dateRange?.fromDate, dateRange?.toDate]);
+
+    // Effect 2: fires only when the user explicitly navigates to a different page.
+    useEffect(() => {
+        if (isPageInitialMount.current) {
+            isPageInitialMount.current = false;
+            return;
+        }
+        if (filterResetInFlight.current) {
+            // This listPage change was triggered by a filter reset — skip; Effect 1 already fetched.
+            filterResetInFlight.current = false;
+            return;
+        }
+        if (activeTab !== 'list') return;
+        fetchQuotationsList(listPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [listPage]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -1395,8 +1476,8 @@ const Quotations = () => {
 
     // ✅ UPDATED CALCULATIONS
     const quotationSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount),
-        [items, billDiscount]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount)),
+        [items, billDiscount, billDiscountType]
     );
     const grossTotal = quotationSummary.grossTotal;
     const totalItemDiscount = quotationSummary.itemDiscountTotal;
@@ -1436,32 +1517,48 @@ const Quotations = () => {
             totalAmount: grandTotal,
             taxAmount: totalTax,
             subTotal: subTotal,
-            billDiscount: billDiscount,
+            billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+            billDiscountAmount: billDiscountAmount,
+            billDiscountType: billDiscountType,
+            billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
             vatMode: vatMode,
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
-            items: activeItems.map(i => ({
-                // Only forward persisted DB ids. New rows get client-side keys
-                // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
-                // non-integer — those must go to the backend as null so Hibernate
-                // inserts them instead of trying to merge a phantom row.
-                id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
-                itemCode: i.code,
-                barcode: i.barcode, // Pass barcode to backend
-                image: i.image, // Pass image to backend if schema supports it
-                description: i.desc,
-                unit: i.unit,
-                quantity: i.qty,
-                price: i.price,
-                discount: i.disc,
-                taxRate: i.tax,
-                foc: i.foc,
-                focUnit: i.focUnit || 'PCS',
-                taxAmount: i.taxAmt,
-                lineTotal: i.total,
-                remarks: i.remarks
-            }))
+            items: allocateFooterDiscount(activeItems, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+                const itemNetBeforeFooter = Number(i.total || 0) - Number(i.taxAmt || 0);
+                const itemNet = Math.max(0, itemNetBeforeFooter - footerDisc);
+                const taxPercent = Number(i.tax) || 0;
+                const itemTax = itemNet * (taxPercent / 100);
+                return {
+                    // Only forward persisted DB ids. New rows get client-side keys
+                    // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
+                    // non-integer — those must go to the backend as null so Hibernate
+                    // inserts them instead of trying to merge a phantom row.
+                    id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
+                    itemCode: i.code,
+                    barcode: i.barcode,
+                    image: i.image,
+                    description: i.desc,
+                    unit: i.unit,
+                    quantity: i.qty,
+                    price: i.price,
+                    discount: i.disc,
+                    footerDiscount: footerDisc,
+                    taxRate: i.tax,
+                    foc: i.foc,
+                    focUnit: i.focUnit || 'PCS',
+                    taxAmount: itemTax,
+                    lineTotal: itemNet + itemTax,
+                    remarks: i.remarks,
+                    sku: i.sku || '',
+                    brandName: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
+                    detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || ''
+                };
+            })
         };
     };
 
@@ -1473,7 +1570,7 @@ const Quotations = () => {
             setShowToast(true);
             return;
         }
-        const validationMessage = getQuotationValidationMessage(items);
+        const validationMessage = getQuotationValidationMessage(items, salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -1512,7 +1609,10 @@ const Quotations = () => {
             setShowToast(true);
             return;
         }
-        const validationMessage = getQuotationValidationMessage(items);
+        const freshSettings = await getSalesSettings().catch(() => salesSettings);
+        if (freshSettings) setSalesSettings(freshSettings);
+        const activeSettings = freshSettings || salesSettings;
+        const validationMessage = getQuotationValidationMessage(items, activeSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -1521,7 +1621,7 @@ const Quotations = () => {
         }
 
         // Stock check enforcement
-        if (salesSettings?.stockCheckRequired) {
+        if (activeSettings?.stockCheckRequired) {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
@@ -1548,7 +1648,7 @@ const Quotations = () => {
         }
 
         // Credit limit BLOCK enforcement
-        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+        if (activeSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomerData?.creditLimitAmount > 0 &&
             (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount) {
             const projectedOutstanding = Number(selectedCustomerData.balance || 0) + grandTotal;
@@ -1594,7 +1694,7 @@ const Quotations = () => {
 
     const handleApprove = async () => {
         if (!editingId) return;
-        const validationMessage = getQuotationValidationMessage(items);
+        const validationMessage = getQuotationValidationMessage(items, salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType("info");
@@ -1603,13 +1703,17 @@ const Quotations = () => {
         }
 
         try {
-            const stock = await checkQuotationStock(editingId);
-            const insufficient = stock.filter(i => !i.sufficient);
+            if (salesSettings?.stockCheckRequired) {
+                const stock = await checkQuotationStock(editingId);
+                const insufficient = stock.filter(i => !i.sufficient);
 
-            if (insufficient.length > 0) {
-                setStockCheckResult(insufficient);
-                setShowStockModal(true);
-                return;
+                if (insufficient.length > 0) {
+                    const itemNames = insufficient.map(i => i.itemCode || 'Unknown Item').join(', ');
+                    setToastMessage(`Insufficient stock for: ${itemNames}`);
+                    setToastType("info");
+                    setShowToast(true);
+                    return;
+                }
             }
 
             await updateQuotationStatus(editingId, "APPROVED");
@@ -1933,7 +2037,10 @@ const Quotations = () => {
         setInternalNotes(qtn.internalNotes || '');
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
-        setBillDiscount(qtn.billDiscount || 0);
+        setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
+        setBillDiscount(qtn.billDiscountType === 'amount'
+            ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
+            : Number(qtn.billDiscount) || 0);
         setVatMode(qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
         setSourceInquiry(qtn.sourceInquiryId ? {
             id: qtn.sourceInquiryId,
@@ -1972,7 +2079,7 @@ const Quotations = () => {
     const handleListingApprove = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2010,7 +2117,7 @@ const Quotations = () => {
     const handleListingConfirm = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2048,7 +2155,7 @@ const Quotations = () => {
     const handleListingProceedToInvoice = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2073,6 +2180,9 @@ const Quotations = () => {
                         customerCode: matched?.code ?? '',
                         customerName: matched?.name ?? qtn.customer,
                         billDiscount: qtn.billDiscount,
+                        billDiscountType: qtn.billDiscountType,
+                        billDiscountFixed: qtn.billDiscountFixed,
+                        billDiscountAmount: qtn.billDiscountAmount,
                         shippingAddress: qtn.shippingAddress || '',
                         items: qtn.items
                     }
@@ -2104,6 +2214,9 @@ const Quotations = () => {
                     qtnNo: getQuotationNo(),
                     customer: customer,
                     billDiscount,
+                    billDiscountType,
+                    billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
+                    billDiscountAmount: billDiscountAmount,
                     items: items
                 }
             }
@@ -2113,7 +2226,7 @@ const Quotations = () => {
     const handleListingConvertToOrder = (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
-        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        const validationMessage = getQuotationValidationMessage(qtn.items || [], salesSettings);
         if (validationMessage) {
             setToastMessage(validationMessage);
             setToastType('info');
@@ -2139,6 +2252,9 @@ const Quotations = () => {
                     customerCode: matched?.code ?? '',
                     customerName: matched?.name ?? qtn.customer,
                     billDiscount: qtn.billDiscount,
+                    billDiscountType: qtn.billDiscountType,
+                    billDiscountFixed: qtn.billDiscountFixed,
+                    billDiscountAmount: qtn.billDiscountAmount,
                     shippingAddress: qtn.shippingAddress || '',
                     items: qtn.items
                 }
@@ -2160,7 +2276,8 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
-            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const _qtnDiscType1 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
+            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType1, _qtnDiscType1 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const printData = {
@@ -2198,12 +2315,15 @@ const Quotations = () => {
                     image: i.image ? getImageUrl(i.image) : ''
                 })),
                 totals: {
-                    subTotal: resolvedSummary.subTotal,
+                    subTotal: resolvedSummary.grossTotal,
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
                     currency: getDisplayCurrencyProps(qtn.currency).currency,
-                    billDiscount: resolvedBillDiscount,
-                    billDiscountAmount: resolvedSummary.billDiscountAmount
+                    billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0,
+                    billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                    discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                    itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                    footerDiscountAmount: resolvedSummary.billDiscountAmount || 0,
                 },
                 meta: {
                     validTill: qtn.validTill,
@@ -2236,10 +2356,11 @@ const Quotations = () => {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
             if (!defaultTemplate) return;
-            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const _qtnDiscType2 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
+            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType2, _qtnDiscType2 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.subTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: resolvedSummary.billDiscountAmount }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
             await downloadPdf(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
@@ -2319,6 +2440,9 @@ const Quotations = () => {
                         customerName: selectedCustomerData?.name ?? customer,
                         shippingAddress: shippingAddress || '',
                         billDiscount,
+                        billDiscountType,
+                        billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
+                        billDiscountAmount: billDiscountAmount,
                         items: items
                     }
                 }
@@ -2354,6 +2478,7 @@ const Quotations = () => {
         setNotesToCustomer('');
         setInternalNotes('');
         setBillDiscount(0);
+        setBillDiscountType('percent');
         setSourceInquiry(null);
         setActiveTab('create');
 
@@ -2381,6 +2506,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
                 return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
+            case 'Superseded':
+                return <span className="text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>;
             default:
                 return <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">Draft</span>;
         }
@@ -2441,12 +2568,15 @@ const Quotations = () => {
             image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
         })),
         totals: {
-            subTotal,
+            subTotal: grossTotal,
             tax: totalTax,
             grandTotal,
             currency: displayCurrencyProps.currency,
-            billDiscount,
-            billDiscountAmount
+            billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+            billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+            discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
+            itemDiscountAmount: totalItemDiscount || 0,
+            footerDiscountAmount: billDiscountAmount || 0,
         },
         meta: {
             validTill,
@@ -2634,7 +2764,7 @@ const Quotations = () => {
     <div style="padding:20px 32px; display:flex; justify-content:flex-end;">
         <table style="border-spacing:0; min-width:280px;">
             <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${subTotal.toFixed(2)}</td></tr>
-            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
+            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Footer Discount${billDiscountType === 'percent' ? ` (${billDiscount}%)` : ''}</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
             <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${totalTax.toFixed(2)}</td></tr>
             <tr style="border-top:2px solid ${t.accentColor};">
                 <td style="padding:12px 20px 6px 0; font-size:16px; font-weight:800; color:#1e293b;">Grand Total</td>
@@ -2758,13 +2888,21 @@ const Quotations = () => {
                             )}
                             {activeTab !== 'list' && (
                                 <>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={handleOpenEmailModal} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Mail className="h-4 w-4" /> Email
                                     </button>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={() => {
+                                        const phone = (selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '').replace(/\D/g, '');
+                                        if (phone) window.open(`https://wa.me/${phone}`, '_blank');
+                                        else alert('No phone number found for this customer.');
+                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <MessageCircle className="h-4 w-4" /> WhatsApp
                                     </button>
-                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={() => {
+                                        const phone = selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '';
+                                        if (phone) window.open(`sms:${phone}`, '_self');
+                                        else alert('No phone number found for this customer.');
+                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Smartphone className="h-4 w-4" /> SMS
                                     </button>
                                     <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
@@ -2810,12 +2948,58 @@ const Quotations = () => {
 
                 {/* ======================= VIEW: LIST ======================= */}
                 {activeTab === 'list' && (
+                    <div>
+                    <KpiCards
+                        loading={isStatsLoading}
+                        cards={[
+                            {
+                                label: 'This Month Quotations',
+                                value: qtnStats?.thisMonthCount ?? '—',
+                                sub: `${qtnStats?.openQuotations ?? 0} still open`,
+                                icon: <FileText size={18} />,
+                                iconBg: 'bg-yellow-100',
+                                iconColor: 'text-yellow-600',
+                                accent: 'border-l-yellow-400',
+                            },
+                            {
+                                label: 'This Month Value',
+                                value: qtnStats?.thisMonthValue != null
+                                    ? `${companyCurrencySymbol} ${Number(qtnStats.thisMonthValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    : '—',
+                                sub: 'Total quoted amount',
+                                icon: <ShoppingCart size={18} />,
+                                iconBg: 'bg-emerald-100',
+                                iconColor: 'text-emerald-600',
+                                accent: 'border-l-emerald-400',
+                            },
+                            {
+                                label: 'Converted',
+                                value: qtnStats?.convertedCount ?? '—',
+                                sub: `${qtnStats?.conversionRate ?? 0}% conversion rate`,
+                                icon: <CheckCircle2 size={18} />,
+                                iconBg: 'bg-blue-100',
+                                iconColor: 'text-blue-600',
+                                accent: 'border-l-blue-400',
+                            },
+                            {
+                                label: 'Open Quotations',
+                                value: qtnStats?.openQuotations ?? '—',
+                                sub: 'Draft + approved',
+                                icon: <AlertCircle size={18} />,
+                                iconBg: 'bg-orange-100',
+                                iconColor: 'text-orange-500',
+                                accent: 'border-l-orange-400',
+                            },
+                        ]}
+                    />
                     <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm p-4">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                <DateFilter onChange={(range) => {
+                                    setDateRange(prev => (prev?.fromDate === range?.fromDate && prev?.toDate === range?.toDate) ? prev : range);
+                                }} />
                                 {/* Search */}
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -2857,7 +3041,8 @@ const Quotations = () => {
                                             totalElements: listPageMeta.totalElements,
                                         }),
                                         QUOTATION_COLUMNS,
-                                        'Quotations'
+                                        'Quotations',
+                                        { companyProfile: company, branch: activeBranch?.name || '' }
                                     )}
                                     onExportPdf={() => exportToPDF(
                                         withListSerialNumbers(filteredQuotations, {
@@ -2868,7 +3053,8 @@ const Quotations = () => {
                                         }),
                                         QUOTATION_COLUMNS,
                                         'Quotations List',
-                                        'Quotations'
+                                        'Quotations',
+                                        { companyProfile: company, branch: activeBranch?.name || '' }
                                     )}
                                 />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
@@ -2952,6 +3138,11 @@ const Quotations = () => {
                                                         </button>
                                                     )}
                                                     {qtn.qtnNo}
+                                                    {qtn.revisions && qtn.revisions.length > 0 && (
+                                                        <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                                                            Rev {qtn.revisions.length}
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3">
@@ -3072,19 +3263,26 @@ const Quotations = () => {
                                                             // handleEditQuotation(qtn, rev); 
                                                         }}
                                                     >
-                                                        <td className="px-4 py-2 pl-10 text-slate-500 text-xs font-semibold">
-                                                            <div className="flex items-center gap-1">
+                                                        <td></td>
+                                                        <td className="px-4 py-2 pl-8 text-slate-500 text-xs font-semibold">
+                                                            <div className="flex items-center gap-1.5">
                                                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
                                                                 {rev.qtnNoDisplay}
                                                             </div>
                                                         </td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs">{formatDisplayDate(rev.date)}</td>
-                                                        <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
+                                                        <td className="px-4 py-2 text-slate-400 text-xs max-w-[180px]">
+                                                            {rev.note
+                                                                ? <span className="italic truncate block" title={rev.note}>{rev.note}</span>
+                                                                : <span className="italic opacity-40">—</span>
+                                                            }
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center text-slate-400 text-xs">—</td>
                                                         <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
                                                             <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
                                                         </td>
-                                                        <td className="px-4 py-2 text-right scale-90 origin-right">
-                                                            {renderStatusBadge(rev.status)}
+                                                        <td className="px-4 py-2 text-right">
+                                                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>
                                                         </td>
                                                         <td></td>
                                                     </tr>
@@ -3134,6 +3332,7 @@ const Quotations = () => {
                             loading={isListLoading}
                             onPageChange={setListPage}
                         />
+                    </div>
                     </div>
                 )}
 
@@ -3277,6 +3476,30 @@ const Quotations = () => {
                                                 className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-slate-50"
                                             />
                                         </div>
+
+                                        {/* Payment Terms */}
+                                        <div className="flex flex-col relative col-span-2">
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Payment Terms</label>
+                                            <div
+                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-[#F5C742]'}`}
+                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
+                                            >
+                                                {paymentTerm} <ChevronDown size={14} className="text-slate-400" />
+                                            </div>
+                                            {isPaymentTermOpen && !isViewMode && (
+                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden">
+                                                    {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
+                                                        <div
+                                                            key={opt}
+                                                            onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
+                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
+                                                        >
+                                                            {opt} {paymentTerm === opt && <Check size={12} />}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
@@ -3297,33 +3520,36 @@ const Quotations = () => {
                                     isReadOnly={isViewMode}
                                     currency={displayCurrencyProps.currency}
                                     currencySymbol={displayCurrencyProps.currencySymbol}
+                                    creditAlert={
+                                        selectedCustomerData && selectedCustomerData.creditLimitAmount > 0 &&
+                                        (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount
+                                            ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                                                ? (
+                                                    <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                                        <p>
+                                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                            Confirming this quotation is blocked until the balance is within limit.
+                                                        </p>
+                                                    </div>
+                                                )
+                                                : salesSettings?.creditLimitPolicy === 'WARNING'
+                                                    ? (
+                                                        <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                                            <p>
+                                                                <strong>Credit Warning:</strong> The projected outstanding balance
+                                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                            </p>
+                                                        </div>
+                                                    )
+                                                    : null
+                                            : null
+                                    }
                                 />
-
-                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
-                                    selectedCustomerData.creditLimitAmount > 0 &&
-                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                        <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                            <p>
-                                                <strong>Credit Warning:</strong> The projected outstanding balance
-                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                            </p>
-                                        </div>
-                                    )}
-                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-                                    selectedCustomerData.creditLimitAmount > 0 &&
-                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                        <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                                            <p>
-                                                <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                                Confirming this quotation is blocked until the balance is within limit.
-                                            </p>
-                                        </div>
-                                    )}
 
                                 {/* CustomerSelector modal (unchanged) */}
                                 <CustomerSelector
@@ -3335,32 +3561,7 @@ const Quotations = () => {
                                     onCustomerCreated={refreshData}
                                 />
 
-                                {/* Payment Terms */}
-                                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative">
-                                    <h3 className="text-xs font-bold text-slate-700 mb-3">Payment Terms</h3>
-                                    <div className="flex flex-col relative">
-                                        <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
-                                        <div
-                                            className={`w-full text-xs p-2 border border-slate-200 rounded-lg text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
-                                            onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
-                                        >
-                                            {paymentTerm} <ChevronDown size={12} className="text-slate-400" />
-                                        </div>
-                                        {isPaymentTermOpen && !isViewMode && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
-                                                {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
-                                                    <div
-                                                        key={opt}
-                                                        onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
-                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
-                                                    >
-                                                        {opt} {paymentTerm === opt && <Check size={12} />}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+
 
                             </div> {/* End Left Column */}
 
@@ -3696,17 +3897,25 @@ const Quotations = () => {
                                             <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
-                                            <span className="flex items-center gap-2">
-                                                Bill Discount
+                                            <span className="flex items-center gap-1.5">
+                                                Footer Discount
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                                                    className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                                                    title="Toggle between percentage and fixed amount"
+                                                >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                                                 <input
                                                     type="number"
                                                     min="0"
-                                                    max="100"
+                                                    max={billDiscountType === 'percent' ? 100 : undefined}
+                                                    step={billDiscountType === 'percent' ? 1 : 0.01}
                                                     disabled={isViewMode}
-                                                    className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                    className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                                                     value={billDiscount}
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
-                                                /> %
+                                                />
                                             </span>
                                             <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} {...displayCurrencyProps} /></span>
                                         </div>
@@ -4023,7 +4232,7 @@ const Quotations = () => {
                                             <div key={rev.revId} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
                                                 <div className="flex justify-between mb-2">
                                                     <span className="text-xs font-bold text-slate-700">{rev.qtnNoDisplay}</span>
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${rev.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500'}`}>{rev.status}</span>
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">Superseded</span>
                                                 </div>
                                                 <div className="text-[10px] text-slate-400 mb-2">{formatDisplayDate(rev.date)}</div>
                                                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded mb-3">
@@ -4375,9 +4584,7 @@ const Quotations = () => {
                                                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                                                 Revision: {compareRevision.qtnNoDisplay}
                                             </div>
-                                            <div className="scale-90 origin-right">
-                                                {renderStatusBadge(compareRevision.status)}
-                                            </div>
+                                            <span className="text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">Superseded</span>
                                         </div>
                                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                             {/* Notes / Meta info for revision */}

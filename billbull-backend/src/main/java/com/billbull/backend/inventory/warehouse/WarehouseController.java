@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.warehouse;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -13,91 +14,112 @@ import java.util.List;
 @RequestMapping("/api/warehouses")
 public class WarehouseController {
 
+    private static final String MODULE = "inventory";
+
     private final WarehouseService service;
     private final WarehouseStockService stockService;
     private final BinService binService;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
     public WarehouseController(WarehouseService service, WarehouseStockService stockService,
-            BinService binService, AuditLogService auditLogService) {
+            BinService binService, AuditLogService auditLogService, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.stockService = stockService;
         this.binService = binService;
         this.auditLogService = auditLogService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
-    public List<WarehouseResponse> list() {
-        return service.list();
+    @PreAuthorize("isAuthenticated()")
+    public List<WarehouseResponse> list(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
+        return service.list(branchId);
+    }
+
+    @GetMapping("/tree")
+    @PreAuthorize("isAuthenticated()")
+    public WarehouseService.WarehouseTree tree(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
+        return service.getTree(branchId);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WarehouseResponse> create(
             @Valid @RequestBody WarehouseRequestDto req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(req));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<WarehouseResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody WarehouseRequestDto req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, req));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
         return ResponseEntity.ok().build();
     }
 
     @GetMapping("/{id}/bins")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<BinResponse> getBins(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return binService.getBinResponsesByWarehouse(id);
     }
 
     // --- STOCK ENDPOINTS (Moved from WarehouseStockController) ---
 
     @GetMapping("/{id}/stock")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<WarehouseStockResponse> stock(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStock(id);
     }
 
     @GetMapping("/stock/product/{productCode}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<WarehouseStockResponse> getStockByProduct(@PathVariable String productCode) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStockByProduct(productCode);
     }
 
     @GetMapping("/{id}/stock/summary")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public WarehouseStockSummary getStockSummary(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getStockSummary(id);
     }
 
     @GetMapping("/{id}/stock/product/{productId}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public java.math.BigDecimal getProductStock(
             @PathVariable Long id,
             @PathVariable Long productId,
             @RequestParam(required = false) Long zoneId,
             @RequestParam(required = false) Long locatorId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableStockWithFilters(id, productId, zoneId, locatorId, binId);
     }
 
     @GetMapping("/{id}/stock/aggregate")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public java.math.BigDecimal getAggregateLocationStock(
             @PathVariable Long id,
             @RequestParam(required = false) Long zoneId,
             @RequestParam(required = false) Long locatorId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableStockWithFilters(id, null, zoneId, locatorId, binId);
     }
 
@@ -108,11 +130,12 @@ public class WarehouseController {
      * Used by the Stock Transfer batch picker.
      */
     @GetMapping("/{id}/stock/product/{productId}/batches")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<BatchStockRow> getProductBatches(
             @PathVariable Long id,
             @PathVariable Long productId,
             @RequestParam(required = false) Long binId) {
+        modulePermissionService.requireCanView(MODULE);
         return stockService.getAvailableBatchesForProduct(id, productId, binId);
     }
 

@@ -61,13 +61,6 @@ export default function DateFilter({ onChange, defaultPreset = 'today' }) {
     const [pendingTo, setPendingTo] = useState('');
     const ref = useRef(null);
 
-    // Emit initial value on mount
-    useEffect(() => {
-        const resolved = resolvePreset(defaultPreset);
-        if (resolved) onChange(resolved);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     useEffect(() => {
         const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
         document.addEventListener('mousedown', handler);
@@ -120,23 +113,23 @@ export default function DateFilter({ onChange, defaultPreset = 'today' }) {
 
                     {preset === 'custom' && (
                         <div className="mt-2 pt-2 border-t border-gray-100 space-y-2 px-1">
-                            <div className="flex gap-2 items-center">
-                                <div className="flex-1">
+                            <div className="flex flex-col gap-3">
+                                <div>
                                     <label className="text-xs text-gray-500 mb-1 block">From</label>
                                     <input
                                         type="date"
                                         value={pendingFrom}
                                         onChange={e => setPendingFrom(e.target.value)}
-                                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
                                     />
                                 </div>
-                                <div className="flex-1">
+                                <div>
                                     <label className="text-xs text-gray-500 mb-1 block">To</label>
                                     <input
                                         type="date"
                                         value={pendingTo}
                                         onChange={e => setPendingTo(e.target.value)}
-                                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
                                     />
                                 </div>
                             </div>

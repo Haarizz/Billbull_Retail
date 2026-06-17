@@ -37,6 +37,8 @@ public class RBACInitializer {
         return args -> {
             // 1. Core roles
             createRoleIfNotExists(roleRepository, "ADMIN");
+            createRoleIfNotExists(roleRepository, "BRANCH_ADMIN");
+            createRoleIfNotExists(roleRepository, "MANAGER");
             createRoleIfNotExists(roleRepository, "SALES");
             createRoleIfNotExists(roleRepository, "INVENTORY_MANAGER");
             createRoleIfNotExists(roleRepository, "ACCOUNTANT");
@@ -106,9 +108,15 @@ public class RBACInitializer {
                         .anyMatch(role -> role.getName().equals("ADMIN")));
 
         if (!adminExists) {
+            // Read password from env var; generate a secure random one if not set
+            String initialPassword = System.getenv("ADMIN_INITIAL_PASSWORD");
+            if (initialPassword == null || initialPassword.isBlank()) {
+                initialPassword = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+            }
+
             User admin = new User();
             admin.setUsername("admin");
-            admin.setPassword(passwordEncoder.encode("admin123"));
+            admin.setPassword(passwordEncoder.encode(initialPassword));
             admin.setFullName("System Administrator");
             admin.setEmail("admin@billbull.app");
             admin.setBranch(defaultBranch);
@@ -118,8 +126,9 @@ public class RBACInitializer {
             admin.getRoles().addAll(roles);
 
             userRepository.save(admin);
-            System.out.println("✅ Created default ADMIN user (username: admin, password: admin123)");
-            System.out.println("⚠️  IMPORTANT: Change the default admin password immediately!");
+            System.out.println("✅ Created default ADMIN user (username: admin)");
+            System.out.println("⚠️  INITIAL PASSWORD: " + initialPassword);
+            System.out.println("⚠️  Change the admin password immediately after first login!");
             return;
         }
 

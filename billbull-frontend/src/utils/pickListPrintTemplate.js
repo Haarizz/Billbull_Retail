@@ -67,6 +67,8 @@ const flattenItems = (rawItems = []) => {
             flat.push({
                 seq,
                 description: item.name || item.desc || item.description?.title || '-',
+                shortDesc: item.shortDesc || item.shortDescription || '',
+                detailedDesc: item.detailedDesc || item.detailedDescription || '',
                 brand: item.brand || item.brandName || '',
                 sku: item.sku || item.skuCode || '',
                 barcode: item.barcode || '',
@@ -86,6 +88,8 @@ const flattenItems = (rawItems = []) => {
                 flat.push({
                     seq,
                     description: item.name || item.desc || item.description?.title || '-',
+                    shortDesc: item.shortDesc || item.shortDescription || '',
+                    detailedDesc: item.detailedDesc || item.detailedDescription || '',
                     brand: item.brand || item.brandName || '',
                     sku: item.sku || item.skuCode || '',
                     barcode: item.barcode || '',
@@ -127,9 +131,10 @@ export const generatePickListHtml = (template, data, options = {}) => {
     const pickRoute = Array.from(new Set(rows.map((r) => r.zone).filter((z) => z && z !== '-')));
     pickRoute.push('Packing Area');
 
+    const resolvedLogoUrl = s.logoUrl || company.logoUrl || '';
     const logoHtml = s.showLogo
-        ? (company.logoUrl
-            ? `<img src="${escapeHtml(company.logoUrl)}" alt="logo" style="height:72px;object-fit:contain;" />`
+        ? (resolvedLogoUrl
+            ? `<img src="${escapeHtml(resolvedLogoUrl)}" alt="logo" style="height:72px;object-fit:contain;" />`
             : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;">
                   <span style="font-size:32px;font-weight:900;color:${gold};">${escapeHtml((company.companyName || 'C').charAt(0))}</span>
                </div>`)
@@ -146,36 +151,36 @@ export const generatePickListHtml = (template, data, options = {}) => {
     ].filter(Boolean);
 
     const headerMetaHtml = metaItems.length
-        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;padding:0;min-width:0;overflow:hidden;">
             ${metaItems.map(([label, value]) => `
-                <div>
-                  <p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${escapeHtml(label)}</p>
-                  <p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${escapeHtml(value)}</p>
+                <div style="min-width:0;overflow:hidden;">
+                  <p style="margin:0;font-size:${f - 2}px;color:#999;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">${escapeHtml(label)}</p>
+                  <p style="margin:0;font-size:${f - 1}px;font-weight:700;color:#1a1a2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(value)}</p>
                 </div>
             `).join('')}
           </div>`
         : '';
 
     const customerBlock = s.showCustomerName ? `
-        <div>
-          <p style="font-weight:700;font-size:${f - 0.5}px;margin:0 0 4px 0;color:#888;letter-spacing:0.5px;text-transform:uppercase;">Delivering To</p>
-          <p style="font-weight:700;font-size:${f + 1}px;margin:0 0 2px 0;">${escapeHtml(customer.name || '-')}</p>
-          ${s.showCustomerCode && customer.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${escapeHtml(customer.code)}</p>` : ''}
-          ${s.showDeliveryAddress && (customer.address || customer.shippingAddress) ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:0;">${escapeHtml(customer.address || customer.shippingAddress)}</p>` : ''}
-          ${s.showCustomerPhone && customer.phone ? `<p style="margin:3px 0 0;color:#555;">${escapeHtml(customer.phone)}</p>` : ''}
+        <div style="min-width:0;overflow:hidden;">
+          <p style="font-weight:700;font-size:${f - 2}px;margin:0 0 2px 0;color:#888;letter-spacing:0.6px;text-transform:uppercase;">Delivering To</p>
+          <p style="font-weight:700;font-size:${f + 1}px;margin:0 0 2px 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(customer.name || '-')}</p>
+          ${s.showCustomerCode && customer.code ? `<p style="color:#64748b;font-size:${f - 1}px;margin:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(customer.code)}</p>` : ''}
+          ${s.showDeliveryAddress && (customer.address || customer.shippingAddress) ? `<p style="color:#555;margin:1px 0 0;font-size:${f - 1}px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((customer.address || customer.shippingAddress || '').replace(/\n/g, ', '))}</p>` : ''}
+          ${s.showCustomerPhone && customer.phone ? `<p style="margin:1px 0 0;color:#555;font-size:${f - 1}px;white-space:nowrap;">${escapeHtml(customer.phone)}</p>` : ''}
         </div>
     ` : '';
 
     const companyBlock = `
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:0;max-width:32%;flex-shrink:0;">
           ${logoHtml}
           ${s.showCompanyName ? `
-            <div style="text-align:right;line-height:1.55;">
-              <p style="font-weight:700;font-size:${f + 3}px;color:#1a1a2e;margin:0;">${escapeHtml(company.companyName || '')}</p>
-              ${s.showCompanyAddress && company.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${escapeHtml(company.address)}</p>` : ''}
-              ${s.showCompanyPhone && company.phone ? `<p style="margin:0;">${escapeHtml(company.phone)}</p>` : ''}
-              ${s.showCompanyEmail && company.email ? `<p style="margin:0;">${escapeHtml(company.email)}</p>` : ''}
-              ${s.showTRN && company.trn ? `<p style="margin:0;color:#666;">TRN · ${escapeHtml(company.trn)}</p>` : ''}
+            <div style="text-align:right;line-height:1.35;min-width:0;">
+              <p style="font-weight:700;font-size:${f - 0.5}px;color:#1a1a2e;margin:0;word-break:break-word;">${escapeHtml(company.companyName || '')}</p>
+              ${s.showCompanyAddress && company.address ? `<p style="margin:2px 0 0;color:#555;font-size:${f - 1}px;line-height:1.35;word-break:break-word;">${escapeHtml(company.address.replace(/\n/g, ', '))}</p>` : ''}
+              ${s.showCompanyPhone && company.phone ? `<p style="margin:1px 0 0;font-size:${f - 1}px;">${escapeHtml(company.phone)}</p>` : ''}
+              ${s.showCompanyEmail && company.email ? `<p style="margin:1px 0 0;font-size:${f - 1}px;">${escapeHtml(company.email)}</p>` : ''}
+              ${s.showTRN && company.trn ? `<p style="margin:1px 0 0;font-size:${f - 1}px;color:#666;">TRN · ${escapeHtml(company.trn)}</p>` : ''}
             </div>
           ` : ''}
         </div>
@@ -252,6 +257,8 @@ export const generatePickListHtml = (template, data, options = {}) => {
                   ${s.colDescription ? `
                     <td style="${tdS()}">
                       <p style="margin:0;font-weight:700;color:#1a1a2e;font-size:${f}px;">${escapeHtml(item.description)}</p>
+                      ${s.showShortDescription !== false && item.shortDesc ? `<p style="margin:2px 0 0;color:#475569;font-size:${f - 1}px;">${escapeHtml(item.shortDesc)}</p>` : ''}
+                      ${s.showDetailedDescription !== false && item.detailedDesc ? `<p style="margin:2px 0 0;color:#94a3b8;font-size:${f - 1}px;font-style:italic;white-space:pre-line;">${escapeHtml(item.detailedDesc)}</p>` : ''}
                       <div style="margin-top:5px;display:flex;flex-direction:column;gap:2px;">
                         ${s.colSubZone && item.zone && item.zone !== '-' ? `
                           <div style="display:flex;align-items:center;gap:5px;">
@@ -336,8 +343,8 @@ export const generatePickListHtml = (template, data, options = {}) => {
 
     const pickRouteAndBarcode = (s.showPickRoute || s.showBarcodeSection) ? `
         <div style="display:grid;grid-template-columns:${s.showPickRoute && s.showBarcodeSection ? '1fr 1fr' : '1fr'};gap:12px;margin-bottom:14px;">
-          ${pickRouteHtml}
-          ${barcodeSection}
+          ${s.showPickRoute ? pickRouteHtml : ''}
+          ${s.showBarcodeSection ? barcodeSection : ''}
         </div>
     ` : '';
 
@@ -403,7 +410,7 @@ export const generatePickListHtml = (template, data, options = {}) => {
     const pageW = paper === 'Letter' ? '816px' : '794px';
     const styles = `
         @page { size: ${paper} portrait; margin: 12mm; }
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         body {
             margin: 0;
             padding: 20px 0 40px;
@@ -448,12 +455,18 @@ export const generatePickListHtml = (template, data, options = {}) => {
         </head>
         <body>
           <div class="pick-list-doc">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
-              <div style="flex:1;">
-                <h1 style="font-size:${f + 17}px;font-weight:700;color:#1a1a2e;margin:0 0 14px 0;letter-spacing:-0.5px;">PICK LIST</h1>
+            <!-- Header row: title+customer | meta | company+logo -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px;">
+              <!-- Left: title + customer -->
+              <div style="flex:0 0 auto;min-width:0;max-width:36%;">
+                <h1 style="font-size:${f + 14}px;font-weight:700;color:#1a1a2e;margin:0 0 6px 0;letter-spacing:-0.5px;white-space:nowrap;">PICK LIST</h1>
                 ${customerBlock}
               </div>
-              ${headerMetaHtml}
+              <!-- Center: meta grid -->
+              <div style="flex:1 1 0;min-width:0;">
+                ${headerMetaHtml}
+              </div>
+              <!-- Right: logo + company -->
               ${companyBlock}
             </div>
             <div style="height:3px;background:${gold};border-radius:2px;margin-bottom:14px;"></div>

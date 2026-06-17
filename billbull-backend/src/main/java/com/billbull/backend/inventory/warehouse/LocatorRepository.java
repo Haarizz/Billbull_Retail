@@ -4,12 +4,15 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
 public interface LocatorRepository extends JpaRepository<Locator, Long> {
 
     List<Locator> findByZoneId(Long zoneId);
+
+    List<Locator> findByZoneIdIn(Collection<Long> zoneIds);
 
     List<Locator> findByZoneIdAndStatus(Long zoneId, String status);
 

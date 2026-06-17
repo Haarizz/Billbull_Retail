@@ -5,6 +5,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.email.DocumentEmailSender;
 
 import java.util.List;
@@ -12,15 +13,20 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/delivery-notes")
-@PreAuthorize("hasAnyRole('ADMIN','SALES')")
+@PreAuthorize("isAuthenticated()")
 public class DeliveryNoteController {
+
+    private static final String MODULE = "sales";
 
     private final DeliveryNoteService service;
     private final DocumentEmailSender emailSender;
+    private final ModulePermissionService modulePermissionService;
 
-    public DeliveryNoteController(DeliveryNoteService service, DocumentEmailSender emailSender) {
+    public DeliveryNoteController(DeliveryNoteService service, DocumentEmailSender emailSender,
+                                  ModulePermissionService modulePermissionService) {
         this.service = service;
         this.emailSender = emailSender;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // QA-040: send the DN email using the frontend-rendered HTML body.
@@ -52,6 +58,7 @@ public class DeliveryNoteController {
 
     @GetMapping
     public List<DeliveryNoteResponse> list() {
+        modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
@@ -88,6 +95,7 @@ public class DeliveryNoteController {
 
     @PostMapping
     public DeliveryNoteResponse create(@RequestBody DeliveryNoteRequest req) {
+        modulePermissionService.requireCanCreate(MODULE);
         return service.create(req);
     }
 
@@ -95,6 +103,7 @@ public class DeliveryNoteController {
     public DeliveryNoteResponse update(
             @PathVariable Long id,
             @RequestBody DeliveryNoteRequest req) {
+        modulePermissionService.requireCanEdit(MODULE);
         return service.update(id, req);
     }
 
@@ -105,13 +114,13 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/dispatch")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse dispatch(@PathVariable Long id) {
         return service.markDispatched(id);
     }
 
     @PostMapping("/{id}/deliver")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse deliver(
             @PathVariable Long id,
             @RequestParam(required = false) String receivedBy) {
@@ -119,7 +128,7 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/advance-status")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse advanceStatus(
             @PathVariable Long id,
             @RequestParam(required = false) String receivedBy) {
@@ -127,13 +136,13 @@ public class DeliveryNoteController {
     }
 
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse cancel(@PathVariable Long id) {
         return service.cancel(id);
     }
 
     @PostMapping("/{dnId}/items/{itemId}/batch-selection")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse saveBatchSelection(
             @PathVariable Long dnId,
             @PathVariable Long itemId,
@@ -142,7 +151,7 @@ public class DeliveryNoteController {
     }
 
     @DeleteMapping("/{dnId}/items/{itemId}/batch-selection")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DeliveryNoteResponse deleteBatchSelection(
             @PathVariable Long dnId,
             @PathVariable Long itemId) {

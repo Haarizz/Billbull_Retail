@@ -2,6 +2,7 @@ package com.billbull.backend.security;
 
 import com.billbull.backend.role.Role;
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @Table(name = "role_permissions",
@@ -24,18 +25,27 @@ public class RolePermission {
     private String module;
 
     @Column(nullable = false)
+    @ColumnDefault("false")
     private boolean canView = false;
 
     @Column(nullable = false)
+    @ColumnDefault("false")
     private boolean canCreate = false;
 
     @Column(nullable = false)
+    @ColumnDefault("false")
     private boolean canEdit = false;
 
     @Column(nullable = false)
+    @ColumnDefault("false")
+    private boolean canDelete = false;
+
+    @Column(nullable = false)
+    @ColumnDefault("false")
     private boolean canApprove = false;
 
     @Column(nullable = false)
+    @ColumnDefault("false")
     private boolean canExport = false;
 
     // --- Getters & Setters ---
@@ -56,6 +66,9 @@ public class RolePermission {
 
     public boolean isCanEdit() { return canEdit; }
     public void setCanEdit(boolean canEdit) { this.canEdit = canEdit; }
+
+    public boolean isCanDelete() { return canDelete; }
+    public void setCanDelete(boolean canDelete) { this.canDelete = canDelete; }
 
     public boolean isCanApprove() { return canApprove; }
     public void setCanApprove(boolean canApprove) { this.canApprove = canApprove; }

@@ -160,6 +160,345 @@ export const generatePrintHtmlAsync = async (template, data, options = {}) => {
     return generateDocumentPrintHtml(template, data, options);
 };
 
+// ──────────────────────────────────────────────────────────────────────────
+// A4 portrait report template (canonical — shared by Print + PDF)
+//
+// Consumes a view-model identical to what the screen renders:
+//   { reportTitle, sections: [{ title?, columns, rows, totals?, totalsLabel? }],
+//     kpis?: [{ label, value, hint? }], note?, meta: {...} }
+// No values are recomputed here — totals come straight from the view-model.
+// ──────────────────────────────────────────────────────────────────────────
+
+const reportA4Styles = `
+    /* Margins live on the content wrapper (.page-pad) rather than @page, so the
+       print output and the html2canvas/jsPDF raster output (which ignores
+       @page) get the same whitespace. A small @page margin keeps the browser's
+       own header/footer off the page in the print path. */
+    @page { size: A4 portrait; margin: 8mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #1e293b;
+        font-size: 9pt;
+        line-height: 1.4;
+        background: #fff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+    .page-pad { padding: 4mm 2mm; }
+
+    /* ── Document header (repeats visually at top of doc) ── */
+    .doc-head {
+        border-bottom: 2px solid #E5B426;
+        padding-bottom: 8px;
+        margin-bottom: 10px;
+    }
+    .doc-head .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+    }
+    .doc-head .company h2 {
+        margin: 0 0 2px;
+        font-size: 14pt;
+        font-weight: 500;
+        color: #111827;
+        letter-spacing: 0.01em;
+    }
+    .doc-head .company p {
+        margin: 0;
+        font-size: 7.5pt;
+        color: #64748b;
+        line-height: 1.35;
+    }
+    .doc-head .company { max-width: 52%; }
+    .doc-head .title-block { text-align: right; min-width: 42%; flex-shrink: 0; }
+    .doc-head .title-block .badge {
+        display: inline-block;
+        background: #F5C742;
+        color: #1a1200;
+        font-size: 7pt;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        padding: 2px 9px;
+        border-radius: 3px;
+        margin-bottom: 5px;
+    }
+    .doc-head .title-block h1 {
+        margin: 0;
+        font-size: 15pt;
+        font-weight: 500;
+        color: #111827;
+    }
+    .doc-head .title-block .note {
+        margin: 3px 0 0;
+        font-size: 8pt;
+        color: #92400e;
+        font-weight: 500;
+    }
+
+    /* ── Filter / meta strip ── */
+    .meta-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 6px;
+        margin-bottom: 10px;
+    }
+    .meta-strip .pill {
+        display: inline-block;
+        background: #FFF8E7;
+        border: 1px solid #FDE6A9;
+        border-radius: 3px;
+        padding: 2px 8px;
+        font-size: 7.5pt;
+        color: #7c5e00;
+        white-space: nowrap;
+    }
+    .meta-strip .pill b { color: #5b4500; font-weight: 500; }
+
+    /* ── KPI strip ── */
+    .kpi-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 12px;
+    }
+    .kpi {
+        flex: 1 1 0;
+        min-width: 110px;
+        border: 1px solid #FDE6A9;
+        border-radius: 5px;
+        background: #FFFBF0;
+        padding: 6px 9px;
+    }
+    .kpi .k-label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.05em; color: #94855a; font-weight: 500; }
+    .kpi .k-value { font-size: 12pt; font-weight: 500; color: #1a1200; margin-top: 1px; }
+    .kpi .k-hint  { font-size: 6.8pt; color: #a8a29e; margin-top: 1px; }
+
+    /* ── Section ── */
+    .section { margin-bottom: 14px; }
+    .section > h3 {
+        margin: 0 0 5px;
+        font-size: 9.5pt;
+        font-weight: 500;
+        color: #1a1200;
+        padding-left: 7px;
+        border-left: 3px solid #F5C742;
+    }
+
+    /* ── Table ── */
+    table { width: 100%; border-collapse: collapse; border-spacing: 0; }
+    thead { display: table-header-group; }   /* repeat header on every page */
+    tfoot { display: table-row-group; }
+    thead th {
+        background: #F5C742;
+        color: #1a1200;
+        font-weight: 500;
+        font-size: 7.5pt;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 5px 7px;
+        text-align: left;
+        border: 0.5px solid #E5B426;
+    }
+    thead th.num { text-align: right; }
+    thead th.center { text-align: center; }
+    tbody td {
+        padding: 4px 7px;
+        font-size: 8pt;
+        border: 0.5px solid #eef2f6;
+        color: #334155;
+        vertical-align: middle;
+        word-break: break-word;
+    }
+    tbody td.num { text-align: right; }
+    tbody td.center { text-align: center; }
+    tbody tr:nth-child(even) { background: #FFFCF4; }
+    tr { page-break-inside: avoid; }
+
+    tfoot td {
+        padding: 5px 7px;
+        font-size: 8pt;
+        font-weight: 500;
+        background: #FFF3D1;
+        border: 0.5px solid #E5B426;
+        color: #5b4500;
+    }
+    tfoot td.num { text-align: right; }
+
+    /* ── Footer band ── */
+    .doc-foot {
+        margin-top: 10px;
+        padding-top: 6px;
+        border-top: 1px solid #FDE6A9;
+        display: flex;
+        justify-content: space-between;
+        font-size: 7pt;
+        color: #94a3b8;
+    }
+`;
+
+// Normalise monetary cells to a consistent 2-decimal, thousands-separated
+// format. Reports build values as "AED <number>" via toLocaleString(), which
+// drops trailing decimals (e.g. "AED 14,297.8", "AED 920.2", "AED 0"). This
+// rewrites the numeric portion of any "AED <number>" / "<number> AED" string
+// to 2dp so totals, subtotals and figures read uniformly across every output.
+const MONEY_NUMBER_PATTERN = /(AED\s*)([+-]?\d[\d,]*(?:\.\d+)?)|([+-]?\d[\d,]*(?:\.\d+)?)(\s*AED)/gi;
+const formatMoneyNumber = (raw) => {
+    const num = Number(String(raw).replace(/,/g, ''));
+    if (!Number.isFinite(num)) return raw;
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+// Negative-zero (e.g. "-0.0%", "AED -0.00") reads as a defect — strip the sign.
+const stripNegativeZero = (text) =>
+    text.replace(/-(0(?:\.0+)?)(?=%|\s|$|[^0-9.])/g, '$1');
+const normaliseReportMoney = (value) => {
+    let text = String(value);
+    if (/AED/i.test(text)) {
+        text = text.replace(MONEY_NUMBER_PATTERN, (match, pre, n1, n2, post) =>
+            pre !== undefined ? `${pre}${formatMoneyNumber(n1)}` : `${formatMoneyNumber(n2)}${post}`
+        );
+    }
+    return stripNegativeZero(text);
+};
+
+const renderReportColumnsHtml = (columns, companyProfile) =>
+    columns
+        .map((col) => {
+            const cls = col.align === 'right' ? 'num' : col.align === 'center' ? 'center' : '';
+            return `<th class="${cls}">${renderTextWithCurrencySymbols(col.header, companyProfile)}</th>`;
+        })
+        .join('');
+
+const renderReportCellHtml = (col, value, companyProfile) => {
+    const cls = col.align === 'right' ? 'num' : col.align === 'center' ? 'center' : '';
+    const display =
+        value !== null && value !== undefined && value !== ''
+            ? renderTextWithCurrencySymbols(normaliseReportMoney(value), companyProfile)
+            : '—';
+    return `<td class="${cls}">${display}</td>`;
+};
+
+const renderReportSectionHtml = (section, companyProfile) => {
+    const { title, columns, rows, totals, totalsLabel } = section;
+    const head = `<thead><tr>${renderReportColumnsHtml(columns, companyProfile)}</tr></thead>`;
+    const body = rows.length
+        ? rows
+            .map(
+                (row) =>
+                    `<tr>${columns.map((col) => renderReportCellHtml(col, row[col.key], companyProfile)).join('')}</tr>`
+            )
+            .join('')
+        : `<tr><td colspan="${columns.length}" style="text-align:center;color:#94a3b8;padding:14px;">No records for the selected filters.</td></tr>`;
+
+    let foot = '';
+    if (totals) {
+        const cells = columns
+            .map((col, idx) => {
+                const cls = col.align === 'right' ? 'num' : col.align === 'center' ? 'center' : '';
+                let value = totals[col.key];
+                if ((value === null || value === undefined || value === '') && idx === 0) {
+                    value = totalsLabel || 'TOTAL';
+                }
+                const display =
+                    value !== null && value !== undefined && value !== ''
+                        ? renderTextWithCurrencySymbols(normaliseReportMoney(value), companyProfile)
+                        : '';
+                return `<td class="${cls}">${display}</td>`;
+            })
+            .join('');
+        foot = `<tfoot><tr>${cells}</tr></tfoot>`;
+    }
+
+    return `<div class="section">${title ? `<h3>${escapeHtml(title)}</h3>` : ''}<table>${head}<tbody>${body}</tbody>${foot}</table></div>`;
+};
+
+export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta = {}) => {
+    const generatedAt = new Date().toLocaleString();
+    const companyName = escapeHtml(companyProfile.companyName || companyProfile.name || 'BillBull ERP');
+    const address = escapeHtml(companyProfile.address || '');
+    const email = escapeHtml(companyProfile.email || '');
+    const phone = escapeHtml(companyProfile.phone || '');
+    const trn = escapeHtml(companyProfile.trn || '');
+    const branchDisplay = escapeHtml(
+        companyProfile.branchName ||
+        (meta.branch && meta.branch !== 'All' ? String(meta.branch) : '')
+    );
+
+    const reportTitle = escapeHtml(viewModel.reportTitle || meta.reportTitle || 'Sales Report');
+    const sections = Array.isArray(viewModel.sections) ? viewModel.sections : [];
+    const kpis = Array.isArray(viewModel.kpis) ? viewModel.kpis : [];
+    const note = viewModel.note ? escapeHtml(viewModel.note) : '';
+
+    // Applied-filter pills — only show filters that are actually set.
+    const filters = Array.isArray(meta.filters) ? meta.filters : [];
+    const pills = filters
+        .filter((f) => f && f.value && String(f.value).trim() && String(f.value) !== 'All')
+        .map(
+            (f) =>
+                `<span class="pill"><b>${escapeHtml(f.label)}:</b> ${renderTextWithCurrencySymbols(String(f.value), companyProfile)}</span>`
+        );
+    pills.push(`<span class="pill"><b>Generated:</b> ${escapeHtml(generatedAt)}</span>`);
+    if (meta.user) pills.push(`<span class="pill"><b>User:</b> ${escapeHtml(meta.user)}</span>`);
+
+    const kpiHtml = kpis.length
+        ? `<div class="kpi-strip">${kpis
+            .map(
+                (k) =>
+                    `<div class="kpi"><div class="k-label">${escapeHtml(k.label)}</div><div class="k-value">${renderTextWithCurrencySymbols(normaliseReportMoney(k.value), companyProfile)}</div>${k.hint ? `<div class="k-hint">${escapeHtml(k.hint)}</div>` : ''}</div>`
+            )
+            .join('')}</div>`
+        : '';
+
+    const sectionsHtml = sections.length
+        ? sections.map((s) => renderReportSectionHtml(s, companyProfile)).join('')
+        : '<p style="text-align:center;color:#94a3b8;padding:24px;">No data available for this report.</p>';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>${reportTitle}</title>
+    <style>${reportA4Styles}</style>
+</head>
+<body>
+  <div class="page-pad">
+    <div class="doc-head">
+        <div class="top">
+            <div class="company">
+                <h2>${companyName}</h2>
+                ${branchDisplay ? `<p style="font-size:8pt;color:#b45309;font-weight:500;margin-top:1px;">Branch: ${branchDisplay}</p>` : ''}
+                ${address ? `<p>${address}</p>` : ''}
+                ${(email || phone) ? `<p>${email ? `Email: ${email}` : ''}${email && phone ? ' &nbsp;|&nbsp; ' : ''}${phone ? `Phone: ${phone}` : ''}</p>` : ''}
+                ${trn ? `<p>TRN: ${trn}</p>` : ''}
+            </div>
+            <div class="title-block">
+                <span class="badge">OFFICIAL REPORT</span>
+                <h1>${reportTitle}</h1>
+                ${note ? `<p class="note">${note}</p>` : ''}
+            </div>
+        </div>
+    </div>
+
+    <div class="meta-strip">${pills.join('')}</div>
+
+    ${kpiHtml}
+
+    ${sectionsHtml}
+
+    <div class="doc-foot">
+        <span>Generated by ${companyName} &nbsp;|&nbsp; Confidential</span>
+        <span>${escapeHtml(generatedAt)}</span>
+    </div>
+  </div>
+</body>
+</html>`;
+};
+
 export const generateReportPrintHtml = (_template, reportTitle, columns, data, companyProfile = {}, meta = {}) => {
     const generatedAt = new Date().toLocaleString();
     const companyName = escapeHtml(companyProfile.companyName || 'BillBull ERP');
@@ -188,6 +527,8 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
             font-size: 9.5pt;
             line-height: 1.45;
             background: #fff;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         /* ── Amber header bar ── */
@@ -200,7 +541,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         }
         .header-bar .brand {
             font-size: 15px;
-            font-weight: 800;
+            font-weight: 500;
             color: #1a1200;
             letter-spacing: 0.04em;
         }
@@ -208,7 +549,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
             background: rgba(255,255,255,0.35);
             color: #1a1200;
             font-size: 9px;
-            font-weight: 700;
+            font-weight: 500;
             padding: 3px 10px;
             border-radius: 20px;
             letter-spacing: 0.07em;
@@ -229,7 +570,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         .company-block h2 {
             margin: 0 0 3px;
             font-size: 15px;
-            font-weight: 700;
+            font-weight: 500;
             color: #111827;
         }
         .company-block p {
@@ -243,7 +584,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         .report-block h1 {
             margin: 0 0 6px;
             font-size: 19px;
-            font-weight: 700;
+            font-weight: 500;
             color: #111827;
         }
         .pills {
@@ -275,7 +616,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         thead th {
             background: #F5C742;
             color: #1a1200;
-            font-weight: 700;
+            font-weight: 500;
             font-size: 8.5px;
             text-transform: uppercase;
             letter-spacing: 0.06em;
@@ -300,7 +641,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         tfoot td {
             padding: 6px 9px;
             font-size: 9px;
-            font-weight: 700;
+            font-weight: 500;
             background: #FFF8E7;
             border-top: 2px solid #E5B426;
             color: #92400e;
@@ -344,11 +685,11 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
     const rows = data.map(row => `
         <tr>
             ${columns.map(col => {
-                const value = row[col.key];
-                const isNum = numericKeys.has(col.key);
-                const display = value !== null && value !== undefined ? renderTextWithCurrencySymbols(String(value), companyProfile) : '—';
-                return `<td class="${isNum ? 'num' : ''}">${display}</td>`;
-            }).join('')}
+        const value = row[col.key];
+        const isNum = numericKeys.has(col.key);
+        const display = value !== null && value !== undefined ? renderTextWithCurrencySymbols(String(value), companyProfile) : '—';
+        return `<td class="${isNum ? 'num' : ''}">${display}</td>`;
+    }).join('')}
         </tr>
     `).join('');
 
@@ -413,7 +754,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 // Renders the generated HTML to a real PDF file and downloads it directly —
 // no print dialog, no new tab. Uses a hidden iframe for layout fidelity, then
 // html2canvas to rasterise each A4 page, assembled by jsPDF.
-export const downloadPdf = async (htmlContent, filename = 'document') => {
+export const downloadPdf = async (htmlContent, filename = 'document', pageFooter = null) => {
     const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
@@ -479,6 +820,14 @@ export const downloadPdf = async (htmlContent, filename = 'document') => {
             ctx.drawImage(fullCanvas, 0, srcY, canvasW, srcH, 0, 0, canvasW, srcH);
 
             pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, A4_W_MM, A4_H_MM);
+
+            // Per-page footer + "Page X of Y" so multi-page PDFs are paginated
+            // even though html2canvas only rasterises the document once.
+            pdf.setFontSize(7);
+            pdf.setTextColor(148, 163, 184);
+            const footY = A4_H_MM - 5;
+            if (pageFooter) pdf.text(String(pageFooter), 10, footY);
+            pdf.text(`Page ${page + 1} of ${totalPages}`, A4_W_MM - 10, footY, { align: 'right' });
         }
 
         pdf.save(`${filename}.pdf`);

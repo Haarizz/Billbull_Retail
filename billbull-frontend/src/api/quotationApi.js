@@ -15,6 +15,11 @@ export const getQuotationsPage = async ({ page = 0, size = 30, search = "", stat
   return res.data;
 };
 
+export const getQuotationStats = async () => {
+  const res = await api.get(`${BASE_URL}/stats`);
+  return res.data;
+};
+
 // --------------------
 // GET BY ID
 // --------------------

@@ -21,6 +21,9 @@ public class CashFlowDTO {
     private String startDate;
     private String endDate;
 
+    /** Sum of Cash (1101) + Bank (1102) GL balances before the period start date. */
+    private BigDecimal openingCash;
+
     /** Sum of Cash (1101) + Bank (1102) GL balances as of endDate — from BalanceSheet. */
     private BigDecimal closingCashFromBalanceSheet;
 
@@ -104,6 +107,9 @@ public class CashFlowDTO {
     public void setEndDate(String endDate) {
         this.endDate = endDate;
     }
+
+    public BigDecimal getOpeningCash() { return openingCash; }
+    public void setOpeningCash(BigDecimal openingCash) { this.openingCash = openingCash; }
 
     public BigDecimal getClosingCashFromBalanceSheet() { return closingCashFromBalanceSheet; }
     public void setClosingCashFromBalanceSheet(BigDecimal v) { this.closingCashFromBalanceSheet = v; }

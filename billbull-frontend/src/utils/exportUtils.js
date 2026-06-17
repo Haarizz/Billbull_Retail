@@ -4,13 +4,59 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateReportFilename } from './filenameUtils';
 
+// ── Export progress overlay ───────────────────────────────────────────────────
+// Pure-DOM overlay: auto-shows when any export starts, hides when it finishes.
+// No React dependency — works across all 29 pages automatically.
+const OVERLAY_ID = '__bb_export_overlay__';
+
+const OVERLAY_CSS = `
+#${OVERLAY_ID}{position:fixed;inset:0;z-index:99999;background:rgba(15,23,42,.6);
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+#${OVERLAY_ID} .bb-exp-card{background:#fff;border-radius:16px;padding:36px 44px;
+  box-shadow:0 24px 64px rgba(0,0,0,.28);display:flex;flex-direction:column;
+  align-items:center;gap:14px;min-width:280px;text-align:center}
+#${OVERLAY_ID} .bb-exp-spinner{width:52px;height:52px;border-radius:50%;
+  border:5px solid #F5C742;border-top-color:transparent;
+  animation:bbSpin .75s linear infinite}
+@keyframes bbSpin{to{transform:rotate(360deg)}}
+#${OVERLAY_ID} .bb-exp-title{font:700 16px/1.3 system-ui,sans-serif;color:#1e293b;margin:0}
+#${OVERLAY_ID} .bb-exp-badge{background:#FFF8E7;border:1.5px solid #FDE6A9;color:#92400e;
+  font:600 11px/1 system-ui,sans-serif;padding:4px 12px;border-radius:99px;letter-spacing:.3px}
+#${OVERLAY_ID} .bb-exp-sub{font:400 12px/1.5 system-ui,sans-serif;color:#64748b;margin:0}`;
+
+const showExportOverlay = (label) => {
+    if (typeof document === 'undefined') return;
+    let overlay = document.getElementById(OVERLAY_ID);
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = OVERLAY_ID;
+        const style = document.createElement('style');
+        style.id = `${OVERLAY_ID}_style`;
+        style.textContent = OVERLAY_CSS;
+        document.head.appendChild(style);
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `<div class="bb-exp-card">
+      <div class="bb-exp-spinner"></div>
+      <p class="bb-exp-title">Preparing Export&hellip;</p>
+      <span class="bb-exp-badge">${label}</span>
+      <p class="bb-exp-sub">Please wait, this may take a moment.</p>
+    </div>`;
+    overlay.style.display = 'flex';
+};
+
+const hideExportOverlay = () => {
+    const overlay = document.getElementById(OVERLAY_ID);
+    if (overlay) { overlay.style.display = 'none'; overlay.innerHTML = ''; }
+};
+
 // ── Brand colours ────────────────────────────────────────────────────────────
-const AMBER        = [245, 199, 66];   // #F5C742
-const AMBER_DARK   = [229, 180, 38];   // #E5B426
-const AMBER_LIGHT  = [255, 251, 240];  // #FFFBF0
-const AMBER_ARGB   = 'FFF5C742';
+const AMBER = [245, 199, 66];   // #F5C742
+const AMBER_DARK = [229, 180, 38];   // #E5B426
+const AMBER_LIGHT = [255, 251, 240];  // #FFFBF0
+const AMBER_ARGB = 'FFF5C742';
 const AMBER_LIGHT_ARGB = 'FFFFF8E7';
-const DARK_TEXT    = [26, 18, 0];
+const DARK_TEXT = [26, 18, 0];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const isImageColumn = (column) => column.type === 'image';
@@ -92,6 +138,7 @@ const colLetter = (n) => {
  * @param {object} [meta]   - Optional { dateFrom, dateTo, branch, companyProfile } shown as subtitle
  */
 export const exportToPDF = async (data, columns, title = 'Report', fileName = 'Export', meta = {}) => {
+    showExportOverlay('PDF Export');
     try {
         const doc = new jsPDF('l', 'pt', 'a4');
         const pageW = doc.internal.pageSize.getWidth();
@@ -112,24 +159,19 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
         doc.setFillColor(...AMBER_DARK);
         doc.rect(0, 32, pageW, 2, 'F');
 
-        // Company name left
+        // Company / branch name — centred in the amber bar
         doc.setFontSize(13);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(...DARK_TEXT);
-        doc.text(orgLine, 22, 22);
+        doc.text(orgLine, pageW / 2, 22, { align: 'center' });
 
-        // "OFFICIAL REPORT" badge right
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(80, 60, 0);
-        doc.text('OFFICIAL REPORT', pageW - 22, 22, { align: 'right' });
-
-        // ── Meta section ────────────────────────────────────────────────────
+        // ── Meta section (centred) ───────────────────────────────────────────
         const metaY = 50;
+        const cx = pageW / 2;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(16);
         doc.setTextColor(...DARK_TEXT);
-        doc.text(title, 22, metaY);
+        doc.text(title, cx, metaY, { align: 'center' });
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
@@ -137,8 +179,8 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
         let metaLine = `Generated: ${generatedAt}`;
         if (meta.dateFrom || meta.dateTo) metaLine += `  |  Period: ${meta.dateFrom || '—'} to ${meta.dateTo || '—'}`;
         if (branchLabel) metaLine += `  |  Branch: ${branchLabel}`;
-        doc.text(metaLine, 22, metaY + 14);
-        doc.text(`Total Records: ${data.length}`, 22, metaY + 26);
+        doc.text(metaLine, cx, metaY + 14, { align: 'center' });
+        doc.text(`Total Records: ${data.length}`, cx, metaY + 26, { align: 'center' });
 
         // amber separator line
         doc.setDrawColor(...AMBER_DARK);
@@ -157,14 +199,19 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
 
         const columnStyles = {};
         columns.forEach((col, index) => {
-            if (!isImageColumn(col)) return;
-            const { width, height } = getImageSize(col);
-            columnStyles[index] = {
-                cellWidth: Math.max(width + 10, 48),
-                minCellHeight: height + 10,
-                halign: 'center',
-                valign: 'middle'
-            };
+            if (isImageColumn(col)) {
+                const { width, height } = getImageSize(col);
+                columnStyles[index] = {
+                    cellWidth: Math.max(width + 10, 48),
+                    minCellHeight: height + 10,
+                    halign: 'center',
+                    valign: 'middle'
+                };
+            } else if (col.pdfWidth) {
+                columnStyles[index] = { cellWidth: col.pdfWidth };
+            } else if (col.width && typeof col.width === 'number') {
+                columnStyles[index] = { cellWidth: col.width * 4 };
+            }
         });
 
         let finalY = metaY + 40;
@@ -241,6 +288,8 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
     } catch (error) {
         console.error('Failed to export to PDF', error);
         throw error;
+    } finally {
+        hideExportOverlay();
     }
 };
 
@@ -253,6 +302,7 @@ export const exportToPDF = async (data, columns, title = 'Report', fileName = 'E
  * @param {object} [meta]   - Optional { dateFrom, dateTo, branch, companyProfile }
  */
 export const exportToExcel = async (data, columns, fileName = 'Export', meta = {}) => {
+    showExportOverlay('Excel Export');
     try {
         const workbook = new ExcelJS.Workbook();
         const cp = meta.companyProfile || {};
@@ -390,5 +440,7 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
     } catch (error) {
         console.error('Failed to export to Excel', error);
         throw error;
+    } finally {
+        hideExportOverlay();
     }
 };

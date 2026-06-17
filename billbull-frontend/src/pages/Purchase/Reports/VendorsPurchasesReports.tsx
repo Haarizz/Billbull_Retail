@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+﻿import React, { useMemo, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -48,12 +48,13 @@ import {
   Cell,
 } from "recharts";
 import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
-import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
-import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
+import { exportToExcel } from "../../../utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { getBranches } from "../../../api/branchApi";
 import { getVendors } from "../../../api/vendorsApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -112,6 +113,98 @@ type ReportId =
   | "audit-trail";
 
 type ReportKind = "table" | "table+chart";
+
+// ---------------------------------------------------------------------------
+// Report view-model registry — Screen === Print === PDF === Excel
+// Every sub-component publishes the exact rows/columns it renders via
+// useReportView(). Export handlers read from this registry so there is never
+// a mismatch between what is visible and what gets exported.
+// ---------------------------------------------------------------------------
+
+type ReportColumnAlign = "left" | "right" | "center";
+
+interface ReportColumn {
+  key: string;
+  header: string;
+  align?: ReportColumnAlign;
+  width?: number;
+}
+
+interface ReportSection {
+  title?: string;
+  columns: ReportColumn[];
+  rows: ReportPayloadRowVM[];
+  totals?: ReportPayloadRowVM | null;
+  totalsLabel?: string;
+}
+
+interface ReportKpi {
+  label: string;
+  value: string;
+  hint?: string;
+}
+
+interface ReportViewModel {
+  sections: ReportSection[];
+  kpis?: ReportKpi[];
+  note?: string;
+}
+
+type ReportPayloadRowVM = Record<string, any>;
+
+const purchaseReportViewModels = new Map<ReportId, ReportViewModel>();
+
+function setReportView(reportId: ReportId, vm: ReportViewModel | null) {
+  if (vm) purchaseReportViewModels.set(reportId, vm);
+  else purchaseReportViewModels.delete(reportId);
+}
+
+function getReportView(reportId: ReportId): ReportViewModel | null {
+  return purchaseReportViewModels.get(reportId) ?? null;
+}
+
+function useReportView(reportId: ReportId, vm: ReportViewModel) {
+  setReportView(reportId, vm);
+}
+
+function flattenReportView(vm: ReportViewModel | null): {
+  columns: ReportColumn[];
+  rows: ReportPayloadRowVM[];
+} {
+  if (!vm || !vm.sections.length) return { columns: [], rows: [] };
+  if (vm.sections.length === 1) {
+    const section = vm.sections[0];
+    const rows = [...section.rows];
+    if (section.totals) {
+      rows.push({
+        ...section.totals,
+        [section.columns[0].key]:
+          section.totals[section.columns[0].key] ?? section.totalsLabel ?? "TOTAL",
+      });
+    }
+    return { columns: section.columns, rows };
+  }
+  const columns: ReportColumn[] = [{ key: "__section", header: "Section", align: "left", width: 24 }];
+  const seen = new Set<string>(["__section"]);
+  vm.sections.forEach((section) =>
+    section.columns.forEach((col) => {
+      if (!seen.has(col.key)) { seen.add(col.key); columns.push(col); }
+    })
+  );
+  const rows: ReportPayloadRowVM[] = [];
+  vm.sections.forEach((section) => {
+    section.rows.forEach((row) => rows.push({ __section: section.title ?? "", ...row }));
+    if (section.totals) {
+      rows.push({
+        __section: section.title ?? "",
+        ...section.totals,
+        [section.columns[0].key]:
+          section.totals[section.columns[0].key] ?? section.totalsLabel ?? "TOTAL",
+      });
+    }
+  });
+  return { columns, rows };
+}
 
 interface ReportDef {
   id: ReportId;
@@ -240,7 +333,7 @@ function statusBadge(status: string) {
     Settled: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Issued: "bg-amber-100 text-amber-700 border-amber-300",
     Rejected: "bg-red-100 text-red-700 border-red-300",
-    Cleared: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Cleared: "bg-emerald-100 text-emerald-700 border-emerald-600",
     "In-Transit": "bg-blue-100 text-blue-700 border-blue-300",
     Posted: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Draft: "bg-slate-100 text-slate-600 border-slate-300",
@@ -248,6 +341,13 @@ function statusBadge(status: string) {
     Unpaid: "bg-red-100 text-red-700 border-red-300",
     Pass: "bg-emerald-100 text-emerald-700 border-emerald-300",
     Fail: "bg-red-100 text-red-700 border-red-300",
+    Breached: "bg-red-100 text-red-700 border-red-300",
+    Variance: "bg-amber-100 text-amber-700 border-amber-300",
+    Backdated: "bg-orange-100 text-orange-700 border-orange-300",
+    Matched: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Warning: "bg-amber-100 text-amber-700 border-amber-300",
+    Critical: "bg-red-100 text-red-700 border-red-300",
+    "On Hold": "bg-amber-100 text-amber-700 border-amber-300",
   };
   const cls = map[status] ?? "bg-slate-100 text-slate-600 border-slate-300";
   return (
@@ -259,10 +359,10 @@ function statusBadge(status: string) {
 
 function amtBadge(amount: number) {
   const color = amount > 0 ? "text-emerald-700" : amount < 0 ? "text-red-600" : "text-slate-600";
-  return <span className={`font-semibold ${color}`}>AED {Math.abs(amount).toLocaleString()}</span>;
+  return <span className={`font-semibold ${color}`}><CurrencySymbol /> {Math.abs(amount).toLocaleString()}</span>;
 }
 
-function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function KpiCard({ label, value, sub, accent }: { label: string; value: React.ReactNode; sub?: string; accent?: boolean }) {
   return (
     <Card className={`border ${accent ? "border-2 border-[#F5C742] bg-gradient-to-br from-[#FFF6D8] to-white" : "border-slate-200 bg-white"}`}>
       <CardContent className="p-4">
@@ -894,20 +994,51 @@ function clearInitialPurchaseReportData() {
 
 clearInitialPurchaseReportData();
 
+const DataRevisionContext = React.createContext(0);
+function useDataRevision() { return React.useContext(DataRevisionContext); }
+
 // ---------------------------------------------------------------------------
 // Individual report components
 // ---------------------------------------------------------------------------
 
 function VendorMasterReport() {
+  useDataRevision();
   const total = mockVendorMaster.reduce((s, r) => s + r.outstanding, 0);
   const creditTotal = mockVendorMaster.reduce((s, r) => s + r.creditLimit, 0);
+  useReportView("vendor-master", {
+    kpis: [
+      { label: "Total Vendors", value: String(mockVendorMaster.length) },
+      { label: "Total Outstanding", value: `AED ${total.toLocaleString()}` },
+      { label: "Total Credit Limit", value: `AED ${creditTotal.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Vendor Master Report",
+      columns: [
+        { key: "code", header: "Code", align: "left", width: 12 },
+        { key: "name", header: "Vendor Name", align: "left", width: 22 },
+        { key: "category", header: "Category", align: "left", width: 18 },
+        { key: "trn", header: "TRN", align: "left", width: 16 },
+        { key: "creditLimit", header: "Credit Limit (AED)", align: "right", width: 16 },
+        { key: "outstanding", header: "Outstanding (AED)", align: "right", width: 16 },
+        { key: "paymentTerms", header: "Terms", align: "left", width: 12 },
+        { key: "status", header: "Status", align: "left", width: 10 },
+        { key: "rating", header: "Rating", align: "right", width: 8 },
+      ],
+      rows: mockVendorMaster.map((r) => ({
+        code: r.code, name: r.name, category: r.category, trn: r.trn,
+        creditLimit: r.creditLimit.toLocaleString(), outstanding: r.outstanding.toLocaleString(),
+        paymentTerms: r.paymentTerms, status: r.status, rating: r.rating,
+      })),
+      totals: { code: "TOTAL", creditLimit: creditTotal.toLocaleString(), outstanding: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Master Report" subtitle="Active and inactive vendors with credit details" count={mockVendorMaster.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Vendors" value={String(mockVendorMaster.length)} sub="In system" accent />
-        <KpiCard label="Total Outstanding" value={`AED ${total.toLocaleString()}`} sub="All vendors" />
-        <KpiCard label="Total Credit Limit" value={`AED ${creditTotal.toLocaleString()}`} sub="Aggregate limit" />
+        <KpiCard label="Total Outstanding" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="All vendors" />
+        <KpiCard label="Total Credit Limit" value={<><CurrencySymbol /> {creditTotal.toLocaleString()}</>} sub="Aggregate limit" />
       </div>
       <Card className="border border-slate-200 bg-white">
         <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Outstanding by Category</CardTitle></CardHeader>
@@ -934,8 +1065,8 @@ function VendorMasterReport() {
                 <Th>Vendor Name</Th>
                 <Th>Category</Th>
                 <Th>TRN</Th>
-                <Th right>Credit Limit (AED)</Th>
-                <Th right>Outstanding (AED)</Th>
+                <Th right>Credit Limit (<CurrencySymbol />)</Th>
+                <Th right>Outstanding (<CurrencySymbol />)</Th>
                 <Th>Terms</Th>
                 <Th>Status</Th>
               </tr>
@@ -961,22 +1092,54 @@ function VendorMasterReport() {
   );
 }
 function VendorAgingReport() {
+  useDataRevision();
   const totals = mockVendorAging.reduce((s, r) => ({ total: s.total + r.total, d30: s.d30 + r.d30, d60: s.d60 + r.d60, d90: s.d90 + r.d90, d90plus: s.d90plus + r.d90plus }), { total: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 });
+  useReportView("vendor-aging", {
+    kpis: [
+      { label: "Total Payable", value: `AED ${totals.total.toLocaleString()}` },
+      { label: "0–30 Days", value: `AED ${totals.d30.toLocaleString()}` },
+      { label: "31–90 Days", value: `AED ${(totals.d60 + totals.d90).toLocaleString()}` },
+      { label: "90+ Days", value: `AED ${totals.d90plus.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Vendor Outstanding & Aging",
+      columns: [
+        { key: "vendor", header: "Vendor", align: "left", width: 22 },
+        { key: "total", header: "Total (AED)", align: "right", width: 14 },
+        { key: "d30", header: "0-30 Days", align: "right", width: 12 },
+        { key: "d60", header: "31-60 Days", align: "right", width: 12 },
+        { key: "d90", header: "61-90 Days", align: "right", width: 12 },
+        { key: "d90plus", header: "90+ Days", align: "right", width: 12 },
+        { key: "creditLimit", header: "Credit Limit", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 10 },
+      ],
+      rows: mockVendorAging.map((r) => ({
+        vendor: r.vendor, total: r.total.toLocaleString(), d30: r.d30.toLocaleString(),
+        d60: r.d60.toLocaleString(), d90: r.d90.toLocaleString(), d90plus: r.d90plus.toLocaleString(),
+        creditLimit: r.creditLimit.toLocaleString(), status: r.status,
+      })),
+      totals: {
+        vendor: "TOTAL",
+        total: totals.total.toLocaleString(), d30: totals.d30.toLocaleString(),
+        d60: totals.d60.toLocaleString(), d90: totals.d90.toLocaleString(), d90plus: totals.d90plus.toLocaleString(),
+      },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Outstanding & Aging" subtitle="Payable aging analysis across all vendors" count={mockVendorAging.length} />
       <div className="grid grid-cols-4 gap-3">
-        <KpiCard label="Total Payable" value={`AED ${totals.total.toLocaleString()}`} sub="All vendors" accent />
-        <KpiCard label="0–30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
-        <KpiCard label="31–90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
-        <KpiCard label="90+ Days" value={`AED ${totals.d90plus.toLocaleString()}`} sub="Overdue" />
+        <KpiCard label="Total Payable" value={<><CurrencySymbol /> {totals.total.toLocaleString()}</>} sub="All vendors" accent />
+        <KpiCard label="0–30 Days" value={<><CurrencySymbol /> {totals.d30.toLocaleString()}</>} sub="Current" />
+        <KpiCard label="31–90 Days" value={<><CurrencySymbol /> {(totals.d60 + totals.d90).toLocaleString()}</>} sub="Moderate" />
+        <KpiCard label="90+ Days" value={<><CurrencySymbol /> {totals.d90plus.toLocaleString()}</>} sub="Overdue" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Tbl>
           <thead>
             <tr>
               <Th>Vendor</Th>
-              <Th right>Total (AED)</Th>
+              <Th right>Total (<CurrencySymbol />)</Th>
               <Th right>0-30</Th>
               <Th right>31-60</Th>
               <Th right>61-90</Th>
@@ -1017,10 +1180,34 @@ function VendorAgingReport() {
 }
 
 function VendorPerformanceReport() {
+  useDataRevision();
   const avgOnTime = mockVendorPerf.length ? mockVendorPerf.reduce((s, r) => s + r.onTimePct, 0) / mockVendorPerf.length : 0;
   const avgReturnRate = mockVendorPerf.length ? mockVendorPerf.reduce((s, r) => s + r.returnRate, 0) / mockVendorPerf.length : 0;
   const avgSettleDays = mockVendorPerf.length ? Math.round(mockVendorPerf.reduce((s, r) => s + r.avgSettleDays, 0) / mockVendorPerf.length) : 0;
-
+  useReportView("vendor-performance", {
+    kpis: [
+      { label: "Avg On-Time Delivery", value: `${avgOnTime.toFixed(1)}%` },
+      { label: "Avg Return Rate", value: `${avgReturnRate.toFixed(1)}%` },
+      { label: "Avg Settlement Days", value: `${avgSettleDays} days` },
+    ],
+    sections: [{
+      title: "Vendor Performance Summary",
+      columns: [
+        { key: "vendor", header: "Vendor", align: "left", width: 22 },
+        { key: "orders", header: "Orders", align: "right", width: 10 },
+        { key: "onTime", header: "On-Time", align: "right", width: 10 },
+        { key: "onTimePct", header: "On-Time%", align: "right", width: 10 },
+        { key: "returnRate", header: "Return%", align: "right", width: 10 },
+        { key: "claimRate", header: "Claim%", align: "right", width: 10 },
+        { key: "avgSettleDays", header: "Settle Days", align: "right", width: 12 },
+        { key: "score", header: "Score", align: "left", width: 8 },
+      ],
+      rows: mockVendorPerf.map((r) => ({
+        vendor: r.vendor, orders: r.orders, onTime: r.onTime, onTimePct: `${r.onTimePct}%`,
+        returnRate: `${r.returnRate}%`, claimRate: `${r.claimRate}%`, avgSettleDays: r.avgSettleDays, score: r.score,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Performance Summary" subtitle="KPI tracking: delivery, returns, claims, settlement" count={mockVendorPerf.length} />
@@ -1078,8 +1265,33 @@ function VendorPerformanceReport() {
 }
 
 function VendorPriceHistoryReport() {
+  useDataRevision();
   const avgCostChange = mockPriceHistory.length ? mockPriceHistory.reduce((s, r) => s + r.change, 0) / mockPriceHistory.length : 0;
-
+  useReportView("vendor-price-history", {
+    kpis: [
+      { label: "Items Tracked", value: String(mockPriceHistory.length) },
+      { label: "Avg Cost Change", value: `${avgCostChange.toFixed(2)}%` },
+    ],
+    sections: [{
+      title: "Vendor Price History",
+      columns: [
+        { key: "item", header: "Item", align: "left", width: 20 },
+        { key: "sku", header: "SKU", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "p1", header: "P1 (AED)", align: "right", width: 10 },
+        { key: "p2", header: "P2 (AED)", align: "right", width: 10 },
+        { key: "p3", header: "P3 (AED)", align: "right", width: 10 },
+        { key: "p4", header: "P4 (AED)", align: "right", width: 10 },
+        { key: "p5", header: "P5 (AED)", align: "right", width: 10 },
+        { key: "change", header: "Change%", align: "right", width: 10 },
+      ],
+      rows: mockPriceHistory.map((r) => ({
+        item: r.item, sku: r.sku, vendor: r.vendor,
+        p1: r.p1.toFixed(2), p2: r.p2.toFixed(2), p3: r.p3.toFixed(2),
+        p4: r.p4.toFixed(2), p5: r.p5.toFixed(2), change: `${r.change > 0 ? "+" : ""}${r.change.toFixed(2)}%`,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Price History" subtitle="Last 5 purchase rates per item with cost change %" count={mockPriceHistory.length} />
@@ -1093,11 +1305,11 @@ function VendorPriceHistoryReport() {
             <Th>Item</Th>
             <Th>SKU</Th>
             <Th>Vendor</Th>
-            <Th right>P1 (AED)</Th>
-            <Th right>P2 (AED)</Th>
-            <Th right>P3 (AED)</Th>
-            <Th right>P4 (AED)</Th>
-            <Th right>P5 (AED)</Th>
+            <Th right>P1 (<CurrencySymbol />)</Th>
+            <Th right>P2 (<CurrencySymbol />)</Th>
+            <Th right>P3 (<CurrencySymbol />)</Th>
+            <Th right>P4 (<CurrencySymbol />)</Th>
+            <Th right>P5 (<CurrencySymbol />)</Th>
             <Th right>Change%</Th>
           </tr>
         </thead>
@@ -1122,7 +1334,36 @@ function VendorPriceHistoryReport() {
 }
 
 function VendorContractComplianceReport() {
+  useDataRevision();
   const breached = mockContractCompliance.filter((r) => r.status === "Breached").length;
+  useReportView("vendor-contract-compliance", {
+    kpis: [
+      { label: "Items Reviewed", value: String(mockContractCompliance.length) },
+      { label: "Breaches", value: String(breached) },
+      { label: "Penalties Applied", value: String(mockContractCompliance.filter((r) => r.penaltyApplied).length) },
+    ],
+    sections: [{
+      title: "Vendor Contract Compliance",
+      columns: [
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "item", header: "Item", align: "left", width: 22 },
+        { key: "contractPrice", header: "Contract Price (AED)", align: "right", width: 16 },
+        { key: "actualPrice", header: "Actual Price (AED)", align: "right", width: 16 },
+        { key: "variance", header: "Variance (AED)", align: "right", width: 14 },
+        { key: "variancePct", header: "Variance%", align: "right", width: 10 },
+        { key: "penalty", header: "Penalty", align: "left", width: 10 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockContractCompliance.map((r) => ({
+        vendor: r.vendor, item: r.item,
+        contractPrice: r.contractPrice.toLocaleString(), actualPrice: r.actualPrice.toLocaleString(),
+        variance: r.variance !== 0 ? `${r.variance > 0 ? "+" : ""}${r.variance.toLocaleString()}` : "—",
+        variancePct: `${r.variancePct > 0 ? "+" : ""}${r.variancePct.toFixed(2)}%`,
+        penalty: r.penaltyApplied ? "Applied" : "None",
+        status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Contract Compliance" subtitle="Contract price vs actual purchase price with penalty tracking" count={mockContractCompliance.length} />
@@ -1136,9 +1377,9 @@ function VendorContractComplianceReport() {
           <tr>
             <Th>Vendor</Th>
             <Th>Item</Th>
-            <Th right>Contract Price (AED)</Th>
-            <Th right>Actual Price (AED)</Th>
-            <Th right>Variance (AED)</Th>
+            <Th right>Contract Price (<CurrencySymbol />)</Th>
+            <Th right>Actual Price (<CurrencySymbol />)</Th>
+            <Th right>Variance (<CurrencySymbol />)</Th>
             <Th right>Variance%</Th>
             <Th>Penalty</Th>
             <Th>Status</Th>
@@ -1154,7 +1395,7 @@ function VendorContractComplianceReport() {
               <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "—"}</Td>
               <Td right><span className={r.variancePct > 0 ? "text-red-600 font-semibold" : r.variancePct < 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>{r.variancePct > 0 ? "+" : ""}{r.variancePct.toFixed(2)}%</span></Td>
               <Td>{r.penaltyApplied ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Applied</Badge> : <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]">None</Badge>}</Td>
-              <Td>{statusBadge(r.status === "Breached" ? "Overdue" : "Active")}</Td>
+              <Td>{statusBadge(r.status)}</Td>
             </tr>
           ))}
         </tbody>
@@ -1164,12 +1405,39 @@ function VendorContractComplianceReport() {
 }
 
 function LpoRegisterReport() {
+  useDataRevision();
   const total = mockLpoRegister.reduce((s, r) => s + r.totalValue, 0);
+  useReportView("lpo-register", {
+    kpis: [
+      { label: "Total LPO Value", value: `AED ${total.toLocaleString()}` },
+      { label: "Approved", value: String(mockLpoRegister.filter((r) => r.status === "Approved" || r.status === "Received").length) },
+      { label: "Pending / Partial", value: String(mockLpoRegister.filter((r) => r.status === "Pending" || r.status === "Partial").length) },
+    ],
+    sections: [{
+      title: "LPO Register",
+      columns: [
+        { key: "lpoNo", header: "LPO No.", align: "left", width: 16 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "branch", header: "Branch", align: "left", width: 12 },
+        { key: "totalItems", header: "Items", align: "right", width: 8 },
+        { key: "totalValue", header: "Value (AED)", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+        { key: "approvedBy", header: "Approved By", align: "left", width: 18 },
+      ],
+      rows: mockLpoRegister.map((r) => ({
+        lpoNo: r.lpoNo, date: r.date, vendor: r.vendor, branch: r.branch,
+        totalItems: r.totalItems, totalValue: r.totalValue.toLocaleString(),
+        status: r.status, approvedBy: r.approvedBy,
+      })),
+      totals: { lpoNo: "TOTAL", totalValue: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="LPO Register" subtitle="All purchase orders with approval status" count={mockLpoRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total LPO Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total LPO Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Approved" value={String(mockLpoRegister.filter((r) => r.status === "Approved" || r.status === "Received").length)} sub="Orders" />
         <KpiCard label="Pending / Partial" value={String(mockLpoRegister.filter((r) => r.status === "Pending" || r.status === "Partial").length)} sub="Awaiting action" />
       </div>
@@ -1181,7 +1449,7 @@ function LpoRegisterReport() {
             <Th>Vendor</Th>
             <Th>Branch</Th>
             <Th right>Items</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Status</Th>
             <Th>Approved By</Th>
           </tr>
@@ -1206,6 +1474,34 @@ function LpoRegisterReport() {
 }
 
 function LpoFulfillmentReport() {
+  useDataRevision();
+  const totOrd = mockLpoFulfillment.reduce((s, r) => s + r.orderedValue, 0);
+  const totDel = mockLpoFulfillment.reduce((s, r) => s + r.deliveredValue, 0);
+  useReportView("lpo-fulfillment", {
+    kpis: [
+      { label: "Total Ordered", value: `AED ${totOrd.toLocaleString()}` },
+      { label: "Total Delivered", value: `AED ${totDel.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "LPO vs Delivery Fulfillment",
+      columns: [
+        { key: "lpoNo", header: "LPO No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "orderedQty", header: "Ordered Qty", align: "right", width: 12 },
+        { key: "deliveredQty", header: "Delivered Qty", align: "right", width: 12 },
+        { key: "pendingQty", header: "Pending Qty", align: "right", width: 12 },
+        { key: "orderedValue", header: "Ordered (AED)", align: "right", width: 14 },
+        { key: "deliveredValue", header: "Delivered (AED)", align: "right", width: 14 },
+        { key: "fulfillmentPct", header: "Fulfillment%", align: "right", width: 12 },
+      ],
+      rows: mockLpoFulfillment.map((r) => ({
+        lpoNo: r.lpoNo, vendor: r.vendor, orderedQty: r.orderedQty, deliveredQty: r.deliveredQty,
+        pendingQty: r.pendingQty, orderedValue: r.orderedValue.toLocaleString(),
+        deliveredValue: r.deliveredValue.toLocaleString(), fulfillmentPct: `${r.fulfillmentPct.toFixed(1)}%`,
+      })),
+      totals: { lpoNo: "TOTAL", orderedValue: totOrd.toLocaleString(), deliveredValue: totDel.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="LPO vs Delivery Fulfillment" subtitle="Ordered vs delivered quantities and value" count={mockLpoFulfillment.length} />
@@ -1218,8 +1514,8 @@ function LpoFulfillmentReport() {
               <Th right>Ordered Qty</Th>
               <Th right>Delivered Qty</Th>
               <Th right>Pending Qty</Th>
-              <Th right>Ordered (AED)</Th>
-              <Th right>Delivered (AED)</Th>
+              <Th right>Ordered (<CurrencySymbol />)</Th>
+              <Th right>Delivered (<CurrencySymbol />)</Th>
               <Th right>Fulfillment%</Th>
             </tr>
           </thead>
@@ -1260,6 +1556,30 @@ function LpoFulfillmentReport() {
 }
 
 function LpoAgingReport() {
+  useDataRevision();
+  useReportView("lpo-aging", {
+    kpis: [
+      { label: "Pending LPOs", value: String(mockLpoAging.length) },
+      { label: "Overdue", value: String(mockLpoAging.filter((r) => r.status === "Overdue").length) },
+      { label: "Total Value", value: `AED ${mockLpoAging.reduce((s, r) => s + r.value, 0).toLocaleString()}` },
+    ],
+    sections: [{
+      title: "LPO Aging Report",
+      columns: [
+        { key: "lpoNo", header: "LPO No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "issueDate", header: "Issue Date", align: "left", width: 12 },
+        { key: "expectedDate", header: "Expected Date", align: "left", width: 12 },
+        { key: "daysPending", header: "Days Pending", align: "right", width: 12 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 10 },
+      ],
+      rows: mockLpoAging.map((r) => ({
+        lpoNo: r.lpoNo, vendor: r.vendor, issueDate: r.issueDate, expectedDate: r.expectedDate,
+        daysPending: r.daysPending, value: r.value.toLocaleString(), status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="LPO Aging Report" subtitle="Pending LPOs with aging and overdue highlighting" count={mockLpoAging.length} />
@@ -1272,7 +1592,7 @@ function LpoAgingReport() {
               <Th>Issue Date</Th>
               <Th>Expected Date</Th>
               <Th right>Days Pending</Th>
-              <Th right>Value (AED)</Th>
+              <Th right>Value (<CurrencySymbol />)</Th>
               <Th>Status</Th>
             </tr>
           </thead>
@@ -1312,12 +1632,36 @@ function LpoAgingReport() {
 }
 
 function LpoCancelledReport() {
+  useDataRevision();
   const total = mockLpoCancelled.reduce((s, r) => s + r.value, 0);
+  useReportView("lpo-cancelled", {
+    kpis: [
+      { label: "Total Cancelled Value", value: `AED ${total.toLocaleString()}` },
+      { label: "Cancelled Orders", value: String(mockLpoCancelled.length) },
+    ],
+    sections: [{
+      title: "Cancelled / Modified LPO",
+      columns: [
+        { key: "lpoNo", header: "LPO No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "reason", header: "Reason", align: "left", width: 28 },
+        { key: "cancelledBy", header: "Cancelled By", align: "left", width: 18 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockLpoCancelled.map((r) => ({
+        lpoNo: r.lpoNo, vendor: r.vendor, date: r.date, value: r.value.toLocaleString(),
+        reason: r.reason, cancelledBy: r.cancelledBy, status: r.status,
+      })),
+      totals: { lpoNo: "TOTAL", value: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Cancelled / Modified LPO" subtitle="Cancelled and modified orders with authorization" count={mockLpoCancelled.length} />
       <div className="grid grid-cols-2 gap-3">
-        <KpiCard label="Total Cancelled Value" value={`AED ${total.toLocaleString()}`} sub="This period" accent />
+        <KpiCard label="Total Cancelled Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="This period" accent />
         <KpiCard label="Cancelled Orders" value={String(mockLpoCancelled.length)} sub="Requiring review" />
       </div>
       <Tbl>
@@ -1326,7 +1670,7 @@ function LpoCancelledReport() {
             <Th>LPO No.</Th>
             <Th>Vendor</Th>
             <Th>Date</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Reason</Th>
             <Th>Cancelled By</Th>
             <Th>Status</Th>
@@ -1351,12 +1695,41 @@ function LpoCancelledReport() {
 }
 
 function GrnRegisterReport() {
+  useDataRevision();
   const total = mockGrnRegister.reduce((s, r) => s + r.value, 0);
+  useReportView("grn-register", {
+    kpis: [
+      { label: "Total Received Value", value: `AED ${total.toLocaleString()}` },
+      { label: "QC Passed", value: String(mockGrnRegister.filter((r) => r.qcStatus === "Pass").length) },
+      { label: "QC Failed / On Hold", value: String(mockGrnRegister.filter((r) => r.qcStatus === "Fail" || r.status === "On Hold").length) },
+    ],
+    sections: [{
+      title: "GRN Register",
+      columns: [
+        { key: "grnNo", header: "GRN No.", align: "left", width: 16 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "lpoNo", header: "LPO Ref", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "warehouse", header: "Warehouse", align: "left", width: 14 },
+        { key: "items", header: "Items", align: "right", width: 8 },
+        { key: "receivedQty", header: "Qty", align: "right", width: 8 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "qcStatus", header: "QC", align: "left", width: 10 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockGrnRegister.map((r) => ({
+        grnNo: r.grnNo, date: r.date, lpoNo: r.lpoNo, vendor: r.vendor, warehouse: r.warehouse,
+        items: r.items, receivedQty: r.receivedQty, value: r.value.toLocaleString(),
+        qcStatus: r.qcStatus, status: r.status,
+      })),
+      totals: { grnNo: "TOTAL", value: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="GRN Register" subtitle="All goods receipts with QC and warehouse status" count={mockGrnRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Received Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Received Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="QC Passed" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Pass").length)} sub="Receipts" />
         <KpiCard label="QC Failed / On Hold" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Fail" || r.status === "On Hold").length)} sub="Needs action" />
       </div>
@@ -1370,7 +1743,7 @@ function GrnRegisterReport() {
             <Th>Warehouse</Th>
             <Th right>Items</Th>
             <Th right>Qty</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>QC</Th>
             <Th>Status</Th>
           </tr>
@@ -1397,6 +1770,35 @@ function GrnRegisterReport() {
 }
 
 function GrnVarianceReport() {
+  useDataRevision();
+  const totValueVar = mockGrnVariance.reduce((s, r) => s + r.valueVar, 0);
+  useReportView("grn-variance", {
+    kpis: [
+      { label: "Items with Variance", value: String(mockGrnVariance.length) },
+      { label: "Total Value Variance", value: `AED ${totValueVar.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "GRN Variance Report",
+      columns: [
+        { key: "grnNo", header: "GRN No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "item", header: "Item", align: "left", width: 22 },
+        { key: "lpoQty", header: "LPO Qty", align: "right", width: 10 },
+        { key: "grnQty", header: "GRN Qty", align: "right", width: 10 },
+        { key: "qtyVar", header: "Qty Var", align: "right", width: 10 },
+        { key: "lpoRate", header: "LPO Rate", align: "right", width: 10 },
+        { key: "grnRate", header: "GRN Rate", align: "right", width: 10 },
+        { key: "valueVar", header: "Value Var (AED)", align: "right", width: 14 },
+      ],
+      rows: mockGrnVariance.map((r) => ({
+        grnNo: r.grnNo, vendor: r.vendor, item: r.item,
+        lpoQty: r.lpoQty, grnQty: r.grnQty, qtyVar: r.qtyVar,
+        lpoRate: r.lpoRate.toFixed(2), grnRate: r.grnRate.toFixed(2),
+        valueVar: r.valueVar !== 0 ? `${r.valueVar > 0 ? "+" : ""}${r.valueVar.toLocaleString()}` : "—",
+      })),
+      totals: { grnNo: "TOTAL", valueVar: `${totValueVar > 0 ? "+" : ""}${totValueVar.toLocaleString()}` },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="GRN Variance Report" subtitle="LPO vs GRN quantity and value differences" count={mockGrnVariance.length} />
@@ -1412,7 +1814,7 @@ function GrnVarianceReport() {
               <Th right>Qty Var</Th>
               <Th right>LPO Rate</Th>
               <Th right>GRN Rate</Th>
-              <Th right>Value Var (AED)</Th>
+              <Th right>Value Var (<CurrencySymbol />)</Th>
             </tr>
           </thead>
           <tbody>
@@ -1451,13 +1853,39 @@ function GrnVarianceReport() {
 }
 
 function GrnBatchExpiryReport() {
+  useDataRevision();
   const nearExpiry = mockBatchExpiry.filter((r) => r.daysToExpiry <= 30).length;
+  useReportView("grn-batch-expiry", {
+    kpis: [
+      { label: "Total Batches", value: String(mockBatchExpiry.length) },
+      { label: "Near Expiry (≤30d)", value: String(nearExpiry) },
+      { label: "Active Batches", value: String(mockBatchExpiry.filter((r) => r.status === "Active").length) },
+    ],
+    sections: [{
+      title: "Batch & Expiry Report",
+      columns: [
+        { key: "grnNo", header: "GRN No.", align: "left", width: 16 },
+        { key: "item", header: "Item", align: "left", width: 22 },
+        { key: "batchNo", header: "Batch No.", align: "left", width: 16 },
+        { key: "mfgDate", header: "Mfg Date", align: "left", width: 12 },
+        { key: "expiryDate", header: "Expiry Date", align: "left", width: 12 },
+        { key: "qty", header: "Qty", align: "right", width: 8 },
+        { key: "warehouse", header: "Warehouse", align: "left", width: 14 },
+        { key: "daysToExpiry", header: "Days to Expiry", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockBatchExpiry.map((r) => ({
+        grnNo: r.grnNo, item: r.item, batchNo: r.batchNo, mfgDate: r.mfgDate, expiryDate: r.expiryDate,
+        qty: r.qty, warehouse: r.warehouse, daysToExpiry: r.daysToExpiry, status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Batch & Expiry Report" subtitle="Batch tracking with expiry monitoring" count={mockBatchExpiry.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Batches" value={String(mockBatchExpiry.length)} sub="Active batches" accent />
-        <KpiCard label="Near Expiry (â‰¤30d)" value={String(nearExpiry)} sub="Requires action" />
+        <KpiCard label="Near Expiry (≤30d)" value={String(nearExpiry)} sub="Requires action" />
         <KpiCard label="Active Batches" value={String(mockBatchExpiry.filter((r) => r.status === "Active").length)} sub="Good standing" />
       </div>
       <Tbl>
@@ -1495,7 +1923,33 @@ function GrnBatchExpiryReport() {
 }
 
 function GrnQcRejectionReport() {
+  useDataRevision();
   const totalValue = mockQcRejection.reduce((s, r) => s + r.value, 0);
+  useReportView("grn-qc-rejection", {
+    kpis: [
+      { label: "Total Rejections", value: String(mockQcRejection.length) },
+      { label: "Total Rejected Value", value: `AED ${totalValue.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "QC Rejection Report",
+      columns: [
+        { key: "grnNo", header: "GRN No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "item", header: "Item", align: "left", width: 22 },
+        { key: "rejectedQty", header: "Rejected Qty", align: "right", width: 12 },
+        { key: "reason", header: "Reason", align: "left", width: 20 },
+        { key: "warehouse", header: "Warehouse", align: "left", width: 14 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "action", header: "Action", align: "left", width: 18 },
+      ],
+      rows: mockQcRejection.map((r) => ({
+        grnNo: r.grnNo, vendor: r.vendor, item: r.item, rejectedQty: r.rejectedQty,
+        reason: r.reason, warehouse: r.warehouse, date: r.date, value: r.value.toLocaleString(), action: r.action,
+      })),
+      totals: { grnNo: "TOTAL", value: totalValue.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="QC Rejection Report" subtitle="Quality control rejections by reason and vendor" count={mockQcRejection.length} />
@@ -1503,7 +1957,7 @@ function GrnQcRejectionReport() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <KpiCard label="Total Rejections" value={String(mockQcRejection.length)} sub="This period" accent />
-            <KpiCard label="Total Rejected Value" value={`AED ${totalValue.toLocaleString()}`} sub="Impact" />
+            <KpiCard label="Total Rejected Value" value={<><CurrencySymbol /> {totalValue.toLocaleString()}</>} sub="Impact" />
           </div>
           <Tbl>
             <thead>
@@ -1513,7 +1967,7 @@ function GrnQcRejectionReport() {
                 <Th>Item</Th>
                 <Th right>Rejected Qty</Th>
                 <Th>Reason</Th>
-                <Th right>Value (AED)</Th>
+                <Th right>Value (<CurrencySymbol />)</Th>
                 <Th>Action</Th>
               </tr>
             </thead>
@@ -1551,12 +2005,40 @@ function GrnQcRejectionReport() {
 }
 
 function GrvRegisterReport() {
+  useDataRevision();
   const total = mockGrvRegister.reduce((s, r) => s + r.value, 0);
+  useReportView("grv-register", {
+    kpis: [
+      { label: "Total GRV Value", value: `AED ${total.toLocaleString()}` },
+      { label: "Settled", value: String(mockGrvRegister.filter((r) => r.status === "Settled").length) },
+      { label: "Pending / Issued", value: String(mockGrvRegister.filter((r) => r.status !== "Settled").length) },
+    ],
+    sections: [{
+      title: "GRV Register",
+      columns: [
+        { key: "grvNo", header: "GRV No.", align: "left", width: 16 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "grnNo", header: "GRN Ref", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "items", header: "Items", align: "right", width: 8 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "reason", header: "Reason", align: "left", width: 16 },
+        { key: "debitNote", header: "Debit Note", align: "left", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockGrvRegister.map((r) => ({
+        grvNo: r.grvNo, date: r.date, grnNo: r.grnNo, vendor: r.vendor,
+        items: r.items, value: r.value.toLocaleString(), reason: r.reason,
+        debitNote: r.debitNote, status: r.status,
+      })),
+      totals: { grvNo: "TOTAL", value: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="GRV Register" subtitle="All goods return vouchers with settlement status" count={mockGrvRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total GRV Value" value={`AED ${total.toLocaleString()}`} sub="Period returns" accent />
+        <KpiCard label="Total GRV Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period returns" accent />
         <KpiCard label="Settled" value={String(mockGrvRegister.filter((r) => r.status === "Settled").length)} sub="Returns" />
         <KpiCard label="Pending / Issued" value={String(mockGrvRegister.filter((r) => r.status !== "Settled").length)} sub="Awaiting action" />
       </div>
@@ -1568,7 +2050,7 @@ function GrvRegisterReport() {
             <Th>GRN Ref</Th>
             <Th>Vendor</Th>
             <Th right>Items</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Reason</Th>
             <Th>Debit Note</Th>
             <Th>Status</Th>
@@ -1595,6 +2077,29 @@ function GrvRegisterReport() {
 }
 
 function GrvReasonAnalysisReport() {
+  useDataRevision();
+  const totCount = mockGrvReasonChart.reduce((s, r) => s + r.count, 0);
+  const totValue = mockGrvReasonChart.reduce((s, r) => s + r.value, 0);
+  useReportView("grv-reason-analysis", {
+    kpis: [
+      { label: "Total Returns", value: String(totCount) },
+      { label: "Total Return Value", value: `AED ${totValue.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "GRV Reason Analysis",
+      columns: [
+        { key: "reason", header: "Return Reason", align: "left", width: 20 },
+        { key: "count", header: "Count", align: "right", width: 10 },
+        { key: "value", header: "Total Value (AED)", align: "right", width: 16 },
+        { key: "avg", header: "Avg per Return (AED)", align: "right", width: 18 },
+      ],
+      rows: mockGrvReasonChart.map((r) => ({
+        reason: r.reason, count: r.count, value: r.value.toLocaleString(),
+        avg: r.count ? (r.value / r.count).toFixed(2) : "0.00",
+      })),
+      totals: { reason: "TOTAL", count: totCount, value: totValue.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="GRV Reason Analysis" subtitle="Return reason breakdown with value impact" count={mockGrvReasonChart.length} />
@@ -1604,8 +2109,8 @@ function GrvReasonAnalysisReport() {
             <tr>
               <Th>Return Reason</Th>
               <Th right>Count</Th>
-              <Th right>Total Value (AED)</Th>
-              <Th right>Avg per Return (AED)</Th>
+              <Th right>Total Value (<CurrencySymbol />)</Th>
+              <Th right>Avg per Return (<CurrencySymbol />)</Th>
             </tr>
           </thead>
           <tbody>
@@ -1638,13 +2143,40 @@ function GrvReasonAnalysisReport() {
 }
 
 function GrvReplacementPendingReport() {
+  useDataRevision();
+  useReportView("grv-replacement-pending", {
+    kpis: [
+      { label: "Pending Replacements", value: String(mockGrvPending.length) },
+      { label: "Overdue SLA", value: String(mockGrvPending.filter((r) => r.status === "Overdue").length) },
+      { label: "Total Value Pending", value: `AED ${mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Replacement Pending Report",
+      columns: [
+        { key: "grvNo", header: "GRV No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "item", header: "Item", align: "left", width: 22 },
+        { key: "qty", header: "Qty", align: "right", width: 8 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "grvDate", header: "GRV Date", align: "left", width: 12 },
+        { key: "slaDate", header: "SLA Date", align: "left", width: 12 },
+        { key: "daysPending", header: "Days Pending", align: "right", width: 12 },
+        { key: "status", header: "Status", align: "left", width: 10 },
+      ],
+      rows: mockGrvPending.map((r) => ({
+        grvNo: r.grvNo, vendor: r.vendor, item: r.item, qty: r.qty,
+        value: r.value.toLocaleString(), grvDate: r.grvDate, slaDate: r.slaDate,
+        daysPending: r.daysPending, status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Replacement Pending Report" subtitle="GRVs awaiting vendor replacement with SLA monitoring" count={mockGrvPending.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Pending Replacements" value={String(mockGrvPending.length)} sub="Open items" accent />
         <KpiCard label="Overdue SLA" value={String(mockGrvPending.filter((r) => r.status === "Overdue").length)} sub="Breach count" />
-        <KpiCard label="Total Value Pending" value={`AED ${mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="At risk" />
+        <KpiCard label="Total Value Pending" value={<><CurrencySymbol /> {mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="At risk" />
       </div>
       <Tbl>
         <thead>
@@ -1653,7 +2185,7 @@ function GrvReplacementPendingReport() {
             <Th>Vendor</Th>
             <Th>Item</Th>
             <Th right>Qty</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>GRV Date</Th>
             <Th>SLA Date</Th>
             <Th right>Days Pending</Th>
@@ -1681,22 +2213,48 @@ function GrvReplacementPendingReport() {
 }
 
 function GrvDebitNoteMappingReport() {
+  useDataRevision();
+  useReportView("grv-debit-note-mapping", {
+    kpis: [
+      { label: "Matched & Settled", value: String(mockGrvDebitNote.filter((r) => r.matched).length) },
+      { label: "Unmatched GRVs", value: String(mockGrvDebitNote.filter((r) => !r.matched).length) },
+      { label: "Total Settled", value: `AED ${mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}` },
+    ],
+    sections: [{
+      title: "GRV vs Debit Note Mapping",
+      columns: [
+        { key: "grvNo", header: "GRV No.", align: "left", width: 16 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "grvValue", header: "GRV Value (AED)", align: "right", width: 14 },
+        { key: "debitNote", header: "Debit Note", align: "left", width: 14 },
+        { key: "dnValue", header: "DN Value (AED)", align: "right", width: 14 },
+        { key: "matched", header: "Matched", align: "left", width: 10 },
+        { key: "settledDate", header: "Settled Date", align: "left", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockGrvDebitNote.map((r) => ({
+        grvNo: r.grvNo, vendor: r.vendor, grvValue: r.grvValue.toLocaleString(),
+        debitNote: r.debitNote, dnValue: r.dnValue > 0 ? r.dnValue.toLocaleString() : "—",
+        matched: r.matched ? "Yes" : "No", settledDate: r.settledDate, status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="GRV vs Debit Note Mapping" subtitle="GRV to debit note matching with settlement tracking" count={mockGrvDebitNote.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Matched & Settled" value={String(mockGrvDebitNote.filter((r) => r.matched).length)} sub="GRV-DN pairs" accent />
         <KpiCard label="Unmatched GRVs" value={String(mockGrvDebitNote.filter((r) => !r.matched).length)} sub="Need debit note" />
-        <KpiCard label="Total Settled" value={`AED ${mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}`} sub="Recovered" />
+        <KpiCard label="Total Settled" value={<><CurrencySymbol /> {mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}</>} sub="Recovered" />
       </div>
       <Tbl>
         <thead>
           <tr>
             <Th>GRV No.</Th>
             <Th>Vendor</Th>
-            <Th right>GRV Value (AED)</Th>
+            <Th right>GRV Value (<CurrencySymbol />)</Th>
             <Th>Debit Note</Th>
-            <Th right>DN Value (AED)</Th>
+            <Th right>DN Value (<CurrencySymbol />)</Th>
             <Th>Matched</Th>
             <Th>Settled Date</Th>
             <Th>Status</Th>
@@ -1722,14 +2280,44 @@ function GrvDebitNoteMappingReport() {
 }
 
 function InvoiceRegisterReport() {
+  useDataRevision();
   const total = mockInvoiceRegister.reduce((s, r) => s + r.totalAmt, 0);
   const vatTotal = mockInvoiceRegister.reduce((s, r) => s + r.vat, 0);
+  const taxableTotal = mockInvoiceRegister.reduce((s, r) => s + r.taxableAmt, 0);
+  useReportView("invoice-register", {
+    kpis: [
+      { label: "Total Invoice Value", value: `AED ${total.toLocaleString()}` },
+      { label: "Total VAT (Input)", value: `AED ${vatTotal.toLocaleString()}` },
+      { label: "On Hold", value: String(mockInvoiceRegister.filter((r) => r.status === "On Hold").length) },
+    ],
+    sections: [{
+      title: "Purchase Invoice Register",
+      columns: [
+        { key: "invNo", header: "Invoice No.", align: "left", width: 18 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "grnRef", header: "GRN Ref", align: "left", width: 16 },
+        { key: "lpoRef", header: "LPO Ref", align: "left", width: 16 },
+        { key: "taxableAmt", header: "Taxable (AED)", align: "right", width: 14 },
+        { key: "vat", header: "VAT (AED)", align: "right", width: 12 },
+        { key: "totalAmt", header: "Total (AED)", align: "right", width: 14 },
+        { key: "dueDate", header: "Due Date", align: "left", width: 12 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockInvoiceRegister.map((r) => ({
+        invNo: r.invNo, date: r.date, vendor: r.vendor, grnRef: r.grnRef, lpoRef: r.lpoRef,
+        taxableAmt: r.taxableAmt.toLocaleString(), vat: r.vat.toLocaleString(),
+        totalAmt: r.totalAmt.toLocaleString(), dueDate: r.dueDate, status: r.status,
+      })),
+      totals: { invNo: "TOTAL", taxableAmt: taxableTotal.toLocaleString(), vat: vatTotal.toLocaleString(), totalAmt: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Purchase Invoice Register" subtitle="All vendor invoices with VAT and reference details" count={mockInvoiceRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Invoice Value" value={`AED ${total.toLocaleString()}`} sub="Gross with VAT" accent />
-        <KpiCard label="Total VAT (Input)" value={`AED ${vatTotal.toLocaleString()}`} sub="Recoverable" />
+        <KpiCard label="Total Invoice Value" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Gross with VAT" accent />
+        <KpiCard label="Total VAT (Input)" value={<><CurrencySymbol /> {vatTotal.toLocaleString()}</>} sub="Recoverable" />
         <KpiCard label="On Hold" value={String(mockInvoiceRegister.filter((r) => r.status === "On Hold").length)} sub="Awaiting clearance" />
       </div>
       <Tbl>
@@ -1740,9 +2328,9 @@ function InvoiceRegisterReport() {
             <Th>Vendor</Th>
             <Th>GRN Ref</Th>
             <Th>LPO Ref</Th>
-            <Th right>Taxable (AED)</Th>
-            <Th right>VAT (AED)</Th>
-            <Th right>Total (AED)</Th>
+            <Th right>Taxable (<CurrencySymbol />)</Th>
+            <Th right>VAT (<CurrencySymbol />)</Th>
+            <Th right>Total (<CurrencySymbol />)</Th>
             <Th>Due Date</Th>
             <Th>Status</Th>
           </tr>
@@ -1769,6 +2357,38 @@ function InvoiceRegisterReport() {
 }
 
 function InvoiceGrnVarianceReport() {
+  useDataRevision();
+  const totValueVar = mockInvGrnVariance.reduce((s, r) => s + r.valueVar, 0);
+  useReportView("invoice-grn-variance", {
+    kpis: [
+      { label: "Items Checked", value: String(mockInvGrnVariance.length) },
+      { label: "Total Value Variance", value: `AED ${totValueVar.toLocaleString()}` },
+      { label: "Variance Items", value: String(mockInvGrnVariance.filter((r) => r.status === "Variance").length) },
+    ],
+    sections: [{
+      title: "Invoice vs GRN Variance",
+      columns: [
+        { key: "invNo", header: "Invoice No.", align: "left", width: 18 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "grnNo", header: "GRN No.", align: "left", width: 16 },
+        { key: "invQty", header: "Inv Qty", align: "right", width: 10 },
+        { key: "grnQty", header: "GRN Qty", align: "right", width: 10 },
+        { key: "qtyVar", header: "Qty Var", align: "right", width: 10 },
+        { key: "invRate", header: "Inv Rate", align: "right", width: 10 },
+        { key: "grnRate", header: "GRN Rate", align: "right", width: 10 },
+        { key: "valueVar", header: "Value Var (AED)", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockInvGrnVariance.map((r) => ({
+        invNo: r.invNo, vendor: r.vendor, grnNo: r.grnNo,
+        invQty: r.invQty, grnQty: r.grnQty, qtyVar: r.qtyVar,
+        invRate: r.invRate.toFixed(2), grnRate: r.grnRate.toFixed(2),
+        valueVar: r.valueVar !== 0 ? `${r.valueVar > 0 ? "+" : ""}${r.valueVar.toLocaleString()}` : "—",
+        status: r.status,
+      })),
+      totals: { invNo: "TOTAL", valueVar: `${totValueVar > 0 ? "+" : ""}${totValueVar.toLocaleString()}` },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Invoice vs GRN Variance" subtitle="Rate and value differences between invoices and goods received" count={mockInvGrnVariance.length} />
@@ -1784,7 +2404,7 @@ function InvoiceGrnVarianceReport() {
               <Th right>Qty Var</Th>
               <Th right>Inv Rate</Th>
               <Th right>GRN Rate</Th>
-              <Th right>Value Var (AED)</Th>
+              <Th right>Value Var (<CurrencySymbol />)</Th>
               <Th>Status</Th>
             </tr>
           </thead>
@@ -1800,7 +2420,7 @@ function InvoiceGrnVarianceReport() {
                 <Td right>{r.invRate.toFixed(2)}</Td>
                 <Td right>{r.grnRate.toFixed(2)}</Td>
                 <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "—"}</Td>
-                <Td>{statusBadge(r.status === "Variance" ? "Overdue" : "Active")}</Td>
+                <Td>{statusBadge(r.status)}</Td>
               </tr>
             ))}
           </tbody>
@@ -1825,13 +2445,48 @@ function InvoiceGrnVarianceReport() {
 }
 
 function InvoiceLandedCostReport() {
+  useDataRevision();
+  const totInvoice = mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0);
+  const totLanded = mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0);
+  const totNlc = mockLandedCost.reduce((s, r) => s + r.total, 0);
+  useReportView("invoice-landed-cost", {
+    kpis: [
+      { label: "Total Invoice Value", value: `AED ${totInvoice.toLocaleString()}` },
+      { label: "Total Landed Costs", value: `AED ${totLanded.toLocaleString()}` },
+      { label: "Total NLC", value: `AED ${totNlc.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Landed Cost Allocation",
+      columns: [
+        { key: "invNo", header: "Invoice No.", align: "left", width: 18 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "invoiceValue", header: "Invoice (AED)", align: "right", width: 14 },
+        { key: "freight", header: "Freight (AED)", align: "right", width: 12 },
+        { key: "customs", header: "Customs (AED)", align: "right", width: 12 },
+        { key: "handling", header: "Handling (AED)", align: "right", width: 12 },
+        { key: "total", header: "Total NLC (AED)", align: "right", width: 14 },
+        { key: "items", header: "Items", align: "right", width: 8 },
+        { key: "nlcPerItem", header: "NLC/Item", align: "right", width: 12 },
+      ],
+      rows: mockLandedCost.map((r) => ({
+        invNo: r.invNo, vendor: r.vendor, invoiceValue: r.invoiceValue.toLocaleString(),
+        freight: r.freight.toLocaleString(), customs: r.customs.toLocaleString(),
+        handling: r.handling.toLocaleString(), total: r.total.toLocaleString(),
+        items: r.items, nlcPerItem: r.nlcPerItem.toFixed(2),
+      })),
+      totals: {
+        invNo: "TOTAL", invoiceValue: totInvoice.toLocaleString(),
+        total: totNlc.toLocaleString(),
+      },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Landed Cost Allocation" subtitle="Freight, customs, handling allocated per purchase invoice" count={mockLandedCost.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Invoice Value" value={`AED ${mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0).toLocaleString()}`} sub="Before landed cost" accent />
-        <KpiCard label="Total Landed Costs" value={`AED ${mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0).toLocaleString()}`} sub="Freight + customs + handling" />
-        <KpiCard label="Total NLC" value={`AED ${mockLandedCost.reduce((s, r) => s + r.total, 0).toLocaleString()}`} sub="Net landed cost" />
+        <KpiCard label="Total Invoice Value" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0).toLocaleString()}</>} sub="Before landed cost" accent />
+        <KpiCard label="Total Landed Costs" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0).toLocaleString()}</>} sub="Freight + customs + handling" />
+        <KpiCard label="Total NLC" value={<><CurrencySymbol /> {mockLandedCost.reduce((s, r) => s + r.total, 0).toLocaleString()}</>} sub="Net landed cost" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Tbl>
@@ -1839,11 +2494,11 @@ function InvoiceLandedCostReport() {
             <tr>
               <Th>Invoice No.</Th>
               <Th>Vendor</Th>
-              <Th right>Invoice (AED)</Th>
-              <Th right>Freight (AED)</Th>
-              <Th right>Customs (AED)</Th>
-              <Th right>Handling (AED)</Th>
-              <Th right>Total NLC (AED)</Th>
+              <Th right>Invoice (<CurrencySymbol />)</Th>
+              <Th right>Freight (<CurrencySymbol />)</Th>
+              <Th right>Customs (<CurrencySymbol />)</Th>
+              <Th right>Handling (<CurrencySymbol />)</Th>
+              <Th right>Total NLC (<CurrencySymbol />)</Th>
               <Th right>Items</Th>
               <Th right>NLC/Item</Th>
             </tr>
@@ -1888,12 +2543,37 @@ function InvoiceLandedCostReport() {
 }
 
 function InvoiceBackdatedReport() {
+  useDataRevision();
+  const totValue = mockBackdatedInv.reduce((s, r) => s + r.value, 0);
+  useReportView("invoice-backdated", {
+    kpis: [
+      { label: "Backdated Invoices", value: String(mockBackdatedInv.length) },
+      { label: "Total Backdated Value", value: `AED ${totValue.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Backdated Invoice Report",
+      columns: [
+        { key: "invNo", header: "Invoice No.", align: "left", width: 18 },
+        { key: "invDate", header: "Invoice Date", align: "left", width: 12 },
+        { key: "postDate", header: "Post Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "postedBy", header: "Posted By", align: "left", width: 18 },
+        { key: "period", header: "Locked Period", align: "left", width: 12 },
+      ],
+      rows: mockBackdatedInv.map((r) => ({
+        invNo: r.invNo, invDate: r.invDate, postDate: r.postDate, vendor: r.vendor,
+        value: r.value.toLocaleString(), postedBy: r.postedBy, period: r.period,
+      })),
+      totals: { invNo: "TOTAL", value: totValue.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Backdated Invoice Report" subtitle="Invoices posted after the period lock date" count={mockBackdatedInv.length} />
       <div className="grid grid-cols-2 gap-3">
         <KpiCard label="Backdated Invoices" value={String(mockBackdatedInv.length)} sub="Period violations" accent />
-        <KpiCard label="Total Backdated Value" value={`AED ${mockBackdatedInv.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Financial impact" />
+        <KpiCard label="Total Backdated Value" value={<><CurrencySymbol /> {mockBackdatedInv.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="Financial impact" />
       </div>
       <Tbl>
         <thead>
@@ -1902,7 +2582,7 @@ function InvoiceBackdatedReport() {
             <Th>Invoice Date</Th>
             <Th>Post Date</Th>
             <Th>Vendor</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th>Posted By</Th>
             <Th>Locked Period</Th>
             <Th>Status</Th>
@@ -1918,7 +2598,7 @@ function InvoiceBackdatedReport() {
               <Td right bold>{r.value.toLocaleString()}</Td>
               <Td>{r.postedBy}</Td>
               <Td muted>{r.period}</Td>
-              <Td>{statusBadge("Overdue")}</Td>
+              <Td>{statusBadge(r.status)}</Td>
             </tr>
           ))}
         </tbody>
@@ -1928,12 +2608,38 @@ function InvoiceBackdatedReport() {
 }
 
 function PaymentRegisterReport() {
+  useDataRevision();
   const total = mockPaymentRegister.reduce((s, r) => s + r.amount, 0);
+  useReportView("payment-register", {
+    kpis: [
+      { label: "Total Payments", value: `AED ${total.toLocaleString()}` },
+      { label: "Bank Transfers", value: String(mockPaymentRegister.filter((r) => r.mode === "Bank Transfer").length) },
+      { label: "Cheque / PDC", value: String(mockPaymentRegister.filter((r) => r.mode === "Cheque" || r.mode === "PDC").length) },
+    ],
+    sections: [{
+      title: "Payment Voucher Register",
+      columns: [
+        { key: "pvNo", header: "PV No.", align: "left", width: 16 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "invRef", header: "Invoice Ref", align: "left", width: 18 },
+        { key: "mode", header: "Mode", align: "left", width: 14 },
+        { key: "bank", header: "Bank", align: "left", width: 14 },
+        { key: "amount", header: "Amount (AED)", align: "right", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockPaymentRegister.map((r) => ({
+        pvNo: r.pvNo, date: r.date, vendor: r.vendor, invRef: r.invRef,
+        mode: r.mode, bank: r.bank, amount: r.amount.toLocaleString(), status: r.status,
+      })),
+      totals: { pvNo: "TOTAL", amount: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Payment Voucher Register" subtitle="All vendor payments with mode and bank details" count={mockPaymentRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Payments" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Payments" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Bank Transfers" value={String(mockPaymentRegister.filter((r) => r.mode === "Bank Transfer").length)} sub="Transactions" />
         <KpiCard label="Cheque / PDC" value={String(mockPaymentRegister.filter((r) => r.mode === "Cheque" || r.mode === "PDC").length)} sub="Instruments" />
       </div>
@@ -1946,7 +2652,7 @@ function PaymentRegisterReport() {
             <Th>Invoice Ref</Th>
             <Th>Mode</Th>
             <Th>Bank</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Status</Th>
           </tr>
         </thead>
@@ -1970,6 +2676,40 @@ function PaymentRegisterReport() {
 }
 
 function PaymentAgingReport() {
+  useDataRevision();
+  const totals = mockPaymentAging.reduce((s, r) => ({
+    total: s.total + r.total, overdue0: s.overdue0 + r.overdue0, overdue30: s.overdue30 + r.overdue30,
+    overdue60: s.overdue60 + r.overdue60, overdue90plus: s.overdue90plus + r.overdue90plus,
+  }), { total: 0, overdue0: 0, overdue30: 0, overdue60: 0, overdue90plus: 0 });
+  useReportView("payment-aging", {
+    kpis: [
+      { label: "Total Payables", value: `AED ${totals.total.toLocaleString()}` },
+      { label: "Current", value: `AED ${totals.overdue0.toLocaleString()}` },
+      { label: "Overdue 30d+", value: `AED ${(totals.overdue30 + totals.overdue60 + totals.overdue90plus).toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Payment Aging & Delay",
+      columns: [
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "total", header: "Total (AED)", align: "right", width: 14 },
+        { key: "overdue0", header: "Current", align: "right", width: 12 },
+        { key: "overdue30", header: "0-30d", align: "right", width: 12 },
+        { key: "overdue60", header: "31-60d", align: "right", width: 12 },
+        { key: "overdue90plus", header: "60d+", align: "right", width: 12 },
+        { key: "avgDelay", header: "Avg Delay (days)", align: "right", width: 14 },
+      ],
+      rows: mockPaymentAging.map((r) => ({
+        vendor: r.vendor, total: r.total.toLocaleString(), overdue0: r.overdue0.toLocaleString(),
+        overdue30: r.overdue30.toLocaleString(), overdue60: r.overdue60.toLocaleString(),
+        overdue90plus: r.overdue90plus.toLocaleString(), avgDelay: r.avgDelay,
+      })),
+      totals: {
+        vendor: "TOTAL", total: totals.total.toLocaleString(), overdue0: totals.overdue0.toLocaleString(),
+        overdue30: totals.overdue30.toLocaleString(), overdue60: totals.overdue60.toLocaleString(),
+        overdue90plus: totals.overdue90plus.toLocaleString(),
+      },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Payment Aging & Delay" subtitle="Due vs actual payment analysis by vendor" count={mockPaymentAging.length} />
@@ -1978,7 +2718,7 @@ function PaymentAgingReport() {
           <thead>
             <tr>
               <Th>Vendor</Th>
-              <Th right>Total (AED)</Th>
+              <Th right>Total (<CurrencySymbol />)</Th>
               <Th right>Current</Th>
               <Th right>0-30d</Th>
               <Th right>31-60d</Th>
@@ -2024,11 +2764,40 @@ function PaymentAgingReport() {
 }
 
 function PaymentChequeTrackingReport() {
+  useDataRevision();
+  const totAmt = mockChequeTracking.reduce((s, r) => s + r.amount, 0);
+  useReportView("payment-cheque-tracking", {
+    kpis: [
+      { label: "Total Cheque Value", value: `AED ${totAmt.toLocaleString()}` },
+      { label: "Cleared", value: String(mockChequeTracking.filter((r) => r.status === "Cleared").length) },
+      { label: "Bounced / Pending", value: String(mockChequeTracking.filter((r) => r.status !== "Cleared").length) },
+    ],
+    sections: [{
+      title: "Cheque / PDC Tracking",
+      columns: [
+        { key: "chequeNo", header: "Cheque No.", align: "left", width: 14 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "bank", header: "Bank", align: "left", width: 14 },
+        { key: "branch", header: "Branch", align: "left", width: 14 },
+        { key: "amount", header: "Amount (AED)", align: "right", width: 14 },
+        { key: "chequeDate", header: "Cheque Date", align: "left", width: 12 },
+        { key: "pvNo", header: "PV No.", align: "left", width: 14 },
+        { key: "clearedDate", header: "Cleared Date", align: "left", width: 12 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockChequeTracking.map((r) => ({
+        chequeNo: r.chequeNo, vendor: r.vendor, bank: r.bank, branch: r.branch,
+        amount: r.amount.toLocaleString(), chequeDate: r.chequeDate,
+        pvNo: r.pvNo, clearedDate: r.clearedDate, status: r.status,
+      })),
+      totals: { chequeNo: "TOTAL", amount: totAmt.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Cheque / PDC Tracking" subtitle="Post-dated cheques with clearance status" count={mockChequeTracking.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Cheque Value" value={`AED ${mockChequeTracking.reduce((s, r) => s + r.amount, 0).toLocaleString()}`} sub="All instruments" accent />
+        <KpiCard label="Total Cheque Value" value={<><CurrencySymbol /> {mockChequeTracking.reduce((s, r) => s + r.amount, 0).toLocaleString()}</>} sub="All instruments" accent />
         <KpiCard label="Cleared" value={String(mockChequeTracking.filter((r) => r.status === "Cleared").length)} sub="Cheques" />
         <KpiCard label="Bounced / Pending" value={String(mockChequeTracking.filter((r) => r.status !== "Cleared").length)} sub="Requires attention" />
       </div>
@@ -2039,7 +2808,7 @@ function PaymentChequeTrackingReport() {
             <Th>Vendor</Th>
             <Th>Bank</Th>
             <Th>Branch</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Cheque Date</Th>
             <Th>PV No.</Th>
             <Th>Cleared Date</Th>
@@ -2067,14 +2836,42 @@ function PaymentChequeTrackingReport() {
 }
 
 function PaymentAdvanceReport() {
+  useDataRevision();
+  const totAdv = mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0);
+  const totBal = mockAdvancePayment.reduce((s, r) => s + r.balance, 0);
+  useReportView("payment-advance", {
+    kpis: [
+      { label: "Total Advances", value: `AED ${totAdv.toLocaleString()}` },
+      { label: "Unadjusted Balance", value: `AED ${totBal.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Advance Payment Utilization",
+      columns: [
+        { key: "pvNo", header: "PV No.", align: "left", width: 14 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "advDate", header: "Adv Date", align: "left", width: 12 },
+        { key: "advAmount", header: "Advance (AED)", align: "right", width: 14 },
+        { key: "adjusted", header: "Adjusted (AED)", align: "right", width: 14 },
+        { key: "balance", header: "Balance (AED)", align: "right", width: 14 },
+        { key: "lastAdj", header: "Last Adj", align: "left", width: 12 },
+        { key: "status", header: "Status", align: "left", width: 10 },
+      ],
+      rows: mockAdvancePayment.map((r) => ({
+        pvNo: r.pvNo, vendor: r.vendor, advDate: r.advDate,
+        advAmount: r.advAmount.toLocaleString(), adjusted: r.adjusted.toLocaleString(),
+        balance: r.balance.toLocaleString(), lastAdj: r.lastAdj, status: r.status,
+      })),
+      totals: { pvNo: "TOTAL", advAmount: totAdv.toLocaleString(), balance: totBal.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Advance Payment Utilization" subtitle="Vendor advances with adjustment and balance tracking" count={mockAdvancePayment.length} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <KpiCard label="Total Advances" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0).toLocaleString()}`} sub="Given to vendors" accent />
-            <KpiCard label="Unadjusted Balance" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.balance, 0).toLocaleString()}`} sub="Remaining" />
+            <KpiCard label="Total Advances" value={<><CurrencySymbol /> {mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0).toLocaleString()}</>} sub="Given to vendors" accent />
+            <KpiCard label="Unadjusted Balance" value={<><CurrencySymbol /> {mockAdvancePayment.reduce((s, r) => s + r.balance, 0).toLocaleString()}</>} sub="Remaining" />
           </div>
           <Tbl>
             <thead>
@@ -2082,9 +2879,9 @@ function PaymentAdvanceReport() {
                 <Th>PV No.</Th>
                 <Th>Vendor</Th>
                 <Th>Adv Date</Th>
-                <Th right>Advance (AED)</Th>
-                <Th right>Adjusted (AED)</Th>
-                <Th right>Balance (AED)</Th>
+                <Th right>Advance (<CurrencySymbol />)</Th>
+                <Th right>Adjusted (<CurrencySymbol />)</Th>
+                <Th right>Balance (<CurrencySymbol />)</Th>
                 <Th>Last Adj</Th>
                 <Th>Status</Th>
               </tr>
@@ -2128,12 +2925,38 @@ function PaymentAdvanceReport() {
 }
 
 function DebitNoteRegisterReport() {
+  useDataRevision();
   const total = mockDebitNoteRegister.reduce((s, r) => s + r.amount, 0);
+  useReportView("debit-note-register", {
+    kpis: [
+      { label: "Total Debit Notes", value: `AED ${total.toLocaleString()}` },
+      { label: "Settled", value: String(mockDebitNoteRegister.filter((r) => r.status === "Settled").length) },
+      { label: "Pending / Rejected", value: String(mockDebitNoteRegister.filter((r) => r.status !== "Settled").length) },
+    ],
+    sections: [{
+      title: "Debit Note Register",
+      columns: [
+        { key: "dnNo", header: "DN No.", align: "left", width: 14 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "grvNo", header: "GRV Ref", align: "left", width: 16 },
+        { key: "reason", header: "Reason", align: "left", width: 22 },
+        { key: "amount", header: "Amount (AED)", align: "right", width: 14 },
+        { key: "settledDate", header: "Settled Date", align: "left", width: 14 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockDebitNoteRegister.map((r) => ({
+        dnNo: r.dnNo, date: r.date, vendor: r.vendor, grvNo: r.grvNo,
+        reason: r.reason, amount: r.amount.toLocaleString(), settledDate: r.settledDate, status: r.status,
+      })),
+      totals: { dnNo: "TOTAL", amount: total.toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Debit Note Register" subtitle="All vendor debit notes with reason and settlement status" count={mockDebitNoteRegister.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Debit Notes" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Total Debit Notes" value={<><CurrencySymbol /> {total.toLocaleString()}</>} sub="Period total" accent />
         <KpiCard label="Settled" value={String(mockDebitNoteRegister.filter((r) => r.status === "Settled").length)} sub="Recovered" />
         <KpiCard label="Pending / Rejected" value={String(mockDebitNoteRegister.filter((r) => r.status !== "Settled").length)} sub="Open" />
       </div>
@@ -2145,7 +2968,7 @@ function DebitNoteRegisterReport() {
             <Th>Vendor</Th>
             <Th>GRV Ref</Th>
             <Th>Reason</Th>
-            <Th right>Amount (AED)</Th>
+            <Th right>Amount (<CurrencySymbol />)</Th>
             <Th>Settled Date</Th>
             <Th>Status</Th>
           </tr>
@@ -2170,8 +2993,31 @@ function DebitNoteRegisterReport() {
 }
 
 function ClaimSettlementReport() {
+  useDataRevision();
   const settledClaims = mockClaimSettlement.filter((r) => r.status === "Settled");
   const avgSettlementDays = settledClaims.length ? Math.round(settledClaims.reduce((s, r) => s + r.daysToSettle, 0) / settledClaims.length) : 0;
+  useReportView("claim-settlement", {
+    kpis: [
+      { label: "Settled Claims", value: String(settledClaims.length) },
+      { label: "Avg Settlement Days", value: `${avgSettlementDays} days` },
+    ],
+    sections: [{
+      title: "Claim Settlement Status",
+      columns: [
+        { key: "claimNo", header: "Claim No.", align: "left", width: 14 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "amount", header: "Amount (AED)", align: "right", width: 14 },
+        { key: "issueDate", header: "Issue Date", align: "left", width: 12 },
+        { key: "settleDate", header: "Settle Date", align: "left", width: 12 },
+        { key: "daysToSettle", header: "Days", align: "right", width: 10 },
+        { key: "status", header: "Status", align: "left", width: 12 },
+      ],
+      rows: mockClaimSettlement.map((r) => ({
+        claimNo: r.claimNo, vendor: r.vendor, amount: r.amount.toLocaleString(),
+        issueDate: r.issueDate, settleDate: r.settleDate, daysToSettle: r.daysToSettle, status: r.status,
+      })),
+    }],
+  });
 
   return (
     <div className="space-y-3">
@@ -2187,7 +3033,7 @@ function ClaimSettlementReport() {
               <tr>
                 <Th>Claim No.</Th>
                 <Th>Vendor</Th>
-                <Th right>Amount (AED)</Th>
+                <Th right>Amount (<CurrencySymbol />)</Th>
                 <Th>Issue Date</Th>
                 <Th>Settle Date</Th>
                 <Th right>Days</Th>
@@ -2228,6 +3074,28 @@ function ClaimSettlementReport() {
 }
 
 function VendorClaimHistoryReport() {
+  useDataRevision();
+  useReportView("vendor-claim-history", {
+    kpis: [],
+    sections: [{
+      title: "Vendor Claim History",
+      columns: [
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "totalClaims", header: "Total Claims", align: "right", width: 12 },
+        { key: "settled", header: "Settled", align: "right", width: 10 },
+        { key: "rejected", header: "Rejected", align: "right", width: 10 },
+        { key: "pending", header: "Pending", align: "right", width: 10 },
+        { key: "totalValue", header: "Total Value (AED)", align: "right", width: 14 },
+        { key: "avgSettleDays", header: "Avg Settle Days", align: "right", width: 14 },
+        { key: "lastClaimDate", header: "Last Claim", align: "left", width: 12 },
+      ],
+      rows: mockVendorClaimHistory.map((r) => ({
+        vendor: r.vendor, totalClaims: r.totalClaims, settled: r.settled,
+        rejected: r.rejected, pending: r.pending, totalValue: r.totalValue.toLocaleString(),
+        avgSettleDays: r.avgSettleDays, lastClaimDate: r.lastClaimDate,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Claim History" subtitle="Claim frequency, values, and settlement performance by vendor" count={mockVendorClaimHistory.length} />
@@ -2240,7 +3108,7 @@ function VendorClaimHistoryReport() {
               <Th right>Settled</Th>
               <Th right>Rejected</Th>
               <Th right>Pending</Th>
-              <Th right>Total Value (AED)</Th>
+              <Th right>Total Value (<CurrencySymbol />)</Th>
               <Th right>Avg Settle Days</Th>
               <Th>Last Claim</Th>
             </tr>
@@ -2283,15 +3151,43 @@ function VendorClaimHistoryReport() {
 }
 
 function VatInputRegisterReport() {
+  useDataRevision();
   const totalTaxable = mockVatInput.reduce((s, r) => s + r.taxableAmt, 0);
   const totalVat = mockVatInput.reduce((s, r) => s + r.vatAmt, 0);
+  useReportView("vat-input-register", {
+    kpis: [
+      { label: "Total Taxable Value", value: `AED ${totalTaxable.toLocaleString()}` },
+      { label: "Total Input VAT", value: `AED ${totalVat.toLocaleString()}` },
+      { label: "Total Incl. VAT", value: `AED ${(totalTaxable + totalVat).toLocaleString()}` },
+    ],
+    sections: [{
+      title: "VAT Input Register (UAE)",
+      columns: [
+        { key: "invNo", header: "Invoice No.", align: "left", width: 18 },
+        { key: "invDate", header: "Date", align: "left", width: 12 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "trn", header: "TRN", align: "left", width: 16 },
+        { key: "taxableAmt", header: "Taxable (AED)", align: "right", width: 14 },
+        { key: "vatAmt", header: "VAT (AED)", align: "right", width: 12 },
+        { key: "totalAmt", header: "Total (AED)", align: "right", width: 14 },
+        { key: "vatRate", header: "VAT Rate", align: "left", width: 10 },
+        { key: "period", header: "Period", align: "left", width: 12 },
+      ],
+      rows: mockVatInput.map((r) => ({
+        invNo: r.invNo, invDate: r.invDate, vendor: r.vendor, trn: r.trn,
+        taxableAmt: r.taxableAmt.toLocaleString(), vatAmt: r.vatAmt.toLocaleString(),
+        totalAmt: r.totalAmt.toLocaleString(), vatRate: r.vatRate, period: r.period,
+      })),
+      totals: { invNo: "TOTAL", taxableAmt: totalTaxable.toLocaleString(), vatAmt: totalVat.toLocaleString(), totalAmt: (totalTaxable + totalVat).toLocaleString() },
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Taxable Value" value={`AED ${totalTaxable.toLocaleString()}`} sub="Excl. VAT" accent />
-        <KpiCard label="Total Input VAT" value={`AED ${totalVat.toLocaleString()}`} sub="Recoverable @ 5%" />
-        <KpiCard label="Total Incl. VAT" value={`AED ${(totalTaxable + totalVat).toLocaleString()}`} sub="Gross" />
+        <KpiCard label="Total Taxable Value" value={<><CurrencySymbol /> {totalTaxable.toLocaleString()}</>} sub="Excl. VAT" accent />
+        <KpiCard label="Total Input VAT" value={<><CurrencySymbol /> {totalVat.toLocaleString()}</>} sub="Recoverable @ 5%" />
+        <KpiCard label="Total Incl. VAT" value={<><CurrencySymbol /> {(totalTaxable + totalVat).toLocaleString()}</>} sub="Gross" />
       </div>
       <Tbl>
         <thead>
@@ -2300,9 +3196,9 @@ function VatInputRegisterReport() {
             <Th>Date</Th>
             <Th>Vendor</Th>
             <Th>TRN</Th>
-            <Th right>Taxable (AED)</Th>
-            <Th right>VAT (AED)</Th>
-            <Th right>Total (AED)</Th>
+            <Th right>Taxable (<CurrencySymbol />)</Th>
+            <Th right>VAT (<CurrencySymbol />)</Th>
+            <Th right>Total (<CurrencySymbol />)</Th>
             <Th>VAT Rate</Th>
             <Th>Period</Th>
           </tr>
@@ -2328,7 +3224,31 @@ function VatInputRegisterReport() {
 }
 
 function PeriodLockViolationsReport() {
+  useDataRevision();
   const breachedPeriods = new Set(mockPeriodLockViolations.map((r) => r.lockedPeriod).filter(Boolean)).size;
+  useReportView("period-lock-violations", {
+    kpis: [
+      { label: "Total Violations", value: String(mockPeriodLockViolations.length) },
+      { label: "Periods Breached", value: String(breachedPeriods) },
+      { label: "Users Involved", value: String(new Set(mockPeriodLockViolations.map((r) => r.user)).size) },
+    ],
+    sections: [{
+      title: "Period Lock Violation Report",
+      columns: [
+        { key: "refNo", header: "Ref No.", align: "left", width: 16 },
+        { key: "type", header: "Type", align: "left", width: 16 },
+        { key: "txDate", header: "Transaction Date", align: "left", width: 14 },
+        { key: "postDate", header: "Post Date", align: "left", width: 14 },
+        { key: "lockedPeriod", header: "Locked Period", align: "left", width: 12 },
+        { key: "user", header: "User", align: "left", width: 18 },
+        { key: "reason", header: "Reason", align: "left", width: 24 },
+      ],
+      rows: mockPeriodLockViolations.map((r) => ({
+        refNo: r.refNo, type: r.type, txDate: r.txDate, postDate: r.postDate,
+        lockedPeriod: r.lockedPeriod, user: r.user, reason: r.reason,
+      })),
+    }],
+  });
 
   return (
     <div className="space-y-3">
@@ -2369,13 +3289,38 @@ function PeriodLockViolationsReport() {
 }
 
 function MissingDocumentsReport() {
+  useDataRevision();
+  const totalValue = mockMissingDocuments.reduce((s, r) => s + r.value, 0);
+  useReportView("missing-documents", {
+    kpis: [
+      { label: "Total Issues", value: String(mockMissingDocuments.length) },
+      { label: "Critical", value: String(mockMissingDocuments.filter((r) => r.status === "Critical").length) },
+      { label: "Total Value at Risk", value: `AED ${totalValue.toLocaleString()}` },
+    ],
+    sections: [{
+      title: "Missing Document Report",
+      columns: [
+        { key: "refNo", header: "Ref No.", align: "left", width: 16 },
+        { key: "type", header: "Issue Type", align: "left", width: 20 },
+        { key: "vendor", header: "Vendor", align: "left", width: 20 },
+        { key: "date", header: "Date", align: "left", width: 12 },
+        { key: "value", header: "Value (AED)", align: "right", width: 14 },
+        { key: "daysOpen", header: "Days Open", align: "right", width: 10 },
+        { key: "status", header: "Priority", align: "left", width: 12 },
+      ],
+      rows: mockMissingDocuments.map((r) => ({
+        refNo: r.refNo, type: r.type, vendor: r.vendor, date: r.date,
+        value: r.value.toLocaleString(), daysOpen: r.daysOpen, status: r.status,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Missing Document Report" subtitle="GRNs, invoices, and payments with missing required documents" count={mockMissingDocuments.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Issues" value={String(mockMissingDocuments.length)} sub="Open items" accent />
         <KpiCard label="Critical" value={String(mockMissingDocuments.filter((r) => r.status === "Critical").length)} sub="High priority" />
-        <KpiCard label="Total Value at Risk" value={`AED ${mockMissingDocuments.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Unverified transactions" />
+        <KpiCard label="Total Value at Risk" value={<><CurrencySymbol /> {mockMissingDocuments.reduce((s, r) => s + r.value, 0).toLocaleString()}</>} sub="Unverified transactions" />
       </div>
       <Tbl>
         <thead>
@@ -2384,7 +3329,7 @@ function MissingDocumentsReport() {
             <Th>Issue Type</Th>
             <Th>Vendor</Th>
             <Th>Date</Th>
-            <Th right>Value (AED)</Th>
+            <Th right>Value (<CurrencySymbol />)</Th>
             <Th right>Days Open</Th>
             <Th>Priority</Th>
           </tr>
@@ -2408,6 +3353,7 @@ function MissingDocumentsReport() {
 }
 
 function AuditTrailReport() {
+  useDataRevision();
   const actionColors: Record<string, string> = {
     Edit: "bg-amber-100 text-amber-700 border-amber-300",
     Delete: "bg-red-100 text-red-700 border-red-300",
@@ -2415,6 +3361,30 @@ function AuditTrailReport() {
     Approve: "bg-blue-100 text-blue-700 border-blue-300",
     Post: "bg-purple-100 text-purple-700 border-purple-300",
   };
+  useReportView("audit-trail", {
+    kpis: [
+      { label: "Total Actions", value: String(mockAuditTrail.length) },
+      { label: "Edit / Delete Actions", value: String(mockAuditTrail.filter((r) => r.action === "Edit" || r.action === "Delete").length) },
+      { label: "Users Active", value: String(new Set(mockAuditTrail.map((r) => r.user)).size) },
+    ],
+    sections: [{
+      title: "Audit Trail Report",
+      columns: [
+        { key: "timestamp", header: "Timestamp", align: "left", width: 18 },
+        { key: "user", header: "User", align: "left", width: 18 },
+        { key: "action", header: "Action", align: "left", width: 10 },
+        { key: "module", header: "Module", align: "left", width: 16 },
+        { key: "refNo", header: "Ref No.", align: "left", width: 16 },
+        { key: "field", header: "Field", align: "left", width: 14 },
+        { key: "before", header: "Before", align: "left", width: 14 },
+        { key: "after", header: "After", align: "left", width: 14 },
+      ],
+      rows: mockAuditTrail.map((r) => ({
+        timestamp: r.timestamp, user: r.user, action: r.action, module: r.module,
+        refNo: r.refNo, field: r.field, before: r.before, after: r.after,
+      })),
+    }],
+  });
   return (
     <div className="space-y-3">
       <ReportHeader title="Audit Trail Report" subtitle="Complete user action log with before/after values" count={mockAuditTrail.length} />
@@ -2459,52 +3429,7 @@ function AuditTrailReport() {
 // Export helpers
 // ---------------------------------------------------------------------------
 
-function getPurchaseExportRows(reportId: ReportId): any[] {
-  switch (reportId) {
-    case "vendor-master": return mockVendorMaster;
-    case "vendor-aging": return mockVendorAging;
-    case "vendor-performance": return mockVendorPerf;
-    case "vendor-price-history": return mockPriceHistory;
-    case "vendor-contract-compliance": return mockContractCompliance;
-    case "lpo-register": return mockLpoRegister;
-    case "lpo-fulfillment": return mockLpoFulfillment;
-    case "lpo-aging": return mockLpoAging;
-    case "lpo-cancelled": return mockLpoCancelled;
-    case "grn-register": return mockGrnRegister;
-    case "grn-variance": return mockGrnVariance;
-    case "grn-batch-expiry": return mockBatchExpiry;
-    case "grn-qc-rejection": return mockQcRejection;
-    case "grv-register": return mockGrvRegister;
-    case "grv-reason-analysis": return mockGrvReasonChart;
-    case "grv-replacement-pending": return mockGrvPending;
-    case "grv-debit-note-mapping": return mockGrvDebitNote;
-    case "invoice-register": return mockInvoiceRegister;
-    case "invoice-grn-variance": return mockInvGrnVariance;
-    case "invoice-landed-cost": return mockLandedCost;
-    case "invoice-backdated": return mockBackdatedInv;
-    case "payment-register": return mockPaymentRegister;
-    case "payment-aging": return mockPaymentAging;
-    case "payment-cheque-tracking": return mockChequeTracking;
-    case "payment-advance": return mockAdvancePayment;
-    case "debit-note-register": return mockDebitNoteRegister;
-    case "claim-settlement": return mockClaimSettlement;
-    case "vendor-claim-history": return mockVendorClaimHistory;
-    case "vat-input-register": return mockVatInput;
-    case "period-lock-violations": return mockPeriodLockViolations;
-    case "missing-documents": return mockMissingDocuments;
-    case "audit-trail": return mockAuditTrail;
-    default: return [];
-  }
-}
 
-function toExportColumns(rows: any[]) {
-  if (!rows.length) return [];
-  return Object.keys(rows[0]).map((key) => ({
-    header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c: string) => c.toUpperCase()).trim(),
-    key,
-    width: 18,
-  }));
-}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -2533,12 +3458,13 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const [vendor, setVendor] = useState("All");
   const [branch, setBranch] = useState("All");
   const [searchText, setSearchText] = useState("");
-  const [, setDataRevision] = useState(0);
+  const [dataRevision, setDataRevision] = useState(0);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [vendorList, setVendorList] = useState<{ id: number; name: string }[]>([]);
   const [vendorSearch, setVendorSearch] = useState("");
   const [vendorOpen, setVendorOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
@@ -2577,32 +3503,45 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
 
   const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
 
-  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+  const exportMeta = () => ({
+    dateFrom,
+    dateTo,
+    branch,
+    companyProfile,
+  });
 
   function handleExportPdf() {
-    const rows = getPurchaseExportRows(activeReport);
-    const cols = toExportColumns(rows);
-    exportToPDF(rows, cols, activeDef.label, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+    const vm = getReportView(activeReport);
+    if (!vm) return;
+    const html = generateReportA4Html(vm, companyProfile || {}, { title: activeDef.label, ...exportMeta() });
+    downloadPdf(html, activeDef.label.replace(/\s+/g, "_") + ".pdf", "Purchases Report");
   }
 
   function handleExportExcel() {
-    const rows = getPurchaseExportRows(activeReport);
-    const cols = toExportColumns(rows);
-    exportToExcel(rows, cols, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+    const vm = getReportView(activeReport);
+    if (!vm) return;
+    const flat = flattenReportView(vm);
+    exportToExcel(flat.rows, flat.columns, activeDef.label.replace(/\s+/g, "_"), exportMeta());
   }
 
   function handlePrint() {
-    const rows = getPurchaseExportRows(activeReport);
-    const cols = toExportColumns(rows);
-    const html = generateReportPrintHtml({}, activeDef.label, cols, rows, companyProfile || {}, exportMeta());
+    const vm = getReportView(activeReport);
+    if (!vm) return;
+    const html = generateReportA4Html(vm, companyProfile || {}, { title: activeDef.label, ...exportMeta() });
     printHtml(html);
   }
 
   function handleDownloadCsv() {
-    const rows = getPurchaseExportRows(activeReport);
+    const vm = getReportView(activeReport);
+    if (!vm) return;
+    const flat = flattenReportView(vm);
+    const rows = flat.rows;
     if (!rows.length) return;
-    const keys = Object.keys(rows[0]);
-    const csv = [keys.join(","), ...rows.map((r: any) => keys.map((k) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+    const cols = flat.columns;
+    const csv = [
+      cols.map((c: any) => `"${c.header}"`).join(","),
+      ...rows.map((r: any) => cols.map((c: any) => `"${String(r[c.key] ?? "").replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `${activeDef.label.replace(/\s+/g, "_")}.csv`;
@@ -2853,7 +3792,12 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 px-3 text-[11px] rounded-full border-[#F5C742]/70 bg-[#FFF6D8] flex items-center gap-1"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className={`h-7 px-3 text-[11px] rounded-full border flex items-center gap-1 transition-colors ${
+                  showAdvanced 
+                    ? "bg-[#F5C742] border-[#E5B426] text-slate-900 font-medium" 
+                    : "border-[#F5C742]/70 bg-[#FFF6D8] text-slate-800"
+                }`}
               >
                 <Filter className="h-3.5 w-3.5" />
                 Advanced
@@ -2937,24 +3881,26 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                   >
                     <option value="All">All</option>
                     {branches.map((b) => (
-                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                      <option key={b.id} value={b.name}>{b.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div className="space-y-1.5 col-span-2">
-                  <label className="text-[11px] text-slate-600">
-                    Item / SKU Search
-                  </label>
-                  <Input
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    placeholder="Search item name or SKU…"
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                  />
-                </div>
+                {showAdvanced && (
+                  <div className="space-y-1.5 col-span-2 xl:col-start-1">
+                    <label className="text-[11px] text-slate-600">
+                      Item / SKU Search
+                    </label>
+                    <Input
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      placeholder="Search item name or SKU…"
+                      className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                    />
+                  </div>
+                )}
 
-                <div className="flex items-end gap-2">
+                <div className={`flex items-end gap-2 ${!showAdvanced ? "xl:col-start-4 md:col-start-2" : "xl:col-start-4"}`}>
                   <Button onClick={() => loadReport()} className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
                     Generate
                   </Button>
@@ -2968,7 +3914,9 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
           </Card>
 
           {/* Results */}
-          {renderResults()}
+          <DataRevisionContext.Provider value={dataRevision}>
+            {renderResults()}
+          </DataRevisionContext.Provider>
         </motion.div>
       </div>
     </div>

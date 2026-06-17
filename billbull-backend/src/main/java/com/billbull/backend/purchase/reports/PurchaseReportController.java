@@ -2,6 +2,7 @@ package com.billbull.backend.purchase.reports;
 
 import java.time.LocalDate;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -15,10 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/purchase/reports")
 public class PurchaseReportController {
 
-    private final PurchaseReportDataService reportDataService;
+    private static final String MODULE = "purchases";
 
-    public PurchaseReportController(PurchaseReportDataService reportDataService) {
+    private final PurchaseReportDataService reportDataService;
+    private final ModulePermissionService modulePermissionService;
+
+    public PurchaseReportController(PurchaseReportDataService reportDataService,
+                                    ModulePermissionService modulePermissionService) {
         this.reportDataService = reportDataService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/data/{reportId}")
@@ -30,6 +36,7 @@ public class PurchaseReportController {
             @RequestParam(required = false) String vendor,
             @RequestParam(required = false) String branch,
             @RequestParam(required = false) String search) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(reportId, dateFrom, dateTo, vendor, branch, search));
     }
 }

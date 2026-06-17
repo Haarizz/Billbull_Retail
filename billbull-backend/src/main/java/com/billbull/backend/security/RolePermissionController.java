@@ -56,16 +56,38 @@ public class RolePermissionController {
      * Create a new role permission row — ADMIN only.
      * Body: { roleName, module, canView, canCreate, canEdit, canApprove, canExport }
      */
+    private static final java.util.Set<String> VALID_MODULES = java.util.Set.of(
+        "sales", "inventory", "purchases", "finance", "hr", "customer",
+        "dashboard", "userManagement", "batch_manual_select", "notification",
+        "sales.invoice", "sales.quotation", "sales.order", "sales.payment",
+        "sales.customer", "purchases.lpo", "purchases.grn", "purchases.invoice",
+        "purchases.vendor", "inventory.product", "inventory.category",
+        "inventory.warehouse", "inventory.stock", "finance.ledger",
+        "finance.voucher", "finance.reconcile", "finance.tax", "hr.employee",
+        "hr.payroll", "hr.attendance", "customer.inquiry", "customer.followup",
+        "customer.message", "userManagement.setup", "userManagement.role",
+        "userManagement.user", "dashboard.kpis", "dashboard.charts",
+        "permissions.journal.create", "permissions.journal.approve",
+        "permissions.journal.approve-high-value", "permissions.posting.backdate-into-locked",
+        "permissions.sales.override-credit-limit", "permissions.vendor.advance",
+        "permissions.customer.advance.refund"
+    );
+
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<RolePermissionDto> create(@RequestBody Map<String, Object> body) {
+        String module = (String) body.get("module");
+        if (module == null || !VALID_MODULES.contains(module.toLowerCase())) {
+            return ResponseEntity.badRequest().build();
+        }
         return ResponseEntity.ok(rolePermissionService.createOrUpdate(
                 null,
                 (String) body.get("roleName"),
-                (String) body.get("module"),
+                module,
                 Boolean.TRUE.equals(body.get("canView")),
                 Boolean.TRUE.equals(body.get("canCreate")),
                 Boolean.TRUE.equals(body.get("canEdit")),
+                Boolean.TRUE.equals(body.get("canDelete")),
                 Boolean.TRUE.equals(body.get("canApprove")),
                 Boolean.TRUE.equals(body.get("canExport"))
         ));
@@ -73,7 +95,7 @@ public class RolePermissionController {
 
     /**
      * Update an existing role permission row by ID — ADMIN only.
-     * Body: { canView, canCreate, canEdit, canApprove, canExport }
+     * Body: { canView, canCreate, canEdit, canDelete, canApprove, canExport }
      */
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
@@ -87,6 +109,7 @@ public class RolePermissionController {
                 Boolean.TRUE.equals(body.get("canView")),
                 Boolean.TRUE.equals(body.get("canCreate")),
                 Boolean.TRUE.equals(body.get("canEdit")),
+                Boolean.TRUE.equals(body.get("canDelete")),
                 Boolean.TRUE.equals(body.get("canApprove")),
                 Boolean.TRUE.equals(body.get("canExport"))
         ));

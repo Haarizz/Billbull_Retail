@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
     Search, Filter, Download, Upload, Plus, MoreHorizontal, ChevronDown, Users, Wallet, MapPin, Phone, Mail,
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
-    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw
+    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw, BarChart2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
@@ -13,9 +13,10 @@ import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
-import { fetchStatementOfAccount } from '../../api/financialsApi';
-// ✅ Import Warehouse API
+import { fetchStatementOfAccount, fetchARAgingReport } from '../../api/financialsApi';
+// ✅ Import Warehouse & Employee API
 import { getWarehouses } from '../../api/warehouseApi';
+import { getEmployees } from '../../api/employeeApi';
 // ✅ Import Sales Payment & Invoice API
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
@@ -36,9 +37,9 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
-import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
+import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateReportA4Html, printHtml } from '../../utils/printGenerator';
 import {
     normalizePurchaseTemplate,
     buildReceiptVoucherPrintData,
@@ -57,14 +58,14 @@ import TableSkeleton from '../../components/common/TableSkeleton';
 // ==========================================
 
 const CUSTOMER_COLUMNS = [
-    { header: 'S.No.', key: 'sNo', width: 8 },
-    { header: 'Code', key: 'code', width: 15 },
-    { header: 'Customer Name', key: 'name', width: 30 },
-    { header: 'Group', key: 'group', width: 15 },
-    { header: 'Contact', key: 'contact', width: 20 },
-    { header: 'Email', key: 'email', width: 25 },
-    { header: 'Balance', key: 'balance', width: 15 },
-    { header: 'Status', key: 'status', width: 12 }
+    { header: 'S.No.', key: 'sNo', width: 8, pdfWidth: 35 },
+    { header: 'Code', key: 'code', width: 15, pdfWidth: 65 },
+    { header: 'Customer Name', key: 'name', width: 30, pdfWidth: 170 },
+    { header: 'Group', key: 'group', width: 15, pdfWidth: 60 },
+    { header: 'Contact', key: 'contact', width: 20, pdfWidth: 90 },
+    { header: 'Email', key: 'email', width: 25, pdfWidth: 140 },
+    { header: 'Balance', key: 'balance', width: 15, pdfWidth: 70 },
+    { header: 'Status', key: 'status', width: 12, pdfWidth: 60 }
 ];
 
 const getOpeningInvoiceOutstanding = (invoice = {}) => {
@@ -449,7 +450,7 @@ const AddContactModal = ({ isOpen, onClose, onSave, initialData }) => {
 // ==========================================
 
 const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) => {
-    const { defaultBranchName } = useBranch();
+    const { defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
     const { company } = useCompany();
     const currency = company?.currency || 'AED';
     const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
@@ -472,6 +473,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     // ✅ WAREHOUSE LIST STATE
     const [warehouseList, setWarehouseList] = useState([]);
+    const [employeeList, setEmployeeList] = useState([]);
 
     const fileInputRef = useRef(null);
     const docInputRef = useRef(null);
@@ -506,6 +508,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         salesman: '',
         taxGroup: 'Standard VAT 5%',
         branch: defaultBranchName || '',
+        allocatedBranches: [],
         warehouse: '',
         billingAddress: '',
         shippingAddress: '',
@@ -539,17 +542,24 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         (value) => ({ value, label: value, displayLabel: value })
     ), [formData.currency]);
 
-    // ✅ FETCH WAREHOUSES ON MOUNT
+    // ✅ FETCH WAREHOUSES & EMPLOYEES ON MOUNT
     useEffect(() => {
-        const fetchWarehouses = async () => {
+        const fetchDropdownData = async () => {
             try {
-                const data = await getWarehouses();
-                setWarehouseList(data);
+                const [whData, empData] = await Promise.all([
+                    getWarehouses(),
+                    getEmployees()
+                ]);
+                setWarehouseList(whData);
+                setEmployeeList(empData.map(e => ({
+                    value: `${e.firstName} ${e.lastName}`,
+                    label: `${e.firstName} ${e.lastName}`
+                })));
             } catch (error) {
-                console.error("Error fetching warehouses", error);
+                console.error("Error fetching dropdown data", error);
             }
         };
-        fetchWarehouses();
+        fetchDropdownData();
     }, []);
 
     // ✅ SYNC FORM STATE WHEN EDITING
@@ -914,10 +924,17 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                     className="w-full"
                                 />
                             </div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label>
+                                <SearchableDropdown
+                                    options={employeeList}
+                                    value={formData.salesman}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, salesman: value }))}
+                                    placeholder="Select Salesman"
+                                    className="w-full"
+                                />
+                            </div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch</label><input name="branch" value={formData.branch} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-
                             {/* ✅ UPDATED WAREHOUSE DROPDOWN */}
                             <div>
                                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Warehouse</label>
@@ -939,6 +956,74 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             {/* ----------------------------- */}
 
                         </div>
+
+                        {/* Branch Allocation Section */}
+                        <div className="pt-6 mt-6 border-t border-slate-100">
+                            <h4 className="text-sm font-semibold text-slate-800 mb-4">Branch Allocation</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch <span className="text-red-500">*</span></label>
+                                    <div className="relative">
+                                        <select 
+                                            name="branch" 
+                                            value={formData.branch || activeBranch?.name || ''} 
+                                            onChange={(e) => {
+                                                handleInputChange(e);
+                                                const selectedBranch = e.target.value;
+                                                setFormData(prev => {
+                                                    const current = prev.allocatedBranches || [];
+                                                    if (!current.includes(selectedBranch)) {
+                                                        return { ...prev, allocatedBranches: [...current, selectedBranch] };
+                                                    }
+                                                    return prev;
+                                                });
+                                            }}
+                                            className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none focus:outline-none focus:border-[#F5C742]"
+                                        >
+                                            {availableBranches?.map(b => (
+                                                 <option key={b.id} value={b.name}>{b.name} {b.isDefault ? '(Default)' : ''}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocate to Branches</label>
+                                    <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2">
+                                        {availableBranches?.map(b => {
+                                            const isDefaultBranch = formData.branch === b.name || (!formData.branch && activeBranch?.name === b.name);
+                                            const isChecked = isDefaultBranch || formData.allocatedBranches?.includes(b.id) || formData.allocatedBranches?.includes(b.name);
+                                            
+                                            return (
+                                                <div key={b.id} className="flex items-center gap-2">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        id={`branch-${b.id}`}
+                                                        checked={isChecked}
+                                                        disabled={isDefaultBranch}
+                                                        onChange={(e) => {
+                                                            if (isDefaultBranch) return;
+                                                            const checked = e.target.checked;
+                                                            setFormData(prev => {
+                                                                const current = prev.allocatedBranches || [];
+                                                                if (checked) return { ...prev, allocatedBranches: [...current, b.name] };
+                                                                return { ...prev, allocatedBranches: current.filter(x => x !== b.name) };
+                                                            });
+                                                        }}
+                                                        className="rounded border-slate-300 text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed" 
+                                                    />
+                                                    <label htmlFor={`branch-${b.id}`} className={`text-xs ${isDefaultBranch ? 'text-slate-400 cursor-not-allowed' : 'text-slate-600 cursor-pointer'}`}>
+                                                        {b.name} <span className="text-[10px] text-slate-400">{b.isDefault ? '(Default)' : ''}</span>
+                                                    </label>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1">Select branches this customer can interact with. Uncheck to restrict.</p>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             );
@@ -1533,7 +1618,7 @@ const ReceiveMoneyView = () => {
         } finally {
             setIsLoading(false);
         }
-        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => { });
     };
 
     // Filtered Data
@@ -1882,7 +1967,8 @@ const ReceiveMoneyView = () => {
                                     {customerInvoices.length > 0 ? (
                                         customerInvoices.map(inv => {
                                             const balance = (inv.balance != null ? inv.balance : (inv.invoiceTotal - (inv.amountPaid || 0)));
-                                            const isOverdue = inv.dueDate && new Date(inv.dueDate) < new Date();
+                                            const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+                                            const isOverdue = inv.dueDate && new Date(inv.dueDate) < todayStart;
 
                                             return (
                                                 <tr key={inv.id} className={`hover:bg-slate-50 transition-colors ${selectedInvoices[inv.invoiceNumber] ? 'bg-yellow-50/50' : ''}`}>
@@ -2129,6 +2215,7 @@ const CustomerSOAView = ({ customers = [] }) => {
     const defaultEndDate = new Date().toISOString().split('T')[0];
 
     const [selectedCustomerCode, setSelectedCustomerCode] = useState('');
+    const [customerSearch, setCustomerSearch] = useState('');
     const [startDate, setStartDate] = useState(defaultStartDate);
     const [endDate, setEndDate] = useState(defaultEndDate);
     const [statementData, setStatementData] = useState(null);
@@ -2139,7 +2226,8 @@ const CustomerSOAView = ({ customers = [] }) => {
         if (customers.length > 0 && !selectedCustomerCode) {
             setSelectedCustomerCode(customers[0].code);
         }
-    }, [customers, selectedCustomerCode]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers]);
 
     const handleGenerateStatement = async () => {
         if (!selectedCustomerCode || !startDate || !endDate) return;
@@ -2213,13 +2301,35 @@ const CustomerSOAView = ({ customers = [] }) => {
             currency
         );
 
-        exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
+        exportToExcel(
+            mapStatementEntriesForExport(statementData),
+            STATEMENT_EXPORT_COLUMNS,
+            filename,
+            {
+                companyProfile: company,
+                branch: activeBranch?.name,
+                dateFrom: startDate,
+                dateTo: endDate,
+            }
+        );
     };
 
     const selectedCustomerDetails = useMemo(
         () => customers.find((customer) => customer.code === selectedCustomerCode) || null,
         [customers, selectedCustomerCode]
     );
+
+    const filteredSoACustomers = useMemo(() => {
+        const term = customerSearch.toLowerCase().trim();
+        if (!term) return customers;
+        return customers.filter(c =>
+            (c.name && c.name.toLowerCase().includes(term)) ||
+            (c.code && c.code.toLowerCase().includes(term)) ||
+            (c.phone && c.phone.toLowerCase().includes(term)) ||
+            (c.mobile && c.mobile.toLowerCase().includes(term)) ||
+            (c.contact && c.contact.toLowerCase().includes(term))
+        );
+    }, [customers, customerSearch]);
 
     return (
         <div className="space-y-6">
@@ -2233,15 +2343,46 @@ const CustomerSOAView = ({ customers = [] }) => {
                     <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-700">Select Customer *</label>
                         <div className="relative">
-                            <select
-                                value={selectedCustomerCode}
-                                onChange={(e) => setSelectedCustomerCode(e.target.value)}
-                                className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white">
-                                {customers.map(c => (
-                                    <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                            <input
+                                type="text"
+                                value={selectedCustomerDetails
+                                    ? `${selectedCustomerDetails.code} - ${selectedCustomerDetails.name}`
+                                    : customerSearch}
+                                onChange={(e) => {
+                                    setCustomerSearch(e.target.value);
+                                    setSelectedCustomerCode('');
+                                }}
+                                onFocus={() => {
+                                    if (selectedCustomerDetails) {
+                                        setCustomerSearch('');
+                                        setSelectedCustomerCode('');
+                                    }
+                                }}
+                                placeholder="Search by name, code or phone..."
+                                className="w-full h-10 pl-9 pr-3 rounded-md border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50"
+                            />
+                            {customerSearch && !selectedCustomerCode && (
+                                <div className="absolute z-20 top-full mt-1 left-0 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-52 overflow-y-auto">
+                                    {filteredSoACustomers.length === 0 ? (
+                                        <div className="px-4 py-3 text-sm text-slate-400 text-center">No customers found</div>
+                                    ) : filteredSoACustomers.slice(0, 50).map(c => (
+                                        <div
+                                            key={c.code}
+                                            className="px-4 py-2.5 cursor-pointer hover:bg-amber-50 border-b border-slate-50 last:border-0"
+                                            onClick={() => {
+                                                setSelectedCustomerCode(c.code);
+                                                setCustomerSearch('');
+                                            }}
+                                        >
+                                            <div className="text-sm font-medium text-slate-800">{c.code} — {c.name}</div>
+                                            {(c.phone || c.mobile || c.contact) && (
+                                                <div className="text-xs text-slate-500 mt-0.5">{c.phone || c.mobile || c.contact}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                     <div className="space-y-1.5">
@@ -2302,6 +2443,7 @@ const CustomerSOAView = ({ customers = [] }) => {
 
             {/* Table */}
             <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
+                <div className="overflow-x-auto">
                 <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
@@ -2328,7 +2470,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                                         <span className={`px-2 py-0.5 border rounded text-[10px] ${entry.type === 'INVOICE' ? 'text-blue-600 bg-blue-50 border-blue-100' :
                                             (entry.type || '').includes('PAYMENT') ? 'text-green-600 bg-green-50 border-green-100' :
                                                 entry.type === 'OPENING_BALANCE' ? 'text-orange-700 bg-orange-50 border-orange-100' :
-                                                'text-slate-500 bg-slate-50'
+                                                    'text-slate-500 bg-slate-50'
                                             }`}>{formatStatementEntryType(entry.type)}</span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600">{entry.documentNo || '-'}</td>
@@ -2354,6 +2496,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                         </tr>
                     </tfoot>
                 </table>
+                </div>
             </div>
 
             <StatementPrintPreview
@@ -2376,7 +2519,245 @@ const CustomerSOAView = ({ customers = [] }) => {
 };
 
 // ==========================================
-// 6. SUB-COMPONENTS (Stats & Cards)
+// 6. DEBTORS SUMMARY VIEW
+// ==========================================
+
+const DebtorsSummaryView = ({ customers = [] }) => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
+    const [isLoading, setIsLoading] = useState(false);
+    const [hasLoaded, setHasLoaded] = useState(false);
+    
+    // Data States
+    const [agingData, setAgingData] = useState([]);
+    const [summary, setSummary] = useState({
+        total: 0,
+        current: 0,
+        thirtySixty: 0,
+        sixtyPlus: 0,
+        sixtyNinety: 0,
+        ninetyPlus: 0
+    });
+
+    useEffect(() => {
+        if (customers.length > 0 && !hasLoaded) {
+            loadData();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customers]);
+
+    const loadData = async () => {
+        setIsLoading(true);
+        try {
+            const invoicesData = await getAllSalesInvoices();
+            const today = new Date();
+
+            let total = 0, current = 0, thirtySixty = 0, sixtyNinety = 0, ninetyPlus = 0, sixtyPlus = 0;
+
+            const agedCustomers = customers.map(cust => {
+                const custInvoices = invoicesData.filter(inv => inv.customerCode === cust.code && inv.paymentStatus !== 'Paid' && Number(inv.balance || inv.amountDue || 0) > 0);
+                
+                let cTotal = 0, cCurr = 0, c30 = 0, c60 = 0, c90 = 0, c60P = 0;
+                
+                const processedInvoices = custInvoices.map(inv => {
+                    const invDate = new Date(inv.dueDate || inv.invoiceDate);
+                    const diffTime = Math.abs(today - invDate);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const isPast = invDate < today;
+                    
+                    const amt = Number(inv.balance || inv.amountDue || 0);
+                    cTotal += amt;
+                    
+                    if (!isPast || diffDays <= 30) {
+                        cCurr += amt;
+                    } else if (diffDays <= 60) {
+                        c30 += amt;
+                    } else if (diffDays <= 90) {
+                        c60 += amt;
+                        c60P += amt;
+                    } else {
+                        c90 += amt;
+                        c60P += amt;
+                    }
+                    
+                    return { ...inv, ageDays: isPast ? diffDays : 0, outstandingAmount: amt };
+                });
+
+                if (cust.balance > 0 && processedInvoices.length === 0) {
+                    const amt = Number(cust.balance);
+                    cTotal += amt; c60P += amt; c90 += amt;
+                }
+
+                total += cTotal; current += cCurr; thirtySixty += c30; sixtyNinety += c60; ninetyPlus += c90; sixtyPlus += c60P;
+
+                return {
+                    name: cust.name,
+                    code: cust.code,
+                    creditStatus: cust.creditStatus || 'Good',
+                    current: cCurr,
+                    thirtySixty: c30,
+                    sixtyNinety: c60,
+                    ninetyPlus: c90,
+                    sixtyPlus: c60P,
+                    totalOutstanding: cTotal
+                };
+            }).filter(c => c.totalOutstanding > 0).sort((a, b) => b.totalOutstanding - a.totalOutstanding);
+
+            setAgingData(agedCustomers);
+            setSummary({ total, current, thirtySixty, sixtyNinety, ninetyPlus, sixtyPlus });
+            setHasLoaded(true);
+        } catch (error) {
+            console.error("Error loading aging data", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 flex flex-col md:flex-row gap-4 items-start md:items-center print:hidden">
+                <div className="w-12 h-12 rounded-lg bg-white shadow-sm flex items-center justify-center shrink-0 border border-yellow-100">
+                    <BarChart2 className="text-yellow-600" size={24} />
+                </div>
+                <div className="flex-1">
+                    <h2 className="text-lg font-bold text-slate-800">Debtors Summary</h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                        Aging analysis and outstanding invoices breakdown
+                    </p>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <FileText className="text-blue-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-blue-600">Total Outstanding</span>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-600">
+                        <CurrencyAmount value={summary.total} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-emerald-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle2 className="text-emerald-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-emerald-600">Current (0-30)</span>
+                    </div>
+                    <div className="text-2xl font-bold text-emerald-500">
+                        <CurrencyAmount value={summary.current} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-orange-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <AlertCircle className="text-orange-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-orange-600">30-60 Days</span>
+                    </div>
+                    <div className="text-2xl font-bold text-orange-500">
+                        <CurrencyAmount value={summary.thirtySixty} currency={currency} />
+                    </div>
+                </div>
+                <div className="bg-white p-5 rounded-lg border border-red-100 shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-2 mb-2">
+                        <XCircle className="text-red-500 w-4 h-4" />
+                        <span className="text-xs font-semibold text-red-600">60+ Days</span>
+                    </div>
+                    <div className="text-2xl font-bold text-red-600">
+                        <CurrencyAmount value={summary.sixtyPlus} currency={currency} />
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                <h3 className="text-sm font-bold text-slate-800 mb-6">Aging Distribution</h3>
+                <div className="space-y-6">
+                    {[
+                        { label: 'Current (0-30 days)', value: summary.current, color: 'bg-emerald-500' },
+                        { label: '30-60 days', value: summary.thirtySixty, color: 'bg-orange-500' },
+                        { label: '60-90 days', value: summary.sixtyNinety, color: 'bg-orange-500' },
+                        { label: '90+ days (Overdue)', value: summary.ninetyPlus, color: 'bg-red-500' },
+                    ].map((item, idx) => {
+                        const pct = summary.total > 0 ? Math.round((item.value / summary.total) * 100) : 0;
+                        return (
+                            <div key={idx}>
+                                <div className="flex justify-between text-xs font-medium text-slate-600 mb-2">
+                                    <span>{item.label}</span>
+                                    <span>{pct}%</span>
+                                </div>
+                                <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full ${item.color} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }}></div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200">
+                    <h3 className="text-sm font-bold text-slate-800">Outstanding by Customer</h3>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold text-xs text-left">Customer</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">Outstanding</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">Current</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">30-60 Days</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-center">60+ Days</th>
+                                <th className="px-6 py-4 font-semibold text-xs text-left">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan="6" className="px-6 py-12 text-center text-slate-400">Loading aging data...</td>
+                                </tr>
+                            ) : agingData.length > 0 ? (
+                                agingData.map((cust, idx) => (
+                                    <tr key={idx} className="hover:bg-slate-50">
+                                        <td className="px-6 py-4">
+                                            <div className="font-medium text-slate-800">{cust.name}</div>
+                                            <div className="text-[10px] text-slate-500 mt-0.5">{cust.code}</div>
+                                        </td>
+                                        <td className="px-6 py-4 text-center font-bold text-slate-800">
+                                            <CurrencyAmount value={cust.totalOutstanding} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-emerald-500 font-medium">
+                                            <CurrencyAmount value={cust.current} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">
+                                            <CurrencyAmount value={cust.thirtySixty} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-red-500 font-medium">
+                                            <CurrencyAmount value={cust.sixtyPlus} currency={currency} />
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold text-white ${
+                                                cust.creditStatus === 'Good' ? 'bg-emerald-500' :
+                                                cust.creditStatus === 'Warning' ? 'bg-orange-500' :
+                                                'bg-orange-500'
+                                            }`}>
+                                                {cust.creditStatus === 'Good' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                                                {cust.creditStatus || 'Good'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan="6" className="px-6 py-12 text-center text-slate-400">No outstanding balances found.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// 7. SUB-COMPONENTS (Stats & Cards)
 // ==========================================
 
 const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => (
@@ -2398,6 +2779,7 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 
 const CustomerLedger = () => {
     const { company } = useCompany();
+    const { activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [customerToEdit, setCustomerToEdit] = useState(null);
@@ -2415,14 +2797,14 @@ const CustomerLedger = () => {
     const customerImportInputRef = useRef(null);
     const [isImportingCustomers, setIsImportingCustomers] = useState(false);
 
-    // Fetch Customers on Mount
+    // Fetch Customers on Mount and when active branch changes (BBQA52-024)
     useEffect(() => {
         loadCustomers();
-    }, []);
+    }, [activeBranch?.id]);
 
     const loadCustomers = async () => {
         try {
-            const res = await getAllCustomers();
+            const res = await getAllCustomers(activeBranch?.name);
 
             // 🔥 SAFETY CHECK
             const data = Array.isArray(res) ? res : [];
@@ -2433,7 +2815,7 @@ const CustomerLedger = () => {
                 status: c.status || 'Active',
                 contact: c.mobile || c.phone || '',
                 location: [c.city, c.country].filter(Boolean).join('\n'),
-                balance: Number(c.balance || 0),
+                balance: Number(c.currentBalance ?? c.balance ?? 0),
                 totalSales: Number(c.totalSales || 0),
             }));
 
@@ -2456,7 +2838,8 @@ const CustomerLedger = () => {
             toast.success(result || 'Customers imported successfully.', { id: toastId, duration: 6000 });
         } catch (error) {
             console.error('Failed to import customers', error);
-            const message = error.response?.data || error.message || 'Failed to import customers.';
+            const errData = error.response?.data;
+            const message = (typeof errData === 'string' ? errData : errData?.message) || error.message || 'Failed to import customers.';
             toast.error(message, { id: toastId, duration: 7000 });
         } finally {
             setIsImportingCustomers(false);
@@ -2475,7 +2858,9 @@ const CustomerLedger = () => {
             handleCloseModal();
         } catch (error) {
             console.error("Failed to save customer", error);
-            alert("Customer not saved to database");
+            const errData2 = error?.response?.data;
+            const msg = errData2?.message || (typeof errData2 === 'string' ? errData2 : null) || error?.message || "Customer not saved to database";
+            toast.error(msg, { duration: 5000 });
         }
     };
 
@@ -2518,6 +2903,32 @@ const CustomerLedger = () => {
     }
 
 
+    const handlePrintCustomerList = () => {
+        const rows = withExportSerialNumbers(filteredCustomers);
+        const vm = {
+            reportTitle: 'Customer List',
+            sections: [{
+                columns: [
+                    { header: 'S.No.',         key: 'sNo',     align: 'center' },
+                    { header: 'Code',           key: 'code'    },
+                    { header: 'Customer Name',  key: 'name'    },
+                    { header: 'Group',          key: 'group'   },
+                    { header: 'Contact',        key: 'contact' },
+                    { header: 'Email',          key: 'email'   },
+                    { header: 'Balance',        key: 'balance', align: 'right' },
+                    { header: 'Status',         key: 'status'  },
+                ],
+                rows,
+            }],
+        };
+        const branchLabel = activeBranch?.name || '';
+        const html = generateReportA4Html(vm, company || {}, {
+            reportTitle: 'Customer List',
+            filters: branchLabel ? [{ label: 'Branch', value: branchLabel }] : [],
+        });
+        printHtml(html);
+    };
+
     // Derived state for Filtering
     const filteredCustomers = useMemo(() => {
         return customers.filter(cust => {
@@ -2556,6 +2967,8 @@ const CustomerLedger = () => {
                 return <ReceiveMoneyView />;
             case 'Customer SoA':
                 return <CustomerSOAView customers={customers} />;
+            case 'Debtors Summary':
+                return <DebtorsSummaryView customers={customers} />;
 
             case 'Customer List':
             default:
@@ -2611,17 +3024,17 @@ const CustomerLedger = () => {
                                 <table className="bb-nowrap-table w-full text-sm text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                         <tr>
-                                            <th className="px-3 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center w-12">S.No.</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Code</th>
-                                            <th className="px-2 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center">Photo</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Customer Name</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Group</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Contact</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Location</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap text-right">Balance</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Credit Status</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Status</th>
-                                            <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap text-right">Actions</th>
+                                            <th className="px-3 py-4 font-semibold text-xs whitespace-nowrap text-center w-12">S.No.</th>
+                                            <th className="px-4 py-4 font-semibold text-xs whitespace-nowrap w-24">Code</th>
+                                            <th className="px-2 py-4 font-semibold text-xs whitespace-nowrap text-center w-12">Photo</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Customer Name</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Group</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Contact</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Location</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap text-right">Balance</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Credit Status</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap">Status</th>
+                                            <th className="px-6 py-4 font-semibold text-xs whitespace-nowrap text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -2635,7 +3048,9 @@ const CustomerLedger = () => {
                                                             totalElements: filteredCustomers.length,
                                                         })}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
+                                                    <td className="px-4 py-4 text-xs font-mono text-slate-500 align-top pt-5">
+                                                        <div className="w-24 whitespace-normal break-words leading-tight">{cust.code}</div>
+                                                    </td>
 
                                                     <td className="px-2 py-4 whitespace-nowrap align-top pt-4 text-center">
                                                         <div
@@ -2785,16 +3200,25 @@ const CustomerLedger = () => {
                             />
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
-                                    withListSerialNumbers(filteredCustomers),
+                                    withExportSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
-                                    'Customers'
+                                    'Customers',
+                                    {
+                                        companyProfile: company,
+                                        branch: activeBranch?.name
+                                    }
                                 )}
                                 onExportPdf={() => exportToPDF(
-                                    withListSerialNumbers(filteredCustomers),
+                                    withExportSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customer List',
-                                    'Customers'
+                                    'Customers',
+                                    {
+                                        companyProfile: company,
+                                        branch: activeBranch?.name
+                                    }
                                 )}
+                                onPrint={handlePrintCustomerList}
                             />
                             <button
                                 onClick={() => customerImportInputRef.current?.click()}
@@ -2818,7 +3242,8 @@ const CustomerLedger = () => {
                         {[
                             { id: 'Customer List', icon: Users },
                             { id: 'Receive Money', icon: Wallet },
-                            { id: 'Customer SoA', icon: FileText }
+                            { id: 'Customer SoA', icon: FileText },
+                            { id: 'Debtors Summary', icon: BarChart2 }
                         ].map(tab => (
                             <button
                                 key={tab.id}

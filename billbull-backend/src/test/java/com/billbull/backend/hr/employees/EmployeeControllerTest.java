@@ -40,7 +40,8 @@ class EmployeeControllerTest {
 
     @BeforeEach
     void setUp() {
-        objectMapper = new ObjectMapper();
+        objectMapper = new ObjectMapper()
+                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         employeeController = new EmployeeController(
                 employeeService,
                 objectMapper,

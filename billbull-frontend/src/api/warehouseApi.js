@@ -2,8 +2,15 @@ import api from "./axiosConfig";
 
 // ================= WAREHOUSES =================
 
-export const getWarehouses = async () => {
-  const res = await api.get("/api/warehouses");
+export const getWarehouses = async (branchId = null) => {
+  const params = branchId ? { branchId } : {};
+  const res = await api.get("/api/warehouses", { params });
+  return res.data;
+};
+
+export const getWarehouseTree = async (branchId = null) => {
+  const params = branchId ? { branchId } : {};
+  const res = await api.get("/api/warehouses/tree", { params });
   return res.data;
 };
 

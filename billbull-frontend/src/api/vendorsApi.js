@@ -4,9 +4,10 @@ import api from "./axiosConfig";
 // VENDOR CRUD APIs
 // ==============================
 
-// LIST
-export const getVendors = async () => {
-  const res = await api.get("/api/vendors");
+// LIST — branchName filters by allocation (BBQA52-024)
+export const getVendors = async (branchName) => {
+  const params = branchName ? { branchName } : {};
+  const res = await api.get("/api/vendors", { params });
   return res.data;
 };
 

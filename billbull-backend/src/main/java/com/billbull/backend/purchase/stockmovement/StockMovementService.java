@@ -10,9 +10,19 @@ import org.springframework.transaction.annotation.Transactional;
 public class StockMovementService {
 
     private final StockMovementRepository repository;
+    private final com.billbull.backend.inventory.product.ProductRepository productRepository;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+    private final com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService;
 
-    public StockMovementService(StockMovementRepository repository) {
+    public StockMovementService(
+            StockMovementRepository repository,
+            com.billbull.backend.inventory.product.ProductRepository productRepository,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
+            com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService) {
         this.repository = repository;
+        this.productRepository = productRepository;
+        this.notifPublisher = notifPublisher;
+        this.inventoryBalanceService = inventoryBalanceService;
     }
 
     public java.math.BigDecimal getAvailableStock(Long warehouseId, Long productId) {
@@ -86,6 +96,7 @@ public class StockMovementService {
         sm.setMovementDate(LocalDate.now());
 
         repository.save(sm);
+        refreshBalance(productId, warehouseId);
     }
 
     /** Full hierarchy inbound post with exact batch/expiry identity. */
@@ -140,6 +151,7 @@ public class StockMovementService {
         sm.setUnitCost(unitCost);
 
         repository.save(sm);
+        refreshBalance(productId, warehouseId);
     }
 
     // =========================================================
@@ -212,6 +224,24 @@ public class StockMovementService {
             LocalDate expiryDate,
             Integer qty,
             String ref) {
+        postOutboundStock(sourceType, sourceId, productId, warehouseId, binId, zoneId, locatorId,
+                batchNumber, expiryDate, qty, ref, false);
+    }
+
+    /** Full hierarchy outbound post — negativeOverride=true stamps the movement for audit. */
+    public void postOutboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            String batchNumber,
+            LocalDate expiryDate,
+            Integer qty,
+            String ref,
+            boolean negativeOverride) {
 
         if (productId == null)
             throw new IllegalArgumentException("Product ID is required for outbound stock");
@@ -245,8 +275,30 @@ public class StockMovementService {
         sm.setReferenceNo(ref);
         sm.setBatchNumber(normalizedBatchNumber);
         sm.setExpiryDate(expiryDate);
+        sm.setNegativeOverride(negativeOverride);
 
         repository.save(sm);
+        refreshBalance(productId, warehouseId);
+
+        // Low stock check
+        try {
+            productRepository.findById(productId).ifPresent(p -> {
+                int reorderLevel = p.getInventory() != null && p.getInventory().getReorderLevel() != null ? p.getInventory().getReorderLevel() : 0;
+                if (reorderLevel > 0) {
+                    java.math.BigDecimal available = repository.getAvailableStock(warehouseId, productId);
+                    if (available != null && available.compareTo(java.math.BigDecimal.valueOf(reorderLevel)) <= 0) {
+                        notifPublisher.lowStockAlert(
+                                p.getName(),
+                                p.getCode() != null ? p.getCode() : "P-" + productId,
+                                available.intValue(),
+                                reorderLevel
+                        );
+                    }
+                }
+            });
+        } catch (Exception e) {
+            // Ignore notification errors to not block transaction
+        }
     }
 
     // =========================================================
@@ -315,6 +367,18 @@ public class StockMovementService {
         sm.setExpiryDate(expiryDate);
 
         repository.save(sm);
+        refreshBalance(productId, warehouseId);
+    }
+
+    private void refreshBalance(Long productId, Long warehouseId) {
+        try {
+            inventoryBalanceService.refresh(productId, warehouseId);
+        } catch (Exception e) {
+            // Never block stock posting due to balance refresh failure; log for investigation.
+            org.slf4j.LoggerFactory.getLogger(StockMovementService.class)
+                    .error("[InventoryBalance] Failed to refresh balance for product={} warehouse={}: {}",
+                            productId, warehouseId, e.getMessage());
+        }
     }
 
     private String normalizeBatchNumber(String batchNumber) {

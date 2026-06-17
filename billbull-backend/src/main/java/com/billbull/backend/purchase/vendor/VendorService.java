@@ -1,10 +1,17 @@
 package com.billbull.backend.purchase.vendor;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.settings.branch.BranchRepository;
+
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -14,15 +21,21 @@ public class VendorService {
     private final com.billbull.backend.purchase.lpo.LpoRepository lpoRepo;
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo;
     private final com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo;
+    private final BranchRepository branchRepo;
+
+    @PersistenceContext
+    private EntityManager em;
 
     public VendorService(VendorRepository repo,
             com.billbull.backend.purchase.lpo.LpoRepository lpoRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo,
-            com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo) {
+            com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo,
+            BranchRepository branchRepo) {
         this.repo = repo;
         this.lpoRepo = lpoRepo;
         this.invRepo = invRepo;
         this.payRepo = payRepo;
+        this.branchRepo = branchRepo;
     }
 
     // -------------------------
@@ -31,10 +44,9 @@ public class VendorService {
     public Vendor create(VendorRequest req, boolean isDraft) {
         Vendor v = new Vendor();
         map(req, v);
-
+        mapBranchAllocations(req, v);
         v.setCode(generateCode());
         v.setStatus(isDraft ? "Draft" : "Active");
-
         return repo.save(v);
     }
 
@@ -44,8 +56,8 @@ public class VendorService {
     public Vendor update(Long id, VendorRequest req) {
         Vendor v = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Vendor not found"));
-
         map(req, v);
+        mapBranchAllocations(req, v);
         return repo.save(v);
     }
 
@@ -53,31 +65,32 @@ public class VendorService {
     // LIST
     // -------------------------
     public List<VendorListResponse> list() {
-        // Batch the three balance aggregates into one grouped query each (keyed by
-        // vendor name) instead of running them per-vendor — turns 3×N queries into
-        // 3 total, which is the difference between ~12s and instant at 300 vendors.
-        java.util.Map<String, BigDecimal> invoicedByName = toAmountMap(invRepo.sumInvoicedGroupedByVendorName());
-        java.util.Map<String, BigDecimal> paidByName = toAmountMap(payRepo.sumPaymentsGroupedByVendorName());
+        return list(null);
+    }
+
+    public List<VendorListResponse> list(String branchName) {
+        // Batch the balance aggregates into grouped queries (keyed by vendor name).
+        // grandTotal of POSTED, unpaid/partial invoices per vendor name.
+        java.util.Map<String, BigDecimal> invoiceOutstandingByName = toAmountMap(invRepo.sumOutstandingByVendorName());
+        // POSTED/CLEARED payments already applied to specific invoices — reduces the gross invoice total.
+        java.util.Map<String, BigDecimal> invoiceLinkedPaidByName = toAmountMap(payRepo.sumInvoiceLinkedPaymentsGroupedByVendorName());
+        // On-account payments (not linked to any invoice — settle opening balance).
         java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
 
-        return repo.findByIsActiveTrue()
+        List<VendorListResponse> result = repo.findByIsActiveTrue()
                 .stream()
                 .map(v -> {
-                    // Compute payable balance live:
-                    // openingBalance + totalInvoiced − totalPaid
                     BigDecimal openingBal  = v.getOpeningBalance() != null ? v.getOpeningBalance() : BigDecimal.ZERO;
-                    BigDecimal totalInvoiced = invoicedByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal totalPaid = paidByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal payableBalance = openingBal.add(totalInvoiced).subtract(totalPaid);
 
-                    // Opening balance still owed after netting off on-account (non
-                    // invoice-linked) payments — prevents the Payments screen from
-                    // showing the OB as unpaid once it has been settled.
+                    // Opening balance still owed after netting off on-account payments.
                     BigDecimal onAccountPaid = onAccountByName.getOrDefault(v.getName(), BigDecimal.ZERO);
-                    BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid);
-                    if (openingOutstanding.compareTo(BigDecimal.ZERO) < 0) {
-                        openingOutstanding = BigDecimal.ZERO;
-                    }
+                    BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid).max(BigDecimal.ZERO);
+
+                    // Payable = (gross invoice total − payments already applied) + remaining opening balance.
+                    BigDecimal invGross = invoiceOutstandingByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal invPaid  = invoiceLinkedPaidByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal invOutstanding = invGross.subtract(invPaid).max(BigDecimal.ZERO);
+                    BigDecimal payableBalance = invOutstanding.add(openingOutstanding);
 
                     VendorListResponse r = new VendorListResponse(
                             v.getId(),
@@ -124,9 +137,34 @@ public class VendorService {
                     r.setIban(v.getIban());
                     r.setSwiftCode(v.getSwiftCode());
                     r.setBeneficiaryName(v.getBeneficiaryName());
+                    // BBQA52-023: branch allocation fields
+                    v.getBranchAllocations().size(); // force lazy init
+                    String defaultBranchName = v.getBranchAllocations().stream()
+                            .filter(VendorBranchAllocation::isDefault)
+                            .findFirst()
+                            .map(a -> a.getBranch().getName())
+                            .orElse(v.getBranch() != null ? v.getBranch().getName() : null);
+                    List<String> allocBranches = v.getBranchAllocations().stream()
+                            .map(a -> a.getBranch().getName())
+                            .collect(Collectors.toList());
+                    r.setBranch(defaultBranchName);
+                    r.setAllocatedBranches(allocBranches);
                     return r;
                 })
-                .toList();
+                .collect(Collectors.toList());
+
+        // BBQA52-024: filter by branch if requested; unallocated vendors visible everywhere
+        if (branchName != null && !branchName.isBlank()) {
+            final String branch = branchName.trim();
+            return result.stream()
+                    .filter(r -> {
+                        List<String> alloc = r.getAllocatedBranches();
+                        if (alloc == null || alloc.isEmpty()) return true;
+                        return alloc.stream().anyMatch(b -> branch.equalsIgnoreCase(b));
+                    })
+                    .collect(Collectors.toList());
+        }
+        return result;
     }
 
     /** Collapse grouped {@code [vendorName, sum]} rows into a name→amount map. */
@@ -209,6 +247,29 @@ public class VendorService {
         v.setIban(r.getIban());
         v.setSwiftCode(r.getSwiftCode());
         v.setBeneficiaryName(r.getBeneficiaryName());
+    }
+
+    private void mapBranchAllocations(VendorRequest req, Vendor v) {
+        if (req.getBranch() == null && req.getAllocatedBranches() == null) return;
+        v.getBranchAllocations().size(); // force-init before clear
+        v.getBranchAllocations().clear();
+        em.flush(); // push DELETEs to DB before INSERTs to avoid unique-constraint violation
+        Set<String> names = new LinkedHashSet<>();
+        if (req.getBranch() != null && !req.getBranch().isBlank()) names.add(req.getBranch());
+        if (req.getAllocatedBranches() != null) names.addAll(req.getAllocatedBranches());
+        final String defaultName = req.getBranch();
+        for (String name : names) {
+            branchRepo.findByNameIgnoreCase(name).ifPresent(b -> {
+                VendorBranchAllocation alloc = new VendorBranchAllocation();
+                alloc.setVendor(v);
+                alloc.setBranch(b);
+                alloc.setDefault(name.equals(defaultName));
+                v.getBranchAllocations().add(alloc);
+                if (name.equals(defaultName)) {
+                    v.setBranch(b);
+                }
+            });
+        }
     }
 
     private String generateCode() {

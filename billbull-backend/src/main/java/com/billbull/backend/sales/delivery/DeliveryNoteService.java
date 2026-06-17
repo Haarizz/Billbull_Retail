@@ -357,8 +357,10 @@ public class DeliveryNoteService {
                         item.getProduct().getId())
                         .add(BigDecimal.valueOf(baseQty));
 
-                // Only enforce when stock check is enabled in Sales Settings
-                if (stockCheckRequired && available.compareTo(requested) < 0) {
+                // Only enforce when stock check is enabled AND the product does not allow negative stock.
+                boolean productAllowsNegative = item.getProduct().getInventory() != null
+                        && item.getProduct().getInventory().isAllowNegative();
+                if (stockCheckRequired && !productAllowsNegative && available.compareTo(requested) < 0) {
                     throw new IllegalStateException(
                             "Insufficient stock for " + item.getProduct().getCode() +
                                     " | Available: " + available +
@@ -386,6 +388,18 @@ public class DeliveryNoteService {
             salesOrderService.updateStatus(
                     dn.getSalesOrderNo(),
                     com.billbull.backend.sales.salesorder.SalesOrderStatus.DISPATCHED);
+
+            // Release any stale RESERVED SO batch allocations whose source line is not
+            // referenced by this DN (e.g. orphaned allocations from a previous item-ID
+            // recreation). Only SO lines actively inherited by this DN are kept.
+            java.util.Set<Long> activeSoLineIds = dn.getItems().stream()
+                    .map(com.billbull.backend.sales.delivery.DeliveryNoteItem::getSalesOrderItemId)
+                    .filter(lineId -> lineId != null)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!activeSoLineIds.isEmpty()) {
+                salesOrderService.findIdBySoNumber(dn.getSalesOrderNo()).ifPresent(soId ->
+                        batchSelectionService.releaseStaleOrderLines(soId, activeSoLineIds));
+            }
         }
 
         return toResponse(saved);
@@ -433,13 +447,16 @@ public class DeliveryNoteService {
                 if (isBatchControlled(item)) {
                     postAllocatedBatchDeliveryDeduction(dn, item, baseQty + baseFoc);
                 } else {
-                    // Pre-check physical stock with record lock only when stock check is enabled.
-                    // When disabled, allow deduction to proceed into negative (zero-stock sales).
+                    // Pre-check physical stock with record lock only when stock check is enabled
+                    // AND the product does not have negative-stock override.
+                    // When either condition is false, allow deduction to proceed into negative.
                     BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
                             dn.getWarehouse().getId(),
                             item.getProduct().getId());
 
-                    if (stockCheckRequired && physicalAvailable.compareTo(requested) < 0) {
+                    boolean productAllowsNegative = item.getProduct().getInventory() != null
+                            && item.getProduct().getInventory().isAllowNegative();
+                    if (stockCheckRequired && !productAllowsNegative && physicalAvailable.compareTo(requested) < 0) {
                         throw new IllegalStateException(
                                 "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
                                         " | Available: " + physicalAvailable +
@@ -447,7 +464,7 @@ public class DeliveryNoteService {
                     }
 
                     // Deduct exact batch/bin identities so visible stock is reduced.
-                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc);
+                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc, productAllowsNegative && physicalAvailable.compareTo(requested) < 0);
                 }
 
             }
@@ -507,7 +524,7 @@ public class DeliveryNoteService {
         }
     }
 
-    private void postBatchAwareDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct) {
+    private void postBatchAwareDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct, boolean negativeOverride) {
         if (totalToDeduct <= 0) {
             return;
         }
@@ -517,8 +534,8 @@ public class DeliveryNoteService {
         int remaining = totalToDeduct;
 
         if (item.getBinId() != null) {
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, item.getBinId(), remaining);
-            if (remaining > 0) {
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, item.getBinId(), remaining, negativeOverride);
+            if (remaining > 0 && !negativeOverride) {
                 throw new IllegalStateException(
                         "Selected bin does not have enough batch stock for " + item.getProduct().getCode()
                                 + ". Short by: " + remaining);
@@ -531,14 +548,14 @@ public class DeliveryNoteService {
                 break;
             }
             Long binId = (Long) row[0];
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, binId, remaining);
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, binId, remaining, negativeOverride);
         }
 
         if (remaining > 0) {
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, null, remaining);
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, null, remaining, negativeOverride);
         }
 
-        if (remaining > 0 && salesSettingsService.getSettings().isStockCheckRequired()) {
+        if (remaining > 0 && !negativeOverride && salesSettingsService.getSettings().isStockCheckRequired()) {
             throw new IllegalStateException(
                     "Insufficient batch/bin stock for " + item.getProduct().getCode()
                             + ". Short by: " + remaining);
@@ -585,7 +602,8 @@ public class DeliveryNoteService {
             Long productId,
             Long warehouseId,
             Long binId,
-            int requestedQty) {
+            int requestedQty,
+            boolean negativeOverride) {
         if (requestedQty <= 0) {
             return 0;
         }
@@ -610,7 +628,8 @@ public class DeliveryNoteService {
                     identity.batchNumber,
                     identity.expiryDate,
                     deductQty,
-                    dn.getDnNumber());
+                    dn.getDnNumber(),
+                    negativeOverride);
             remaining -= deductQty;
         }
 
@@ -825,20 +844,35 @@ public class DeliveryNoteService {
                     + resolveBaseQty(dnItem.getProduct().getId(), effectiveFocUnit, rawFoc);
             if (deliveredQty <= 0) continue;
 
-            // FIX 2 — Cost source: try weighted average from stock ledger first,
-            // fall back to product pricing cost. Reject if neither is available.
+            // Cost source: try weighted average from stock ledger first, fall back to product pricing.
+            // PDF §16 / QA §I: "If the inventory cost cannot be determined, the sale must not be
+            // permitted to post." Block delivery for inventory-tracked items with no cost.
             Product product = dnItem.getProduct();
             BigDecimal fallbackCost = (product.getPricing() != null)
                     ? product.getPricing().getCost() : null;
             BigDecimal productCost = stockMovementService.getCostForOutbound(
                     product.getId(), dn.getWarehouse().getId(), fallbackCost);
 
-            // Zero-cost and no-cost products are valid (service items, complimentary goods).
-            // Treat null or zero cost as ZERO COGS — no journal entry contribution.
-            BigDecimal effectiveCost = (productCost != null && productCost.compareTo(BigDecimal.ZERO) > 0)
-                    ? productCost : BigDecimal.ZERO;
+            // PDF §16 / QA §I: block delivery if cost is completely undetermined (no WAC, no pricing cost).
+            // Items with a pricing cost of zero are allowed (service items, free goods).
+            BigDecimal effectiveCost;
+            if (productCost == null) {
+                // getCostForOutbound returned null → both WAC and fallbackCost are null.
+                throw new ResponseStatusException(
+                        org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Cannot deliver item '" + product.getName() + "' (code=" + product.getCode()
+                                + "): inventory cost is unknown. Post a GRN or configure a product cost before delivery.");
+            } else if (productCost.compareTo(BigDecimal.ZERO) > 0) {
+                effectiveCost = productCost;
+            } else {
+                // Explicitly zero-cost product (service / free-of-charge) — COGS = 0, allowed.
+                effectiveCost = BigDecimal.ZERO;
+            }
             BigDecimal itemCogs = effectiveCost.multiply(BigDecimal.valueOf(deliveredQty));
             totalCogs = totalCogs.add(itemCogs);
+
+            // Stamp WAC cost back onto DN item so invoice items can copy it for profit reporting
+            dnItem.setCost(effectiveCost.doubleValue());
 
             // Match DN item to invoice item by itemCode for proportional revenue
             SalesInvoiceItem matchedInvoiceItem = invoice.getItems().stream()
@@ -874,6 +908,11 @@ public class DeliveryNoteService {
                     matchedInvoiceItem.setRecognizedCogs(
                             matchedInvoiceItem.getRecognizedCogs().add(itemCogs));
                 }
+
+                // Stamp WAC unit cost onto invoice item for dashboard profit calculation
+                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost() == 0.0) {
+                    matchedInvoiceItem.setCost(effectiveCost.doubleValue());
+                }
             }
         }
 
@@ -885,12 +924,17 @@ public class DeliveryNoteService {
                     return si.getRecognizedRevenue().compareTo(net) >= 0;
                 });
         if (isFinalDelivery) {
-            BigDecimal totalInvoiceSubTotal = invoice.getSubTotal() != null
-                    ? BigDecimal.valueOf(invoice.getSubTotal()) : BigDecimal.ZERO;
+            // Compare against the sum of item netAmounts — the same base that each delivery
+            // draw-down targets. Using invoice.subTotal would include footer discount add-backs
+            // and exclude tax, causing a large spurious snap on discounted/taxed invoices.
+            BigDecimal totalItemNet = invoice.getItems().stream()
+                    .map(si -> si.getNetAmount() != null
+                            ? BigDecimal.valueOf(si.getNetAmount()) : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal totalAlreadyRecognized = invoice.getItems().stream()
                     .map(SalesInvoiceItem::getRecognizedRevenue)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal rounding = totalInvoiceSubTotal.subtract(totalAlreadyRecognized);
+            BigDecimal rounding = totalItemNet.subtract(totalAlreadyRecognized);
             if (rounding.abs().compareTo(BigDecimal.valueOf(0.10)) <= 0
                     && rounding.compareTo(BigDecimal.ZERO) != 0) {
                 totalRecognizedRevenue = totalRecognizedRevenue.add(rounding);
@@ -902,17 +946,29 @@ public class DeliveryNoteService {
         dn.setRecognizedRevenue(totalRecognizedRevenue);
         dn.setRecognizedCogs(totalCogs);
 
-        // Post journals: Dr Deferred Revenue / Cr Revenue + Dr COGS / Cr Inventory
+        // Post journals.
+        // F-13: For FAST_SALE auto-generated DNs, post a single combined entry
+        // (Dr Cash/AR / Cr Revenue / Cr VAT / Dr COGS / Cr Inventory) instead of the
+        // normal two-step deferred→recognition sequence. This eliminates the unnecessary
+        // Deferred Revenue pass-through for immediate point-of-sale transactions.
         if (totalRecognizedRevenue.compareTo(BigDecimal.ZERO) > 0
                 || totalCogs.compareTo(BigDecimal.ZERO) > 0) {
             LocalDate journalDate = dn.getReceivedDate() != null ? dn.getReceivedDate()
                     : (dn.getDnDate() != null ? dn.getDnDate() : LocalDate.now());
-            postingEngineService.createJournalFromDeliveryNoteDelivered(
-                    "DN-" + dn.getDnNumber(),
-                    journalDate,
-                    dn.getDnNumber(),
-                    totalRecognizedRevenue,
-                    totalCogs);
+            boolean isFastSaleDn = Boolean.TRUE.equals(dn.getAutoGenerated())
+                    && invoice != null && invoice.isFastSale();
+            if (isFastSaleDn) {
+                postingEngineService.createJournalFromFastSaleDelivered(
+                        invoice, totalCogs, dn.getBranchEntity());
+            } else {
+                postingEngineService.createJournalFromDeliveryNoteDelivered(
+                        "DN-" + dn.getDnNumber(),
+                        journalDate,
+                        dn.getDnNumber(),
+                        totalRecognizedRevenue,
+                        totalCogs,
+                        dn.getBranchEntity());
+            }
         }
 
         // FIX 3 — Mark as financially posted to prevent duplicate journals on retry

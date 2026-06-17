@@ -49,6 +49,12 @@ public class SalesOrder {
     private Double advanceAmount;
     private Double balanceDue;
     private Double billDiscount;
+    
+    @Column(name = "bill_discount_amount")
+    private Double billDiscountAmount;
+
+    @Column(name = "bill_discount_type", length = 20)
+    private String billDiscountType;
 
     private String paymentMethod;
     private String paymentReference;
@@ -205,6 +211,22 @@ public class SalesOrder {
 
     public void setBillDiscount(Double billDiscount) {
         this.billDiscount = billDiscount;
+    }
+
+    public Double getBillDiscountAmount() {
+        return billDiscountAmount;
+    }
+
+    public void setBillDiscountAmount(Double billDiscountAmount) {
+        this.billDiscountAmount = billDiscountAmount;
+    }
+
+    public String getBillDiscountType() {
+        return billDiscountType;
+    }
+
+    public void setBillDiscountType(String billDiscountType) {
+        this.billDiscountType = billDiscountType;
     }
 
     public String getPaymentMethod() {

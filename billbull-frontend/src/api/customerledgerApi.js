@@ -6,9 +6,10 @@ const BASE_URL = "/api/sales/customer-ledger";
    CUSTOMER APIs
    =========================== */
 
-// ✅ GET all customers
-export const getAllCustomers = async () => {
-  const res = await api.get(BASE_URL);
+// ✅ GET all customers — branchName filters by allocation (BBQA52-024)
+export const getAllCustomers = async (branchName) => {
+  const params = branchName ? { branchName } : {};
+  const res = await api.get(BASE_URL, { params });
   return res.data;
 };
 

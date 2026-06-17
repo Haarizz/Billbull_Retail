@@ -47,11 +47,19 @@ class PostingEngineServiceTest {
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
+    @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
 
     private PostingEngineService service;
 
     @BeforeEach
     void setUp() {
+        com.billbull.backend.sales.settings.SalesSettings settings =
+                new com.billbull.backend.sales.settings.SalesSettings();
+        settings.setCreditLimitPolicy(com.billbull.backend.sales.settings.CreditLimitPolicy.NO_IMPACT);
+        org.mockito.Mockito.lenient().when(salesSettingsService.getSettings()).thenReturn(settings);
+
         service = new PostingEngineService(
                 journalEntryRepository,
                 journalEntryService,
@@ -61,12 +69,15 @@ class PostingEngineServiceTest {
                 voucherSequenceService,
                 customerCreditService,
                 grnRepository,
-                glBalanceRepository);
+                glBalanceRepository,
+                salesSettingsService,
+                currencyService,
+                outletRepository);
     }
 
     @Test
     void validateRejectsUnbalancedEntryBeyondTolerance() {
-        JournalEntry entry = entryWith(line("1101", "100.00", "0.00"), line("4101", "0.00", "90.00"));
+        JournalEntry entry = entryWith(line("1001", "100.00", "0.00"), line("4001", "0.00", "90.00"));
 
         PostingException ex = assertThrows(PostingException.class, () -> service.validate(entry));
         assertEquals(PostingErrorCode.UNBALANCED_ENTRY, ex.getCode());
@@ -76,7 +87,7 @@ class PostingEngineServiceTest {
     void validateAbsorbsSubToleranceResidualIntoRoundingAccount() {
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());
         // 100.00 Dr vs 99.99 Cr → 0.01 residual within tolerance.
-        JournalEntry entry = entryWith(line("1101", "100.00", "0.00"), line("4101", "0.00", "99.99"));
+        JournalEntry entry = entryWith(line("1001", "100.00", "0.00"), line("4001", "0.00", "99.99"));
 
         service.validate(entry);
 
@@ -89,12 +100,12 @@ class PostingEngineServiceTest {
     @Test
     void validateRejectsInactiveAccount() {
         Account archived = new Account();
-        archived.setCode("5403");
+        archived.setCode("6099");
         archived.setName("General Expense");
         archived.setStatus("archived");
-        when(accountRepository.findByCode("5403")).thenReturn(archived);
+        when(accountRepository.findByCode("6099")).thenReturn(archived);
 
-        JournalEntry entry = entryWith(line("5403", "100.00", "0.00"), line("1101", "0.00", "100.00"));
+        JournalEntry entry = entryWith(line("6099", "100.00", "0.00"), line("1001", "0.00", "100.00"));
 
         PostingException ex = assertThrows(PostingException.class, () -> service.validate(entry));
         assertEquals(PostingErrorCode.ACCOUNT_INACTIVE, ex.getCode());
@@ -105,7 +116,7 @@ class PostingEngineServiceTest {
         doThrow(new PostingException(PostingErrorCode.PERIOD_LOCKED, "closed"))
                 .when(accountingPeriodService).assertOpen(any());
 
-        JournalEntry entry = entryWith(line("1101", "100.00", "0.00"), line("4101", "0.00", "100.00"));
+        JournalEntry entry = entryWith(line("1001", "100.00", "0.00"), line("4001", "0.00", "100.00"));
 
         PostingException ex = assertThrows(PostingException.class, () -> service.validate(entry));
         assertEquals(PostingErrorCode.PERIOD_LOCKED, ex.getCode());
@@ -117,8 +128,8 @@ class PostingEngineServiceTest {
         grn.setGrnNo("GRN-1");
         grn.setGrnDate(LocalDate.of(2026, 5, 10));
         grn.setGrandTotal(new BigDecimal("105.00"));
+        grn.setSubtotal(new BigDecimal("105.00")); // createJournalFromGRN uses subtotal, not grandTotal
 
-        when(journalEntryRepository.existsByReference("GRN-1")).thenReturn(false);
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());
         when(voucherSequenceService.nextVoucherNumber(eq("GRN"), anyString(), any()))
                 .thenReturn("GRN-HO-2026-000001");

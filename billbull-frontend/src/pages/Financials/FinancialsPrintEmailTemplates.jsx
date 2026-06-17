@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-    FileText, ChevronRight, Plus, Edit, Copy, Download, Upload,
+    FileText, ChevronRight, ChevronLeft, Plus, Edit, Copy, Download, Upload,
     Trash2, Check, RefreshCw, Printer, Mail,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -300,6 +300,9 @@ export default function FinancialsPrintEmailTemplates() {
                                 <span className="text-slate-900 font-medium">{typeInfo.label}</span>
                             </div>
                             <div className="flex items-center gap-3">
+                                <button onClick={() => setSelectedType(null)} className="hover:bg-slate-200 p-1 rounded-full transition-colors" title="Go back">
+                                    <ChevronLeft className="h-6 w-6 text-slate-600" />
+                                </button>
                                 <FileText className="h-6 w-6 text-[#F5C742]" />
                                 <h1 className="text-3xl font-semibold text-[#1E1E1E]">
                                     {typeInfo.label} Templates

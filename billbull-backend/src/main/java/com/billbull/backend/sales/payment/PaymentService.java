@@ -53,6 +53,9 @@ public class PaymentService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
@@ -99,6 +102,17 @@ public class PaymentService {
         return payments;
     }
 
+    public List<Payment> getPaymentsBySplitGroupId(String splitGroupId) {
+        if (splitGroupId == null || splitGroupId.isBlank()) return java.util.Collections.emptyList();
+        List<Payment> payments = new ArrayList<>(paymentRepository.findBySplitGroupId(splitGroupId));
+        payments.sort(java.util.Comparator.comparing(Payment::getId));
+        return payments;
+    }
+
+    public List<Payment> getAllWithSplitGroupId() {
+        return paymentRepository.findBySplitGroupIdIsNotNull();
+    }
+
     public List<Payment> getPaymentsByInvoice(String invoiceNumber) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByLinkedInvoice(invoiceNumber));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
@@ -126,16 +140,26 @@ public class PaymentService {
                 byInvoice.computeIfAbsent(inv, k -> new ArrayList<>()).add(p);
             }
         }
-        for (List<Payment> group : byInvoice.values()) {
-            // group is desc-sorted; reverse to process oldest first
-            List<Payment> asc = new ArrayList<>(group);
-            java.util.Collections.reverse(asc);
-            double invoiceTotal = asc.isEmpty() ? 0 : (asc.get(0).getInvoiceAmount() != null ? asc.get(0).getInvoiceAmount() : 0);
-            double running = invoiceTotal;
-            for (Payment p : asc) {
-                double paid = p.getAmount() != null ? p.getAmount() : 0;
-                running = Math.max(running - paid, 0);
-                p.setInvoiceBalance(running);
+        for (Map.Entry<String, List<Payment>> entry : byInvoice.entrySet()) {
+            List<Payment> group = entry.getValue();
+            // group is desc-sorted (newest first).
+            // Use the actual current invoice balance from DB as the terminal balance
+            // after the most recent payment. This accounts for SO advance RVs that are
+            // not Payment rows but are already reflected in invoice.balance.
+            double terminalBalance = salesInvoiceRepository.findByInvoiceNumber(entry.getKey())
+                    .map(inv -> inv.getBalance() != null ? inv.getBalance() : 0.0)
+                    .orElse(0.0);
+
+            // Assign invoiceBalance to each payment (= balance AFTER that payment).
+            // P[0] is newest: its balance = terminalBalance.
+            // P[1] is second-newest: its balance = terminalBalance + P[0].amount (what
+            // P[0] reduced the balance from).
+            // P[k]: balance = terminalBalance + sum(P[0..k-1].amount).
+            double cumulativeFromNewest = 0;
+            for (int i = 0; i < group.size(); i++) {
+                Payment p = group.get(i);
+                p.setInvoiceBalance(Math.max(terminalBalance + cumulativeFromNewest, 0));
+                cumulativeFromNewest += p.getAmount() != null ? p.getAmount() : 0;
             }
         }
         return payments;
@@ -179,6 +203,7 @@ public class PaymentService {
             payment.setCreatedDate(LocalDate.now());
         }
 
+        boolean isNew = (payment.getId() == null);
         Payment savedPayment = paymentRepository.save(payment);
 
         if (savedPayment.getPaymentType() == PaymentType.RECEIVED) {
@@ -187,6 +212,15 @@ public class PaymentService {
                     && !Objects.equals(savedPayment.getReceiptVoucherRecordId(), receiptVoucher.getId())) {
                 savedPayment.setReceiptVoucherRecordId(receiptVoucher.getId());
                 savedPayment = paymentRepository.save(savedPayment);
+            }
+            
+            if (isNew) {
+                notifPublisher.paymentReceived(
+                        savedPayment.getPaymentNumber(),
+                        savedPayment.getCustomerName() != null ? savedPayment.getCustomerName() : "Customer",
+                        String.format("AED %,.2f", savedPayment.getAmount() != null ? savedPayment.getAmount() : 0.0),
+                        savedPayment.getPaymentMode() != null ? savedPayment.getPaymentMode() : "CASH"
+                );
             }
         }
 

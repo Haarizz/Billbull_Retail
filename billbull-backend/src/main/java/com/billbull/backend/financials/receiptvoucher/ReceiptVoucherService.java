@@ -14,6 +14,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -31,6 +32,7 @@ import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
+import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
@@ -115,7 +117,13 @@ public class ReceiptVoucherService {
     @Transactional
     public ReceiptVoucher createReceipt(ReceiptVoucher receipt, MultipartFile file) {
         receipt.setVoucherId(generateNextVoucherId());
-        receipt.setBranchEntity(branchAccessService.getRequiredCurrentUserBranch());
+
+        // Resolve branch from the form-selected name; fall back to session branch.
+        Branch resolvedBranch = null;
+        if (receipt.getBranch() != null && !receipt.getBranch().isBlank()) {
+            resolvedBranch = branchAccessService.findBranchByName(receipt.getBranch());
+        }
+        receipt.setBranchEntity(resolvedBranch != null ? resolvedBranch : branchAccessService.getRequiredCurrentUserBranch());
 
         if (receipt.getStatus() == null) {
             receipt.setStatus("Completed");
@@ -143,6 +151,16 @@ public class ReceiptVoucherService {
         return saved;
     }
 
+    /**
+     * Creates a receipt in a separate transaction so that GL-posting failures do not
+     * roll back the caller's transaction (e.g. a Sales Order save that auto-creates
+     * an advance receipt).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ReceiptVoucher createReceiptInNewTransaction(ReceiptVoucher receipt, MultipartFile file) {
+        return createReceipt(receipt, file);
+    }
+
     @Transactional
     public ReceiptVoucher updateReceipt(Long id, ReceiptVoucher receiptDetails, MultipartFile file) {
         ReceiptVoucher receipt = getReceiptById(id);
@@ -151,6 +169,7 @@ public class ReceiptVoucherService {
         // Branch is immutable on update — receipt.branchEntity stays as-is, never copied from receiptDetails.
 
         String previousStatus = receipt.getStatus();
+        BigDecimal previousAmount = receipt.getAmount();
         Long previousInvoiceId = receipt.getSalesInvoiceId();
         Long previousOpeningInvoiceId = receipt.getOpeningInvoiceId();
 
@@ -162,6 +181,7 @@ public class ReceiptVoucherService {
         receipt.setPaymentMode(receiptDetails.getPaymentMode());
         receipt.setReference(receiptDetails.getReference());
         receipt.setNotes(receiptDetails.getNotes());
+        receipt.setPreparedBy(receiptDetails.getPreparedBy());
         receipt.setPurpose(receiptDetails.getPurpose());
         if (receiptDetails.getSalesInvoiceId() != null) {
             receipt.setSalesInvoiceId(receiptDetails.getSalesInvoiceId());
@@ -193,6 +213,11 @@ public class ReceiptVoucherService {
                 && !isCompletedStatus(previousStatus);
         if (isNewlyCompleted) {
             postingEngineService.createJournalFromReceiptVoucher(saved);
+        } else if (isCompletedStatus(saved.getStatus()) && isCompletedStatus(previousStatus)
+                && previousAmount != null && saved.getAmount() != null
+                && previousAmount.compareTo(saved.getAmount()) != 0) {
+            // Amount changed on an already-completed receipt — reverse old GL entry and re-post new one
+            postingEngineService.reverseAndRepostReceiptVoucher(saved, previousAmount);
         }
 
         syncLinkedInvoice(previousInvoiceId);
@@ -477,7 +502,10 @@ public class ReceiptVoucherService {
         boolean delivered = isEffectivelyDelivered(invoice);
 
         if (totalPaid >= invoiceTotal && invoiceTotal > 0) {
-            return delivered ? SalesInvoiceStatus.PAID : SalesInvoiceStatus.PARTIALLY_PAID;
+            // Full payment received → always PAID regardless of delivery status.
+            // Delivery-blocks-PAID is enforced only for manual status changes in
+            // SalesInvoiceService.updateStatus, not for payment sync.
+            return SalesInvoiceStatus.PAID;
         }
 
         if (totalPaid > 0) {

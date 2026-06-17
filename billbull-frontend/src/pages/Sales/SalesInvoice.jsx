@@ -22,6 +22,7 @@ import {
     Edit,
     ArrowLeft,
     X, // ✅ Added X for Modal Close
+    AlertTriangle,
     Box, // ✅ Added Box for product image placeholder
     Menu,
     ChevronUp,
@@ -48,12 +49,14 @@ import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
     getSalesInvoicesPage,
+    getSalesInvoiceStats,
     saveSalesInvoice,
     getNextInvoiceNumber,
     recordInvoicePayment,
     getItemPriceHistory,
     updateInvoiceStatus,
     getCustomerOutstanding,
+    getSalesInvoiceById,
     sendSalesInvoiceEmail
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
@@ -66,7 +69,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -74,7 +77,7 @@ import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -82,6 +85,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
+import KpiCards from '../../components/common/KpiCards';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
@@ -156,7 +160,7 @@ const calculateLineAmounts = ({ qty, price, disc, tax }) => {
     const taxAmt = taxable * (taxPercent / 100);
     const net = taxable + taxAmt;
 
-    return { gross, taxAmt, net };
+    return { gross, taxAmt, net, taxableAmount: taxable };
 };
 
 import ProductSelector from '../../components/ProductSelector';
@@ -196,7 +200,11 @@ const SalesInvoice = () => {
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
     const fromDNHandled = useRef(false);
+    const directCreateHandled = useRef(false);
+    const directOpenHandled = useRef(false);
     const editorDataLoaded = useRef(false);
+    // Capture invoiceId at mount so location.state changes can't lose it
+    const pendingOpenIdRef = useRef(location.state?.invoiceId ?? null);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -206,6 +214,8 @@ const SalesInvoice = () => {
     const [listPage, setListPage] = useState(0);
     const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [isListLoading, setIsListLoading] = useState(false);
+    const [invoiceStats, setInvoiceStats] = useState(null);
+    const [isStatsLoading, setIsStatsLoading] = useState(false);
     const [salesSettings, setSalesSettings] = useState(null);
     const invoiceAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_INVOICE');
 
@@ -294,6 +304,8 @@ const SalesInvoice = () => {
 
     // ✅ Invoice ID for tracking edit vs create
     const [invoiceId, setInvoiceId] = useState(null);
+    // null | 'need-draft' | 'need-batches'
+    const [batchGuideStep, setBatchGuideStep] = useState(null);
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
 
     // --- FORM STATES ---
@@ -333,7 +345,7 @@ const SalesInvoice = () => {
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
-    const [branch, setBranch] = useState(defaultBranch?.name || '');
+    const [branch, setBranch] = useState(activeBranch?.name || defaultBranch?.name || '');
     const createBlankInvoiceItem = () => ({
         id: Date.now() + Math.random(),
         code: '',
@@ -382,6 +394,7 @@ const SalesInvoice = () => {
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
+        taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
         cost: i.cost || 0,
         gp: 0,
         foc: i.foc || 0,
@@ -404,6 +417,7 @@ const SalesInvoice = () => {
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
+    const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
     const [deliveryCharge, setDeliveryCharge] = useState(0);
     // Round Off is auto-computed (nearest ฿1.00) by default; the user can flip
     // `roundOffManual` on to override the figure by hand for edge cases.
@@ -453,6 +467,7 @@ const SalesInvoice = () => {
     const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalNotes, setModalNotes] = useState('');
     const [bankAccountOptions, setBankAccountOptions] = useState([]);
+    const [invoiceNotes, setInvoiceNotes] = useState('');
 
     // Stock Check Modal
     const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -716,10 +731,11 @@ const SalesInvoice = () => {
     }, [defaultBranch, warehousesList]);
 
     useEffect(() => {
-        if (!invoiceId && defaultBranch?.name) {
-            setBranch(prev => prev || defaultBranch.name);
+        if (!invoiceId) {
+            const preferred = activeBranch?.name || defaultBranch?.name;
+            if (preferred) setBranch(preferred);
         }
-    }, [defaultBranch?.name, invoiceId]);
+    }, [activeBranch?.name, defaultBranch?.name, invoiceId]);
 
     // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
     useEffect(() => {
@@ -763,9 +779,9 @@ const SalesInvoice = () => {
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
                 tax: Number(i.tax) || 5,
-                taxAmt: Number(i.taxAmt) || 0,
-                gross: Number(i.total) || 0,
-                net: Number(i.total) || 0,
+                taxAmt: 0,
+                gross: 0,
+                net: 0,
                 cost: 0
             }));
 
@@ -804,7 +820,11 @@ const SalesInvoice = () => {
         }
 
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
-        setBillDiscount(Number(fromQtn.billDiscount) || 0);
+        const fromQtnDiscType = fromQtn.billDiscountType === 'amount' ? 'amount' : 'percent';
+        setBillDiscountType(fromQtnDiscType);
+        setBillDiscount(fromQtnDiscType === 'amount'
+            ? Number(fromQtn.billDiscountFixed || fromQtn.billDiscountAmount || fromQtn.billDiscount) || 0
+            : Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
         setLinkedQuotation(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -845,9 +865,9 @@ const SalesInvoice = () => {
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
                 tax: Number(i.tax) || 5,
-                taxAmt: Number(i.taxAmt) || 0,
-                gross: Number(i.total) || 0,
-                net: Number(i.total) || 0,
+                taxAmt: 0,
+                gross: 0,
+                net: 0,
                 cost: Number(i.cost) || 0,
                 // Inherit batch picks from the SO so the invoice editor shows
                 // "Batches N/N" instead of "0/N", and the auto-DN can reuse them.
@@ -899,6 +919,7 @@ const SalesInvoice = () => {
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
+        setBillDiscountType(fromSO.billDiscountType === 'amount' ? 'amount' : 'percent');
         setBillDiscount(Number(fromSO.billDiscount) || 0);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -953,6 +974,16 @@ const SalesInvoice = () => {
         window.history.replaceState({}, document.title);
     }, [customersList, deliveryNotesList, location.state]);
 
+    // When salesOrdersList loads after a saved invoice is opened, backfill carriedSoAdvance
+    // so the totals block can show SO advance and invoice payments as separate lines.
+    useEffect(() => {
+        if (!linkedSO || salesOrdersList.length === 0 || !invoiceId) return;
+        if (carriedSoAdvance > 0) return; // already set (new invoice pre-fill path)
+        const soData = salesOrdersList.find(s => s.soNumber === linkedSO);
+        const soAdv = Number(soData?.advanceAmount) || 0;
+        if (soAdv > 0) setCarriedSoAdvance(soAdv);
+    }, [salesOrdersList, linkedSO, invoiceId]);
+
     // Fetch invoices separately for refresh — uses paginated /page endpoint
     // so the list tab only loads the currently visible page.
     const fetchInvoices = async () => {
@@ -981,6 +1012,18 @@ const SalesInvoice = () => {
         }
     };
 
+    const fetchInvoiceStats = async () => {
+        setIsStatsLoading(true);
+        try {
+            const data = await getSalesInvoiceStats();
+            setInvoiceStats(data);
+        } catch (err) {
+            console.error("Failed to load invoice stats", err);
+        } finally {
+            setIsStatsLoading(false);
+        }
+    };
+
     // Reset to page 0 when filters change.
     useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterPayMode]);
 
@@ -990,6 +1033,12 @@ const SalesInvoice = () => {
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
+
+    // Stats are month-level aggregates — fetch once on mount, not on every filter.
+    useEffect(() => {
+        fetchInvoiceStats();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Lazy-load editor data (SOs, Proformas, DNs) only when the create tab is first opened.
     useEffect(() => {
@@ -1084,8 +1133,8 @@ const SalesInvoice = () => {
     // ==========================================
     // Total before round-off, used to derive the automatic rounding adjustment.
     const preRoundSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: 0 }),
-        [items, billDiscount, deliveryCharge]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }),
+        [items, billDiscount, billDiscountType, deliveryCharge]
     );
     // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
     const autoRoundOff = useMemo(
@@ -1105,8 +1154,8 @@ const SalesInvoice = () => {
     }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const invoiceSummary = useMemo(
-        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: effectiveRoundOff }),
-        [items, billDiscount, deliveryCharge, effectiveRoundOff]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }),
+        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff]
     );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
@@ -1155,8 +1204,8 @@ const SalesInvoice = () => {
         setIsGeneratedFromDN(false);
         setPaymentMode('');
         setPaymentTerms('Immediate');
-        setSalesperson('John Doe');
-        setBranch(defaultBranch?.name || '');
+        setSalesperson('');
+        setBranch(activeBranch?.name || defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
         setDeliveryCharge(0);
@@ -1165,8 +1214,30 @@ const SalesInvoice = () => {
         setAmountCollected(0);
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
+        setInvoiceNotes('');
+        setBatchGuideStep(null);
         setActiveTab('create');
     };
+
+    useEffect(() => {
+        const shouldOpenCreate = location.state?.openCreate || location.state?.mode === 'create';
+        if (!shouldOpenCreate || directCreateHandled.current) return;
+        if (customersList.length === 0) return;
+
+        directCreateHandled.current = true;
+        handleCreateNew(location.state?.salesType || 'STANDARD_FLOW');
+        window.history.replaceState({}, document.title);
+    }, [customersList.length, location.state]);
+
+    // Open a specific invoice by ID navigated from dashboard / global search
+    useEffect(() => {
+        const targetId = pendingOpenIdRef.current;
+        if (!targetId || customersList.length === 0) return;
+        pendingOpenIdRef.current = null; // consume so it doesn't re-fire
+        api.get(`/api/sales/invoices/${targetId}`)
+            .then(res => { handleLoadInvoice(res.data); })
+            .catch(err => console.error('Failed to open invoice:', err));
+    }, [customersList.length]);
 
     const handleSelectCustomer = async (cust) => {
         if (isReadOnlyInvoice) return;
@@ -1180,6 +1251,17 @@ const SalesInvoice = () => {
         setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
+
+        // Auto-fill salesperson from customer default
+        if (cust.salesman) setSalesperson(cust.salesman);
+
+        // Auto-fill item warehouse from customer default warehouse
+        if (cust.warehouse) {
+            const matchedWh = warehousesList.find(w => w.name === cust.warehouse);
+            if (matchedWh) {
+                setItems(prev => prev.map(item => ({ ...item, warehouseId: matchedWh.id })));
+            }
+        }
 
         // Fetch real outstanding balance for this customer (QA-035)
         if (cust.code) {
@@ -1241,7 +1323,17 @@ const SalesInvoice = () => {
             .map(soNumber => salesOrdersList.find(s => s.soNumber === soNumber))
             .filter(Boolean);
         if (linkedSoDiscounts.length === 1) {
-            setBillDiscount(Number(linkedSoDiscounts[0].billDiscount) || 0);
+            const singleSO = linkedSoDiscounts[0];
+            setBillDiscountType(singleSO.billDiscountType === 'amount' ? 'amount' : 'percent');
+            setBillDiscount(singleSO.billDiscountType === 'amount'
+                ? Number(singleSO.billDiscountFixed || singleSO.billDiscountAmount) || 0
+                : Number(singleSO.billDiscount) || 0);
+            // Carry SO advance
+            const soAdvance = Number(singleSO.advanceAmount);
+            if (Number.isFinite(soAdvance) && soAdvance > 0) {
+                setAmountCollected(soAdvance);
+                setCarriedSoAdvance(soAdvance);
+            }
         }
 
         // Merge Items with Composite Key (productCode + unit + warehouse + price if available)
@@ -1403,7 +1495,16 @@ const SalesInvoice = () => {
                 const linkedSO = salesOrdersList.find(s => s.soNumber === dn.salesOrderNo);
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
-                    setBillDiscount(Number(linkedSO.billDiscount) || 0);
+                    setBillDiscountType(linkedSO.billDiscountType === 'amount' ? 'amount' : 'percent');
+                    setBillDiscount(linkedSO.billDiscountType === 'amount'
+                        ? Number(linkedSO.billDiscountFixed || linkedSO.billDiscountAmount) || 0
+                        : Number(linkedSO.billDiscount) || 0);
+                    // Carry SO advance so invoice shows pre-paid amount
+                    const soAdvance = Number(linkedSO.advanceAmount);
+                    if (Number.isFinite(soAdvance) && soAdvance > 0) {
+                        setAmountCollected(soAdvance);
+                        setCarriedSoAdvance(soAdvance);
+                    }
                     // Stock lines come from the DN (with delivered qty); service
                     // lines come from the SO (since they're never on the DN — see
                     // DeliveryNoteService.mapToEntity QA-001 filter). The customer
@@ -1419,7 +1520,7 @@ const SalesInvoice = () => {
                         const disc = firstPresentNumber(dnItem.disc, dnItem.discount, soItem?.discount);
                         const tax = firstPresentNumber(dnItem.tax, dnItem.taxRate, soItem?.taxRate, 5);
                         const cost = firstPresentNumber(dnItem.cost, soItem?.cost);
-                        const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                        const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
 
                         return {
                             id: Date.now() + Math.random(),
@@ -1435,6 +1536,7 @@ const SalesInvoice = () => {
                             disc: disc,
                             tax: tax,
                             taxAmt: taxAmt,
+                            taxableAmount: taxableAmount,
                             gross,
                             net: net,
                             gp: 0,
@@ -1461,7 +1563,7 @@ const SalesInvoice = () => {
                             const disc = Number(si.discount) || 0;
                             const tax = Number(si.taxRate) || 5;
                             const cost = Number(si.cost) || 0;
-                            const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                            const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
                             return {
                                 id: Date.now() + Math.random(),
                                 salesOrderItemId: si.id || null,
@@ -1470,7 +1572,7 @@ const SalesInvoice = () => {
                                 name: si.itemName || si.description || '',
                                 desc: si.description || si.itemName || '',
                                 unit: si.unit || 'PCS',
-                                qty, price, cost, disc, tax, taxAmt, gross, net,
+                                qty, price, cost, disc, tax, taxAmt, gross, net, taxableAmount,
                                 gp: 0,
                                 binId: null,
                                 productType: 'SERVICE',
@@ -1498,7 +1600,7 @@ const SalesInvoice = () => {
                     const disc = firstPresentNumber(i.disc, i.discount);
                     const tax = firstPresentNumber(i.tax, i.taxRate, 5);
                     const cost = firstPresentNumber(i.cost);
-                    const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                    const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
 
                     return {
                         id: Date.now() + Math.random(),
@@ -1851,6 +1953,18 @@ const SalesInvoice = () => {
         }
         const hasItems = items.some(i => i && (i.code || i.name) && Number(i.qty) > 0);
         if (!hasItems) { alert("Add at least one item before saving."); return; }
+
+        if (mode === 'Confirmed' && salesType === 'DIRECT_SALE') {
+            const incompleteBatchItems = items.filter(i =>
+                i && i.batchControlled &&
+                Number(i.batchSelectedQuantity || 0) < Number(i.baseRequiredQuantity || i.qty || 0)
+            );
+            if (incompleteBatchItems.length > 0) {
+                setBatchGuideStep(!invoiceId ? 'need-draft' : 'need-batches');
+                return;
+            }
+        }
+
         setPreviewMode(mode);
     };
 
@@ -1873,8 +1987,12 @@ const SalesInvoice = () => {
             return;
         }
 
+        const freshSettings = await getSalesSettings().catch(() => salesSettings);
+        if (freshSettings) setSalesSettings(freshSettings);
+        const activeSettings = freshSettings || salesSettings;
+
         // Zero-price policy check
-        const zeroPricePolicy = salesSettings?.zeroPricePolicy ?? 'BLOCK';
+        const zeroPricePolicy = activeSettings?.zeroPricePolicy ?? 'BLOCK';
         if (zeroPricePolicy !== 'ALLOW') {
             const zeroPriceItems = items.filter(i => (i.code || i.name) && Number(i.qty) > 0 && !(Number(i.price) > 0));
             if (zeroPriceItems.length > 0) {
@@ -1917,11 +2035,13 @@ const SalesInvoice = () => {
             branch: branch,
             shippingAddress: shippingAddress,
             amountPaid: Number(amountCollected),
-            billDiscount: 0,
-            billDiscountAmount: 0,
+            billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+            billDiscountAmount: Number(billDiscountAmount),
+            billDiscountType: billDiscountType,
+            billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
             deliveryCharge: Number(deliveryCharge) || 0,
             roundOff: Number(effectiveRoundOff) || 0,
-            totalDiscount: 0,
+            totalDiscount: Number(totalDiscount) + Number(billDiscountAmount),
             subTotal: Number(taxableSubTotal),
             taxableSubTotal: Number(taxableSubTotal),
             totalTax: Number(totalTax),
@@ -1930,11 +2050,15 @@ const SalesInvoice = () => {
             salesType: salesType,
             requirePickingNote: true,
             requestedFulfillmentType: 'Picking',
+            customerNotes: invoiceNotes || '',
 
-            items: items.map(i => {
-                const discountFactor = 1 - (Number(billDiscount) / 100);
-                const finalNet = Number(i.net) * discountFactor;
-                const finalTax = Number(i.taxAmt) * discountFactor;
+            items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+                const preFooterTaxable = Number(i.taxableAmount) || Math.max(0, (Number(i.gross) || 0) * (1 - (Number(i.disc) || 0) / 100));
+                const postFooterTaxable = Math.max(0, preFooterTaxable - footerDisc);
+                const taxPercent = Number(i.tax) || 0;
+                const itemTax = postFooterTaxable * (taxPercent / 100);
+                const itemNet = postFooterTaxable + itemTax;
                 const qty = Number(i.qty) || 1;
 
                 return {
@@ -1955,10 +2079,11 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: Number(i.cost),
                     discount: Number(i.disc) || 0,
+                    footerDiscount: footerDisc,
                     taxRate: Number(i.tax),
-                    taxAmount: finalTax,
+                    taxAmount: itemTax,
                     grossAmount: Number(i.gross) || 0,
-                    netAmount: finalNet,
+                    netAmount: itemNet,
                     foc: Number(i.foc) || 0,
                     binId: i.binId || null,
                     warehouseId: (i.warehouseId && i.warehouseId !== '')
@@ -1970,7 +2095,7 @@ const SalesInvoice = () => {
 
         // Stock check enforcement (skip for Draft saves)
         const isSourceLinkedInvoice = Boolean((linkedSO || '').trim() || (linkedDN || '').trim());
-        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
+        if (newStatus !== 'Draft' && activeSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
@@ -1997,7 +2122,7 @@ const SalesInvoice = () => {
         }
 
         // Credit limit BLOCK enforcement
-        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+        if (activeSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomer.creditLimitAmount > 0 &&
             (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount) {
             toast.error(`Credit Limit Blocked: The projected outstanding balance (${formatCurrencyDisplay(customerOutstanding + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}. Please collect payment first or adjust the credit limit in the customer profile.`, { duration: 6000 });
@@ -2020,7 +2145,7 @@ const SalesInvoice = () => {
                 && savedInvoice.items.some(item => item.batchControlled);
             if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
                 setActiveTab('create');
-                alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the invoice.');
+                setBatchGuideStep('need-batches');
             } else if (newStatus === 'Confirmed') {
                 // Invoice confirmed — offer AR settlement before returning to the list.
                 setSettlementInvoice(savedInvoice);
@@ -2038,7 +2163,13 @@ const SalesInvoice = () => {
         if (updatedInvoice?.id) {
             setInvoiceId(updatedInvoice.id);
             setStatus(updatedInvoice.status || status);
-            setItems((updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            const updatedItems = (updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index));
+            setItems(updatedItems);
+            const allBatchesDone = updatedItems.every(i =>
+                !i.batchControlled ||
+                Number(i.batchSelectedQuantity || 0) >= Number(i.baseRequiredQuantity || i.qty || 0)
+            );
+            if (allBatchesDone) setBatchGuideStep(null);
             await fetchInvoices();
         }
     };
@@ -2086,7 +2217,20 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
-        setBillDiscount(Number(invoice.billDiscount) || 0);
+
+        // Restore SO advance from salesOrdersList so totals block can show
+        // "Advance from SO" and "Payments on Invoice" as separate lines.
+        if (invoice.linkedSalesOrder) {
+            const linkedSOData = salesOrdersList.find(s => s.soNumber === invoice.linkedSalesOrder);
+            const soAdv = Number(linkedSOData?.advanceAmount) || 0;
+            setCarriedSoAdvance(soAdv);
+        } else {
+            setCarriedSoAdvance(0);
+        }
+        setBillDiscountType(invoice.billDiscountType === 'amount' ? 'amount' : 'percent');
+        setBillDiscount(invoice.billDiscountType === 'amount'
+            ? Number(invoice.billDiscountFixed || invoice.billDiscountAmount) || 0
+            : Number(invoice.billDiscount) || 0);
         setDeliveryCharge(Number(invoice.deliveryCharge) || 0);
         setRoundOff(Number(invoice.roundOff) || 0);
         setRoundOffManual(false);
@@ -2113,6 +2257,7 @@ const SalesInvoice = () => {
             setItems([createBlankInvoiceItem()]);
         }
 
+        setInvoiceNotes(invoice.customerNotes || invoice.notes || '');
         setActiveTab('create');
     };
 
@@ -2193,9 +2338,18 @@ const SalesInvoice = () => {
         setIsSettlementSaving(true);
         const todayStr = new Date().toISOString().split('T')[0];
         try {
-            // Record each entry through the same /payment-detailed path the Pay
-            // button uses — the backend mints a real ReceiptVoucher per entry.
-            for (const e of entries) {
+            const paidEntries = entries.filter(e => e.mode !== 'Credit' && Number(e.amount) > 0);
+            const hasCreditEntry = entries.some(e => e.mode === 'Credit');
+            // One shared UUID links all entries of the same split transaction
+            const splitGroupId = paidEntries.length > 1 ? crypto.randomUUID() : null;
+            // Build combined label upfront (e.g. "Cash + Card") so the backend can
+            // stamp it on the invoice without relying on a mid-transaction DB query.
+            const combinedPaymentMode = splitGroupId
+                ? paidEntries.map(e => e.mode).join(' + ')
+                : null;
+
+            // Post each real-money entry through /payment-detailed
+            for (const e of paidEntries) {
                 await recordInvoicePayment(inv.id, {
                     amount: Number(e.amount),
                     paymentMode: e.mode,
@@ -2203,29 +2357,62 @@ const SalesInvoice = () => {
                     paymentDate: todayStr,
                     ...(e.bankAccount ? { bankAccount: e.bankAccount } : {}),
                     ...(e.mode === 'Cheque' && e.chequeDate ? { chequeDate: e.chequeDate } : {}),
+                    ...(splitGroupId ? { splitGroupId } : {}),
+                    ...(combinedPaymentMode ? { combinedPaymentMode } : {}),
+                });
+            }
+            // Credit entry: stamp paymentMode=Credit on the invoice (no amount)
+            if (hasCreditEntry) {
+                await recordInvoicePayment(inv.id, {
+                    amount: 0,
+                    paymentMode: 'Credit',
+                    paymentReference: entries.find(e => e.mode === 'Credit')?.reference || '',
+                    paymentDate: todayStr,
                 });
             }
             await fetchInvoices();
+
+            // Refresh settlementInvoice with the post-payment state so that
+            // receipt prints show the correct outstanding/balance figures.
+            try {
+                const refreshed = await getSalesInvoiceById(inv.id);
+                if (refreshed) setSettlementInvoice(refreshed);
+            } catch { /* non-fatal — receipt print will fall back gracefully */ }
 
             // Surface the real voucher number(s) the backend just created for
             // this invoice (mirrors the Receipts-history mapping).
             let receipts = [];
             try {
-                const sps = await getSalesPaymentsByInvoice(inv.invoiceNumber);
-                receipts = (Array.isArray(sps) ? sps : [])
-                    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
-                    .slice(0, entries.length)
-                    .map(sp => ({
-                        id: sp.id,
-                        receiptNumber: sp.paymentNumber || `SP-${sp.id}`,
-                        date: sp.paymentDate,
-                        customerName: sp.customerName || inv.customerName,
-                        amount: Number(sp.amount || 0),
-                        mode: sp.paymentMode || 'Cash',
-                        reference: sp.referenceNumber || '',
-                        status: sp.status || 'Completed',
-                    }))
-                    .reverse(); // back to chronological order
+                if (paidEntries.length > 0) {
+                    const sps = await getSalesPaymentsByInvoice(inv.invoiceNumber);
+                    receipts = (Array.isArray(sps) ? sps : [])
+                        .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
+                        .slice(0, paidEntries.length)
+                        .map(sp => ({
+                            id: sp.id,
+                            receiptNumber: sp.paymentNumber || `SP-${sp.id}`,
+                            date: sp.paymentDate,
+                            customerName: sp.customerName || inv.customerName,
+                            amount: Number(sp.amount || 0),
+                            mode: sp.paymentMode || 'Cash',
+                            reference: sp.referenceNumber || '',
+                            status: sp.status || 'Completed',
+                        }))
+                        .reverse();
+                }
+                // For credit settlement, surface a synthetic entry in the done-phase
+                if (hasCreditEntry) {
+                    receipts.push({
+                        id: 'credit',
+                        receiptNumber: 'On Credit',
+                        date: todayStr,
+                        customerName: inv.customerName,
+                        amount: 0,
+                        mode: 'Credit',
+                        reference: entries.find(e => e.mode === 'Credit')?.reference || '',
+                        status: 'On Credit',
+                    });
+                }
             } catch { /* number lookup is best-effort */ }
 
             return { receipts };
@@ -2245,10 +2432,12 @@ const SalesInvoice = () => {
     // phase both close the modal and return to the list.
     const handleSettlementSkip = () => {
         setSettlementInvoice(null);
+        setBatchGuideStep(null);
         setActiveTab('list');
     };
     const handleSettlementDone = () => {
         setSettlementInvoice(null);
+        setBatchGuideStep(null);
         setActiveTab('list');
     };
 
@@ -2257,6 +2446,84 @@ const SalesInvoice = () => {
     const handleSettlementVoucherPrint = (receipt) => {
         if (!settlementInvoice || !receipt) return;
         handlePrintReceipt(receipt, settlementInvoice);
+    };
+
+    // For split payments, merge all receipts into one print instead of opening
+    // separate print dialogs per receipt (only the last one would survive).
+    const handlePrintAllSettlementVouchers = async (receipts = []) => {
+        if (!settlementInvoice || receipts.length === 0) return;
+        if (receipts.length === 1) {
+            handleSettlementVoucherPrint(receipts[0]);
+            return;
+        }
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
+                category: 'Receipt Voucher', paperSize: 'A4', orientation: 'Portrait',
+                headerContent: '', footerContent: '', termsContent: '',
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true }
+            };
+            const totalAmount = receipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+            const invoiceTotal = Number(settlementInvoice?.invoiceTotal || settlementInvoice?.netTotal || 0);
+            const balanceAfter = Math.max(0, invoiceTotal - totalAmount);
+            const methodLabel = receipts.map(r => `${r.mode} ${Number(r.amount).toFixed(2)}`).join(' + ');
+            const receiptNums = receipts.map(r => r.receiptNumber).filter(Boolean).join(', ');
+            const mergedReceipt = {
+                receiptNumber: receiptNums,
+                date: receipts[0]?.date || '',
+                status: 'Completed',
+                session: null,
+                invoiceCount: '1 invoice',
+                account: null,
+                bankAccount: null,
+            };
+            const printData = {
+                receiptData: mergedReceipt,
+                customerData: {
+                    name: settlementInvoice?.customerName || '',
+                    code: settlementInvoice?.customerCode || '',
+                    address: settlementInvoice?.customerAddress || '',
+                    phone: settlementInvoice?.customerPhone || '',
+                    email: settlementInvoice?.customerEmail || '',
+                    trn: settlementInvoice?.customerTrn || '',
+                    crn: settlementInvoice?.customerCrn || '',
+                },
+                invoices: [{
+                    ref: settlementInvoice?.invoiceNumber || '—',
+                    soRef: settlementInvoice?.linkedSalesOrder || '',
+                    date: settlementInvoice?.invoiceDate || '',
+                    total: invoiceTotal,
+                    outstanding: invoiceTotal,
+                    received: totalAmount,
+                    balance: balanceAfter,
+                    status: balanceAfter <= 0 ? 'Fully paid' : 'Partial',
+                }],
+                summary: {
+                    totalOutstanding: invoiceTotal,
+                    discount: 0,
+                    remaining: balanceAfter,
+                    totalReceived: totalAmount,
+                },
+                payment: { method: methodLabel, depositedTo: '', chequeRef: '', chequeDate: '' },
+                note: '',
+                title: 'PAYMENT RECEIPT',
+                docNo: receiptNums,
+                date: receipts[0]?.date || '',
+                customer: { name: settlementInvoice?.customerName || '' },
+                totals: { subTotal: totalAmount, tax: 0, grandTotal: totalAmount, currency: company?.currencySymbol || 'AED' },
+            };
+            const receiptBranchId = settlementInvoice?.branchId ?? activeBranch?.id;
+            const branchProfile = buildDocumentHeaderProfile({
+                company, branches: availableBranches || [], branchId: receiptBranchId,
+            });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+            const title = `Payment Receipt - ${receiptNums}`;
+            const titledHtml = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            printHtml(titledHtml);
+        } catch (err) {
+            console.error('Failed to print merged receipt voucher', err);
+        }
     };
 
     const handleSettlementVoucherEmail = () => {
@@ -2368,8 +2635,15 @@ const SalesInvoice = () => {
         const amount = Number(receipt.amount) || 0;
         const currencyCode = company?.currencySymbol || company?.currency || 'AED';
         const invoiceTotal = Number(invoice?.invoiceTotal || invoice?.netTotal || 0);
-        const previousPaid = Math.max(0, Number(invoice?.amountPaid || 0) - amount);
-        const outstandingBefore = Math.max(0, invoiceTotal - previousPaid);
+        // Use invoice.balance as the authoritative pre-payment outstanding.
+        // invoice.balance is the remaining balance at the point the invoice object was loaded —
+        // if loaded before this payment it equals (invoiceTotal - priorPayments - soAdvance),
+        // which is correct. The old formula (invoiceTotal - (amountPaid - amount)) broke when
+        // amountPaid already included a carried SO advance, yielding an inflated previous paid.
+        const invoiceBalance = invoice?.balance != null ? Number(invoice.balance) : null;
+        const outstandingBefore = invoiceBalance != null
+            ? Math.max(0, invoiceBalance + amount)
+            : Math.max(0, invoiceTotal - Math.max(0, Number(invoice?.amountPaid || 0) - amount));
         const balanceAfter = Math.max(0, outstandingBefore - amount);
         return {
             // Rich receipt layout data (used by renderCustomerPaymentReceiptHtml)
@@ -2476,7 +2750,7 @@ const SalesInvoice = () => {
         const resolvedBillDiscount = Number(billDiscount) || 0;
         const resolvedDeliveryCharge = Number(deliveryCharge) || 0;
         const resolvedRoundOff = Number(effectiveRoundOff) || 0;
-        const resolvedSummary = summarizeSalesItems(items || [], resolvedBillDiscount, {
+        const resolvedSummary = summarizeSalesItems(items || [], makeFooterDiscount(billDiscountType, resolvedBillDiscount), {
             deliveryCharge: resolvedDeliveryCharge,
             roundOff: resolvedRoundOff
         });
@@ -2523,12 +2797,15 @@ const SalesInvoice = () => {
                 expiry: i.expiry || i.expiryDate || ''
             })),
             totals: {
-                subTotal: resolvedSummary.subTotal,
+                subTotal: resolvedSummary.grossTotal,
                 tax: resolvedSummary.tax,
                 grandTotal: resolvedSummary.grandTotal,
                 currency: company?.currencySymbol || company?.currency || 'AED',
-                billDiscount: resolvedBillDiscount,
-                billDiscountAmount: resolvedSummary.billDiscountAmount,
+                billDiscount: billDiscountType === 'percent' ? resolvedBillDiscount : 0,
+                billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0),
+                itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                footerDiscountAmount: resolvedSummary.billDiscountAmount || 0,
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
             },
@@ -2544,7 +2821,7 @@ const SalesInvoice = () => {
                 warehouse: printBranch.defaultWarehouseName || '',
                 deliveryTerms: '',
                 salesPerson: salesperson || '',
-                notes: ''
+                notes: invoiceNotes || ''
             }
         };
     };
@@ -2575,6 +2852,8 @@ const SalesInvoice = () => {
         paymentTerms,
         salesperson,
         shippingAddress,
+        customerNotes: invoiceNotes || '',
+        notes: invoiceNotes || '',
     });
 
     // Build the print HTML for an invoice (saved row or current-form source)
@@ -2601,10 +2880,15 @@ const SalesInvoice = () => {
         if (!defaultTemplate) return null;
 
         {
-            const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
+            // Only treat as percent-type when explicitly flagged — null/missing defaults to amount-safe (no % label).
+            const resolvedBillDiscountType = dataToPrint.billDiscountType === 'percent' ? 'percent' : 'amount';
+            // For percent-type, billDiscount is the percentage. For amount-type (or unknown), use billDiscountAmount.
+            const resolvedBillDiscount = resolvedBillDiscountType === 'percent'
+                ? Number(dataToPrint.billDiscount) || 0
+                : Number(dataToPrint.billDiscountAmount) || 0;
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount, {
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
             });
@@ -2661,12 +2945,17 @@ const SalesInvoice = () => {
                         expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
-                        subTotal: resolvedSummary.subTotal,
+                        subTotal: resolvedSummary.grossTotal,
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
-                        billDiscount: resolvedBillDiscount,
-                        billDiscountAmount: resolvedSummary.billDiscountAmount,
+                        // Only show % label when type is explicitly percent; amount-type has no % label.
+                        billDiscount: resolvedBillDiscountType === 'percent' ? resolvedBillDiscount : 0,
+                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
+                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
+                        itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
+                        // Use API-stored amount (always correct AED value) rather than re-computed value.
+                        footerDiscountAmount: Number(dataToPrint.billDiscountAmount) || 0,
                         deliveryCharge: resolvedDeliveryCharge,
                         roundOff: resolvedRoundOff
                     },
@@ -2685,7 +2974,7 @@ const SalesInvoice = () => {
                         warehouse: printBranch.defaultWarehouseName || '',
                         deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
-                        notes: dataToPrint.notes || ''
+                        notes: dataToPrint.customerNotes || dataToPrint.notes || ''
                     }
                 };
 
@@ -2702,11 +2991,25 @@ const SalesInvoice = () => {
         }
     };
 
-    // Async source for the review preview modal — renders the current editor
-    // form through the default print template, stamped DRAFT / TAX INVOICE.
+    // Async source for the review preview modal — uses the email renderer so
+    // the preview has no fixed paper-height blank gaps and matches email layout.
     const getPreviewHtml = async () => {
-        const titleOverride = 'TAX INVOICE';
-        return buildInvoiceHtml(buildCurrentFormPrintSource(), { titleOverride });
+        const family = await getTemplateFamily('Sales Invoice');
+        const list = Array.isArray(family) ? family : [];
+        const lastId = sessionStorage.getItem('salesInvoiceTemplateId');
+        const defaultTemplate = (lastId && list.find(t => String(t.id) === lastId))
+            || list.find(t => t.isDefault)
+            || list[0];
+        if (!defaultTemplate) return null;
+        const printData = buildCurrentInvoicePrintData();
+        printData.title = 'TAX INVOICE';
+        const invoiceBranchId = activeBranch?.id;
+        const branchProfile = buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: invoiceBranchId,
+        });
+        return generateEmailHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
     };
 
     const handleDownloadClick = async (invoice = null) => {
@@ -3095,7 +3398,8 @@ const SalesInvoice = () => {
                                                     totalElements: listPageMeta.totalElements,
                                                 }),
                                                 SALES_INVOICE_COLUMNS,
-                                                'Sales_Invoices'
+                                                'Sales_Invoices',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                             onExportPdf={() => exportToPDF(
                                                 withListSerialNumbers(filteredInvoices, {
@@ -3106,7 +3410,8 @@ const SalesInvoice = () => {
                                                 }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales Invoices',
-                                                'Sales_Invoices'
+                                                'Sales_Invoices',
+                                                { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                         />
                                         <button
@@ -3138,6 +3443,48 @@ const SalesInvoice = () => {
 
                     {/* ================= VIEW: LIST ================= */}
                     {activeTab === 'list' && (
+                        <div>
+                        <KpiCards
+                            loading={isStatsLoading}
+                            cards={[
+                                {
+                                    label: "Today's Revenue",
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.todayRevenue, company) : '—',
+                                    sub: `${invoiceStats?.todayCount ?? 0} invoices today`,
+                                    icon: <TrendingUp size={18} />,
+                                    iconBg: 'bg-yellow-100',
+                                    iconColor: 'text-yellow-600',
+                                    accent: 'border-l-yellow-400',
+                                },
+                                {
+                                    label: 'This Month Revenue',
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.thisMonthRevenue, company) : '—',
+                                    sub: `${invoiceStats?.thisMonthCount ?? 0} invoices`,
+                                    icon: <DollarSign size={18} />,
+                                    iconBg: 'bg-emerald-100',
+                                    iconColor: 'text-emerald-600',
+                                    accent: 'border-l-emerald-400',
+                                },
+                                {
+                                    label: 'Outstanding AR',
+                                    value: invoiceStats != null ? formatCurrencyDisplay(invoiceStats.outstandingBalance, company) : '—',
+                                    sub: 'Unpaid balances',
+                                    icon: <CreditCard size={18} />,
+                                    iconBg: 'bg-red-100',
+                                    iconColor: 'text-red-500',
+                                    accent: 'border-l-red-400',
+                                },
+                                {
+                                    label: 'Invoices This Month',
+                                    value: invoiceStats?.thisMonthCount ?? '—',
+                                    sub: 'Total issued',
+                                    icon: <Receipt size={18} />,
+                                    iconBg: 'bg-blue-100',
+                                    iconColor: 'text-blue-500',
+                                    accent: 'border-l-blue-400',
+                                },
+                            ]}
+                        />
                         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
@@ -3323,6 +3670,7 @@ const SalesInvoice = () => {
                                 onPageChange={setListPage}
                             />
                         </div>
+                        </div>
                     )}
 
                     {/* ================= VIEW: CREATE ================= */}
@@ -3336,6 +3684,46 @@ const SalesInvoice = () => {
                                     <p className="text-xs text-amber-700">
                                         <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create a Picking delivery note, mark it delivered, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
                                     </p>
+                                </div>
+                            )}
+
+                            {/* BATCH GUIDE BANNER */}
+                            {batchGuideStep && (
+                                <div className="bg-amber-50 border border-amber-300 rounded-lg px-5 py-4 flex items-start gap-4 shadow-sm">
+                                    <div className="flex-shrink-0 mt-0.5">
+                                        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                                            <AlertTriangle size={16} className="text-amber-600" />
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-amber-800 mb-2">Batch selection required to confirm this invoice</p>
+                                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-draft' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-white text-emerald-700 border-emerald-300 line-through opacity-60'}`}>
+                                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-draft' ? 'bg-white text-amber-600' : 'bg-emerald-500 text-white'}`}>
+                                                    {batchGuideStep === 'need-draft' ? '1' : '✓'}
+                                                </span>
+                                                Save as Draft
+                                            </div>
+                                            <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                                            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-batches' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-batches' ? 'bg-white text-amber-600' : 'bg-slate-300 text-slate-500'}`}>2</span>
+                                                Select batches for each item
+                                            </div>
+                                            <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border bg-slate-100 text-slate-400 border-slate-200">
+                                                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-300 text-slate-500">3</span>
+                                                Confirm Invoice
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-amber-700 mt-2">
+                                            {batchGuideStep === 'need-draft'
+                                                ? 'Click "Save Draft" first, then use the batch selector on each line to assign stock batches before confirming.'
+                                                : 'Click the batch selector button on each highlighted item row to assign stock batches, then click "Confirm".'}
+                                        </p>
+                                    </div>
+                                    <button onClick={() => setBatchGuideStep(null)} className="flex-shrink-0 text-amber-400 hover:text-amber-600 transition-colors">
+                                        <X size={16} />
+                                    </button>
                                 </div>
                             )}
 
@@ -3655,12 +4043,12 @@ const SalesInvoice = () => {
                                                                 />
                                                             </th>
                                                             <th className="px-3 py-2 w-16 text-center">Unit</th>
-                                                            <th className="px-3 py-2 w-16 text-center">Qty</th>
+                                                            <th className="px-3 py-2 w-24 text-center">Qty</th>
+                                                            <th className="px-3 py-2 w-32 text-right">Price</th>
+                                                            <th className="px-3 py-2 w-24 text-right">Line total</th>
                                                             {salesType === 'DIRECT_SALE' && (
                                                                 <th className="px-3 py-2 w-32 text-left">Warehouse</th>
                                                             )}
-                                                            <th className="px-3 py-2 w-20 text-right">Price</th>
-                                                            <th className="px-3 py-2 w-24 text-right">Line total</th>
                                                             <th className="px-3 py-2 w-16 text-center">Remarks</th>
                                                         </tr>
                                                     </thead>
@@ -3788,24 +4176,7 @@ const SalesInvoice = () => {
 
                                                                     </td>
 
-                                                                    {/* Warehouse (Direct Sale Only) */}
-                                                                    {salesType === 'DIRECT_SALE' && (
-                                                                        <td className="px-3 py-2">
 
-                                                                            <select
-                                                                                disabled={isReadOnlyInvoice}
-                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
-                                                                                value={item.warehouseId || ''}
-                                                                                onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
-                                                                            >
-                                                                                <option value="" className="text-slate-400">Select...</option>
-                                                                                {warehousesList.map(w => (
-                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
-                                                                                ))}
-                                                                            </select>
-
-                                                                        </td>
-                                                                    )}
 
                                                                     {/* FOC */}
                                                                     <td className="hidden px-3 py-2 text-center align-top">
@@ -3875,6 +4246,25 @@ const SalesInvoice = () => {
 
                                                                     </td>
 
+                                                                    {/* Warehouse (Direct Sale Only) */}
+                                                                    {salesType === 'DIRECT_SALE' && (
+                                                                        <td className="px-3 py-2">
+
+                                                                            <select
+                                                                                disabled={isReadOnlyInvoice}
+                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
+                                                                                value={item.warehouseId || ''}
+                                                                                onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
+                                                                            >
+                                                                                <option value="" className="text-slate-400">Select...</option>
+                                                                                {warehousesList.map(w => (
+                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                                                                ))}
+                                                                            </select>
+
+                                                                        </td>
+                                                                    )}
+
                                                                     {/* Remarks / Action */}
                                                                     <td className="px-3 py-2 text-center">
                                                                         <div className="flex items-center justify-center">
@@ -3943,7 +4333,17 @@ const SalesInvoice = () => {
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                            <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="Thank you for your business!"></textarea>
+                                            <div>
+                                                <label className="block text-xs text-slate-500 mb-1">Customer Notes (prints on invoice)</label>
+                                                <textarea
+                                                    rows="2"
+                                                    readOnly={isReadOnlyInvoice}
+                                                    value={invoiceNotes}
+                                                    onChange={(e) => setInvoiceNotes(e.target.value)}
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500"
+                                                    placeholder="Thank you for your business!"
+                                                />
+                                            </div>
                                             <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
                                         </div>
                                     </div>
@@ -3967,17 +4367,25 @@ const SalesInvoice = () => {
                                                     <span>- <CurrencyAmount value={totalDiscount} currency={invoiceCurrency} /></span>
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600 items-center">
-                                                    <span className="flex items-center gap-2">
-                                                        Bill Discount
+                                                    <span className="flex items-center gap-1.5">
+                                                        Footer Discount
+                                                        <button
+                                                            type="button"
+                                                            disabled={isReadOnlyInvoice}
+                                                            onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                                                            className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                                                            title="Toggle between percentage and fixed amount"
+                                                        >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                                                         <input
                                                             type="number"
                                                             min="0"
-                                                            max="100"
+                                                            max={billDiscountType === 'percent' ? 100 : undefined}
+                                                            step={billDiscountType === 'percent' ? 1 : 0.01}
                                                             disabled={isReadOnlyInvoice}
                                                             value={billDiscount}
                                                             onChange={(e) => setBillDiscount(Number(e.target.value))}
-                                                            className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
-                                                        /> %
+                                                            className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                        />
                                                     </span>
                                                     <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
                                                 </div>
@@ -4057,6 +4465,18 @@ const SalesInvoice = () => {
                                                         <CurrencyAmount value={carriedSoAdvance} currency={invoiceCurrency} />
                                                     </div>
                                                 )}
+
+                                                {(() => {
+                                                    const invoicePayments = Math.max(0, Number(amountCollected) - carriedSoAdvance);
+                                                    return isReadOnlyInvoice && invoicePayments > 0.004 ? (
+                                                        <div className="flex justify-between text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                                                            <span title="Partial payments recorded against this invoice">
+                                                                Payments on Invoice
+                                                            </span>
+                                                            <CurrencyAmount value={invoicePayments} currency={invoiceCurrency} />
+                                                        </div>
+                                                    ) : null;
+                                                })()}
 
                                                 <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
                                                     <span>- <CurrencySymbol currency={invoiceCurrency} /></span>
@@ -4463,103 +4883,6 @@ const SalesInvoice = () => {
                 )
             }
 
-            {/* ✅ UNINVOICED DN MODAL */}
-            {false && isDNModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                    <div className="bg-white w-[800px] max-w-full rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                        {/* Header */}
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                    <Package size={20} className="text-purple-600" />
-                                    Un-Invoiced Delivery Notes Found
-                                </h3>
-                                <p className="text-xs text-slate-500 mt-1">Select the delivery notes to merge into this invoice.</p>
-                            </div>
-                            <button onClick={handleProceedManually} className="text-slate-400 hover:text-slate-600">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        {/* Body - Scrollable */}
-                        <div className="p-6 overflow-y-auto flex-1 bg-white">
-                            <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                <table className="bb-nowrap-table w-full text-xs text-left">
-                                    <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
-                                        <tr>
-                                            <th className="px-4 py-3 w-10 text-center">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedDNRows.length === uninvoicedDNs.length && uninvoicedDNs.length > 0}
-                                                    onChange={handleSelectAllDNs}
-                                                    className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-600 cursor-pointer"
-                                                />
-                                            </th>
-                                            <th className="px-4 py-3">DN Number</th>
-                                            <th className="px-4 py-3">Date</th>
-                                            <th className="px-4 py-3">Warehouse</th>
-                                            <th className="px-4 py-3">Linked SO</th>
-                                            <th className="px-4 py-3 text-right">Items</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {uninvoicedDNs.map((dn) => (
-                                            <tr
-                                                key={dn.id}
-                                                className={`hover:bg-purple-50/50 cursor-pointer transition-colors ${selectedDNRows.includes(dn.id) ? 'bg-purple-50' : ''}`}
-                                                onClick={() => handleToggleDNRow(dn.id)}
-                                            >
-                                                <td className="px-4 py-3 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedDNRows.includes(dn.id)}
-                                                        onChange={() => { }} // handled by tr click
-                                                        onClick={(e) => e.stopPropagation()} // in case they click box directly
-                                                        className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-600 cursor-pointer pointer-events-none"
-                                                    />
-                                                </td>
-                                                <td className="px-4 py-3 font-semibold text-slate-700">{dn.dnNumber}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.deliveryDate || dn.createdDate || '-'}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.warehouse || '-'}</td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.salesOrderNo || '-'}</td>
-                                                <td className="px-4 py-3 text-right font-medium text-slate-600">
-                                                    {dn.items ? dn.items.length : 0} items
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {uninvoicedDNs.length === 0 && (
-                                            <tr>
-                                                <td colSpan="5" className="text-center py-8 text-slate-400">No un-invoiced Delivery Notes found.</td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {/* Footer */}
-                        <div className="px-6 py-4 bg-slate-50 flex justify-between items-center border-t border-slate-100">
-                            <span className="text-xs text-slate-500 font-medium">Selected {selectedDNRows.length} of {uninvoicedDNs.length} documents</span>
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={handleProceedManually}
-                                    className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50 transition-colors"
-                                >
-                                    Proceed Manually
-                                </button>
-                                <button
-                                    onClick={handleProceedWithSelectedDNs}
-                                    disabled={selectedDNRows.length === 0}
-                                    className="px-6 py-2 bg-purple-600 text-white text-xs font-bold rounded hover:bg-purple-700 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                >
-                                    Generate Combined Invoice
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* QA-040: Send Sales Invoice Email */}
             <SendDocumentEmailModal
                 isOpen={isEmailModalOpen}
@@ -4602,6 +4925,7 @@ const SalesInvoice = () => {
                 <InvoiceSettlementModal
                     invoice={settlementInvoice}
                     customer={selectedCustomer || {}}
+                    invoiceTotal={settlementInvoice.invoiceTotal != null ? settlementInvoice.invoiceTotal : netTotal}
                     netTotal={settlementInvoice.balance != null ? settlementInvoice.balance : netTotal}
                     currency={invoiceCurrency}
                     bankAccountOptions={bankAccountOptions}
@@ -4610,8 +4934,8 @@ const SalesInvoice = () => {
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}
-                    onPrintVoucher={handleSettlementVoucherPrint}
-                    onDownloadVoucher={handleSettlementVoucherPrint}
+                    onPrintVoucher={handlePrintAllSettlementVouchers}
+                    onDownloadVoucher={handlePrintAllSettlementVouchers}
                     onEmailVoucher={handleSettlementVoucherEmail}
                     onWhatsAppVoucher={handleSettlementVoucherWhatsApp}
                 />

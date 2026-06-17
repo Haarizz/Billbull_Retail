@@ -66,4 +66,16 @@ public class RoleController {
         auditLogService.logAllowedAccess("/api/roles", "POST", request);
         return ResponseEntity.ok(roleService.createRole(role));
     }
+
+    /**
+     * Delete a custom role - ADMIN ONLY.
+     * Fails if system role or if active users are still assigned.
+     */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteRole(@PathVariable Long id, HttpServletRequest request) {
+        auditLogService.logAllowedAccess("/api/roles/" + id, "DELETE", request);
+        roleService.deleteRole(id);
+        return ResponseEntity.noContent().build();
+    }
 }

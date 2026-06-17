@@ -154,9 +154,25 @@ public class UserService {
         user.setPhone(employee.getPhone());
         user.setLinkedEmployee(employee);
         user.setRoles(resolveRoles(Set.of(request.getRoleId())));
-        user.setActive(false);
-        user.setPendingEmployeeActivation(true);
+        // If employee is already Active, activate the account immediately.
+        // Otherwise keep it pending until the approval workflow reaches Active.
+        boolean alreadyActive = "Active".equals(employee.getStatus());
+        user.setActive(alreadyActive);
+        user.setPendingEmployeeActivation(!alreadyActive);
         user.setBranch(resolveBranchForEmployeeAccess(employee, request.getBranchId()));
+
+        java.util.Set<com.billbull.backend.settings.branch.Branch> nextAdditionalBranches = new java.util.HashSet<>();
+        if (employee.getAdditionalBranchIds() != null && !employee.getAdditionalBranchIds().isEmpty()) {
+            String[] parts = employee.getAdditionalBranchIds().split(",");
+            for (String part : parts) {
+                try {
+                    Long bid = Long.parseLong(part.trim());
+                    if (user.getBranch() != null && bid.equals(user.getBranch().getId())) continue;
+                    branchRepository.findById(bid).ifPresent(nextAdditionalBranches::add);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        user.setAdditionalBranches(nextAdditionalBranches);
 
         userRepository.save(user);
     }
@@ -208,6 +224,7 @@ public class UserService {
     public UserSafeDto assignAdditionalBranches(Long userId, java.util.List<Long> branchIds) {
         User user = findUserById(userId);
         Set<Branch> next = new HashSet<>();
+        StringBuilder branchIdsStr = new StringBuilder();
         if (branchIds != null) {
             for (Long bid : branchIds) {
                 if (bid == null) continue;
@@ -216,9 +233,17 @@ public class UserService {
                 Branch b = branchRepository.findById(bid)
                         .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + bid));
                 next.add(b);
+                if (branchIdsStr.length() > 0) branchIdsStr.append(",");
+                branchIdsStr.append(bid);
             }
         }
         user.setAdditionalBranches(next);
+        
+        if (user.getLinkedEmployee() != null) {
+            user.getLinkedEmployee().setAdditionalBranchIds(branchIdsStr.length() > 0 ? branchIdsStr.toString() : null);
+            employeeRepository.save(user.getLinkedEmployee());
+        }
+        
         return new UserSafeDto(userRepository.save(user));
     }
 
@@ -230,7 +255,7 @@ public class UserService {
         User user = findUserById(userId);
 
         boolean hadAdminRole = user.getRoles().stream()
-                .anyMatch(r -> r.getName().equals("ADMIN"));
+                .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
 
         Set<Role> newRoles = new HashSet<>();
         for (Long roleId : roleIds) {
@@ -240,9 +265,9 @@ public class UserService {
         }
 
         boolean hasAdminRoleInNew = newRoles.stream()
-                .anyMatch(r -> r.getName().equals("ADMIN"));
+                .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
 
-        // If removing ADMIN role, validate not last admin
+        // If removing all admin roles, validate not last admin
         if (hadAdminRole && !hasAdminRoleInNew) {
             adminSafeguardService.validateRemoveAdminRole(user);
         }
@@ -330,7 +355,23 @@ public class UserService {
         if (rawPassword == null || rawPassword.isBlank()) {
             throw new RuntimeException(label + " is required.");
         }
+        validatePasswordComplexity(rawPassword, label);
         return passwordEncoder.encode(rawPassword);
+    }
+
+    private void validatePasswordComplexity(String password, String label) {
+        if (password.length() < 8) {
+            throw new RuntimeException(label + " must be at least 8 characters.");
+        }
+        if (!password.matches(".*[A-Z].*")) {
+            throw new RuntimeException(label + " must contain at least one uppercase letter.");
+        }
+        if (!password.matches(".*[0-9].*")) {
+            throw new RuntimeException(label + " must contain at least one digit.");
+        }
+        if (!password.matches(".*[^a-zA-Z0-9].*")) {
+            throw new RuntimeException(label + " must contain at least one special character.");
+        }
     }
 
     private Set<Role> resolveRoles(Set<Long> roleIds) {

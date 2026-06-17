@@ -125,7 +125,7 @@ const COST_CENTER_COLUMNS = [
 const TRANSACTION_COLUMNS = GL_COLUMNS; // Same as GL for now
 
 const Ledger = () => {
-  const { branches, defaultBranchName } = useBranch();
+  const { branches, defaultBranchName, activeBranch } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
@@ -626,16 +626,18 @@ const Ledger = () => {
         <div className="flex gap-2">
           <ExportDropdown
             onExportExcel={() => {
-              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts');
-              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
-              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers');
-              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History');
+              const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
+              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts', branchMeta);
+              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger', branchMeta);
+              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers', branchMeta);
+              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History', branchMeta);
             }}
             onExportPdf={() => {
-              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
-              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
-              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers');
-              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History');
+              const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
+              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts', branchMeta);
+              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger', branchMeta);
+              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers', branchMeta);
+              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History', branchMeta);
             }}
           />
           
@@ -695,8 +697,22 @@ const Ledger = () => {
           {/* STATS */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
-                const typeAccounts = accounts.filter(a => a.group === type && a.status !== 'archived');
-                const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
+                const typeAccounts = accounts.filter(a => a.group === type && a.status !== 'archived' && !a.isGroup);
+                let total = 0;
+                typeAccounts.forEach(acc => {
+                  const amount = parseFloat(acc.balanceAmount || 0);
+                  if (amount === 0) return;
+                  
+                  const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
+                  const isDebit = balType.toLowerCase().startsWith('dr');
+                  const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
+                  
+                  if (isCrNormal) {
+                    total += isDebit ? -amount : amount;
+                  } else {
+                    total += isDebit ? amount : -amount;
+                  }
+                });
                 
                 let icon = Wallet; 
                 let color = 'text-blue-700'; 

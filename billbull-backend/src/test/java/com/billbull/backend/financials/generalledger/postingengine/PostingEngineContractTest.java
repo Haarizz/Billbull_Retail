@@ -47,15 +47,24 @@ class PostingEngineContractTest {
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
     @Mock private GlAccountBalanceRepository glBalanceRepository;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
+    @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
 
     private PostingEngineService service;
 
     @BeforeEach
     void setUp() {
+        com.billbull.backend.sales.settings.SalesSettings blockSettings =
+                new com.billbull.backend.sales.settings.SalesSettings();
+        blockSettings.setCreditLimitPolicy(com.billbull.backend.sales.settings.CreditLimitPolicy.BLOCK);
+        when(salesSettingsService.getSettings()).thenReturn(blockSettings);
+
         service = new PostingEngineService(
                 journalEntryRepository, journalEntryService, accountRepository,
                 accountingPeriodService, dimensionMatrixService, voucherSequenceService,
-                customerCreditService, grnRepository, glBalanceRepository);
+                customerCreditService, grnRepository, glBalanceRepository, salesSettingsService,
+                currencyService, outletRepository);
 
         // Default: all accounts active, no duplicate references, no period lock
         when(accountRepository.findByCode(anyString())).thenReturn(activeAccount());
@@ -104,6 +113,45 @@ class PostingEngineContractTest {
     }
 
     @Test
+    void cashVendorPaymentCreditsPettyCash() {
+        PaymentVoucher pv = paymentVoucher("PV-CASH-001", new BigDecimal("500.00"), null);
+        pv.setPaymentMode(PaymentMode.CASH);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_PETTY_CASH, new BigDecimal("500.00"), false);
+    }
+
+    @Test
+    void selectedPettyCashAccountOverridesBankTransferDefault() {
+        Account pettyCash = activeAccount();
+        pettyCash.setCode(PostingEngineService.ACC_PETTY_CASH);
+        pettyCash.setName("Petty Cash");
+        when(accountRepository.findByCode(PostingEngineService.ACC_PETTY_CASH)).thenReturn(pettyCash);
+
+        PaymentVoucher pv = paymentVoucher("PV-BANK-PETTY-001", new BigDecimal("500.00"), null);
+        pv.setPaymentMode(PaymentMode.BANK_TRANSFER);
+        pv.setBankAccount(PostingEngineService.ACC_PETTY_CASH);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_PETTY_CASH, new BigDecimal("500.00"), false);
+    }
+
+    @Test
+    void lpoAdvancePaymentDebitsVendorAdvances() {
+        PaymentVoucher pv = paymentVoucher("PV-LPO-ADV-001", new BigDecimal("500.00"), null);
+        pv.setLpoId(7L);
+
+        JournalEntry result = service.createJournalFromPaymentVoucher(pv, "Vendor A");
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_VENDOR_ADVANCES, new BigDecimal("500.00"), true);
+    }
+
+    @Test
     void periodLockedBlocksPosting() {
         doThrow(new PostingException(PostingErrorCode.PERIOD_LOCKED, "closed"))
                 .when(accountingPeriodService).assertOpen(any());
@@ -117,11 +165,11 @@ class PostingEngineContractTest {
     @Test
     void inactiveAccountBlocksPosting() {
         Account inactive = new Account();
-        inactive.setCode("1101");
+        inactive.setCode("1001");
         inactive.setStatus("archived");
-        when(accountRepository.findByCode("1101")).thenReturn(inactive);
+        when(accountRepository.findByCode("1001")).thenReturn(inactive);
 
-        JournalEntry entry = entryWith(line("1101", "100.00", "0.00"), line("4101", "0.00", "100.00"));
+        JournalEntry entry = entryWith(line("1001", "100.00", "0.00"), line("4001", "0.00", "100.00"));
         PostingException ex = assertThrows(PostingException.class, () -> service.validate(entry));
         assertEquals(PostingErrorCode.ACCOUNT_INACTIVE, ex.getCode());
     }
@@ -138,11 +186,18 @@ class PostingEngineContractTest {
     }
 
     @Test
-    void duplicateReferenceBlocksSecondPosting() {
-        when(journalEntryRepository.existsByReference("GRN-DUP")).thenReturn(true);
+    void duplicateReferenceReturnsExistingEntry() {
+        JournalEntry existing = new JournalEntry();
+        existing.setReference("GRN-DUP");
+        existing.setId(99L);
+        when(journalEntryRepository.findByReference("GRN-DUP")).thenReturn(Optional.of(existing));
         GrnEntity grn = grn("GRN-DUP", 100.0);
+
         JournalEntry result = service.createJournalFromGRN(grn);
-        assertNull(result, "Duplicate posting should return null without creating a new entry");
+
+        assertNotNull(result, "Duplicate posting must return the existing entry (not null)");
+        assertEquals(99L, result.getId(), "Must be the pre-existing entry, not a new one");
+        verify(journalEntryRepository, never()).save(any());
     }
 
     // =========================================================
@@ -282,7 +337,7 @@ class PostingEngineContractTest {
         // GRN Clearing Dr (1000 = GRN value)
         assertLineExists(result, PostingEngineService.ACC_GRN_CLEARING, new BigDecimal("1000.00"), true);
         // PPV Dr (50 = (1100-50) piNet - 1000 GRN, positive variance → Dr expense)
-        assertLineExists(result, "5103", new BigDecimal("50.00"), true);
+        assertLineExists(result, "5003", new BigDecimal("50.00"), true);
         // Cr AP (full PI grandTotal)
         assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_PAYABLE, new BigDecimal("1100.00"), false);
     }
@@ -324,14 +379,18 @@ class PostingEngineContractTest {
 
     @Test
     void customerReceiptWithDiscountPostsThreeLines() {
-        // Bank Dr (net 980) + Discount Allowed Dr (20) / AR Cr (1000 full)
+        // Gross discount = 20 (tax-inclusive). VAT portion = 20 * 5/105 = 0.95.
+        // Net discount (ex-VAT) = 19.05. Entry:
+        //   Dr Cash 980 + Dr Discount Allowed 19.05 + Dr VAT Output 0.95 / Cr AR 1000
         ReceiptVoucher rv = receiptVoucher("RV-DISC-001", "CUST-1", 980.0, new BigDecimal("20.00"),
                 ReceiptPurpose.AGAINST_INVOICE);
         JournalEntry result = service.createJournalFromReceiptVoucher(rv);
 
         assertBalanced(result);
-        // Discount Allowed debit (20)
-        assertLineExists(result, PostingEngineService.ACC_DISCOUNT_ALLOWED, new BigDecimal("20.00"), true);
+        // Net discount debit (19.05 = 20 - 0.95 VAT)
+        assertLineExists(result, PostingEngineService.ACC_DISCOUNT_ALLOWED, new BigDecimal("19.05"), true);
+        // VAT Output debit (0.95 = reduces output tax liability)
+        assertLineExists(result, PostingEngineService.ACC_VAT_OUTPUT, new BigDecimal("0.95"), true);
         // AR credit = 980 + 20 = 1000 full
         assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_RECEIVABLE, new BigDecimal("1000.00"), false);
     }
@@ -450,8 +509,8 @@ class PostingEngineContractTest {
                 new BigDecimal("350.00"), LocalDate.now());
 
         assertBalanced(result);
-        assertLineExists(result, "5104",                              new BigDecimal("350.00"), true);
-        assertLineExists(result, PostingEngineService.ACC_INVENTORY,  new BigDecimal("350.00"), false);
+        assertLineExists(result, PostingEngineService.ACC_INVENTORY_WRITEOFF, new BigDecimal("350.00"), true);
+        assertLineExists(result, PostingEngineService.ACC_INVENTORY,          new BigDecimal("350.00"), false);
     }
 
     @Test
@@ -604,6 +663,8 @@ class PostingEngineContractTest {
         grn.setGrnNo(grnNo);
         grn.setGrnDate(LocalDate.of(2026, 6, 1));
         grn.setGrandTotal(new BigDecimal(String.valueOf(grandTotal)));
+        // createJournalFromGRN uses subtotal (ex-VAT); set it equal to grandTotal for tests with no VAT
+        grn.setSubtotal(new BigDecimal(String.valueOf(grandTotal)));
         return grn;
     }
 

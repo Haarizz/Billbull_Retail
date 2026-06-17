@@ -21,19 +21,20 @@ public class AdminSafeguardService {
      * Check if user is the last ACTIVE ADMIN in the system.
      * Frozen (inactive) admins do not count — they cannot perform admin operations.
      */
-    public boolean isLastAdmin(User user) {
-        boolean isAdmin = user.getRoles().stream()
-                .anyMatch(role -> role.getName().equals("ADMIN"));
+    private static boolean hasAdminRole(User u) {
+        return u.getRoles().stream()
+                .anyMatch(r -> r.getName().equals("ADMIN") || r.getName().equals("BRANCH_ADMIN"));
+    }
 
-        if (!isAdmin) {
+    public boolean isLastAdmin(User user) {
+        if (!hasAdminRole(user)) {
             return false;
         }
 
-        // Count only ACTIVE ADMIN users (frozen admins must not count)
+        // Count only ACTIVE ADMIN / BRANCH_ADMIN users (frozen admins must not count)
         long activeAdminCount = userRepository.findAll().stream()
-                .filter(u -> u.isActive())
-                .filter(u -> u.getRoles().stream()
-                        .anyMatch(role -> role.getName().equals("ADMIN")))
+                .filter(User::isActive)
+                .filter(AdminSafeguardService::hasAdminRole)
                 .count();
 
         return activeAdminCount <= 1;
@@ -76,8 +77,6 @@ public class AdminSafeguardService {
      * Check if at least one ADMIN exists in the system.
      */
     public boolean hasAdminUser() {
-        return userRepository.findAll().stream()
-                .anyMatch(user -> user.getRoles().stream()
-                        .anyMatch(role -> role.getName().equals("ADMIN")));
+        return userRepository.findAll().stream().anyMatch(AdminSafeguardService::hasAdminRole);
     }
 }

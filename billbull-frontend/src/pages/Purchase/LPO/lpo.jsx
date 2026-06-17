@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -128,6 +128,7 @@ import { useBranch } from '../../../context/BranchContext';
 // UTILITIES & CONSTANTS
 // ==========================================
 import SearchableDropdown from '../../../components/SearchableDropdown';
+import LocationSelector from '../../../components/common/LocationSelector';
 import ProductSelector from '../../../components/ProductSelector';
 import VendorSelector from '../../../components/VendorSelector';
 import TableSkeleton from '../../../components/common/TableSkeleton';
@@ -331,7 +332,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, pageSize, totalElements, loading = false }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, pageSize, totalElements, loading = false }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -524,11 +525,10 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 text-[11px]">
-                      {row.branchName ? (
-                        <>
-                          <div className="font-medium">{row.branchName}</div>
-                          {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                        </>
+                      {row.branchCode ? (
+                        <div className="font-medium">{row.branchCode}</div>
+                      ) : row.branchName ? (
+                        <div className="font-medium">{row.branchName}</div>
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}
@@ -668,22 +668,6 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                         >
                           <Download className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
-                          title="Advance Payment"
-                          onClick={(e) => { e.stopPropagation(); onAdvancePayment && onAdvancePayment(row); }}
-                        >
-                          <DollarSign className="h-3.5 w-3.5" />
-                        </button>
-                        {Number(row.advancePaid) > 0 && (
-                          <button
-                            className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
-                            title="Print Payment Voucher"
-                            onClick={(e) => { e.stopPropagation(); onPrintPaymentVoucher && onPrintPaymentVoucher(row); }}
-                          >
-                            <FileDown className="h-3.5 w-3.5" />
-                          </button>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -961,7 +945,7 @@ const HistoryView = ({ lpos }) => {
 // EDITOR COMPONENT (UPDATED FOR VIEW ONLY)
 // ==========================================
 
-const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onRevert, isReadOnly, followUpNotes }) => {
+const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onDownload, onExportExcel, onRevert, isReadOnly, followUpNotes }) => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   // --- Editor Logic ---
@@ -1017,6 +1001,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
   const inlineSearchRefs = useRef({});
   const focusNextInlineSearchRef = useRef(null);
+  const locationSectionRef = useRef(null);
 
   // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
   useEffect(() => {
@@ -1071,6 +1056,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [zoneList, setZoneList] = useState([]);
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
+  const [locationError, setLocationError] = useState(null);
 
   const { defaultBranch } = useBranch();
 
@@ -1216,7 +1202,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       focUnit: defaultUnit,
       tax: parseFloat(product.purchaseTax) || 5,
       taxAmt: 0,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
@@ -1266,7 +1252,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       focUnit: defaultUnit,
       tax: parseFloat(product.purchaseTax) || 5,
       taxAmt: 0,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || null,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
@@ -1435,17 +1421,23 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         binId: formData.binId,
         items: mapItemsToRequest(calculations.calculatedItems)
       };
-      if (!formData.warehouseId) {
-        alert("Please select a warehouse");
+      const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+        : !formData.zoneId ? "Select a zone within the warehouse"
+        : !formData.locatorId ? "Select a locator (aisle / rack)"
+        : !formData.binId ? "Select a bin to complete the delivery location"
+        : null;
+      if (locErr) {
+        setLocationError(locErr);
+        locationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setLoading(false);
         return;
       }
-
+      setLocationError(null);
 
       await onSave(payload);
     } catch (error) {
       console.error('Save failed:', error);
-      alert('Failed to save LPO. Please try again.');
+      toast.error('Failed to save LPO. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -1483,34 +1475,23 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         items: mapItemsToRequest(calculations.calculatedItems)
       };
 
-      if (!formData.warehouseId) {
-        alert("Please select a warehouse");
+      const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+        : !formData.zoneId ? "Select a zone within the warehouse"
+        : !formData.locatorId ? "Select a locator (aisle / rack)"
+        : !formData.binId ? "Select a bin to complete the delivery location"
+        : null;
+      if (locErr) {
+        setLocationError(locErr);
+        locationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setLoading(false);
         return;
       }
-
-      if (!formData.zoneId) {
-        alert("Please select a zone");
-        setLoading(false);
-        return;
-      }
-
-      if (!formData.locatorId) {
-        alert("Please select a locator");
-        setLoading(false);
-        return;
-      }
-
-      if (!formData.binId) {
-        alert("Please select a bin");
-        setLoading(false);
-        return;
-      }
+      setLocationError(null);
 
       await onSubmit(payload);
     } catch (error) {
       console.error('Submit failed:', error);
-      alert('Failed to submit LPO. Please try again.');
+      toast.error('Failed to submit LPO. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -1525,55 +1506,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     }));
   };
 
-  const handleWarehouseChange = (value) => {
-    const w = warehouses.find(x => x.id === Number(value));
-    if (w) {
-      setFormData(prev => ({
-        ...prev,
-        warehouseId: w.id,
-        warehouseName: w.name,
-        zoneId: null, locatorId: null, binId: null
-      }));
-      getWarehouseZones(w.id).then(setZoneList).catch(console.error);
-      setLocatorList([]);
-      setBinList([]);
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        warehouseId: null,
-        warehouseName: '',
-        zoneId: null, locatorId: null, binId: null
-      }));
-      setZoneList([]);
-      setLocatorList([]);
-      setBinList([]);
-    }
-  };
-
-  const handleZoneChange = (value) => {
-    const z = zoneList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, zoneId: z?.id || null, locatorId: null, binId: null }));
-    if (z) {
-      getZoneLocators(z.id).then(setLocatorList).catch(console.error);
-    } else {
-      setLocatorList([]);
-    }
-    setBinList([]);
-  };
-
-  const handleLocatorChange = (value) => {
-    const l = locatorList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, locatorId: l?.id || null, binId: null }));
-    if (l) {
-      getLocatorBins(l.id).then(setBinList).catch(console.error);
-    } else {
-      setBinList([]);
-    }
-  };
-
-  const handleBinChange = (value) => {
-    const b = binList.find(x => x.id === Number(value));
-    setFormData(prev => ({ ...prev, binId: b?.id || null }));
+  const handleLocationChange = (payload) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseId: payload.warehouseId,
+      warehouseName: payload.warehouseName,
+      zoneId: payload.zoneId,
+      locatorId: payload.locatorId,
+      binId: payload.binId
+    }));
+    if (payload.binId) setLocationError(null);
+    else if (payload.locatorId) setLocationError("Select a bin to complete the location");
+    else if (payload.zoneId) setLocationError("Select a locator, then a bin");
+    else if (payload.warehouseId) setLocationError("Select a zone, locator, and bin");
+    else setLocationError(null);
   };
 
   return (
@@ -1681,66 +1627,26 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   className="w-full text-sm border border-slate-200 rounded-md py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
                 />
               </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Delivery Location (Warehouse)
+              <div ref={locationSectionRef}>
+                <label className="text-xs font-medium mb-1 flex items-center gap-1">
+                  <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                  {locationError && <span className="text-red-500">*</span>}
+                  {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
                 </label>
-                <SearchableDropdown
-                  options={warehouses.map(w => ({ value: w.id, label: w.name }))}
-                  value={formData.warehouseId}
-                  onChange={handleWarehouseChange}
-                  placeholder="Select Warehouse"
+                <LocationSelector
+                  value={{
+                    warehouseId: formData.warehouseId,
+                    warehouseName: formData.warehouseName,
+                    zoneId: formData.zoneId,
+                    locatorId: formData.locatorId,
+                    binId: formData.binId
+                  }}
+                  onChange={handleLocationChange}
                   disabled={isReadOnly}
-                  menuPlacement="auto"
-                  menuZIndexClass="z-[120]"
                   className="w-full"
+                  error={locationError}
                 />
               </div>
-
-              {/* Cascading Location Fields */}
-              {formData.warehouseId && (
-                <div className="grid grid-cols-3 gap-2 p-2 bg-slate-50 rounded border border-slate-100">
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Zone</label>
-                    <SearchableDropdown
-                      options={zoneList.map(z => ({ value: z.id, label: z.name }))}
-                      value={formData.zoneId}
-                      onChange={handleZoneChange}
-                      placeholder="Zone"
-                      disabled={isReadOnly}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Locator</label>
-                    <SearchableDropdown
-                      options={locatorList.map(l => ({ value: l.id, label: l.name }))}
-                      value={formData.locatorId}
-                      onChange={handleLocatorChange}
-                      placeholder="Locator"
-                      disabled={isReadOnly || !formData.zoneId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-medium text-slate-500 mb-1 block">Bin</label>
-                    <SearchableDropdown
-                      options={binList.map(b => ({ value: b.id, label: b.code }))}
-                      value={formData.binId}
-                      onChange={handleBinChange}
-                      placeholder="Bin"
-                      disabled={isReadOnly || !formData.locatorId}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">
                   Purchase Type
@@ -2149,141 +2055,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         </div>
       </div>
 
-      {/* BB-023: Inline Follow-Up & Revision History (shown in view mode) */}
-      {isReadOnly && (
-        <div className="mt-6 space-y-6">
-
-          {/* Follow-Up Notes */}
-          <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <MessageSquare className="h-4 w-4 text-[#F5C742]" />
-              <h3 className="font-semibold text-slate-800 text-sm">Follow-Up Notes</h3>
-              {followUpNotes && followUpNotes.length > 0 && (
-                <span className="ml-auto text-[10px] bg-[#F5C742]/20 text-slate-700 font-bold px-2 py-0.5 rounded-full">
-                  {followUpNotes.length}
-                </span>
-              )}
-            </div>
-            {(!followUpNotes || followUpNotes.length === 0) ? (
-              <div className="text-center py-6 text-slate-400 text-xs italic">No follow-up notes recorded.</div>
-            ) : (
-              <div className="space-y-3">
-                {followUpNotes.map((note, idx) => (
-                  <div key={note.id || idx} className="flex gap-3 p-3 bg-slate-50 border border-slate-100 rounded-lg">
-                    <div className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-full bg-[#F5C742]/20 flex items-center justify-center">
-                      <MessageSquare className="h-3.5 w-3.5 text-[#F5C742]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1 gap-2">
-                        <span className="text-xs font-semibold text-slate-800">{note.addedBy}</span>
-                        <div className="text-right flex-shrink-0">
-                          <div className="text-[10px] text-slate-400">{note.addedAt}</div>
-                          {note.date && <div className="text-[10px] font-bold text-[#F5C742]">Follow-up: {formatDisplayDate(note.date)}</div>}
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-600 break-words">{note.note}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Revision / Approval History */}
-          <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <GitCommit className="h-4 w-4 text-[#F5C742]" />
-              <h3 className="font-semibold text-slate-800 text-sm">Approval & Revision History</h3>
-            </div>
-            <div className="relative">
-              <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-slate-200" />
-              <div className="space-y-3 ml-9">
-
-                {/* Current status marker */}
-                <div className="relative">
-                  <div className="absolute -left-9 mt-1 w-5 h-5 rounded-full bg-[#F5C742] border-2 border-white shadow flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-white" />
-                  </div>
-                  <div className="bg-[#F5C742]/10 border border-[#F5C742]/30 rounded-lg p-3">
-                    <div className="flex justify-between items-start">
-                      <span className="text-xs font-bold text-slate-800">Current Status: {formData.status}</span>
-                      {formData.approvedAt && (
-                        <span className="text-[10px] text-slate-400">{new Date(formData.approvedAt).toLocaleString()}</span>
-                      )}
-                    </div>
-                    {formData.approvedBy && (
-                      <p className="text-[10px] text-slate-500 mt-0.5">By: <strong>{formData.approvedBy}</strong></p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Approval workflow steps */}
-                {(formData.approvalHistory || []).length > 0 ? (
-                  [...formData.approvalHistory].reverse().map((step, idx) => {
-                    const isApproved = step.status === 'APPROVED';
-                    const isRejected = step.status === 'REJECTED';
-                    const dotColor = isApproved ? 'bg-emerald-500' : isRejected ? 'bg-red-500' : 'bg-slate-300';
-                    const cardClass = isApproved ? 'bg-emerald-50 border-emerald-200' : isRejected ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200';
-                    const labelColor = isApproved ? 'text-emerald-700' : isRejected ? 'text-red-600' : 'text-slate-500';
-                    return (
-                      <div key={idx} className="relative">
-                        <div className={`absolute -left-9 mt-1 w-5 h-5 rounded-full ${dotColor} border-2 border-white shadow flex items-center justify-center`}>
-                          <div className="w-2 h-2 rounded-full bg-white" />
-                        </div>
-                        <div className={`border rounded-lg p-3 ${cardClass}`}>
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <span className="text-xs font-bold text-slate-800">
-                                Step {step.stepOrder}: {step.displayName || step.roleCode}
-                              </span>
-                              <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded ${labelColor}`}>
-                                {step.status}
-                              </span>
-                            </div>
-                            {step.approvedAt && (
-                              <span className="text-[10px] text-slate-400">{new Date(step.approvedAt).toLocaleString()}</span>
-                            )}
-                          </div>
-                          {step.approvedBy && <p className="text-[10px] text-slate-500 mt-0.5">By: <strong>{step.approvedBy}</strong></p>}
-                          {step.remarks && <p className="text-[10px] text-slate-600 mt-1 italic">"{step.remarks}"</p>}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="text-center py-3 text-slate-400 text-xs italic">No approval steps recorded yet.</div>
-                )}
-
-                {/* Created milestone */}
-                <div className="relative">
-                  <div className="absolute -left-9 mt-1 w-5 h-5 rounded-full bg-slate-300 border-2 border-white shadow flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-white" />
-                  </div>
-                  <div className="bg-white border border-slate-200 rounded-lg p-3">
-                    <div className="flex justify-between items-start">
-                      <span className="text-xs font-bold text-slate-800">LPO Created</span>
-                      <span className="text-[10px] text-slate-400">{formData.createdAt ? new Date(formData.createdAt).toLocaleString() : 'N/A'}</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1">
-                      <span key="lpo-prefix">LPO #</span>
-                      <span key="lpo-no" className="font-medium">{formData.lpoNumber}</span>
-                      <span key="created-text">created</span>
-                      {formData.createdBy ? <span key="created-by"> by {formData.createdBy}</span> : null}
-                      <span key="with-text"> with </span>
-                      <span key="item-count">{formData.items?.length || 0}</span>
-                      <span key="items-suffix"> item(s) for </span>
-                      <strong key="vendor-name" className="font-bold">{formData.vendorName}</strong>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-
-        </div>
-      )}
-
       {/* Bottom Bar */}
       <div className="sticky bottom-0 left-0 right-0 bg-white border-t-2 border-slate-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-4 z-50 -mx-4 md:-mx-6 -mb-4 md:-mb-6">
         <div className="max-w-[1920px] mx-auto flex flex-col xl:flex-row justify-between items-center text-xs text-slate-400 gap-3 xl:gap-0 px-4">
@@ -2304,30 +2075,33 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 Revert to Draft
               </button>
             )}
-            <button
-              onClick={() => onPrint(initialData)}
-              disabled={loading || !initialData || isReadOnly}
-              className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Printer size={14} />
-              Print
-            </button>
-            <button
-              onClick={handleSaveAction}
-              disabled={loading || !formData.vendorName || formData.items.length === 0 || isReadOnly}
-              className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <FileText size={14} />
-              {isReadOnly ? 'View Only' : (loading ? 'Saving...' : 'Save Draft')}
-            </button>
-            <button
-              onClick={handleSubmitAction}
-              disabled={loading || !formData.vendorName || formData.items.length === 0 || isReadOnly}
-              className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] rounded font-bold text-slate-900 flex items-center justify-center gap-2 shadow-sm transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Upload size={14} />
-              {isReadOnly ? (formData.status === 'PENDING_APPROVAL' ? 'Pending Approval' : 'View Only') : (loading ? 'Submitting...' : 'Submit for Approval')}
-            </button>
+            {initialData?.lpoNumber && (
+              <ExportDropdown
+                onExportPdf={() => onDownload && onDownload(initialData)}
+                onExportExcel={() => onExportExcel && onExportExcel(initialData)}
+                onPrint={() => onPrint(initialData)}
+              />
+            )}
+            {!isReadOnly && (
+              <>
+                <button
+                  onClick={handleSaveAction}
+                  disabled={loading || !formData.vendorName || formData.items.length === 0}
+                  className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <FileText size={14} />
+                  {loading ? 'Saving...' : 'Save Draft'}
+                </button>
+                <button
+                  onClick={handleSubmitAction}
+                  disabled={loading || !formData.vendorName || formData.items.length === 0}
+                  className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] rounded font-bold text-slate-900 flex items-center justify-center gap-2 shadow-sm transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Upload size={14} />
+                  {loading ? 'Submitting...' : 'Submit for Approval'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -2369,6 +2143,7 @@ const LPOList = () => {
   const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
 
@@ -2436,6 +2211,14 @@ const LPOList = () => {
   // Initialize Data via useEffect
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Open a specific LPO by number (from dashboard search navigation)
+  useEffect(() => {
+    const lpoNumber = location.state?.lpoNumber;
+    if (!lpoNumber) return;
+    navigate(location.pathname, { replace: true, state: {} });
+    handleViewLPO({ lpoNumber });
   }, []);
 
   // Refetch when the global Branch Selector changes the active branch.
@@ -2638,11 +2421,7 @@ const LPOList = () => {
         const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-          companyProfile: buildDocumentHeaderProfile({
-            company,
-            branches: availableBranches || [],
-            branchId: detailedLpo?.branchId ?? activeBranch?.id,
-          }),
+          companyProfile: company,
           billBullLogo
         });
         printHtml(html);
@@ -2668,7 +2447,7 @@ const LPOList = () => {
       if (defaultTemplate) {
         const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
-        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: detailedLpo?.branchId ?? activeBranch?.id }), billBullLogo });
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
         await downloadPdf(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
       } else {
         toast.error("No default template for LPO found.");
@@ -2857,11 +2636,7 @@ const LPOList = () => {
         null
       );
       const html = await generatePrintHtmlAsync(template, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: voucher?.branch?.id ?? row?.branchId ?? activeBranch?.id,
-        }),
+        companyProfile: company,
         billBullLogo
       });
       printHtml(html);
@@ -2978,12 +2753,32 @@ const LPOList = () => {
     }));
   };
 
-  const handleExportExcel = async () => {
-    exportToExcel(await buildExportRows(), LPO_COLUMNS, 'LPO_List');
-  };
-
-  const handleExportPdf = async () => {
-    exportToPDF(await buildExportRows(), LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
+  const handleExportLpoExcel = (lpo) => {
+    const LPO_ITEM_COLUMNS = [
+      { header: 'S.No.', key: 'sNo', width: 6 },
+      { header: 'Item Code', key: 'itemCode', width: 15 },
+      { header: 'Item Name', key: 'itemName', width: 30 },
+      { header: 'SKU', key: 'sku', width: 15 },
+      { header: 'Brand', key: 'brand', width: 15 },
+      { header: 'UOM', key: 'uom', width: 8 },
+      { header: 'Qty', key: 'quantity', width: 8 },
+      { header: 'Unit Price', key: 'unitPrice', width: 12 },
+      { header: 'Discount %', key: 'discountPercent', width: 12 },
+      { header: 'Line Total', key: 'lineTotal', width: 12 },
+    ];
+    const rows = (lpo?.items || []).map((item, idx) => ({
+      sNo: idx + 1,
+      itemCode: item.itemCode || item.code || '',
+      itemName: item.itemName || item.name || '',
+      sku: item.sku || '',
+      brand: item.brand || item.brandName || '',
+      uom: item.uom || '',
+      quantity: item.quantity || item.qty || 0,
+      unitPrice: item.unitPrice || item.price || 0,
+      discountPercent: item.discountPercent || 0,
+      lineTotal: item.lineTotal || item.total || 0,
+    }));
+    exportToExcel(rows, LPO_ITEM_COLUMNS, lpo?.lpoNumber || 'LPO', { companyProfile: company, branch: activeBranch?.name || '' });
   };
 
   return (
@@ -3031,13 +2826,16 @@ const LPOList = () => {
                 </button>
               )}
 
+              {activeNavTab === 'editor' && currentEditorData?.lpoNumber && (
+                <ExportDropdown
+                  onExportPdf={() => handleDownloadLPO(currentEditorData)}
+                  onExportExcel={() => handleExportLpoExcel(currentEditorData)}
+                  onPrint={() => handlePrintLPO(currentEditorData)}
+                />
+              )}
               <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <Upload className="h-4 w-4" /> Import
               </button>
-              <ExportDropdown
-                onExportExcel={handleExportExcel}
-                onExportPdf={handleExportPdf}
-              />
               <button
                 onClick={handleCreateNew}
                 disabled={loading}
@@ -3180,6 +2978,7 @@ const LPOList = () => {
                 onSubmit={handleSubmitForApproval}
                 onPrint={handlePrintLPO}
                 onDownload={handleDownloadLPO}
+                onExportExcel={handleExportLpoExcel}
                 onRevert={handleRevertLPO}
                 isReadOnly={isViewOnly}
                 followUpNotes={isViewOnly ? followUpNotes : undefined}

@@ -25,6 +25,7 @@ import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.security.BranchContextHolder;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -58,6 +59,7 @@ public class ProductService {
     private final StockMovementRepository stockMovementRepo;
     private final BranchRepository branchRepo;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
     public ProductService(
             ProductRepository productRepo,
@@ -79,7 +81,8 @@ public class ProductService {
             ProductImageStorageService imageStorage,
             StockMovementRepository stockMovementRepo,
             BranchRepository branchRepo,
-            AuditLogService auditLogService) {
+            AuditLogService auditLogService,
+            ModulePermissionService modulePermissionService) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -100,6 +103,7 @@ public class ProductService {
         this.stockMovementRepo = stockMovementRepo;
         this.branchRepo = branchRepo;
         this.auditLogService = auditLogService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     private void auditProduct(String action, Product product, ProductAggregateRequest req) {
@@ -268,6 +272,11 @@ public class ProductService {
             throw new IllegalArgumentException("Product code already exists");
         }
 
+        if (product.getSku() != null && !product.getSku().isBlank()
+                && productRepo.existsBySkuAndIsActiveTrue(product.getSku())) {
+            throw new IllegalArgumentException("A product with SKU '" + product.getSku() + "' already exists");
+        }
+
         // 1. Fetch real entities to prevent foreign key errors
         resolveRelationships(product);
 
@@ -300,6 +309,11 @@ public class ProductService {
                 .orElseThrow(() -> new RuntimeException("Product not found"));
 
         Product updated = req.getProduct();
+
+        if (updated.getSku() != null && !updated.getSku().isBlank()
+                && productRepo.existsBySkuAndIdNotAndIsActiveTrue(updated.getSku(), productId)) {
+            throw new IllegalArgumentException("A product with SKU '" + updated.getSku() + "' already exists");
+        }
 
         // Preserve BaseEntity fields
         updated.setId(existing.getId());
@@ -396,7 +410,17 @@ public class ProductService {
         inventory.setSafetyStock(reqInventory.getSafetyStock());
         inventory.setMinStock(reqInventory.getMinStock());
         inventory.setMaxStock(reqInventory.getMaxStock());
-        inventory.setAllowNegative(reqInventory.isAllowNegative());
+        // Only users with inventory.approve permission can enable negative-stock override.
+        // If the caller lacks the permission, silently preserve the existing value (no error
+        // so the rest of the inventory save succeeds).
+        if (reqInventory.isAllowNegative()) {
+            if (modulePermissionService.canApprove("inventory")) {
+                inventory.setAllowNegative(true);
+            }
+            // else: leave existing value unchanged — no escalation
+        } else {
+            inventory.setAllowNegative(false);
+        }
         inventory.setProcurementType(reqInventory.getProcurementType());
         inventory.setDefaultVendor(reqInventory.getDefaultVendor());
 

@@ -6,7 +6,7 @@ import {
   ArrowRight, RefreshCw, Building2, Grid3X3, ScanLine
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getWarehouses, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
+import { getWarehouseTree, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
 import { getBranches } from '../../../api/branchApi';
 import { hasRole } from '../../../api/auth';
 import { useBranch } from '../../../context/BranchContext';
@@ -182,7 +182,7 @@ const extractErrorMessage = (error, fallback) =>
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const Warehouse = () => {
-  const { defaultBranch } = useBranch();
+  const { defaultBranch, activeBranchId, isAllBranches } = useBranch();
   const isAdmin = hasRole('ADMIN');
   const [warehouses, setWarehouses]   = useState([]);
   const [branches, setBranches]       = useState([]);
@@ -198,7 +198,10 @@ const Warehouse = () => {
   const [modal, setModal]             = useState({ type: null, editing: null });
   const [form, setForm]               = useState({});
 
-  useEffect(() => { fetchWarehousesAndExpand(); }, []);
+  useEffect(() => {
+    setSelected({ type: null, item: null, parentId: null });
+    fetchWarehousesAndExpand();
+  }, [activeBranchId]);
   useEffect(() => { fetchBranches(); }, []);
   useEffect(() => {
     if (modal.type === 'warehouse' && !modal.editing && !form.branchId && defaultBranch?.id) {
@@ -217,30 +220,41 @@ const Warehouse = () => {
   const fetchWarehousesAndExpand = async () => {
     try {
       setLoading(true);
-      const data = await getWarehouses();
-      const warehouseList = Array.isArray(data) ? data : [];
+      const branchFilter = (isAdmin && !isAllBranches && activeBranchId && activeBranchId !== 'ALL')
+        ? activeBranchId
+        : null;
+      const tree = await getWarehouseTree(branchFilter);
+      const warehouseList = Array.isArray(tree.warehouses) ? tree.warehouses : [];
+      const zoneList     = Array.isArray(tree.zones)      ? tree.zones      : [];
+      const locatorList  = Array.isArray(tree.locators)   ? tree.locators   : [];
+      const binList      = Array.isArray(tree.bins)        ? tree.bins       : [];
+
       setWarehouses(warehouseList);
-      const expW = {}, expZ = {}, expL = {}, allZ = {}, allL = {}, allB = {};
-      let firstBin = null, firstBinLocatorId = null;
-      for (const wh of warehouseList) {
-        expW[wh.id] = true;
-        try {
-          const zoneData = await getZones(wh.id); allZ[wh.id] = zoneData || [];
-          for (const zone of (zoneData || [])) {
-            expZ[zone.id] = true;
-            try {
-              const locData = await getLocators(zone.id); allL[zone.id] = locData || [];
-              for (const loc of (locData || [])) {
-                expL[loc.id] = true;
-                try {
-                  const binData = await getBins(loc.id); allB[loc.id] = binData || [];
-                  if (!firstBin && binData?.length > 0) { firstBin = binData[0]; firstBinLocatorId = loc.id; }
-                } catch { allB[loc.id] = []; }
-              }
-            } catch { allL[zone.id] = []; }
-          }
-        } catch { allZ[wh.id] = []; }
+
+      const expW = {}, expZ = {}, expL = {};
+      const allZ = {}, allL = {}, allB = {};
+
+      for (const wh of warehouseList) expW[wh.id] = true;
+
+      for (const zone of zoneList) {
+        expZ[zone.id] = true;
+        allZ[zone.warehouseId] = allZ[zone.warehouseId] || [];
+        allZ[zone.warehouseId].push(zone);
       }
+
+      for (const loc of locatorList) {
+        expL[loc.id] = true;
+        allL[loc.zoneId] = allL[loc.zoneId] || [];
+        allL[loc.zoneId].push(loc);
+      }
+
+      let firstBin = null, firstBinLocatorId = null;
+      for (const bin of binList) {
+        allB[bin.locatorId] = allB[bin.locatorId] || [];
+        allB[bin.locatorId].push(bin);
+        if (!firstBin) { firstBin = bin; firstBinLocatorId = bin.locatorId; }
+      }
+
       setExpanded({ warehouses: expW, zones: expZ, locators: expL });
       setZones(allZ); setLocators(allL); setBins(allB);
       if (firstBin) setSelected({ type: 'bin', item: firstBin, parentId: firstBinLocatorId });
@@ -971,6 +985,7 @@ const LocatorDetail = ({ locator, bins, onEdit, onAddBin, onEditBin, onDeleteBin
 const BinDetail = ({ bin, onEdit }) => {
   const [binStock, setBinStock] = useState([]);
   const [stockLoading, setStockLoading] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
 
   useEffect(() => {
     if (bin?.id) {
@@ -985,6 +1000,42 @@ const BinDetail = ({ bin, onEdit }) => {
   const skuCount    = new Set(binStock.map(r => r.productCode)).size;
   const capacityPct = bin.capacity ? Math.min(100, Math.round((currentQty / bin.capacity) * 100)) : 0;
   const capColor    = capacityPct > 85 ? 'bg-red-500' : capacityPct > 60 ? 'bg-[#F5C742]' : 'bg-emerald-500';
+
+  // Natural comparison: splits strings into text/number chunks for proper numeric ordering
+  const naturalCompare = (strA, strB) => {
+    const a = (strA || '').toLowerCase();
+    const b = (strB || '').toLowerCase();
+    const re = /(\d+|\D+)/g;
+    const partsA = a.match(re) || [];
+    const partsB = b.match(re) || [];
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      if (i >= partsA.length) return -1;
+      if (i >= partsB.length) return 1;
+      const pA = partsA[i], pB = partsB[i];
+      const nA = Number(pA), nB = Number(pB);
+      const bothNum = !isNaN(nA) && !isNaN(nB);
+      const cmp = bothNum ? nA - nB : pA.localeCompare(pB);
+      if (cmp !== 0) return cmp;
+    }
+    return 0;
+  };
+
+  // Sort stock by product name, then product code, then batch number (all with natural ordering)
+  const sortedAndFilteredStock = [...binStock]
+    .sort((a, b) => {
+      return naturalCompare(a.productName, b.productName)
+          || naturalCompare(a.productCode, b.productCode)
+          || naturalCompare(a.batchNumber, b.batchNumber);
+    })
+    .filter(s => {
+      if (!stockSearch.trim()) return true;
+      const term = stockSearch.toLowerCase().trim();
+      return (
+        (s.productCode || '').toLowerCase().includes(term) ||
+        (s.productName || '').toLowerCase().includes(term) ||
+        (s.batchNumber || '').toLowerCase().includes(term)
+      );
+    });
 
   return (
     <div className="space-y-5">
@@ -1040,7 +1091,30 @@ const BinDetail = ({ bin, onEdit }) => {
       </div>
 
       {/* Stock snapshot */}
-      <SectionCard title="Stock Snapshot" subtitle="Current inventory in this bin">
+      <SectionCard
+        title="Stock Snapshot"
+        subtitle="Current inventory in this bin"
+        action={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by SKU, name, or batch…"
+              value={stockSearch}
+              onChange={e => setStockSearch(e.target.value)}
+              className="w-64 pl-9 pr-8 py-1.5 text-xs bg-[#F7F7FA] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 focus:border-[#F5C742] transition-all"
+            />
+            {stockSearch && (
+              <button
+                onClick={() => setStockSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        }
+      >
         {stockLoading ? (
           <div className="flex items-center justify-center py-12 gap-3">
             <div className="w-6 h-6 border-2 border-[#F5C742] border-t-transparent rounded-full animate-spin" />
@@ -1057,13 +1131,15 @@ const BinDetail = ({ bin, onEdit }) => {
               { key: 'expiry', label: 'Expiry' },
               { key: 'reserved', label: 'Reserved' },
               { key: 'available', label: 'Available' },
+              { key: 'status', label: 'Status' },
             ]}
-            rows={binStock.map((s, idx) => {
+            rows={sortedAndFilteredStock.map((s, idx) => {
               const onHand   = s.quantity || 0;
               const res      = s.reservedQuantity || 0;
               const avail    = onHand - res;
+              const isNeg    = onHand < 0;
               return (
-                <tr key={s.stockIdentityKey || `${s.id}-${idx}`} className="hover:bg-amber-50/20 transition-colors">
+                <tr key={s.stockIdentityKey || `${s.id}-${idx}`} className={`transition-colors ${isNeg ? 'bg-red-50/40 hover:bg-red-50/60' : 'hover:bg-amber-50/20'}`}>
                   <td className="px-4 py-3 text-center text-slate-400 text-[11px] font-mono">{idx + 1}</td>
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs font-bold text-slate-800">{s.productCode || '—'}</span>
@@ -1075,16 +1151,30 @@ const BinDetail = ({ bin, onEdit }) => {
                       : <span className="text-slate-400 text-xs">—</span>
                     }
                   </td>
-                  <td className="px-4 py-3 text-sm font-bold text-slate-900">{onHand}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-sm font-bold ${isNeg ? 'text-red-600' : 'text-slate-900'}`}>{onHand}</span>
+                  </td>
                   <td className="px-4 py-3 text-xs text-slate-500">{s.expiryDate || '—'}</td>
                   <td className="px-4 py-3 text-xs text-purple-600 font-semibold">{res}</td>
                   <td className="px-4 py-3">
                     <span className={`text-sm font-bold ${avail < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{avail}</span>
                   </td>
+                  <td className="px-4 py-3">
+                    {s.negativeOverride
+                      ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 border border-orange-300 text-orange-700 text-[10px] rounded-full font-semibold">
+                          <AlertTriangle className="h-3 w-3" /> Neg. Override
+                        </span>
+                      : isNeg
+                        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 border border-red-300 text-red-700 text-[10px] rounded-full font-semibold">
+                            <AlertTriangle className="h-3 w-3" /> Negative
+                          </span>
+                        : <span className="text-slate-400 text-xs">—</span>
+                    }
+                  </td>
                 </tr>
               );
             })}
-            empty="No stock in this bin"
+            empty={stockSearch ? `No items matching "${stockSearch}"` : "No stock in this bin"}
           />
         )}
       </SectionCard>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useContext, useState } from "react";
 import {
   ArrowLeft,
   Save,
@@ -18,6 +18,11 @@ import {
 } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
+import CompanyContext from "../../../context/CompanyContext";
+import {
+  resolveCurrencyDisplayConfig,
+  UAE_DIRHAM_SYMBOL_IMAGE
+} from "../../../utils/countryCurrencyOptions";
 function docTypeLabel(t) {
   return {
     quotation: "Quotation",
@@ -48,8 +53,53 @@ function docTypeCode(t) {
     "debit-note": "DN"
   }[t];
 }
-function amountInWords(n) {
-  return `${Math.floor(n).toLocaleString("en-AE")} AED and ${Math.round(n % 1 * 100)} Fils Only`;
+const CURRENCY_UNITS = {
+  AED: { main: "Dirhams", sub: "Fils" },
+  USD: { main: "Dollars", sub: "Cents" },
+  EUR: { main: "Euros", sub: "Cents" },
+  GBP: { main: "Pounds", sub: "Pence" },
+  INR: { main: "Rupees", sub: "Paise" }
+};
+
+function amountInWords(n, currencyCode = "AED") {
+  const units = CURRENCY_UNITS[String(currencyCode || "").toUpperCase()] || {
+    main: String(currencyCode || "Units"),
+    sub: "Cents"
+  };
+  return `${Math.floor(n).toLocaleString("en-AE")} ${units.main} and ${Math.round(n % 1 * 100)} ${units.sub} Only`;
+}
+
+function CurrencyPreviewToken({ currencyConfig, currencyDisplay = "symbol" }) {
+  if (!currencyConfig) return null;
+
+  if (currencyDisplay === "code") {
+    return <span>{currencyConfig.currency || currencyConfig.label}</span>;
+  }
+
+  if (currencyConfig.hasImage) {
+    return <span
+      role="img"
+      aria-label={currencyConfig.ariaLabel}
+      style={{
+        display: "inline-block",
+        verticalAlign: "-0.08em",
+        margin: "0 0.06em",
+        width: "1.05em",
+        height: "0.82em",
+        backgroundColor: "currentColor",
+        WebkitMaskImage: `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`,
+        maskImage: `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`,
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        WebkitMaskSize: "contain",
+        maskSize: "contain"
+      }}
+    />;
+  }
+
+  return <span>{currencyConfig.label}</span>;
 }
 function defaultSettings(docType) {
   const isInv = docType === "sales-invoice" || docType === "proforma-invoice" || docType === "purchase-invoice";
@@ -101,11 +151,16 @@ function defaultSettings(docType) {
     showDeliveryTerms: isDN || docType === "sales-order",
     showLocationStore: docType === "quotation" || docType === "sales-order",
     showWarehouseStore: isDN,
+    showQuotationRef: isDN,
+    showSalesOrderRef: isDN,
+    showSalesInvoiceRef: isDN,
     showGrandTotalBanner: !isGRN && !isDN,
     colNo: true,
     colProductImage: !isGRN && !isDN,
     colItemCode: true,
     colDescription: true,
+    showShortDescription: true,
+    showDetailedDescription: true,
     colUOM: true,
     colQty: true,
     colUnitPrice: !isGRN && !isDN,
@@ -144,18 +199,20 @@ function defaultSettings(docType) {
 const MOCK = {
   company: { name: "GEEBU Enterprise Platforms LLC", address: "Suite No. 103 \xB7 Office No. 33\nAl Mamkhool \xB7 Dubai \xB7 U.A.E", phone: "+971 529 125 865", email: "crteam@geebu.io", website: "www.geebu.io", trn: "100047547540457", crn: "DED-2022-112345" },
   customer: { name: "GEEBU Enterprise Platforms Private Limited", code: "CUS-0042", billAddress: "Advent Complex \xB7 3rd Floor \xB7 Suite No. 307\nPinnacle Business Park\nP.O. Box 670525\nThrissur \xB7 Kerala \xB7 India\nGSTIN: 144AMGO 0990191918\nGSM: 80175 86 43 28\nbiz@geebu.io", shipAddress: "Warehouse 8, Industrial Area 12, Sharjah, UAE", phone: "+971 4 321 9876", email: "biz@geebu.io", trn: "144AMGO0990191918" },
-  doc: { number: "QTN-199194-1881", date: "2026-04-26", validUntil: "2026-05-14", dueDate: "2026-05-14", salesperson: "Mr. Nazam", paymentTerms: "Net 30 Days", currency: "AED", poRef: "INC-099919", location: "OXG-01", deliveryTerms: "DAP \u2013 Customer Warehouse", warehouse: "Warehouse 3 \u2014 Main Store, Fujairah" },
+  doc: { number: "QTN-199194-1881", date: "2026-04-26", validUntil: "2026-05-14", dueDate: "2026-05-14", salesperson: "Mr. Nazam", paymentTerms: "Net 30 Days", currency: "AED", poRef: "INC-099919", location: "OXG-01", deliveryTerms: "DAP \u2013 Customer Warehouse", warehouse: "Warehouse 3 \u2014 Main Store, Fujairah", quotationNo: "QUO-2026-000041", salesOrderNo: "SO-2026-001782", salesInvoiceNo: "SI-2026-004291" },
   items: [
     { no: 1, code: "JASEWAY-0001", name: "JASEWAY POS Machine", desc: 'i5-10th (10351GT) / 8 GB RAM / 256\nGB SSD / LCD 10"\nCapacitive touch screen\nBuilt-in Wifi\n+ Cash Drawer\n+ Thermal Receipt Printer', uom: "PCS", qty: 12, price: 1500, disc: 0, vat: 5, barcode: "6291041500213", sku: "JSW-POS-001-BLK", batch: "BTH-2025-0441", brand: "JASEWAY", binLocation: "A-01 / R-03 / B-07" },
     { no: 2, code: "POZONE-001", name: "POZONE PP610 Thermal Printer", desc: 'i5-10th (10351GT) / 8 GB RAM / 256\nGB SSD / LCD 10"\nTouch Panel\nCapacitive touch screen\nBuilt-in Wifi\nColour: Black\n+ Cash Drawer\n+ Thermal Receipt Printer', uom: "PCS", qty: 5, price: 7325, disc: 10, vat: 5, barcode: "6291041500220", sku: "PZN-PP610-WHT", batch: "BTH-2025-0512", brand: "POZONE", binLocation: "B-02 / R-01 / B-12" }
   ]
 };
-function ClassicPreview({ s }) {
+function ClassicPreview({ s, currencyConfig }) {
   const items = MOCK.items;
   const subtotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100), 0);
   const discTotal = items.reduce((sum, i) => sum + i.qty * i.price * (i.disc / 100), 0);
+  const mockFooterDiscount = 500; // sample footer (bill-level) discount for preview
   const vatTotal = items.reduce((sum, i) => sum + i.qty * i.price * (1 - i.disc / 100) * (i.vat / 100), 0);
-  const grandTotal = subtotal + vatTotal;
+  const grandTotal = subtotal - mockFooterDiscount + vatTotal;
+  const currencyMode = s.currencyDisplay === "code" ? "code" : "symbol";
   const f = s.fontSize;
   const b = s.borderColor;
   const thS = {
@@ -221,11 +278,14 @@ function ClassicPreview({ s }) {
       s.showWarehouseStore && ["Warehouse / Store", MOCK.doc.warehouse],
       s.showSalesperson && ["Account Executive", MOCK.doc.salesperson],
       s.showPaymentTerms && ["Payment Terms", MOCK.doc.paymentTerms],
-      s.showCurrency && ["Currency", MOCK.doc.currency],
-      s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms]
+      s.showCurrency && ["Currency", <CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} />],
+      s.showDeliveryTerms && ["Delivery Terms", MOCK.doc.deliveryTerms],
+      s.showQuotationRef && ["Quotation No.", MOCK.doc.quotationNo],
+      s.showSalesOrderRef && ["SO No.", MOCK.doc.salesOrderNo],
+      s.showSalesInvoiceRef && ["SI No.", MOCK.doc.salesInvoiceNo]
     ].filter(Boolean);
     if (!metaItems.length) return null;
-    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", alignSelf: "flex-end", paddingBottom: 2 }}>
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", paddingTop: 64, paddingBottom: 2 }}>
               {metaItems.map(([label, val], i) => <div key={i}>
                   <p style={{ margin: 0, fontSize: `${f - 1}px`, color: "#999", fontWeight: 500 }}>{label}</p>
                   <p style={{ margin: "1px 0 0", fontSize: `${f}px`, fontWeight: 700, color: "#1a1a2e" }}>{val}</p>
@@ -259,7 +319,8 @@ function ClassicPreview({ s }) {
           <div style={{ textAlign: "right" }}>
             <p style={{ fontSize: `${f}px`, color: "#888", margin: "0 0 2px", fontWeight: 600, letterSpacing: 1 }}>Grand Total</p>
             <p style={{ fontSize: `${f + 22}px`, fontWeight: 800, color: s.grandTotalColor, margin: 0, letterSpacing: "-1px", lineHeight: 1 }}>
-              {MOCK.doc.currency} &nbsp;{grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+              <CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} />{" "}
+              {grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
             </p>
           </div>
         </div>}
@@ -290,6 +351,11 @@ function ClassicPreview({ s }) {
     const taxable = item.qty * netUnit;
     const vatAmt = taxable * (item.vat / 100);
     const lineTotal = taxable + vatAmt;
+    const [shortDescriptionLine, ...detailedDescriptionLines] = item.desc.split("\n").filter(Boolean);
+    const visibleDescriptionLines = [
+      s.showShortDescription !== false ? shortDescriptionLine : null,
+      ...(s.showDetailedDescription !== false ? detailedDescriptionLines : [])
+    ].filter(Boolean);
     return <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
                 {s.colNo && <td style={{ ...tdS(false, true), fontWeight: 600 }}>{item.no}</td>}
                 {s.colProductImage && <td style={tdS()}>
@@ -320,7 +386,7 @@ function ClassicPreview({ s }) {
                       </div>}
                   </td>}
                 {s.colDescription && <td style={tdS()}>
-                    <p style={{ whiteSpace: "pre-line", margin: 0, lineHeight: 1.6, color: "#444" }}>{item.desc.split("\n").map((line, li) => <span key={li} style={{ display: "block" }}>{"\xB7 "}{line}</span>)}</p>
+                    {visibleDescriptionLines.length > 0 && <p style={{ whiteSpace: "pre-line", margin: 0, lineHeight: 1.6, color: "#444" }}>{visibleDescriptionLines.map((line, li) => <span key={li} style={{ display: "block" }}>{"\xB7 "}{line}</span>)}</p>}
                     {item.disc > 0 && <p style={{ margin: "4px 0 0", color: "#e11d48", fontSize: `${f - 1}px`, fontWeight: 600 }}>
                         Discount N/A @ {item.disc}%
                       </p>}
@@ -356,35 +422,42 @@ function ClassicPreview({ s }) {
           <tbody>
             {s.showSubtotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Sub Total</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
                   {subtotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
-            {s.showDiscountTotal && discTotal > 0 && <tr>
+            {s.showDiscountTotal !== false && discTotal > 0 && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#e11d48", textAlign: "right" }}>Discount</td>
-                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48", fontWeight: 700, width: 110 }}>
                   - {discTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
+            {s.showDiscountTotal !== false && mockFooterDiscount > 0 && <tr>
+                <td style={{ padding: "3px 16px 3px 0", color: "#e11d48", textAlign: "right" }}>Footer Discount</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#e11d48", width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
+                <td style={{ padding: "3px 0 3px 12px", textAlign: "right", color: "#e11d48", fontWeight: 700, width: 110 }}>
+                  - {mockFooterDiscount.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>}
             {s.showTaxableTotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Taxable Amount</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
-                  {(subtotal - discTotal).toLocaleString("en-AE", { minimumFractionDigits: 2 })}
+                  {(subtotal - discTotal - mockFooterDiscount).toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showVATTotal && <tr>
                 <td style={{ padding: "3px 16px 3px 0", color: "#888", textAlign: "right" }}>Total VAT</td>
-                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}>AED</td>
+                <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 600, width: 100 }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "3px 0 3px 12px", textAlign: "right", fontWeight: 700, width: 110 }}>
                   {vatTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
               </tr>}
             {s.showGrandTotal && <tr style={{ background: s.totalRowBg }}>
                 <td style={{ padding: "6px 16px 6px 0", fontWeight: 700, textAlign: "right", fontSize: `${f + 1}px` }}>Total</td>
-                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, width: 100, fontSize: `${f + 1}px` }}>AED</td>
+                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, width: 100, fontSize: `${f + 1}px` }}><CurrencyPreviewToken currencyConfig={currencyConfig} currencyDisplay={currencyMode} /></td>
                 <td style={{ padding: "6px 0 6px 12px", textAlign: "right", fontWeight: 800, fontSize: `${f + 2}px`, width: 110 }}>
                   {grandTotal.toLocaleString("en-AE", { minimumFractionDigits: 2 })}
                 </td>
@@ -397,7 +470,7 @@ function ClassicPreview({ s }) {
     /* ── AMOUNT IN WORDS (immediately after grand total) ── */
   }
       {s.showAmountInWords && <p style={{ fontSize: `${f}px`, color: "#374151", marginBottom: 14, textAlign: "right" }}>
-          In Words: {amountInWords(grandTotal)}
+          In Words: {amountInWords(grandTotal, currencyConfig?.currency)}
         </p>}
 
       {
@@ -549,6 +622,11 @@ function Sel({ value, onChange, options }) {
     </select>;
 }
 function DocumentTemplateDesigner({ docType, templateName, initialSettings, onClose, onSave }) {
+  const companyContext = useContext(CompanyContext);
+  const previewCurrencyConfig = resolveCurrencyDisplayConfig(
+    companyContext?.company || {},
+    { currency: MOCK.doc.currency }
+  );
   const [s, setS] = useState({
     ...defaultSettings(docType),
     templateName: templateName ?? `Default ${docTypeLabel(docType)}`,
@@ -754,6 +832,10 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <Row label="Location / Store"><Toggle value={s.showLocationStore} onChange={(v) => upd("showLocationStore", v)} /></Row>
               <Row label="Warehouse / Store"><Toggle value={s.showWarehouseStore} onChange={(v) => upd("showWarehouseStore", v)} /></Row>
               <Row label="Delivery Terms"><Toggle value={s.showDeliveryTerms} onChange={(v) => upd("showDeliveryTerms", v)} /></Row>
+              <SectionLabel icon={<FileText className="h-3 w-3" />} label="Document References" />
+              <Row label="Quotation No."><Toggle value={s.showQuotationRef} onChange={(v) => upd("showQuotationRef", v)} /></Row>
+              <Row label="SO No."><Toggle value={s.showSalesOrderRef} onChange={(v) => upd("showSalesOrderRef", v)} /></Row>
+              <Row label="SI No."><Toggle value={s.showSalesInvoiceRef} onChange={(v) => upd("showSalesInvoiceRef", v)} /></Row>
             </>}
 
             {
@@ -775,6 +857,8 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
 
               <SectionLabel icon={<Table className="h-3 w-3" />} label="Other Columns" />
               <Row label="Description"><Toggle value={s.colDescription} onChange={(v) => upd("colDescription", v)} /></Row>
+              <Row label="Short Description"><Toggle value={s.showShortDescription !== false} onChange={(v) => upd("showShortDescription", v)} /></Row>
+              <Row label="Detailed Description"><Toggle value={s.showDetailedDescription !== false} onChange={(v) => upd("showDetailedDescription", v)} /></Row>
               <Row label="UOM"><Toggle value={s.colUOM} onChange={(v) => upd("colUOM", v)} /></Row>
               <Row label="Quantity"><Toggle value={s.colQty} onChange={(v) => upd("colQty", v)} /></Row>
               <Row label="Unit Price"><Toggle value={s.colUnitPrice} onChange={(v) => upd("colUnitPrice", v)} /></Row>
@@ -787,7 +871,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <SectionLabel icon={<CreditCard className="h-3 w-3" />} label="Totals Block" />
               <Row label="Taxable Amount"><Toggle value={s.showTaxableTotal} onChange={(v) => upd("showTaxableTotal", v)} /></Row>
               <Row label="Sub Total"><Toggle value={s.showSubtotal} onChange={(v) => upd("showSubtotal", v)} /></Row>
-              <Row label="Discount Total"><Toggle value={s.showDiscountTotal} onChange={(v) => upd("showDiscountTotal", v)} /></Row>
+              <Row label="Discount Total"><Toggle value={s.showDiscountTotal !== false} onChange={(v) => upd("showDiscountTotal", v)} /></Row>
               <Row label="VAT Total"><Toggle value={s.showVATTotal} onChange={(v) => upd("showVATTotal", v)} /></Row>
               <Row label="Grand Total"><Toggle value={s.showGrandTotal} onChange={(v) => upd("showGrandTotal", v)} /></Row>
               <Row label="Amount in Words"><Toggle value={s.showAmountInWords} onChange={(v) => upd("showAmountInWords", v)} /></Row>
@@ -866,7 +950,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
   }
           <div style={{ transformOrigin: "top center", transform: `scale(${zoom})`, width: 794, marginLeft: "auto", marginRight: "auto", marginBottom: `${-(794 * (1 - zoom) * 1.414)}px` }}>
             <div style={{ width: 794, minHeight: 1123, background: "#fff", boxShadow: "0 4px 32px rgba(0,0,0,0.18)" }}>
-              <ClassicPreview s={s} />
+              <ClassicPreview s={s} currencyConfig={previewCurrencyConfig} />
             </div>
           </div>
 

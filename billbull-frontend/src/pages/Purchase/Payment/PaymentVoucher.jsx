@@ -24,6 +24,7 @@ import {
     Check,
     Printer
 } from 'lucide-react';
+import SearchableDropdown from '../../../components/SearchableDropdown';
 import { useCompany } from '../../../context/CompanyContext';
 import { useBranch } from '../../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
@@ -92,6 +93,13 @@ const getStatusColor = (status) => {
     if (s === 'CLEARED') return "bg-green-100 text-green-700 border-green-200";
     if (s === 'REJECTED') return "bg-red-100 text-red-700 border-red-200";
     return "bg-slate-100 text-slate-700 border-slate-200";
+};
+
+const getApiErrorMessage = (error, fallback = "Failed to process payment.") => {
+    const data = error?.response?.data;
+    if (data?.message) return data.message;
+    if (typeof data === 'string' && data.trim()) return data;
+    return error?.message || fallback;
 };
 
 // ==========================================
@@ -525,6 +533,7 @@ const PaymentVoucher = () => {
             fetchData();
         } catch (error) {
             console.error("Approve failed", error);
+            alert(getApiErrorMessage(error, "Failed to approve payment voucher."));
         }
     };
 
@@ -566,11 +575,7 @@ const PaymentVoucher = () => {
             );
 
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-                companyProfile: buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: voucher.branchId ?? activeBranch?.id,
-                }),
+                companyProfile: company,
                 billBullLogo
             });
 
@@ -604,11 +609,7 @@ const PaymentVoucher = () => {
             );
 
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-                companyProfile: buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id,
-                }),
+                companyProfile: company,
                 billBullLogo
             });
 
@@ -629,7 +630,7 @@ const PaymentVoucher = () => {
             const fullVendor = findVendorRecord(vendors, voucherDetail, voucherDetail?.vendorName);
             const linkedInvoice = purchaseInvoices.find((invoice) => Number(invoice.id ?? invoice.dbId) === Number(voucherDetail.invoiceId) || Number(invoice.dbId) === Number(voucherDetail.invoiceId) || String(invoice.invoiceNumber || '') === String(voucherDetail.invoiceId || '')) || null;
             const printData = buildPaymentVoucherPrintData(voucherDetail, fullVendor, company, linkedInvoice);
-            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id }), billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
             await downloadPdf(html, voucherDetail?.voucherNumber || voucher?.voucherNumber || 'Payment-Voucher');
         } catch (error) {
             console.error("Error downloading Voucher:", error);
@@ -787,7 +788,12 @@ const PaymentVoucher = () => {
                     bankAccount: paymentMethod !== 'Cash' ? bankAccount : null,
                 });
                 if (saved && saved.id) {
-                    await updateVoucherStatus(saved.id, 'POSTED');
+                    try {
+                        await updateVoucherStatus(saved.id, 'POSTED');
+                    } catch (error) {
+                        const voucherNo = saved.voucherNumber || `ID-${saved.id}`;
+                        throw new Error(`${voucherNo} was sent to Pending Approval, but posting failed: ${getApiErrorMessage(error)}`);
+                    }
                 }
             }));
 
@@ -804,7 +810,7 @@ const PaymentVoucher = () => {
             handleVendorSelect(selectedVendor);
         } catch (err) {
             console.error('Payment failed', err);
-            alert('Failed to process some payments.');
+            alert(getApiErrorMessage(err, 'Failed to process some payments.'));
         } finally {
             setIsProcessing(false);
         }
@@ -932,29 +938,31 @@ const PaymentVoucher = () => {
                             <div className="lg:col-span-2 space-y-6">
 
                                 {/* Vendor Selection & Balance */}
-                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6" onClick={() => setIsVendorOpen(false)}>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Select Vendor <span className="text-red-500">*</span></label>
-                                    <div className="mb-6 relative">
-                                        <div
-                                            onClick={(e) => { e.stopPropagation(); setIsVendorOpen(!isVendorOpen); }}
-                                            className="w-full text-sm px-3 py-2.5 border border-slate-200 rounded bg-white flex justify-between items-center cursor-pointer hover:border-yellow-400 transition-all"
-                                        >
-                                            {selectedVendor
-                                                ? <span className="font-bold text-slate-700">{selectedVendor.name}</span>
-                                                : <span className="text-slate-400">Search or Select Vendor...</span>}
-                                            <ChevronDown className="w-4 h-4 text-slate-400" />
-                                        </div>
-                                        {isVendorOpen && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
-                                                {vendors.map(v => (
-                                                    <div key={v.id} onClick={() => handleVendorSelect(v)}
-                                                        className="px-3 py-2.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0">
-                                                        <span className="font-bold text-slate-800">{v.name}</span>
-                                                        {v.code && <span className="text-slate-400 ml-1">• {v.code}</span>}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                    <div className="mb-6">
+                                        <SearchableDropdown
+                                            options={vendors.map(v => ({
+                                                value: v.id || v.code,
+                                                label: v.name,
+                                                subtitle: v.code ? `• ${v.code}` : undefined
+                                            }))}
+                                            value={selectedVendor?.id || selectedVendor?.code}
+                                            onChange={(val) => {
+                                                const vendor = vendors.find(v => (v.id || v.code) === val);
+                                                if (vendor) {
+                                                    handleVendorSelect(vendor);
+                                                } else {
+                                                    setSelectedVendor(null);
+                                                    setSelectedInvoices({});
+                                                    setSettleAmounts({});
+                                                    setReceivedAmount('');
+                                                    setVendorInvoices([]);
+                                                }
+                                            }}
+                                            placeholder="Search or Select Vendor..."
+                                            className="w-full"
+                                        />
                                     </div>
                                     {selectedVendor && (
                                         <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex items-center gap-3">
@@ -1121,7 +1129,7 @@ const PaymentVoucher = () => {
                                                             className="w-full pl-8 text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                                             <option value="">Select Bank Account...</option>
                                                             {bankAccounts.map(acc => (
-                                                                <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                                                <option key={acc.id} value={acc.code || acc.name}>{acc.code} — {acc.name}</option>
                                                             ))}
                                                         </select>
                                                     </div>
@@ -1255,11 +1263,10 @@ const PaymentVoucher = () => {
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                                    {row.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{row.branchName}</div>
-                                                            {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                                                        </>
+                                                    {row.branchCode ? (
+                                                        <div className="font-medium">{row.branchCode}</div>
+                                                    ) : row.branchName ? (
+                                                        <div className="font-medium">{row.branchName}</div>
                                                     ) : (
                                                         <span className="text-slate-300">—</span>
                                                     )}

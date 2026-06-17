@@ -1,6 +1,7 @@
 package com.billbull.backend.financials.receiptvoucher;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.email.DocumentEmailSender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,21 +16,25 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales/receipt-vouchers")
-@CrossOrigin(origins = "*")
-@PreAuthorize("hasAnyRole('ADMIN', 'ACCOUNTANT')")
+@PreAuthorize("isAuthenticated()")
 public class ReceiptVoucherController {
+
+    private static final String MODULE = "finance";
 
     private final ReceiptVoucherService service;
     private final ObjectMapper objectMapper;
     private final AuditLogService auditLogService;
     private final DocumentEmailSender emailSender;
+    private final ModulePermissionService modulePermissionService;
 
     public ReceiptVoucherController(ReceiptVoucherService service, ObjectMapper objectMapper,
-            AuditLogService auditLogService, DocumentEmailSender emailSender) {
+            AuditLogService auditLogService, DocumentEmailSender emailSender,
+            ModulePermissionService modulePermissionService) {
         this.service = service;
         this.objectMapper = objectMapper;
         this.auditLogService = auditLogService;
         this.emailSender = emailSender;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // QA-040: send the receipt-voucher email using the frontend-rendered HTML.
@@ -37,6 +42,7 @@ public class ReceiptVoucherController {
     @SuppressWarnings("unchecked")
     public ResponseEntity<?> sendEmail(@PathVariable Long id,
                                        @RequestBody(required = false) Map<String, Object> body) {
+        modulePermissionService.requireCanEdit(MODULE);
         try {
             String toEmail = body != null ? (String) body.get("toEmail") : null;
             String subject = body != null ? (String) body.get("subject") : null;
@@ -61,16 +67,19 @@ public class ReceiptVoucherController {
 
     @GetMapping("/next-number")
     public ResponseEntity<Map<String, String>> getNextVoucherNumber() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(Map.of("voucherNumber", service.generateNextVoucherId()));
     }
 
     @GetMapping
     public ResponseEntity<List<ReceiptVoucher>> getAllReceipts() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getAllReceipts());
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<ReceiptVoucher> getReceiptById(@PathVariable Long id) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(service.getReceiptById(id));
     }
 
@@ -78,7 +87,7 @@ public class ReceiptVoucherController {
     public ResponseEntity<ReceiptVoucher> createReceipt(
             @RequestPart("data") String receiptData,
             @RequestPart(value = "file", required = false) MultipartFile file) throws Exception {
-
+        modulePermissionService.requireCanCreate(MODULE);
         ReceiptVoucher receipt = objectMapper.readValue(receiptData, ReceiptVoucher.class);
         return ResponseEntity.ok(service.createReceipt(receipt, file));
     }
@@ -88,13 +97,14 @@ public class ReceiptVoucherController {
             @PathVariable Long id,
             @RequestPart("data") String receiptData,
             @RequestPart(value = "file", required = false) MultipartFile file) throws Exception {
-
+        modulePermissionService.requireCanEdit(MODULE);
         ReceiptVoucher receipt = objectMapper.readValue(receiptData, ReceiptVoucher.class);
         return ResponseEntity.ok(service.updateReceipt(id, receipt, file));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteReceipt(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.deleteReceipt(id);
         return ResponseEntity.ok().build();
     }

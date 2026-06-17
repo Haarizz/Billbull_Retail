@@ -429,4 +429,33 @@ public interface StockMovementRepository
         /** Global inventory valuation: SUM(qty × unitCost) across all inbound movements with cost. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0) FROM StockMovement sm WHERE sm.quantity > 0 AND sm.unitCost IS NOT NULL AND sm.unitCost > 0")
         BigDecimal sumGlobalInventoryValue();
+
+        /**
+         * Single query replacing countOutOfStockActiveProducts, countLowStockActiveProducts,
+         * findLowStockProductsForDashboard, and sumGlobalInventoryValue.
+         * Returns one row per active product: [id, code, name, on_hand, last_sold, stock_value].
+         * Callers compute all four metrics from this result set in memory.
+         */
+        @Query(value = """
+                SELECT p.id,
+                       p.code,
+                       p.name,
+                       COALESCE(SUM(sm.quantity), 0) AS on_hand,
+                       MAX(CASE WHEN sm.quantity < 0 THEN sm.movement_date END) AS last_sold,
+                       COALESCE(SUM(CASE WHEN sm.quantity > 0 AND sm.unit_cost IS NOT NULL AND sm.unit_cost > 0
+                                        THEN sm.quantity * sm.unit_cost ELSE 0 END), 0) AS stock_value
+                FROM products p
+                LEFT JOIN stock_movements sm ON sm.product_id = p.id
+                WHERE p.is_active = true
+                GROUP BY p.id, p.code, p.name
+                """, nativeQuery = true)
+        List<Object[]> findActiveProductStockSummary();
+
+        /** All distinct (productId, warehouseId) pairs that have at least one movement. */
+        @Query("""
+                    SELECT DISTINCT sm.productId, sm.warehouseId
+                    FROM StockMovement sm
+                    WHERE sm.productId IS NOT NULL AND sm.warehouseId IS NOT NULL
+                """)
+        List<Object[]> findAllDistinctProductWarehousePairs();
 }

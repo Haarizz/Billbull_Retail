@@ -5,14 +5,22 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.EntityManager;
+
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class CustomerService {
@@ -35,19 +43,84 @@ public class CustomerService {
     @Autowired(required = false)
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private BranchRepository branchRepository;
+
+    @Autowired
+    private OpeningInvoiceRepository openingInvoiceRepository;
+
+    @Autowired
+    private EntityManager entityManager;
+
     // =========================
     // GET ALL CUSTOMERS
-    // QA-028: force-initialise savedAddresses while the JPA session is open
-    // so the transaction-page customer picker can render the multi-address
-    // dropdown without an extra detail fetch per row.
+    // QA-028: force-initialise savedAddresses while the JPA session is open.
+    // BBQA52-024: optional branchName filter — customers with no allocations
+    // are visible everywhere (backwards compat for legacy/unallocated records).
     // =========================
     @Transactional(readOnly = true)
     public List<Customer> getAllCustomers() {
+        return getAllCustomers(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Customer> getAllCustomers(String branchName) {
         List<Customer> customers = repository.findAll();
+        boolean filterByBranch = branchName != null && !branchName.isBlank();
         for (Customer customer : customers) {
             customer.getSavedAddresses().size();
+            if (filterByBranch) {
+                customer.getBranchAllocations().size();
+            }
         }
-        return customers;
+
+        // Bulk-fetch accurate outstanding balances without N+1 queries.
+        // Use per-invoice balance field (maintained on each payment) + opening invoice outstanding.
+        Map<String, BigDecimal> invoiceOutstanding = new HashMap<>();
+        for (Object[] row : salesInvoiceRepo.sumOutstandingBalanceByCustomerCode()) {
+            if (row[0] != null) {
+                invoiceOutstanding.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        Map<String, BigDecimal> openingOutstanding = new HashMap<>();
+        for (Object[] row : openingInvoiceRepository.sumOutstandingByCustomerCode()) {
+            if (row[0] != null) {
+                openingOutstanding.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        // Also bulk-fetch invoice totals for totalSales display (unchanged)
+        Map<String, BigDecimal> invoiceTotals = new HashMap<>();
+        for (Object[] row : salesInvoiceRepo.sumInvoiceTotalByCustomerCode()) {
+            if (row[0] != null) {
+                invoiceTotals.put((String) row[0], new BigDecimal(row[1].toString()));
+            }
+        }
+        for (Customer c : customers) {
+            BigDecimal openingBalance = c.getBalance() != null ? c.getBalance() : BigDecimal.ZERO;
+            BigDecimal invoiced = invoiceTotals.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            BigDecimal invOutstanding = invoiceOutstanding.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            BigDecimal opnOutstanding = openingOutstanding.getOrDefault(c.getCode(), BigDecimal.ZERO);
+            c.setCurrentBalance(invOutstanding.add(opnOutstanding));
+            c.setTotalSales(openingBalance.add(invoiced));
+        }
+
+        if (!filterByBranch) {
+            return customers;
+        }
+        final String branch = branchName.trim();
+        return customers.stream()
+                .filter(c -> {
+                    if (c.getBranchAllocations().isEmpty()) return true;
+                    return c.getBranchAllocations().stream()
+                            .anyMatch(a -> branch.equalsIgnoreCase(a.getBranch().getName()));
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Customer> search(String q) {
+        if (q == null || q.isBlank()) return List.of();
+        return repository.findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(q, q);
     }
 
     // =========================
@@ -67,13 +140,21 @@ public class CustomerService {
         CustomerDTO dto = new CustomerDTO();
         BeanUtils.copyProperties(customer, dto);
         dto.setGroup(customer.getGroupType());
-        // Force-initialize lazy collections by copying into plain ArrayLists while
-        // the session is still open. Without this, Jackson serialization after the
-        // transaction closes would throw LazyInitializationException (open-in-view=false).
+        // Force-initialize lazy collections while session is still open.
         dto.setSavedAddresses(new ArrayList<>(customer.getSavedAddresses()));
         dto.setOpeningInvoices(new ArrayList<>(customer.getOpeningInvoices()));
         dto.setContactPersons(new ArrayList<>(customer.getContactPersons()));
         dto.setDocuments(new ArrayList<>(customer.getDocuments()));
+        // BBQA52-023: load branch allocations
+        customer.getBranchAllocations().size();
+        List<String> allocBranches = customer.getBranchAllocations().stream()
+                .map(a -> a.getBranch().getName())
+                .collect(Collectors.toList());
+        dto.setAllocatedBranches(allocBranches);
+        // Populate branch name from branchEntity FK if set; fall back to legacy string
+        if (customer.getBranchEntity() != null) {
+            dto.setBranch(customer.getBranchEntity().getName());
+        }
         return dto;
     }
 
@@ -164,6 +245,19 @@ public class CustomerService {
         }
 
         // -------------------------
+        // DUPLICATE MOBILE CHECK
+        // -------------------------
+        if (dto.getMobile() != null && !dto.getMobile().isBlank()) {
+            boolean duplicate = dto.getId() == null
+                    ? repository.existsByMobile(dto.getMobile())
+                    : repository.existsByMobileAndIdNot(dto.getMobile(), dto.getId());
+            if (duplicate) {
+                throw new IllegalArgumentException(
+                        "A customer with this phone number already exists.");
+            }
+        }
+
+        // -------------------------
         // COPY SIMPLE FIELDS
         // -------------------------
         BeanUtils.copyProperties(
@@ -228,12 +322,26 @@ public class CustomerService {
         // CHILD ENTITIES (OWNING SIDE)
         // -------------------------
 
+        List<SavedAddress> oldAddresses = new ArrayList<>(customer.getSavedAddresses());
+        List<OpeningInvoice> oldInvoices = new ArrayList<>(customer.getOpeningInvoices());
+        List<ContactPerson> oldContacts = new ArrayList<>(customer.getContactPersons());
+        List<CustomerDocument> oldDocuments = new ArrayList<>(customer.getDocuments());
+
         // Saved Addresses
         if (dto.getSavedAddresses() != null) {
             customer.getSavedAddresses().clear();
             // Enforce at most one default address
             boolean foundDefault = false;
-            for (SavedAddress addr : dto.getSavedAddresses()) {
+            for (SavedAddress dtoAddr : dto.getSavedAddresses()) {
+                SavedAddress addr = new SavedAddress();
+                if (dtoAddr.getId() != null) {
+                    addr = oldAddresses.stream()
+                            .filter(e -> dtoAddr.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new SavedAddress());
+                }
+                BeanUtils.copyProperties(dtoAddr, addr, "id", "customer");
+
                 if (addr.isDefault() && !foundDefault) {
                     foundDefault = true;
                 } else {
@@ -243,7 +351,7 @@ public class CustomerService {
                 customer.getSavedAddresses().add(addr);
             }
             // Sync denormalised field so the customer list response always has it
-            String defaultAddr = dto.getSavedAddresses().stream()
+            String defaultAddr = customer.getSavedAddresses().stream()
                     .filter(SavedAddress::isDefault)
                     .findFirst()
                     .map(a -> java.util.stream.Stream.of(a.getAddress1(), a.getAddress2(), a.getCity(), a.getCountry())
@@ -257,7 +365,16 @@ public class CustomerService {
         if (dto.getOpeningInvoices() != null) {
             customer.getOpeningInvoices().clear();
             if (hasSubmittedOpeningInvoices) {
-                for (OpeningInvoice inv : dto.getOpeningInvoices()) {
+                for (OpeningInvoice dtoInv : dto.getOpeningInvoices()) {
+                    OpeningInvoice inv = new OpeningInvoice();
+                    if (dtoInv.getId() != null) {
+                        inv = oldInvoices.stream()
+                                .filter(e -> dtoInv.getId().equals(e.getId()))
+                                .findFirst()
+                                .orElse(new OpeningInvoice());
+                    }
+                    BeanUtils.copyProperties(dtoInv, inv, "id", "customer");
+
                     initializeOpeningBalanceAmount(inv);
                     inv.setCustomer(customer);
                     customer.getOpeningInvoices().add(inv);
@@ -270,7 +387,16 @@ public class CustomerService {
         // Contact Persons
         if (dto.getContactPersons() != null) {
             customer.getContactPersons().clear();
-            for (ContactPerson cp : dto.getContactPersons()) {
+            for (ContactPerson dtoCp : dto.getContactPersons()) {
+                ContactPerson cp = new ContactPerson();
+                if (dtoCp.getId() != null) {
+                    cp = oldContacts.stream()
+                            .filter(e -> dtoCp.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new ContactPerson());
+                }
+                BeanUtils.copyProperties(dtoCp, cp, "id", "customer");
+
                 cp.setCustomer(customer);
                 customer.getContactPersons().add(cp);
             }
@@ -279,9 +405,44 @@ public class CustomerService {
         // Documents
         if (dto.getDocuments() != null) {
             customer.getDocuments().clear();
-            for (CustomerDocument doc : dto.getDocuments()) {
+            for (CustomerDocument dtoDoc : dto.getDocuments()) {
+                CustomerDocument doc = new CustomerDocument();
+                if (dtoDoc.getId() != null) {
+                    doc = oldDocuments.stream()
+                            .filter(e -> dtoDoc.getId().equals(e.getId()))
+                            .findFirst()
+                            .orElse(new CustomerDocument());
+                }
+                BeanUtils.copyProperties(dtoDoc, doc, "id", "customer");
+
                 doc.setCustomer(customer);
                 customer.getDocuments().add(doc);
+            }
+        }
+
+        // -------------------------
+        // BBQA52-023: Branch Allocations
+        // -------------------------
+        if (dto.getBranch() != null || dto.getAllocatedBranches() != null) {
+            customer.getBranchAllocations().size(); // force-init before clear
+            customer.getBranchAllocations().clear();
+            entityManager.flush(); // flush DELETEs before INSERTs to avoid unique-key violation
+            Set<String> names = new LinkedHashSet<>();
+            if (dto.getBranch() != null && !dto.getBranch().isBlank()) names.add(dto.getBranch());
+            if (dto.getAllocatedBranches() != null) names.addAll(dto.getAllocatedBranches());
+            final String defaultBranch = dto.getBranch();
+            for (String name : names) {
+                branchRepository.findByNameIgnoreCase(name).ifPresent(b -> {
+                    CustomerBranchAllocation alloc = new CustomerBranchAllocation();
+                    alloc.setCustomer(customer);
+                    alloc.setBranch(b);
+                    alloc.setDefault(name.equals(defaultBranch));
+                    customer.getBranchAllocations().add(alloc);
+                    if (name.equals(defaultBranch)) {
+                        customer.setBranchEntity(b);
+                        customer.setBranch(name);
+                    }
+                });
             }
         }
 

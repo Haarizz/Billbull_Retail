@@ -19,12 +19,12 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     @org.springframework.data.jpa.repository.Query("SELECT SUM(p.amount) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
     java.math.BigDecimal calculateOpeningBalance(String vendorName, java.time.LocalDate startDate);
 
-    /** Total payments made to a vendor (all non-cancelled payment vouchers). */
-    @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.status <> 'CANCELLED'")
+    /** Total posted/cleared payments made to a vendor (excludes pending approval and rejected). */
+    @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED)")
     java.math.BigDecimal sumPaymentsByVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
 
     /** Batched variant of {@link #sumPaymentsByVendorName}: one grouped query for all vendors. Rows: [vendorName, sum]. */
-    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.status <> 'CANCELLED' GROUP BY p.vendorName")
+    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
     List<Object[]> sumPaymentsGroupedByVendorName();
 
     /**
@@ -38,6 +38,10 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     /** Batched variant of {@link #sumOnAccountPaidByVendorName}: one grouped query for all vendors. Rows: [vendorName, sum]. */
     @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId IS NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
     List<Object[]> sumOnAccountPaidGroupedByVendorName();
+
+    /** Batched sum of POSTED/CLEARED payments that ARE linked to an invoice (invoiceId IS NOT NULL), grouped by vendorName. Rows: [vendorName, sum]. */
+    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId IS NOT NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED) GROUP BY p.vendorName")
+    List<Object[]> sumInvoiceLinkedPaymentsGroupedByVendorName();
 
     @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.voucherNumber, 'PAYMENT_MADE', p.amount, CAST(0 AS big_decimal), CAST(p.status AS string)) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
     java.util.List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
@@ -67,13 +71,19 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
      * filters by one or more statuses; pass an empty/sentinel-only collection
      * with {@code allStatuses=true} to skip the status predicate.
      */
-    @Query("SELECT v FROM PaymentVoucher v WHERE "
+    @Query(value = "SELECT v FROM PaymentVoucher v LEFT JOIN FETCH v.branch WHERE "
             + "(:allBranches = true OR v.branch IS NULL OR v.branch.id IN :branchIds) "
             + "AND (:allStatuses = true OR v.status IN :statuses) "
             + "AND (:search = '' OR LOWER(v.voucherNumber) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.vendorName) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.referenceNumber) LIKE CONCAT('%', :search, '%')) "
-            + "ORDER BY v.id DESC")
+            + "ORDER BY v.id DESC",
+           countQuery = "SELECT COUNT(v) FROM PaymentVoucher v WHERE "
+            + "(:allBranches = true OR v.branch IS NULL OR v.branch.id IN :branchIds) "
+            + "AND (:allStatuses = true OR v.status IN :statuses) "
+            + "AND (:search = '' OR LOWER(v.voucherNumber) LIKE CONCAT('%', :search, '%') "
+            + "OR LOWER(v.vendorName) LIKE CONCAT('%', :search, '%') "
+            + "OR LOWER(v.referenceNumber) LIKE CONCAT('%', :search, '%'))")
     Page<PaymentVoucher> searchPage(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds,
             @Param("allStatuses") boolean allStatuses,

@@ -61,8 +61,17 @@ public class JournalEntry {
     @Column(length = 1000)
     private String narration;
 
+    /** Central status constants — keep in sync with DatabaseFixConfig journal_entries_status_check. */
+    public static final String STATUS_DRAFT            = "Draft";
+    public static final String STATUS_SUBMITTED        = "Submitted";
+    public static final String STATUS_PENDING_APPROVAL = "PENDING_APPROVAL";
+    public static final String STATUS_APPROVED         = "Approved";
+    public static final String STATUS_POSTED           = "Posted";
+    public static final String STATUS_REJECTED         = "Rejected";
+    public static final String STATUS_VOIDED           = "Voided";
+
     @Column(nullable = false)
-    private String status; // Draft, Posted, etc.
+    private String status;
 
     private String preparedBy;
     private String postedBy;

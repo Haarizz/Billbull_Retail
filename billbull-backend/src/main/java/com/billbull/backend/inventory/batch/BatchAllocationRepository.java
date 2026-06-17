@@ -78,6 +78,19 @@ public interface BatchAllocationRepository extends JpaRepository<BatchAllocation
             @Param("statuses") Collection<BatchAllocationStatus> statuses);
 
     @Query("""
+            SELECT a
+            FROM BatchAllocation a
+            WHERE a.sourceDocumentType = :sourceDocumentType
+              AND a.sourceDocumentId = :sourceDocumentId
+              AND a.sourceLineId NOT IN :activeLineIds
+              AND a.status = com.billbull.backend.inventory.batch.BatchAllocationStatus.RESERVED
+            """)
+    List<BatchAllocation> findReservedBySourceExcludingLines(
+            @Param("sourceDocumentType") String sourceDocumentType,
+            @Param("sourceDocumentId") Long sourceDocumentId,
+            @Param("activeLineIds") Collection<Long> activeLineIds);
+
+    @Query("""
             SELECT COALESCE(SUM(a.quantity), 0)
             FROM BatchAllocation a
             JOIN a.batchMaster b

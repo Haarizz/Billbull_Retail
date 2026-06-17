@@ -89,3 +89,91 @@ export const finalizeReconciliation = async (payload) => {
   const res = await api.post("/api/reconciliation/finalize", payload);
   return res.data;
 };
+
+// ──────────────── Bank Statement Reconciliation ────────────────
+export const getBankStatements = async (branchId) => {
+  const params = branchId ? { branchId } : {};
+  const res = await api.get("/api/bank-reconciliation/statements", { params });
+  return res.data;
+};
+
+export const createBankStatement = async (payload) => {
+  const res = await api.post("/api/bank-reconciliation/statements", payload);
+  return res.data;
+};
+
+export const importBankStatementLines = async (statementId, lines) => {
+  const res = await api.post(`/api/bank-reconciliation/statements/${statementId}/lines`, lines);
+  return res.data;
+};
+
+export const matchStatementLine = async (statementLineId, journalLineId) => {
+  const res = await api.post(`/api/bank-reconciliation/lines/${statementLineId}/match`, null, {
+    params: { journalLineId },
+  });
+  return res.data;
+};
+
+export const autoMatchStatement = async (statementId) => {
+  const res = await api.post(`/api/bank-reconciliation/statements/${statementId}/auto-match`);
+  return res.data;
+};
+
+export const postBankCharge = async (statementLineId, branchId) => {
+  const params = branchId ? { branchId } : {};
+  const res = await api.post(`/api/bank-reconciliation/lines/${statementLineId}/post-charge`, null, { params });
+  return res.data;
+};
+
+export const postBankInterest = async (statementLineId, branchId) => {
+  const params = branchId ? { branchId } : {};
+  const res = await api.post(`/api/bank-reconciliation/lines/${statementLineId}/post-interest`, null, { params });
+  return res.data;
+};
+
+export const getReconciliationSummary = async (statementId) => {
+  const res = await api.get(`/api/bank-reconciliation/statements/${statementId}/summary`);
+  return res.data;
+};
+
+export const markStatementReconciled = async (statementId) => {
+  const res = await api.post(`/api/bank-reconciliation/statements/${statementId}/reconcile`);
+  return res.data;
+};
+
+// ──────────────── PDC (Post-Dated Cheques) ────────────────
+export const getPdcEntries = async (params) => {
+  const res = await api.get("/api/pdc", { params });
+  return res.data;
+};
+
+export const createPdcEntry = async (payload) => {
+  const res = await api.post("/api/pdc", payload);
+  return res.data;
+};
+
+export const updatePdcStatus = async (id, newStatus) => {
+  const res = await api.post(`/api/pdc/${id}/status`, null, { params: { newStatus } });
+  return res.data;
+};
+
+// ──────────────── GL Special Vouchers ────────────────
+export const postContraVoucher = async (payload) => {
+  const res = await api.post("/api/ledger/contra-voucher", payload);
+  return res.data;
+};
+
+export const postEquityInjection = async (payload) => {
+  const res = await api.post("/api/ledger/equity-injection", payload);
+  return res.data;
+};
+
+export const postVatSettlement = async (payload) => {
+  const res = await api.post("/api/ledger/vat-settlement", payload);
+  return res.data;
+};
+
+export const postVatPayment = async (payload) => {
+  const res = await api.post("/api/ledger/vat-payment", payload);
+  return res.data;
+};

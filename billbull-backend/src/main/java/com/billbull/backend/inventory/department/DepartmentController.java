@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.department;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -16,27 +17,33 @@ import java.io.ByteArrayInputStream;
 @RequestMapping("/api")
 public class DepartmentController {
 
+    private static final String MODULE = "inventory";
+
     private final DepartmentService service;
     private final DepartmentExportService exportService;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
-    public DepartmentController(DepartmentService service, DepartmentExportService exportService, AuditLogService auditLogService) {
+    public DepartmentController(DepartmentService service, DepartmentExportService exportService, AuditLogService auditLogService, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.exportService = exportService;
         this.auditLogService = auditLogService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // ================= DEPARTMENTS =================
 
     @GetMapping("/departments")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<DepartmentResponse> getDepartments() {
+        modulePermissionService.requireCanView(MODULE);
         return service.getAll();
     }
 
     @GetMapping("/departments/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportDepartmentsToExcel() {
+        modulePermissionService.requireCanExport(MODULE);
         List<DepartmentResponse> departments = service.getAll();
         ByteArrayInputStream in = exportService.export(departments);
 
@@ -51,29 +58,33 @@ public class DepartmentController {
     }
 
     @PostMapping("/departments")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DepartmentResponse createDepartment(
             @RequestBody DepartmentRequest request) {
+        modulePermissionService.requireCanCreate(MODULE);
         return service.create(request);
     }
 
     @PutMapping("/departments/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public DepartmentResponse updateDepartment(
             @PathVariable Long id,
             @RequestBody DepartmentRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
         return service.update(id, request);
     }
 
     @DeleteMapping("/departments/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public void deleteDepartment(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
     }
 
     @PostMapping("/departments/bulk-delete")
     @PreAuthorize("hasRole('ADMIN')")
     public void bulkDeleteDepartments(@RequestBody List<Long> ids) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.bulkDelete(ids);
     }
 }

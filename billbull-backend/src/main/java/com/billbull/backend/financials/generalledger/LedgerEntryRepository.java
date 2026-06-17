@@ -17,6 +17,9 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
     List<LedgerEntry> findByTransactionDateBetweenOrderByTransactionDateAsc(java.time.LocalDate start,
             java.time.LocalDate end);
 
+    List<LedgerEntry> findByBranchIdAndTransactionDateBetweenOrderByTransactionDateAsc(Long branchId,
+            java.time.LocalDate start, java.time.LocalDate end);
+
     List<LedgerEntry> findByTransactionDateBefore(java.time.LocalDate date);
 
     boolean existsByAccountCode(String accountCode);
@@ -27,4 +30,10 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
     /** Net GL balance for a specific account code: SUM(debit) - SUM(credit). */
     @Query("SELECT COALESCE(SUM(le.debitAmount), 0) - COALESCE(SUM(le.creditAmount), 0) FROM LedgerEntry le WHERE le.accountCode = :accountCode")
     BigDecimal netBalanceByAccountCode(@org.springframework.data.repository.query.Param("accountCode") String accountCode);
+
+    /** Net GL balance for an account code up to (but not including) a given date — used for opening balance derivation. */
+    @Query("SELECT COALESCE(SUM(le.debitAmount), 0) - COALESCE(SUM(le.creditAmount), 0) FROM LedgerEntry le WHERE le.accountCode = :accountCode AND le.transactionDate < :beforeDate")
+    BigDecimal netBalanceByAccountCodeBefore(
+            @org.springframework.data.repository.query.Param("accountCode") String accountCode,
+            @org.springframework.data.repository.query.Param("beforeDate") java.time.LocalDate beforeDate);
 }

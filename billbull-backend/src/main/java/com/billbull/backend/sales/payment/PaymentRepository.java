@@ -23,6 +23,10 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findByLinkedInvoice(String linkedInvoice);
 
+    List<Payment> findBySplitGroupId(String splitGroupId);
+
+    List<Payment> findBySplitGroupIdIsNotNull();
+
     List<Payment> findByPaymentType(PaymentType paymentType);
 
     List<Payment> findByStatus(PaymentStatus status);

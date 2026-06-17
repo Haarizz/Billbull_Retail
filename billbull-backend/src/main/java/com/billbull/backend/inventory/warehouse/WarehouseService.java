@@ -10,11 +10,19 @@ import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class WarehouseService {
+
+    public record WarehouseTree(
+            List<WarehouseResponse> warehouses,
+            List<ZoneResponse> zones,
+            List<LocatorResponse> locators,
+            List<BinResponse> bins) {}
 
     private final WarehouseRepository repository;
     private final ZoneRepository zoneRepository;
@@ -39,11 +47,59 @@ public class WarehouseService {
     }
 
     @Transactional(readOnly = true)
-    public List<WarehouseResponse> list() {
-        return getAccessibleWarehouses()
+    public List<WarehouseResponse> list(Long branchId) {
+        return getAccessibleWarehouses(branchId)
                 .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public WarehouseTree getTree(Long branchId) {
+        List<Warehouse> warehouses = getAccessibleWarehouses(branchId);
+        List<WarehouseResponse> warehouseResponses = warehouses.stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+
+        if (warehouses.isEmpty()) {
+            return new WarehouseTree(warehouseResponses, List.of(), List.of(), List.of());
+        }
+
+        Set<Long> warehouseIds = warehouses.stream().map(Warehouse::getId).collect(Collectors.toSet());
+
+        List<Zone> zones = zoneRepository.findByWarehouseIdIn(warehouseIds);
+        List<ZoneResponse> zoneResponses = zones.stream()
+                .map(z -> new ZoneResponse(z.getId(), z.getCode(), z.getName(), z.getDescription(),
+                        z.getZoneType(), z.getStatus(), z.getWarehouse().getId(), z.getWarehouse().getName()))
+                .collect(Collectors.toList());
+
+        if (zones.isEmpty()) {
+            return new WarehouseTree(warehouseResponses, zoneResponses, List.of(), List.of());
+        }
+
+        Set<Long> zoneIds = zones.stream().map(Zone::getId).collect(Collectors.toSet());
+
+        List<Locator> locators = locatorRepository.findByZoneIdIn(zoneIds);
+        List<LocatorResponse> locatorResponses = locators.stream()
+                .map(l -> new LocatorResponse(l.getId(), l.getCode(), l.getName(), l.getAisleNumber(),
+                        l.getRackNumber(), l.getStatus(), l.getZone().getId(), l.getZone().getName(),
+                        l.getZone().getWarehouse().getId()))
+                .collect(Collectors.toList());
+
+        if (locators.isEmpty()) {
+            return new WarehouseTree(warehouseResponses, zoneResponses, locatorResponses, List.of());
+        }
+
+        Set<Long> locatorIds = locators.stream().map(Locator::getId).collect(Collectors.toSet());
+
+        List<Bin> bins = binRepository.findByLocatorIdIn(locatorIds);
+        List<BinResponse> binResponses = bins.stream()
+                .map(b -> new BinResponse(b.getId(), b.getCode(), b.getName(), b.getCapacity(),
+                        b.getBinType(), b.getStatus(), b.getLocator().getId(), b.getLocator().getName(),
+                        b.getLocator().getZone().getId(), b.getLocator().getZone().getWarehouse().getId()))
+                .collect(Collectors.toList());
+
+        return new WarehouseTree(warehouseResponses, zoneResponses, locatorResponses, binResponses);
     }
 
     @Transactional(readOnly = true)
@@ -115,7 +171,7 @@ public class WarehouseService {
     }
 
     private Branch resolveBranchForWrite(Long requestedBranchId, Branch existingBranch) {
-        if (!branchAccessService.currentUserHasRole("ADMIN")) {
+        if (!branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
             if (requestedBranchId != null && !Objects.equals(requestedBranchId, currentBranch.getId())) {
                 throw new ResponseStatusException(
@@ -148,7 +204,7 @@ public class WarehouseService {
     }
 
     private void assertWarehouseWritable(Warehouse warehouse) {
-        if (branchAccessService.currentUserHasRole("ADMIN")) {
+        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             return;
         }
 
@@ -164,8 +220,11 @@ public class WarehouseService {
         return value != null && !value.isBlank();
     }
 
-    private List<Warehouse> getAccessibleWarehouses() {
-        if (branchAccessService.currentUserHasRole("ADMIN")) {
+    private List<Warehouse> getAccessibleWarehouses(Long requestedBranchId) {
+        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
+            if (requestedBranchId != null) {
+                return repository.findByBranch_Id(requestedBranchId);
+            }
             return repository.findAll();
         }
 

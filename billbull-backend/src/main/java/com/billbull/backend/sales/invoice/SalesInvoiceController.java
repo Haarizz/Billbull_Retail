@@ -66,6 +66,12 @@ public class SalesInvoiceController {
         return service.getAll();
     }
 
+    @GetMapping("/stats")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> getStats() {
+        return service.getStats();
+    }
+
     @GetMapping("/page")
     @PreAuthorize("isAuthenticated()")
     public com.billbull.backend.util.PageResponse<SalesInvoice> getPage(
@@ -141,7 +147,7 @@ public class SalesInvoiceController {
     }
 
     @PutMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> updateStatus(
             @PathVariable Long id,
             @RequestParam SalesInvoiceStatus status) {
@@ -150,7 +156,7 @@ public class SalesInvoiceController {
     }
 
     @PostMapping("/{id}/payment")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice recordPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Double> payload) {
@@ -159,7 +165,7 @@ public class SalesInvoiceController {
     }
 
     @PostMapping("/{id}/payment-detailed")
-    @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice recordDetailedPayment(
             @PathVariable Long id,
             @RequestBody Map<String, Object> payload) {
@@ -180,11 +186,18 @@ public class SalesInvoiceController {
         if (chequeDateStr != null && !chequeDateStr.isBlank()) {
             try { chequeDate = LocalDate.parse(chequeDateStr); } catch (Exception ignored) {}
         }
-        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        String splitGroupId = payload.get("splitGroupId") != null ? payload.get("splitGroupId").toString() : null;
+        String combinedPaymentMode = payload.get("combinedPaymentMode") != null ? payload.get("combinedPaymentMode").toString() : null;
+        // Credit-only settlement: no money changes hands — just stamp the invoice
+        // paymentMode so it's visible in history and leave status as CONFIRMED.
+        if ("Credit".equalsIgnoreCase(paymentMode) && (amount == null || amount <= 0)) {
+            return service.markAsCreditSettled(id);
+        }
+        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, combinedPaymentMode);
     }
 
     @GetMapping("/price-history/{itemCode}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<PriceHistoryDTO> getPriceHistory(
             @PathVariable String itemCode,
             @RequestParam(required = false) String customerCode) {

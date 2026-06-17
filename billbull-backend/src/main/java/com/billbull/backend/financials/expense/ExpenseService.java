@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.settings.branch.BranchRepository;
+import com.billbull.backend.security.BranchContextHolder;
 
 @Service
 public class ExpenseService {
@@ -25,6 +27,9 @@ public class ExpenseService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private BranchRepository branchRepository;
+
     public List<Expense> getAllExpenses() {
         return branchAccessService.filterBranchScopedByBranch(
                 expenseRepository.findAllByOrderByDateDesc(), Expense::getBranch);
@@ -35,7 +40,20 @@ public class ExpenseService {
     }
 
     public Expense createExpense(Expense expense) {
-        expense.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        // If the request body explicitly provides a branch id (form selection)
+        // and the session is in "All Branches" mode (no specific branch in header),
+        // use that explicit branch. Otherwise fall back to the session branch.
+        Long bodyBranchId = expense.getBranch() != null ? expense.getBranch().getId() : null;
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        boolean isAllBranches = ctx != null && ctx.isAllBranches() && ctx.activeBranchId() == null;
+        if (bodyBranchId != null && isAllBranches) {
+            expense.setBranch(branchRepository.findById(bodyBranchId)
+                    .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Selected branch not found.")));
+        } else {
+            expense.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        }
         // Recalculate derived fields to ensure consistency
         if (expense.getAmount() != null && expense.getTaxRate() != null) {
             double taxAmount = (expense.getAmount() * expense.getTaxRate()) / 100;

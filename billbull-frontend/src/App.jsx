@@ -1,6 +1,15 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from 'react-hot-toast';
+import { Toaster as SonnerToaster } from 'sonner';
+
+// Module dashboards (lazy loaded)
+const BIEngineDashboardV2 = React.lazy(() => import('./pages/dashboards/bi-engine-dashboard-v2').then(m => ({ default: m.BillBullBIEngineDashboard })));
+const CustomerConnectDashboard = React.lazy(() => import('./pages/dashboards/customer-connect-dashboard').then(m => ({ default: m.CustomerConnectDashboard ?? m.default })));
+const CustomersSalesDashboard = React.lazy(() => import('./pages/dashboards/customers-sales-dashboard').then(m => ({ default: m.CustomersSalesDashboard ?? m.default })));
+const InventoryRegistriesDashboard = React.lazy(() => import('./pages/dashboards/inventory-registries-dashboard').then(m => ({ default: m.InventoryRegistriesDashboard ?? m.default })));
+const StorefrontAdminDashboard = React.lazy(() => import('./pages/dashboards/storefront-admin-dashboard').then(m => ({ default: m.StorefrontAdminDashboard ?? m.default })));
+const VendorsPurchasesDashboard = React.lazy(() => import('./pages/dashboards/vendors-purchases-dashboard').then(m => ({ default: m.VendorsPurchasesDashboard ?? m.default })));
 
 import Sidebar from "./layout/Sidebar";
 
@@ -12,6 +21,7 @@ import Dashboard from "./pages/Dashboard";
 // Route Guards
 import PrivateRoute from "./auth/PrivateRoute";
 import { PermissionProvider } from "./context/PermissionContext";
+import { NotificationProvider } from "./context/NotificationContext";
 import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
@@ -76,6 +86,7 @@ import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
+import Notifications from "./pages/Notifications/Notifications";
 // import Products from "./pages/Inventory/Product/Products";
 // import Warehouse from "./pages/Inventory/Warehouse/Warehouse";
 // import Quotations from "./pages/Sales/Quotations";
@@ -162,6 +173,7 @@ function App() {
         <AedSymbolRenderer />
         <AppAlertBridge />
         <Toaster position="top-right" reverseOrder={false} containerStyle={{ zIndex: 10000 }} />
+        <SonnerToaster position="top-right" richColors />
         <Routes>
           {/* 🔓 Public Route */}
           <Route path="/login" element={<Login />} />
@@ -176,6 +188,7 @@ function App() {
                     token and permissions load correctly on every login */}
                 <PermissionProvider>
                 <ErrorBoundary>
+                <NotificationProvider>
                 <Sidebar>
                   <Routes>
                     {/* Default redirect */}
@@ -193,6 +206,14 @@ function App() {
                         </ResourceGuard>
                       }
                     />
+
+                    {/* Module Dashboards */}
+                    <Route path="/dashboard/bi" element={<React.Suspense fallback={null}><BIEngineDashboardV2 /></React.Suspense>} />
+                    <Route path="/dashboard/customers" element={<React.Suspense fallback={null}><CustomersSalesDashboard /></React.Suspense>} />
+                    <Route path="/dashboard/customer-connect" element={<React.Suspense fallback={null}><CustomerConnectDashboard /></React.Suspense>} />
+                    <Route path="/dashboard/inventory" element={<React.Suspense fallback={null}><InventoryRegistriesDashboard /></React.Suspense>} />
+                    <Route path="/dashboard/storefront" element={<React.Suspense fallback={null}><StorefrontAdminDashboard /></React.Suspense>} />
+                    <Route path="/dashboard/vendors" element={<React.Suspense fallback={null}><VendorsPurchasesDashboard /></React.Suspense>} />
 
                     {/* Inventory -> Departments */}
                     <Route
@@ -539,6 +560,8 @@ function App() {
                       }
                     />
 
+                    <Route path="/notifications" element={<Notifications />} />
+
                     <Route path="/myprofile" element={<Navigate to="/myprofile/overview" replace />} />
                     <Route path="/myprofile/overview" element={<MyProfile />} />
                     <Route path="/myprofile/sales" element={<MySales />} />
@@ -665,6 +688,7 @@ function App() {
 
                   </Routes>
                 </Sidebar>
+                </NotificationProvider>
                 </ErrorBoundary>
                 </PermissionProvider>
               </PrivateRoute>

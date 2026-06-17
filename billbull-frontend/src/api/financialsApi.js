@@ -24,3 +24,15 @@ export const fetchStatementOfAccount = async (accountType, accountCode, startDat
         throw error;
     }
 };
+
+export const fetchARAgingReport = async (asOfDate) => {
+    try {
+        const response = await axiosInstance.get('/api/financials/reports/ar-aging', {
+            params: { asOfDate }
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching AR Aging Report:", error);
+        throw error;
+    }
+};

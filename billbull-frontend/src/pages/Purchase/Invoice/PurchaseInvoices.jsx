@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import ProductSelector from "../../../components/ProductSelector";
 import SearchableDropdown from "../../../components/SearchableDropdown";
+import LocationSelector from "../../../components/common/LocationSelector";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
@@ -540,7 +541,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onDownload, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -726,11 +727,10 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
                   <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
                   <td className="px-6 py-4 text-slate-600 text-[11px]">
-                    {row.branchName ? (
-                      <>
-                        <div className="font-medium">{row.branchName}</div>
-                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
-                      </>
+                    {row.branchCode ? (
+                      <div className="font-medium">{row.branchCode}</div>
+                    ) : row.branchName ? (
+                      <div className="font-medium">{row.branchName}</div>
                     ) : (
                       <span className="text-slate-300">—</span>
                     )}
@@ -789,6 +789,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
   const [vendorList, setVendorList] = useState([]);
+  const [locationError, setLocationError] = useState(null);
   const [productList, setProductList] = useState([]);
 
   // UI State
@@ -1058,14 +1059,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         otherCosts: Number(editInvoice.otherCosts || 0)
       });
 
-      setLandedCostItems([
-        { id: "freight", type: "Freight", name: "Freight", desc: "", cost: Number(editInvoice.freight || 0) },
-        { id: "customsDuty", type: "Customs Duty", name: "Customs Duty", desc: "", cost: Number(editInvoice.customsDuty || 0) },
-        { id: "handling", type: "Handling", name: "Handling", desc: "", cost: Number(editInvoice.handling || 0) },
-        { id: "clearing", type: "Clearing", name: "Clearing", desc: "", cost: Number(editInvoice.clearing || 0) },
-        { id: "insurance", type: "Insurance", name: "Insurance", desc: "", cost: Number(editInvoice.insurance || 0) },
-        { id: "otherCosts", type: "Other", name: "Other", desc: "", cost: Number(editInvoice.otherCosts || 0) }
-      ].filter((costItem) => Number(costItem.cost) > 0));
+      if (editInvoice.landedCosts && editInvoice.landedCosts.length > 0) {
+        setLandedCostItems(editInvoice.landedCosts.map((lc, idx) => ({
+          id: `lc-${idx}`,
+          type: lc.costName || "Other",
+          name: lc.costName || "Other",
+          desc: lc.description || "",
+          cost: Number(lc.amount || 0)
+        })));
+      } else {
+        setLandedCostItems([
+          { id: "freight", type: "Freight", name: "Freight", desc: "", cost: Number(editInvoice.freight || 0) },
+          { id: "customsDuty", type: "Customs Duty", name: "Customs Duty", desc: "", cost: Number(editInvoice.customsDuty || 0) },
+          { id: "handling", type: "Handling", name: "Handling", desc: "", cost: Number(editInvoice.handling || 0) },
+          { id: "clearing", type: "Clearing", name: "Clearing", desc: "", cost: Number(editInvoice.clearing || 0) },
+          { id: "insurance", type: "Insurance", name: "Insurance", desc: "", cost: Number(editInvoice.insurance || 0) },
+          { id: "otherCosts", type: "Other", name: "Other", desc: "", cost: Number(editInvoice.otherCosts || 0) }
+        ].filter((costItem) => Number(costItem.cost) > 0));
+      }
 
       // 4. Set Selects
       if (type === SOURCE.LPO) {
@@ -1796,6 +1807,22 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
   };
 
+  const handleLocationChange = (payload) => {
+    setFormData(prev => ({
+      ...prev,
+      warehouseId: payload.warehouseId,
+      warehouse: payload.warehouseName,
+      zoneId: payload.zoneId,
+      locatorId: payload.locatorId,
+      binId: payload.binId
+    }));
+    if (payload.binId) setLocationError(null);
+    else if (payload.locatorId) setLocationError("Select a bin to complete the location");
+    else if (payload.zoneId) setLocationError("Select a locator, then a bin");
+    else if (payload.warehouseId) setLocationError("Select a zone, locator, and bin");
+    else setLocationError(null);
+  };
+
   return (
     <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 pb-20 relative">
       {isViewMode && (
@@ -2032,90 +2059,25 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Default Warehouse</label>
-                  <SearchableDropdown
-                    options={warehouseList.map(w => ({ value: w.id, label: w.name }))}
-                    value={formData.warehouseId}
-                    onChange={(whId) => {
-                      const wh = warehouseList.find(w => w.id == whId);
-                      setFormData({
-                        ...formData,
-                        warehouseId: whId,
-                        warehouse: wh ? wh.name : "",
-                        zoneId: null, locatorId: null, binId: null
-                      });
-                      if (whId) {
-                        getWarehouseZones(whId).then(setZoneList).catch(console.error);
-                      } else {
-                        setZoneList([]);
-                      }
+                  <label className="text-[10px] mb-1 flex items-center gap-1">
+                    <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                    {locationError && <span className="text-red-500">*</span>}
+                    {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+                  </label>
+                  <LocationSelector
+                    value={{
+                      warehouseId: formData.warehouseId,
+                      warehouseName: formData.warehouse,
+                      zoneId: formData.zoneId,
+                      locatorId: formData.locatorId,
+                      binId: formData.binId
                     }}
-                    placeholder="Select Warehouse..."
+                    onChange={handleLocationChange}
                     disabled={isFormLocked}
-                    menuPlacement="auto"
-                    menuZIndexClass="z-[120]"
                     className="w-full"
+                    error={locationError}
                   />
                 </div>
-
-                {/* Zone Selector — always show when warehouse is selected */}
-                {formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Zone</label>
-                    <SearchableDropdown
-                      options={zoneList.map(z => ({ value: z.id, label: z.name }))}
-                      value={formData.zoneId}
-                      onChange={(zId) => {
-                        setFormData({ ...formData, zoneId: zId, locatorId: null, binId: null });
-                        if (zId) getZoneLocators(zId).then(setLocatorList).catch(console.error);
-                        else { setLocatorList([]); setBinList([]); }
-                      }}
-                      placeholder="Select Zone..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Locator Selector — always show when zone is selected */}
-                {(formData.zoneId || locatorList.length > 0) && formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Locator</label>
-                    <SearchableDropdown
-                      options={locatorList.map(l => ({ value: l.id, label: l.name }))}
-                      value={formData.locatorId}
-                      onChange={(lId) => {
-                        setFormData({ ...formData, locatorId: lId, binId: null });
-                        if (lId) getLocatorBins(lId).then(setBinList).catch(console.error);
-                        else setBinList([]);
-                      }}
-                      placeholder="Select Locator..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Bin Selector — always show when locator is selected */}
-                {(formData.locatorId || binList.length > 0) && formData.warehouseId && (
-                  <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Bin</label>
-                    <SearchableDropdown
-                      options={binList.map(b => ({ value: b.id, label: b.name }))}
-                      value={formData.binId}
-                      onChange={(bId) => setFormData({ ...formData, binId: bId })}
-                      placeholder="Select Bin..."
-                      disabled={isInvoiceLocked}
-                      menuPlacement="auto"
-                      menuZIndexClass="z-[120]"
-                      className="w-full"
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -2573,6 +2535,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       alert("Vendor invoice number is required.");
                       return;
                     }
+                    const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                      : !formData.zoneId ? "Select a zone within the warehouse"
+                      : !formData.locatorId ? "Select a locator (aisle / rack)"
+                      : !formData.binId ? "Select a bin to complete the delivery location"
+                      : null;
+                    if (locErr) { setLocationError(locErr); return; }
+                    setLocationError(null);
                     onSaveDraft(getInvoicePayload());
                   }}
                   className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
@@ -2598,13 +2567,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       return;
                     }
 
-                    // 4. Direct Invoice Location Guard
-                    if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
-                      alert("Warehouse is required for Direct Invoices to post stock.");
-                      return;
+                    // 4. Location Guard (bin required for all invoice types)
+                    {
+                      const locErr = !formData.warehouseId ? "Select a warehouse to continue"
+                        : !formData.zoneId ? "Select a zone within the warehouse"
+                        : !formData.locatorId ? "Select a locator (aisle / rack)"
+                        : !formData.binId ? "Select a bin to complete the delivery location"
+                        : null;
+                      if (locErr) { setLocationError(locErr); return; }
+                      setLocationError(null);
                     }
 
-                    // 4. NLC Validation
+                    // 5. NLC Validation
                     const totalNLC = isLandedCostAllowed ? landedCost : 0;
                     if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
                       // User said "Invoice Total", usually implies Goods Value.
@@ -2946,9 +2920,15 @@ const PurchaseInvoices = () => {
     const fromGrn = location.state?.fromGrn;
     const fromLpo = location.state?.fromLpo;
     const draft = fromGrn || fromLpo;
+    const shouldOpenCreate = location.state?.openCreate || location.state?.mode === "create";
     if (draft) {
       // Store in ref so the tab-change effect applies it after the tab switch
       pendingDraftRef.current = mapInvoiceFromApi(draft);
+      setEditorMode("edit");
+      setActiveNavTab("editor");
+      navigate(location.pathname, { replace: true, state: {} });
+    } else if (shouldOpenCreate) {
+      setEditInvoice(null);
       setEditorMode("edit");
       setActiveNavTab("editor");
       navigate(location.pathname, { replace: true, state: {} });
@@ -3006,10 +2986,7 @@ const PurchaseInvoices = () => {
   };
 
   const handleSubmitApproval = async (payload) => {
-    if (!payload.warehouseId) { alert("Please select a warehouse before submitting."); return; }
-    if (!payload.zoneId) { alert("Please select a zone before submitting."); return; }
-    if (!payload.locatorId) { alert("Please select a locator before submitting."); return; }
-    if (!payload.binId) { alert("Please select a bin before submitting."); return; }
+    if (!payload.binId) return; // field-level validation already shown in CreateEditView
 
     try {
       const invoiceId = await handleSaveDraft(payload);
@@ -3077,11 +3054,7 @@ const PurchaseInvoices = () => {
 
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-        companyProfile: buildDocumentHeaderProfile({
-          company,
-          branches: availableBranches || [],
-          branchId: piBranchId,
-        }),
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -3109,7 +3082,7 @@ const PurchaseInvoices = () => {
       const fullVendor = findVendorRecord(vendorData, printableInvoice, printableInvoice?.vendorName, printableInvoice?.vendor);
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
-      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: piBranchId }), billBullLogo });
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
       await downloadPdf(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
     } catch (error) {
       console.error("Error downloading Invoice:", error);
@@ -3173,7 +3146,8 @@ const PurchaseInvoices = () => {
         documentNumberSelector: (inv) => inv.id,
       }),
       INVOICE_COLUMNS,
-      'Purchase_Invoice_List'
+      'Purchase_Invoice_List',
+      { companyProfile: company, branch: activeBranch?.name || '' }
     );
   };
 
@@ -3184,7 +3158,8 @@ const PurchaseInvoices = () => {
       }),
       INVOICE_COLUMNS,
       'Purchase Invoices',
-      'Purchase_Invoice_List'
+      'Purchase_Invoice_List',
+      { companyProfile: company, branch: activeBranch?.name || '' }
     );
   };
 

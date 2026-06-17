@@ -39,6 +39,10 @@ export const getListSerialNumber = (index, pagination = {}) => (
   descendingSerialNumber(index, pagination)
 );
 
+// Always produces ascending 1-based serial numbers — use this for exports/print.
+export const withExportSerialNumbers = (rows) =>
+  (Array.isArray(rows) ? rows : []).map((row, i) => ({ ...row, sNo: i + 1 }));
+
 export const withListSerialNumbers = (rows, {
   documentNumberSelector,
   ...pagination

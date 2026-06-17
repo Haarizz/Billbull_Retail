@@ -26,7 +26,11 @@ import {
   Save,
   ChevronRight,
   AlertCircle,
-  Zap
+  Zap,
+  MoreVertical,
+  Eye,
+  Copy,
+  Receipt
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -40,7 +44,8 @@ import {
   getNextSalesOrderNumber,
   saveSalesOrder,
   uploadSalesOrderAttachment,
-  getSalesOrderReceiptVouchers
+  getSalesOrderReceiptVouchers,
+  getSalesOrderStats
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -58,7 +63,7 @@ import { useBranch } from '../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendSalesOrderEmail } from '../../api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -93,6 +98,7 @@ import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import KpiCards from '../../components/common/KpiCards';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -190,6 +196,8 @@ const SalesOrders = () => {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
   // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
   const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
+  const [overflowMenu, setOverflowMenu] = useState(null); // { id, order, top, right }
+  const overflowMenuRef = useRef(null);
 
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
@@ -206,6 +214,8 @@ const SalesOrders = () => {
   const [listPage, setListPage] = useState(0);
   const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
   const [isListLoading, setIsListLoading] = useState(false);
+  const [soStats, setSoStats] = useState(null);
+  const [isStatsLoading, setIsStatsLoading] = useState(false);
   const _todaySO = new Date().toISOString().slice(0, 10);
   const [dateRange, setDateRange] = useState({ fromDate: _todaySO, toDate: _todaySO });
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
@@ -218,6 +228,8 @@ const SalesOrders = () => {
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
   const [showItemError, setShowItemError] = useState(false);
+  // null | 'need-draft' | 'need-batches'
+  const [batchGuideStep, setBatchGuideStep] = useState(null);
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
@@ -303,6 +315,7 @@ const SalesOrders = () => {
   }, [items]);
 
   const [billDiscount, setBillDiscount] = useState(0);
+  const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
   // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
   const [vatMode, setVatMode] = useState('EXCLUSIVE');
 
@@ -349,6 +362,8 @@ const SalesOrders = () => {
   const [paymentNotes, setPaymentNotes] = useState('');
   const [bankAccountOptions, setBankAccountOptions] = useState([]);
 
+  const [pendingPaymentSave, setPendingPaymentSave] = useState(false);
+
   // Payment Modal State
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -371,6 +386,18 @@ const SalesOrders = () => {
 
   // Attachments
   const [attachmentName, setAttachmentName] = useState('No file chosen');
+
+  const [pendingPrintOrderId, setPendingPrintOrderId] = useState(null);
+
+  // Trigger print after state settles from list view
+  useEffect(() => {
+    if (pendingPrintOrderId && orderId === pendingPrintOrderId) {
+      setPendingPrintOrderId(null);
+      // Slight delay to ensure child components (if any) have finished their internal effect chains
+      setTimeout(() => handlePrintClick(), 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, pendingPrintOrderId]);
   const [attachmentFile, setAttachmentFile] = useState(null);
 
   // Locking Logic 
@@ -387,6 +414,7 @@ const SalesOrders = () => {
   useEffect(() => {
     fetchAllData();
     fetchSalesOrders();
+    fetchSoStats();
   }, []);
 
   // ✅ HANDLE INCOMING QUOTATION
@@ -445,6 +473,9 @@ const SalesOrders = () => {
         customerCode: qtn.customerCode ?? '',
         customerName: qtn.customerName ?? qtn.customer,
         billDiscount: qtn.billDiscount,
+        billDiscountType: qtn.billDiscountType,
+        billDiscountFixed: qtn.billDiscountFixed,
+        billDiscountAmount: qtn.billDiscountAmount,
         shippingAddress: qtn.shippingAddress || '',
         items: qtn.items || []
       });
@@ -478,29 +509,7 @@ const SalesOrders = () => {
       }
 
       let validCustomers = Array.isArray(custData) ? custData : [];
-
-      // Ensure a default Walk-in Customer exists in the list for quick selection
-      const hasWalkin = validCustomers.some(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
-      if (!hasWalkin) {
-        validCustomers = [{
-          id: 'WALKIN-ID',
-          code: 'WALKIN',
-          name: 'Walk-in Customer',
-          mobile: '',
-          phone: '',
-          trn: '',
-          address: 'Counter Sale',
-          balance: 0,
-          creditStatus: 'Good'
-        }, ...validCustomers];
-      }
       setCustomersList(validCustomers);
-
-      // ✅ Set default customer to Walk-in
-      const walkIn = validCustomers.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
-      if (walkIn) {
-        setSelectedCustomer(current => current || walkIn);
-      }
 
       setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
       setProformasList(Array.isArray(proformaData) ? proformaData : []);
@@ -528,6 +537,18 @@ const SalesOrders = () => {
     }
   };
 
+  const fetchSoStats = async () => {
+    setIsStatsLoading(true);
+    try {
+      const data = await getSalesOrderStats();
+      setSoStats(data);
+    } catch (err) {
+      console.error("Failed to load SO stats", err);
+    } finally {
+      setIsStatsLoading(false);
+    }
+  };
+
   // Refetch when the user pages through the list.
   useEffect(() => {
     if (activeTab !== 'list') return;
@@ -542,9 +563,21 @@ const SalesOrders = () => {
     return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
 
+  // Close overflow menu when clicking outside.
+  useEffect(() => {
+    if (!overflowMenu) return;
+    const handleOutside = (e) => {
+      if (overflowMenuRef.current && !overflowMenuRef.current.contains(e.target)) {
+        setOverflowMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [overflowMenu]);
+
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, billDiscount);
+    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount));
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -832,6 +865,7 @@ const SalesOrders = () => {
     setLinkedQtn('');
     setLinkedPi('');
     setBillDiscount(0);
+    setBillDiscountType('percent');
     setIsLinkedSourceOpen(false);
   };
 
@@ -943,6 +977,7 @@ const SalesOrders = () => {
           linkedQuotation: linkedQtn || '',
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
+          billDiscountType: billDiscountType,
           shippingAddress: shippingAddress || '',
           // QA-032: carry the SO advance so the destination invoice can
           // pre-fill amountCollected and surface the advance to the user.
@@ -1025,12 +1060,15 @@ const SalesOrders = () => {
         expiry: i.expiry || i.expiryDate || ''
       })),
       totals: {
-        subTotal,
+        subTotal: grossTotal,
         tax: totalTax,
         grandTotal: orderTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
-        billDiscount: Number(billDiscount) || 0,
-        billDiscountAmount
+        billDiscount: billDiscountType === 'percent' ? Number(billDiscount) || 0 : 0,
+        billDiscountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
+        discountAmount: (totalDiscount || 0) + (billDiscountAmount || 0),
+        itemDiscountAmount: totalDiscount || 0,
+        footerDiscountAmount: billDiscountAmount || 0,
       },
       meta: (() => {
         const printBranchId = loadedSoBranchId ?? activeBranch?.id;
@@ -1092,21 +1130,45 @@ const SalesOrders = () => {
     setIsPaymentModalOpen(true);
   };
 
-  const handleAddPaymentFromModal = () => {
+  const handleAddPaymentFromModal = async () => {
     if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
       return alert("Please enter a valid amount.");
     }
-    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+    const outstanding = Math.max(orderTotal - Number(advanceAmount), 0);
+    if (Number(modalPaymentAmount) > outstanding + 0.001) {
+      return alert(`Payment amount cannot exceed the outstanding balance of ${outstanding.toFixed(2)}.`);
+    }
+    const newAdvance = Number(advanceAmount) + Number(modalPaymentAmount);
+    setAdvanceAmount(newAdvance);
     setPaymentMethod(modalPaymentMode);
     setPaymentRef(modalPaymentRef);
     setPaymentNotes(modalNotes);
     setIsPaymentModalOpen(false);
+
+    if (orderId) {
+      // SO already exists — persist immediately so the receipt voucher is created now
+      await saveOrUpdateOrder('CONFIRMED', { overrideAdvance: newAdvance, overridePaymentMethod: modalPaymentMode, overridePaymentRef: modalPaymentRef });
+    } else {
+      // New unsaved SO — flag that the user must save to persist the payment
+      setPendingPaymentSave(true);
+    }
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
-  const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
+  const saveOrUpdateOrder = async (targetStatus = 'DRAFT', overrides = {}) => {
     if (!orderAutoNumbering && !soNumber.trim()) {
       alert('Please enter a sales order number.');
+      return;
+    }
+
+    // Sales Orders require a mandatory registered customer — walk-in is not allowed.
+    const isWalkin = !selectedCustomer
+      || selectedCustomer.id === 'WALKIN-ID'
+      || selectedCustomer.code === 'WALKIN'
+      || /walk.?in/i.test(selectedCustomer.name || '')
+      || /cash.?customer/i.test(selectedCustomer.name || '');
+    if (isWalkin) {
+      alert('Walk-in / Cash Customer is not allowed for Sales Orders. Please select a registered customer.');
       return;
     }
 
@@ -1122,13 +1184,16 @@ const SalesOrders = () => {
       customerName: selectedCustomer?.name || '',
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
-      billDiscount: Number(billDiscount) || 0,
+      billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+      billDiscountAmount: billDiscountAmount,
+      billDiscountType: billDiscountType,
+      billDiscountFixed: billDiscountType === 'amount' ? Number(billDiscount) : 0,
       vatMode,
 
       // Payment & Delivery
-      advanceAmount: Number(advanceAmount),
-      paymentMethod,
-      paymentReference: paymentRef,
+      advanceAmount: overrides.overrideAdvance !== undefined ? Number(overrides.overrideAdvance) : Number(advanceAmount),
+      paymentMethod: overrides.overridePaymentMethod !== undefined ? overrides.overridePaymentMethod : paymentMethod,
+      paymentReference: overrides.overridePaymentRef !== undefined ? overrides.overridePaymentRef : paymentRef,
       deliveryType,
       expectedDeliveryDate: expectedDelivery,
       shippingAddress,
@@ -1140,25 +1205,32 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
-      items: items.map(i => ({
-        id: (orderId && i.soItemId) ? i.soItemId : null,
-        itemCode: i.code,
-        barcode: i.barcode || '',
-        image: i.image || '',
-        description: i.desc,
-        remarks: i.remarks || '',
-        unit: i.unit,
-        quantity: Number(i.qty),
-        price: Number(i.price),
-        cost: Number(i.cost),
-        discount: Number(i.disc),
-        taxRate: Number(i.tax),
-        taxAmount: Number(i.taxAmt),
-        lineTotal: Number(i.total),
-        foc: Number(i.foc) || 0,
-        focUnit: i.focUnit || i.unit || 'PCS',
-        binId: i.binId || null
-      }))
+      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+        const footerDisc = Number(i.allocatedFooterDiscount) || 0;
+        const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
+        const taxPercent = Number(i.tax) || 0;
+        const itemTax = (itemNet) * (taxPercent / 100);
+        return {
+          id: (orderId && i.soItemId) ? i.soItemId : null,
+          itemCode: i.code,
+          barcode: i.barcode || '',
+          image: i.image || '',
+          description: i.desc,
+          remarks: i.remarks || '',
+          unit: i.unit,
+          quantity: Number(i.qty),
+          price: Number(i.price),
+          cost: Number(i.cost),
+          discount: Number(i.disc),
+          footerDiscount: footerDisc,
+          taxRate: Number(i.tax),
+          taxAmount: itemTax,
+          lineTotal: itemNet + itemTax,
+          foc: Number(i.foc) || 0,
+          focUnit: i.focUnit || i.unit || 'PCS',
+          binId: i.binId || null
+        };
+      })
     };
 
     // Stock check enforcement
@@ -1220,15 +1292,21 @@ const SalesOrders = () => {
         && savedOrder.items.some(item => item.batchControlled);
       if (targetStatus === 'DRAFT' && hasBatchLines) {
         setActiveTab('create');
-        alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the Sales Order.');
+        setBatchGuideStep('need-batches');
       } else {
+        setBatchGuideStep(null);
         setActiveTab('list');
       }
+      setPendingPaymentSave(false);
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
       const msg = e?.response?.data?.message || e?.response?.data || e?.message || "Please check inputs.";
-      alert(`Failed to save Sales Order: ${msg}`);
+      if (typeof msg === 'string' && msg.toLowerCase().includes('batch-controlled')) {
+        setBatchGuideStep('need-draft');
+      } else {
+        alert(`Failed to save Sales Order: ${msg}`);
+      }
     }
   };
 
@@ -1286,7 +1364,10 @@ const SalesOrders = () => {
     setLinkedQtn(qtn.qtnNo);
     setLinkedPi('');
     setLinkedSourceSearch(qtn.qtnNo || '');
-    setBillDiscount(Number(qtn.billDiscount) || 0);
+    setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
+    setBillDiscount(qtn.billDiscountType === 'amount'
+      ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
+      : Number(qtn.billDiscount) || 0);
 
     if (qtn.customer || qtn.customerId || qtn.customerCode) {
       // Centralised resolution: id → code → name → fuzzy. Falls back to a thin
@@ -1378,7 +1459,10 @@ const SalesOrders = () => {
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
-    setBillDiscount(Number(order.billDiscount) || 0);
+    setBillDiscountType(order.billDiscountType === 'amount' ? 'amount' : 'percent');
+    setBillDiscount(order.billDiscountType === 'amount'
+        ? Number(order.billDiscountFixed || order.billDiscountAmount) || 0
+        : Number(order.billDiscount) || 0);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -1391,6 +1475,7 @@ const SalesOrders = () => {
 
     setAttachmentName('No file chosen');
     setAttachmentFile(null);
+    setBatchGuideStep(null);
     setActiveTab('create');
   };
 
@@ -1405,9 +1490,8 @@ const SalesOrders = () => {
     }
     setOrderDate(new Date().toISOString().split('T')[0]);
 
-    // ✅ Set default customer to Walk-in
-    const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
-    setSelectedCustomer(walkIn || null);
+    // Sales Orders require a registered customer — no walk-in default.
+    setSelectedCustomer(null);
 
     setLinkedSourceType('');
     setLinkedSourceSearch('');
@@ -1415,7 +1499,9 @@ const SalesOrders = () => {
     setLinkedPi('');
     setItems([createBlankOrderItem()]);
     setBillDiscount(0);
+    setBillDiscountType('percent');
     setAdvanceAmount(0);
+    setPendingPaymentSave(false);
     setPaymentMethod('Cash');
     setPaymentRef('');
     setDeliveryType('Delivery');
@@ -1427,6 +1513,7 @@ const SalesOrders = () => {
     setStatus('DRAFT');
     setAttachmentName('No file chosen');
     setAttachmentFile(null);
+    setBatchGuideStep(null);
     setActiveTab('create');
     setFocusedItem(null);
   };
@@ -1522,7 +1609,7 @@ const SalesOrders = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); }}>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); setOverflowMenu(null); }}>
 
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
@@ -1573,6 +1660,69 @@ const SalesOrders = () => {
         isReadOnly={isLocked}
       />
 
+      {/* Overflow action menu — rendered fixed so it escapes overflow-x-auto clipping */}
+      {overflowMenu && (
+        <div
+          ref={overflowMenuRef}
+          style={{ position: 'fixed', top: overflowMenu.top, right: overflowMenu.right, zIndex: 9999 }}
+          className="w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {canExport('sales.order') && (
+            <>
+              <button
+                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); setIsEmailModalOpen(true); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+              >
+                <MessageCircle size={13} className="text-green-500" /> WhatsApp
+              </button>
+              <button
+                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+              >
+                <Smartphone size={13} className="text-blue-500" /> SMS
+              </button>
+            </>
+          )}
+          <div className="border-t border-slate-100 my-1" />
+          {canCreate('sales.order') && (
+            <button
+              onClick={() => {
+                const o = overflowMenu.order;
+                setOverflowMenu(null);
+                navigate('/sales/invoice', {
+                  state: {
+                    fromSalesOrder: {
+                      soNumber: o.soNumber,
+                      customerName: o.customerName,
+                      customerCode: o.customerCode,
+                      items: []
+                    }
+                  }
+                });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+            >
+              <Receipt size={13} className="text-purple-500" /> Convert to Invoice
+            </button>
+          )}
+          {canCreate('sales.order') && (
+            <button
+              onClick={() => {
+                const o = overflowMenu.order;
+                setOverflowMenu(null);
+                navigate('/sales/deliverynote', {
+                  state: { fromSalesOrder: { id: o.id, soNumber: o.soNumber } }
+                });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
+            >
+              <Truck size={13} className="text-indigo-500" /> Create Delivery Note
+            </button>
+          )}
+        </div>
+      )}
+
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
         <div>
@@ -1580,24 +1730,33 @@ const SalesOrders = () => {
           <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
         </div>
         {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
-        {canExport('sales.order') && (
+        {activeTab === 'create' && canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
-            {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-              <button key={label} onClick={
-                label === 'Print' ? handlePrintClick
-                  : label === 'Email' ? () => {
-                    if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
-                    setIsEmailModalOpen(true);
-                  }
-                  : undefined
-              } disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
-                {label === 'Email' && <Mail size={14} />}
-                {label === 'WhatsApp' && <MessageCircle size={14} />}
-                {label === 'SMS' && <Smartphone size={14} />}
-                {label === 'Print' && <Printer size={14} />}
-                {label === 'Print' && isPrinting ? 'Printing...' : label}
-              </button>
-            ))}
+            <button onClick={() => {
+              if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+              setIsEmailModalOpen(true);
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <Mail size={14} /> Email
+            </button>
+            <button onClick={() => {
+              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+              const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
+              if (phone) window.open(`https://wa.me/${phone}`, '_blank');
+              else alert('No phone number found for this customer.');
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <MessageCircle size={14} /> WhatsApp
+            </button>
+            <button onClick={() => {
+              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+              const phone = fullCustomer?.mobile || fullCustomer?.phone || '';
+              if (phone) window.open(`sms:${phone}`, '_self');
+              else alert('No phone number found for this customer.');
+            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+              <Smartphone size={14} /> SMS
+            </button>
+            <button onClick={handlePrintClick} disabled={isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+              <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+            </button>
           </div>
         )}
       </div>
@@ -1623,6 +1782,48 @@ const SalesOrders = () => {
 
       {/* ======================= VIEW: LIST ======================= */}
       {activeTab === 'list' && (
+        <div>
+        <KpiCards
+          loading={isStatsLoading}
+          cards={[
+            {
+              label: 'This Month Orders',
+              value: soStats?.thisMonthOrders ?? '—',
+              sub: `${soStats?.confirmedOrders ?? 0} confirmed`,
+              icon: <ShoppingCart size={18} />,
+              iconBg: 'bg-yellow-100',
+              iconColor: 'text-yellow-600',
+              accent: 'border-l-yellow-400',
+            },
+            {
+              label: 'This Month Value',
+              value: soStats != null ? formatCurrencyAmount(soStats.thisMonthValue, company) : '—',
+              sub: 'Confirmed + invoiced',
+              icon: <DollarSign size={18} />,
+              iconBg: 'bg-emerald-100',
+              iconColor: 'text-emerald-600',
+              accent: 'border-l-emerald-400',
+            },
+            {
+              label: 'Outstanding Balance',
+              value: soStats != null ? formatCurrencyAmount(soStats.outstandingBalance, company) : '—',
+              sub: 'Confirmed, not fully paid',
+              icon: <CreditCard size={18} />,
+              iconBg: 'bg-red-100',
+              iconColor: 'text-red-500',
+              accent: 'border-l-red-400',
+            },
+            {
+              label: "Today's Orders",
+              value: soStats?.todayOrders ?? '—',
+              sub: 'Placed today',
+              icon: <Calendar size={18} />,
+              iconBg: 'bg-blue-100',
+              iconColor: 'text-blue-500',
+              accent: 'border-l-blue-400',
+            },
+          ]}
+        />
         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
             <h2 className="font-bold text-slate-700 text-sm">Sales Orders</h2>
@@ -1648,7 +1849,8 @@ const SalesOrders = () => {
                         totalElements: listPageMeta.totalElements,
                       }),
                       SALES_ORDER_COLUMNS,
-                      'Sales_Orders'
+                      'Sales_Orders',
+                      { companyProfile: company, branch: activeBranch?.name || '' }
                     )}
                     onExportPdf={() => exportToPDF(
                       withListSerialNumbers(exportOrdersList, {
@@ -1659,7 +1861,8 @@ const SalesOrders = () => {
                       }),
                       SALES_ORDER_COLUMNS,
                       'Sales Orders',
-                      'Sales_Orders'
+                      'Sales_Orders',
+                      { companyProfile: company, branch: activeBranch?.name || '' }
                     )}
                   />
                 )}
@@ -1724,10 +1927,53 @@ const SalesOrders = () => {
                       {renderStatusBadge(order.status)}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => handleLoadOrder(order)} className="p-1 hover:bg-yellow-100 rounded text-yellow-600 transition-colors" title="Edit / View"><FileText size={14} /></button>
-                        <button onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }} className="p-1 hover:bg-sky-100 rounded text-sky-500 transition-colors" title="Send Email"><Mail size={14} /></button>
-                        <button onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }} className="p-1 hover:bg-slate-200 rounded text-slate-500 transition-colors" title="Load & Print"><Printer size={14} /></button>
+                      <div className="flex justify-end items-center gap-1">
+                        {/* Primary actions */}
+                        <button
+                          onClick={() => handleLoadOrder(order)}
+                          className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600 transition-colors"
+                          title="View / Edit"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            handleLoadOrder(order); 
+                            setPendingPrintOrderId(order.id); 
+                          }}
+                          className="p-1.5 hover:bg-slate-100 rounded text-slate-500 transition-colors"
+                          title="Print"
+                        >
+                          <Printer size={14} />
+                        </button>
+                        {canExport('sales.order') && (
+                          <button
+                            onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }}
+                            className="p-1.5 hover:bg-sky-100 rounded text-sky-500 transition-colors"
+                            title="Send Email"
+                          >
+                            <Mail size={14} />
+                          </button>
+                        )}
+
+                        {/* Overflow menu trigger */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const menuId = order.id || order.soNumber;
+                            if (overflowMenu?.id === menuId) {
+                              setOverflowMenu(null);
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setOverflowMenu({ id: menuId, order, top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                          }}
+                          className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors"
+                          title="More actions"
+                        >
+                          <MoreVertical size={14} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1759,11 +2005,57 @@ const SalesOrders = () => {
             />
           </div>
         </div>
+        </div>
       )}
 
       {/* ======================= VIEW: CREATE ======================= */}
       {activeTab === 'create' && (
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1 relative mb-24 md:mb-16">
+        <div className="flex flex-col gap-4 flex-1 relative mb-24 md:mb-16">
+
+        {/* BATCH GUIDE BANNER */}
+        {batchGuideStep && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg px-5 py-4 flex items-start gap-4 shadow-sm">
+            <div className="flex-shrink-0 mt-0.5">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                <AlertTriangle size={16} className="text-amber-600" />
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800 mb-2">Batch selection required to confirm this order</p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {/* Step 1 */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-draft' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-white text-emerald-700 border-emerald-300 line-through opacity-60'}`}>
+                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-draft' ? 'bg-white text-amber-600' : 'bg-emerald-500 text-white'}`}>
+                    {batchGuideStep === 'need-draft' ? '1' : '✓'}
+                  </span>
+                  Save as Draft
+                </div>
+                <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                {/* Step 2 */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border ${batchGuideStep === 'need-batches' ? 'bg-amber-500 text-white border-amber-500 shadow' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${batchGuideStep === 'need-batches' ? 'bg-white text-amber-600' : 'bg-slate-300 text-slate-500'}`}>2</span>
+                  Select batches for each item
+                </div>
+                <ChevronRight size={12} className="text-slate-400 flex-shrink-0" />
+                {/* Step 3 */}
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-semibold border bg-slate-100 text-slate-400 border-slate-200">
+                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-300 text-slate-500">3</span>
+                  Confirm Order
+                </div>
+              </div>
+              <p className="text-xs text-amber-700 mt-2">
+                {batchGuideStep === 'need-draft'
+                  ? 'Click "Save Draft" first, then use the batch selector on each line to assign stock batches before confirming.'
+                  : 'Click the batch selector icon on each highlighted item row to assign stock batches, then click "Confirm Order".'}
+              </p>
+            </div>
+            <button onClick={() => setBatchGuideStep(null)} className="flex-shrink-0 text-amber-400 hover:text-amber-600 transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
 
           {/* LEFT COLUMN */}
           <div className="xl:col-span-1 space-y-4">
@@ -1880,80 +2172,47 @@ const SalesOrders = () => {
               onExpectedDispatchChange={setExpectedDelivery}
               isReadOnly={isLocked}
               currency={orderCurrency}
+              creditAlert={
+                selectedCustomer && selectedCustomer.creditLimitAmount > 0 &&
+                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount
+                  ? salesSettings?.creditLimitPolicy === 'BLOCK'
+                    ? (
+                      <div className="mt-2 p-2.5 bg-red-50 border border-red-300 rounded-lg text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                        <p>
+                          <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                          (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                          credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                          Saving this order is blocked until the balance is within limit.
+                        </p>
+                      </div>
+                    )
+                    : salesSettings?.creditLimitPolicy === 'WARNING'
+                      ? (
+                        <div className="mt-2 p-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                          <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                          <p>
+                            <strong>Credit Warning:</strong> The projected outstanding balance
+                            (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                            credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                          </p>
+                        </div>
+                      )
+                      : null
+                  : null
+              }
             />
-
-            {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
-              selectedCustomer.creditLimitAmount > 0 &&
-              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
-                <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                  <p>
-                    <strong>Credit Warning:</strong> The projected outstanding balance
-                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                  </p>
-                </div>
-              )}
-            {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-              selectedCustomer.creditLimitAmount > 0 &&
-              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
-                <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                  <p>
-                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                    Saving this order is blocked until the balance is within limit.
-                  </p>
-                </div>
-              )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
               isOpen={isCustomerSearchOpen}
               onClose={() => setIsCustomerSearchOpen(false)}
               onSelect={handleSelectCustomer}
-              customers={customersList}
+              customers={customersList.filter(c => c.code !== 'WALKIN' && !/walk.?in/i.test(c.name || '') && !/cash.?customer/i.test(c.name || ''))}
               selectedCode={selectedCustomer?.code || ''}
               onCustomerCreated={fetchAllData}
             />
 
-            {/* Delivery Instructions */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
-                Delivery Instructions
-              </h3>
-              <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none" />
-            </div>
-
-            {/* 4. ATTACHMENTS (Moved to Left Column) */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 min-h-[180px] flex flex-col">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
-                <Paperclip size={16} className="text-slate-400" /> Attachments
-              </h3>
-              <div className="border border-dashed border-slate-300 rounded p-4 text-center flex-1 flex flex-col items-center justify-center">
-                <p className="text-xs text-slate-500 mb-2">Upload (Customer PO, PI, LPO, etc.)</p>
-                <div className="flex flex-col items-center justify-center gap-2 w-full">
-                  <label className="cursor-pointer">
-                    <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-colors">Choose File</span>
-                    <input type="file" disabled={isLocked} className="hidden" onChange={handleFileUpload} accept="image/*,.pdf" />
-                  </label>
-
-                  <div className="flex items-center gap-1 mt-1 justify-center w-full">
-                    <span className="text-xs text-slate-500 truncate max-w-[150px]">{attachmentName}</span>
-                    {attachmentName !== 'No file chosen' && !isLocked && (
-                      <button
-                        onClick={handleRemoveFile}
-                        className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
-                        title="Remove file"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div> {/* End Left Column */}
 
           {/* ======================= MIDDLE COLUMN ======================= */}
@@ -2228,8 +2487,48 @@ const SalesOrders = () => {
               </div>
             </div>
 
-            {/* 4. Combined Attachments & Notes */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 4. Delivery Instructions, Attachments & Notes */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+              {/* Delivery Instructions */}
+              <div className="h-full">
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 h-full">
+                  <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <Truck size={16} className="text-slate-400" /> Delivery Instructions
+                  </h3>
+                  <textarea rows="5" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-3 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none leading-relaxed min-h-[120px]" />
+                </div>
+              </div>
+
+              {/* Attachments */}
+              <div className="h-full">
+                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                  <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <Paperclip size={16} className="text-slate-400" /> Attachments
+                  </h3>
+                  <div className="border border-dashed border-slate-300 rounded p-4 text-center flex-1 flex flex-col items-center justify-center">
+                    <p className="text-xs text-slate-500 mb-2">Upload (Customer PO, PI, LPO, etc.)</p>
+                    <div className="flex flex-col items-center justify-center gap-2 w-full">
+                      <label className="cursor-pointer">
+                        <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-colors">Choose File</span>
+                        <input type="file" disabled={isLocked} className="hidden" onChange={handleFileUpload} accept="image/*,.pdf" />
+                      </label>
+                      <div className="flex items-center gap-1 mt-1 justify-center w-full">
+                        <span className="text-xs text-slate-500 truncate max-w-[150px]">{attachmentName}</span>
+                        {attachmentName !== 'No file chosen' && !isLocked && (
+                          <button
+                            onClick={handleRemoveFile}
+                            className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                            title="Remove file"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* Notes */}
               <div className="h-full">
@@ -2273,17 +2572,25 @@ const SalesOrders = () => {
                   <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600 items-center">
-                  <span className="flex items-center gap-2">
-                    Bill Discount
+                  <span className="flex items-center gap-1.5">
+                    Footer Discount
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => { setBillDiscountType(t => t === 'percent' ? 'amount' : 'percent'); setBillDiscount(0); }}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                      title="Toggle between percentage and fixed amount"
+                    >{billDiscountType === 'percent' ? '%' : 'AED'}</button>
                     <input
                       type="number"
                       min="0"
-                      max="100"
+                      max={billDiscountType === 'percent' ? 100 : undefined}
+                      step={billDiscountType === 'percent' ? 1 : 0.01}
                       disabled={isLocked}
-                      className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      className="w-16 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                       value={billDiscount}
                       onChange={(e) => setBillDiscount(Number(e.target.value))}
-                    /> %
+                    />
                   </span>
                   <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
                 </div>
@@ -2322,6 +2629,14 @@ const SalesOrders = () => {
                     <span className={`px-2 py-1 rounded text-xs font-bold border ${balanceDue > 0 ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
                       {balanceDue > 0 ? 'Partially Paid / Unpaid' : 'Fully Paid'}
                     </span>
+                  </div>
+                )}
+
+                {/* Unsaved payment warning — only shown for new (unsaved) orders */}
+                {pendingPaymentSave && !orderId && (
+                  <div className="mt-2 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded p-2">
+                    <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                    <span className="text-[10px] text-amber-700 font-semibold">Payment not yet saved. Save or Confirm the order to record this payment.</span>
                   </div>
                 )}
               </div>
@@ -2462,7 +2777,7 @@ const SalesOrders = () => {
                   </button>
                 </>
               )}
-              {status !== 'INVOICED' && (
+              {status !== 'INVOICED' && status !== 'DRAFT' && (
                 <button
                   onClick={handleOpenPaymentModal}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
@@ -2481,6 +2796,7 @@ const SalesOrders = () => {
             onSave={() => saveOrUpdateOrder('DRAFT')}
             onPrint={handlePrintClick}
           />
+        </div>
         </div>
       )}
 

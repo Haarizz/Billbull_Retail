@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.reports;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,15 +17,21 @@ import java.util.List;
 @RequestMapping("/api/sales/reports")
 public class SalesReportController {
 
-    private final SalesReportDataService reportDataService;
+    private static final String MODULE = "sales";
 
-    public SalesReportController(SalesReportDataService reportDataService) {
+    private final SalesReportDataService reportDataService;
+    private final ModulePermissionService modulePermissionService;
+
+    public SalesReportController(SalesReportDataService reportDataService,
+                                 ModulePermissionService modulePermissionService) {
         this.reportDataService = reportDataService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/salespersons")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<String>> getSalespersons() {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getDistinctSalespersons());
     }
 
@@ -39,6 +46,7 @@ public class SalesReportController {
             @RequestParam(required = false) String salesperson,
             @RequestParam(required = false) String valuationMethod,
             @RequestParam(required = false) String search) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
                 dateFrom,

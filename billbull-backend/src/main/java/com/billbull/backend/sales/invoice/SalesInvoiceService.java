@@ -17,6 +17,7 @@ import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.sales.settings.SalesMode;
 import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -85,6 +86,7 @@ public class SalesInvoiceService {
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
     private final PaymentService paymentService;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -108,7 +110,8 @@ public class SalesInvoiceService {
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
-            PaymentService paymentService) {
+            PaymentService paymentService,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -132,6 +135,42 @@ public class SalesInvoiceService {
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
+        this.notifPublisher = notifPublisher;
+    }
+
+    // ----------------------------
+    // STARTUP MIGRATION
+    // ----------------------------
+    @PostConstruct
+    @Transactional
+    public void fixSplitPaymentModesOnStartup() {
+        java.util.List<com.billbull.backend.sales.payment.Payment> splitPayments =
+                paymentService.getAllWithSplitGroupId();
+        java.util.Map<String, java.util.List<com.billbull.backend.sales.payment.Payment>> byGroup =
+                splitPayments.stream()
+                        .collect(java.util.stream.Collectors.groupingBy(
+                                com.billbull.backend.sales.payment.Payment::getSplitGroupId));
+        for (java.util.Map.Entry<String, java.util.List<com.billbull.backend.sales.payment.Payment>> entry : byGroup.entrySet()) {
+            java.util.List<com.billbull.backend.sales.payment.Payment> group = entry.getValue();
+            java.util.List<String> modes = group.stream()
+                    .map(com.billbull.backend.sales.payment.Payment::getPaymentMode)
+                    .filter(m -> m != null && !m.isBlank() && !m.equalsIgnoreCase("Credit"))
+                    .distinct()
+                    .collect(java.util.stream.Collectors.toList());
+            if (modes.size() <= 1) continue;
+            String combinedMode = String.join(" + ", modes);
+            String linkedInvoice = group.stream()
+                    .map(com.billbull.backend.sales.payment.Payment::getLinkedInvoice)
+                    .filter(s -> s != null && !s.isBlank())
+                    .findFirst().orElse(null);
+            if (linkedInvoice == null) continue;
+            invoiceRepo.findByInvoiceNumber(linkedInvoice).ifPresent(invoice -> {
+                if (!combinedMode.equals(invoice.getPaymentMode())) {
+                    invoice.setPaymentMode(combinedMode);
+                    invoiceRepo.save(invoice);
+                }
+            });
+        }
     }
 
     // ----------------------------
@@ -246,8 +285,9 @@ public class SalesInvoiceService {
 
                 double netAmount = item.getNetAmount() != null ? item.getNetAmount() : 0;
                 double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
 
-                subTotal += (netAmount - taxAmount);
+                subTotal += (netAmount - taxAmount + footerDisc);
                 taxTotal += taxAmount;
             }
         }
@@ -255,9 +295,14 @@ public class SalesInvoiceService {
         // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscAmt = invoice.getBillDiscountAmount() != null ? invoice.getBillDiscountAmount() : 0;
+        if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+            invoice.setBillDiscountAmount(billDiscAmt);
+        }
+
         // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
         double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
         double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
@@ -344,6 +389,10 @@ public class SalesInvoiceService {
                 linkedSO.ifPresent(so -> {
                     so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
                     salesOrderRepository.save(so);
+                    // Release any RESERVED batch allocations that were held against the SO.
+                    // The invoice's own DN has already consumed (or will consume) the actual
+                    // batches, so the SO-level reservations are orphaned at this point.
+                    batchSelectionService.releaseSalesOrder(so.getId());
                 });
                 // If the invoice was reached via SO and the SO came from a quotation,
                 // surface that quotation here so it gets stamped Invoiced too.
@@ -363,6 +412,14 @@ public class SalesInvoiceService {
                         linkedQtnNo,
                         com.billbull.backend.sales.quotation.QuotationStatus.INVOICED);
             }
+
+            // Publish Notification
+            notifPublisher.newSalesInvoice(
+                    saved.getInvoiceNumber(),
+                    saved.getCustomerName(),
+                    String.format("AED %,.2f", saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : 0.0),
+                    saved.getSalesperson() != null ? saved.getSalesperson() : "System"
+            );
         }
 
         if (isNewlyFinalized && paid > 0) {
@@ -391,6 +448,18 @@ public class SalesInvoiceService {
                         rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.AGAINST_INVOICE);
                         receiptVoucherRepo.save(rv);
                         remainingPaidToReceipt -= rvAmt;
+                        // Post the advance-application clearing entry:
+                        //   Dr Customer Advance (2060)   [rvAmt]
+                        //   Cr Accounts Receivable (1100) [rvAmt]
+                        // This clears the liability posted when the SO advance was received
+                        // and reduces AR to match the net amount the customer still owes.
+                        postingEngineService.createJournalFromAdvanceApplication(
+                                rv.getId(),
+                                refreshed.getInvoiceNumber(),
+                                rv.getAmount(),
+                                refreshed.getInvoiceDate() != null
+                                        ? refreshed.getInvoiceDate()
+                                        : java.time.LocalDate.now());
                     }
                 }
             }
@@ -537,7 +606,8 @@ public class SalesInvoiceService {
 
         double gross = qty * price;
         double discountAmount = gross * (discountPercent / 100);
-        double taxableAmount = Math.max(0, gross - discountAmount);
+        double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
+        double taxableAmount = Math.max(0, gross - discountAmount - footerDisc);
         double taxAmount = taxableAmount * (taxPercent / 100);
         double netAmount = taxableAmount + taxAmount;
 
@@ -574,6 +644,31 @@ public class SalesInvoiceService {
     }
 
     // ----------------------------
+    // ----------------------------
+    // STATS
+    // ----------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        LocalDate today = LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        LocalDate monthStart = month.atDay(1);
+        LocalDate monthEnd = month.atEndOfMonth();
+
+        Double todayRevenue = invoiceRepo.sumRevenueBetween(today, today);
+        Double monthRevenue = invoiceRepo.sumRevenueBetween(monthStart, monthEnd);
+        long monthCount = invoiceRepo.countBetween(monthStart, monthEnd);
+        long todayCount = invoiceRepo.countBetween(today, today);
+        Double outstanding = invoiceRepo.sumOutstandingBalance();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("todayRevenue", todayRevenue != null ? todayRevenue : 0.0);
+        stats.put("todayCount", todayCount);
+        stats.put("thisMonthRevenue", monthRevenue != null ? monthRevenue : 0.0);
+        stats.put("thisMonthCount", monthCount);
+        stats.put("outstandingBalance", outstanding != null ? outstanding : 0.0);
+        return stats;
+    }
+
     // GET ALL
     // ----------------------------
     @Transactional(readOnly = true)
@@ -816,7 +911,11 @@ public class SalesInvoiceService {
             // For Before-Sale invoices (DN already delivered before invoice raised),
             // recognition is triggered by linkDeliveryNotesToInvoice() called in save().
             // This unified approach ensures all revenue flows through the same DN path.
-            if (isNewlyPosted) {
+            // F-13: FAST_SALE skips the Deferred Revenue invoice journal.
+            // The single combined entry (Dr Cash/AR / Cr Revenue / Cr VAT / Dr COGS / Cr Inventory)
+            // is posted by PostingEngineService.createJournalFromFastSaleDelivered() inside
+            // DeliveryNoteService.recognizeRevenueForDeliveredDn() when the auto-DN is delivered.
+            if (isNewlyPosted && !invoice.isFastSale()) {
                 postingEngineService.createJournalFromInvoicePosting(invoice);
             }
 
@@ -825,6 +924,19 @@ public class SalesInvoiceService {
                 postingEngineService.reverseJournalFromInvoiceCancellation(invoice);
             }
         });
+    }
+
+    // ----------------------------
+    // CREDIT-ONLY SETTLEMENT
+    // ----------------------------
+    @Transactional
+    public SalesInvoice markAsCreditSettled(Long id) {
+        SalesInvoice invoice = getById(id);
+        // No money received — keep status as CONFIRMED (outstanding on credit).
+        // Stamp paymentMode so the invoice history shows "Credit".
+        invoice.setPaymentMode("Credit");
+        invoiceRepo.save(invoice);
+        return getById(id);
     }
 
     // ----------------------------
@@ -845,18 +957,41 @@ public class SalesInvoiceService {
     @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, String combinedPaymentMode) {
         SalesInvoice invoice = getById(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
 
-        // Sync invoice's paymentMode to the actual mode used for payment
+        // syncLinkedInvoice (called inside ReceiptVoucherService.createReceipt) already
+        // updated amountPaid/balance/status from the full ReceiptVoucher sum — which
+        // includes both the SO advance RVs re-linked at invoice creation AND this new
+        // payment RV. Re-reading from Payment rows only would exclude the SO advance RVs
+        // (which are RVs, not Payment rows) and produce a wrong amountPaid.
+        // We only need to stamp paymentMode if provided.
         if (paymentMode != null && !paymentMode.isBlank()) {
             SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
-            toUpdate.setPaymentMode(paymentMode);
+            // Use the combined mode string sent by the frontend for split payments (e.g. "Cash + Card").
+            // This avoids any mid-transaction DB query timing issues.
+            String stampMode = (combinedPaymentMode != null && !combinedPaymentMode.isBlank())
+                    ? combinedPaymentMode
+                    : paymentMode;
+            toUpdate.setPaymentMode(stampMode);
             invoiceRepo.save(toUpdate);
         }
 
@@ -865,6 +1000,11 @@ public class SalesInvoiceService {
 
     private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
+    }
+
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
         Payment p = new Payment();
         p.setPaymentType(PaymentType.RECEIVED);
         p.setCustomerCode(invoice.getCustomerCode());
@@ -878,14 +1018,15 @@ public class SalesInvoiceService {
         p.setBankName(bankAccount);
         p.setChequeDate(chequeDate);
         p.setPaymentDate(paymentDate != null ? paymentDate : LocalDate.now());
-        
+        p.setSplitGroupId(splitGroupId);
+
         // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
         if (paymentAmount >= (invoice.getBalance() != null ? invoice.getBalance() : invoice.getInvoiceTotal())) {
             p.setStatus(PaymentStatus.COMPLETED);
         } else {
             p.setStatus(PaymentStatus.PARTIAL);
         }
-        
+
         // Numbering is handled either by frontend passing it, or backend if left null
         // Currently PaymentController expects the client to pass the paymentNumber if manual,
         // or uses NumberingService if null. We will let PaymentService generate the number if null.
@@ -920,6 +1061,11 @@ public class SalesInvoiceService {
                 continue;
             // QA-001: service products have no physical inventory — never validate stock.
             if (product.isService())
+                continue;
+
+            // Per-product negative-stock override: if the product is explicitly configured to
+            // allow negative stock, skip the shortage check for this line only.
+            if (product.getInventory() != null && product.getInventory().isAllowNegative())
                 continue;
 
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
@@ -1162,7 +1308,8 @@ public class SalesInvoiceService {
         return salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder())
                 .map(so -> {
                     if (so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED
-                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID) {
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID) {
                         return 0;
                     }
                     if (warehouseId != null && so.getWarehouse() != null

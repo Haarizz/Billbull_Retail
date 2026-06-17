@@ -25,6 +25,9 @@ import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
+import com.billbull.backend.purchase.lpo.Lpo;
+import com.billbull.backend.purchase.lpo.LpoRepository;
+import com.billbull.backend.purchase.lpo.LpoStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 
@@ -42,6 +45,7 @@ public class FinancialReportService {
     private final PurchaseInvoiceRepository purchaseInvoiceRepository;
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
+    private final LpoRepository lpoRepository;
 
     public FinancialReportService(
             AccountRepository accountRepository,
@@ -50,7 +54,8 @@ public class FinancialReportService {
             SalesInvoiceRepository salesInvoiceRepository,
             PurchaseInvoiceRepository purchaseInvoiceRepository,
             OpeningInvoiceRepository openingInvoiceRepository,
-            CustomerRepository customerRepository) {
+            CustomerRepository customerRepository,
+            LpoRepository lpoRepository) {
         this.accountRepository = accountRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.expenseRepository = expenseRepository;
@@ -58,6 +63,27 @@ public class FinancialReportService {
         this.purchaseInvoiceRepository = purchaseInvoiceRepository;
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
+        this.lpoRepository = lpoRepository;
+    }
+
+    // ==================== BRANCH FILTER HELPER ====================
+
+    private List<LedgerEntry> fetchEntries(Long branchId, LocalDate start, LocalDate end) {
+        if (branchId != null) {
+            return ledgerEntryRepository
+                    .findByBranchIdAndTransactionDateBetweenOrderByTransactionDateAsc(branchId, start, end);
+        }
+        return ledgerEntryRepository
+                .findByTransactionDateBetweenOrderByTransactionDateAsc(start, end);
+    }
+
+    private List<LedgerEntry> fetchEntriesBefore(Long branchId, LocalDate before) {
+        List<LedgerEntry> all = ledgerEntryRepository.findByTransactionDateBefore(before);
+        if (branchId != null) {
+            return all.stream().filter(e -> e.getBranch() != null && branchId.equals(e.getBranch().getId()))
+                    .collect(Collectors.toList());
+        }
+        return all;
     }
 
     // ==================== TRIAL BALANCE ====================
@@ -67,13 +93,16 @@ public class FinancialReportService {
      * Groups debit/credit totals by account.
      */
     public TrialBalanceDTO generateTrialBalance(LocalDate startDate, LocalDate endDate) {
+        return generateTrialBalance(startDate, endDate, null);
+    }
+
+    public TrialBalanceDTO generateTrialBalance(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         Map<String, BigDecimal> debitMap = new LinkedHashMap<>();
         Map<String, BigDecimal> creditMap = new LinkedHashMap<>();
@@ -141,13 +170,23 @@ public class FinancialReportService {
     // ==================== PROFIT & LOSS ====================
 
     public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate) {
+        return generateProfitLoss(startDate, endDate, null, null);
+    }
+
+    public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate, Long branchId) {
+        return generateProfitLoss(startDate, endDate, branchId, null);
+    }
+
+    public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate, Long branchId, String costCenter) {
         if (startDate == null)
             startDate = LocalDate.now().withDayOfMonth(1); // Default to this month start
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> allEntries = fetchEntries(branchId, startDate, endDate);
+        List<LedgerEntry> entries = (costCenter != null && !costCenter.isBlank())
+                ? allEntries.stream().filter(e -> costCenter.equals(e.getCostCenter())).collect(Collectors.toList())
+                : allEntries;
 
         Map<String, BigDecimal> accountBalances = new LinkedHashMap<>();
         Map<String, String> accountNames = new HashMap<>();
@@ -210,11 +249,12 @@ public class FinancialReportService {
             }
         }
 
-        // Adjust totals to be positive for report display
-        totalRevenue = totalRevenue.abs();
-        totalCogs = totalCogs.abs();
-        totalOpex = totalOpex.abs();
-        totalOtherIncome = totalOtherIncome.abs();
+        // Convert expense totals to positive display values using sign semantics instead of .abs().
+        // .abs() would mask abnormal balances (e.g. net Cr on COGS from excessive returns).
+        // COGS and OPEX are Dr-normal: netBal is (Cr-Dr), so negate to get a positive display amount.
+        // Revenue totals are already positive from the negate() above.
+        totalCogs = totalCogs.negate();
+        totalOpex = totalOpex.negate();
 
         BigDecimal grossProfit = totalRevenue.subtract(totalCogs);
         BigDecimal netProfit = grossProfit.subtract(totalOpex).add(totalOtherIncome);
@@ -246,13 +286,17 @@ public class FinancialReportService {
     // ==================== BALANCE SHEET ====================
 
     public BalanceSheetDTO generateBalanceSheet(LocalDate asOfDate) {
+        return generateBalanceSheet(asOfDate, null);
+    }
+
+    public BalanceSheetDTO generateBalanceSheet(LocalDate asOfDate, Long branchId) {
         if (asOfDate == null)
             asOfDate = LocalDate.now();
 
         BalanceSheetDTO dto = new BalanceSheetDTO();
         dto.setAsOfDate(asOfDate.toString());
 
-        List<LedgerEntry> entries = ledgerEntryRepository.findByTransactionDateBefore(asOfDate.plusDays(1));
+        List<LedgerEntry> entries = fetchEntriesBefore(branchId, asOfDate.plusDays(1));
         Map<String, BigDecimal> computedBalances = new HashMap<>();
 
         for (LedgerEntry entry : entries) {
@@ -306,7 +350,7 @@ public class FinancialReportService {
             }
         }
 
-        ProfitLossDTO pl = generateProfitLoss(LocalDate.of(1970, 1, 1), asOfDate);
+        ProfitLossDTO pl = generateProfitLoss(LocalDate.of(1970, 1, 1), asOfDate, branchId);
         if (pl.getNetProfit() != null && pl.getNetProfit().compareTo(BigDecimal.ZERO) != 0) {
             BigDecimal displayRetained = pl.getNetProfit();
             equityItems.add(new ReportLineDTO("3999", "Retained Earnings", "Retained Earnings", displayRetained));
@@ -327,13 +371,16 @@ public class FinancialReportService {
     // ==================== CASH FLOW ====================
 
     public CashFlowDTO generateCashFlow(LocalDate startDate, LocalDate endDate) {
+        return generateCashFlow(startDate, endDate, null);
+    }
+
+    public CashFlowDTO generateCashFlow(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         List<ReportLineDTO> operatingItems = new ArrayList<>();
         List<ReportLineDTO> investingItems = new ArrayList<>();
@@ -385,12 +432,14 @@ public class FinancialReportService {
 
         // Cash flow tie-back (PDF §15 / Phase 7.3):
         // Closing cash on the statement should equal Cash (1101) + Bank (1102) on the Balance Sheet.
-        BigDecimal bsCash = safe(ledgerEntryRepository.netBalanceByAccountCode("1101"))
-                .add(safe(ledgerEntryRepository.netBalanceByAccountCode("1102")));
-        // Opening cash = BS cash balance as of startDate minus net change (approximation using ledger net up to startDate)
-        // For simplicity, closingCashFromCashFlow = openingCash + netCashFlow where openingCash is derived from prior-period ledger
-        BigDecimal openingCash = BigDecimal.ZERO; // Phase 7 MVP: opening = 0; full prior-period calc is Phase 9 scope
+        BigDecimal bsCash = safe(ledgerEntryRepository.netBalanceByAccountCode("1001"))
+                .add(safe(ledgerEntryRepository.netBalanceByAccountCode("1010")));
+        // Opening cash = cumulative Cash (1001) + Bank (1010) GL balance before the period start date.
+        final LocalDate periodStart = startDate;
+        BigDecimal openingCash = safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1001", periodStart))
+                .add(safe(ledgerEntryRepository.netBalanceByAccountCodeBefore("1010", periodStart)));
         BigDecimal closingCF  = openingCash.add(netCashFlow);
+        dto.setOpeningCash(openingCash);
         dto.setClosingCashFromBalanceSheet(bsCash);
         dto.setClosingCashFromCashFlow(closingCF);
         boolean pass = bsCash.subtract(closingCF).abs().compareTo(new java.math.BigDecimal("1.00")) <= 0;
@@ -402,13 +451,16 @@ public class FinancialReportService {
     // ==================== EXPENSE ANALYSIS ====================
 
     public ExpenseAnalysisDTO generateExpenseAnalysis(LocalDate startDate, LocalDate endDate) {
+        return generateExpenseAnalysis(startDate, endDate, null);
+    }
+
+    public ExpenseAnalysisDTO generateExpenseAnalysis(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         Map<String, BigDecimal> byCategoryMap = new LinkedHashMap<>();
         Map<String, Integer> byCategoryCount = new LinkedHashMap<>();
@@ -474,13 +526,16 @@ public class FinancialReportService {
     // ==================== TAX DASHBOARD ====================
 
     public TaxDashboardDTO generateTaxDashboard(LocalDate startDate, LocalDate endDate) {
+        return generateTaxDashboard(startDate, endDate, null);
+    }
+
+    public TaxDashboardDTO generateTaxDashboard(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
         BigDecimal outputTax = BigDecimal.ZERO;
         BigDecimal inputTax = BigDecimal.ZERO;
@@ -519,13 +574,16 @@ public class FinancialReportService {
     }
 
     public TaxReconciliationDTO generateTaxReconciliation(LocalDate startDate, LocalDate endDate) {
+        return generateTaxReconciliation(startDate, endDate, null);
+    }
+
+    public TaxReconciliationDTO generateTaxReconciliation(LocalDate startDate, LocalDate endDate, Long branchId) {
         if (startDate == null)
             startDate = LocalDate.of(1970, 1, 1);
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository
-                .findByTransactionDateBetweenOrderByTransactionDateAsc(startDate, endDate);
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
         List<Account> allAccounts = accountRepository.findAll();
         Map<String, String> taxRoleMap = allAccounts.stream()
                 .filter(a -> a.getTaxRole() != null)
@@ -816,5 +874,160 @@ public class FinancialReportService {
 
     private BigDecimal safe(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    // ==================== VAT RETURN REPORT (F-16) ====================
+
+    /**
+     * Generates a VAT Return summary for the given period by summing debit/credit
+     * movements on the VAT Output (2102) and VAT Input (1130) accounts from ledger entries.
+     *
+     * PDF §07 / RPTGAP-008.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> generateVatReturnReport(LocalDate startDate, LocalDate endDate, Long branchId) {
+        if (startDate == null) startDate = LocalDate.now().withDayOfYear(1);
+        if (endDate   == null) endDate   = LocalDate.now();
+
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
+
+        BigDecimal outputTax  = BigDecimal.ZERO; // VAT charged on sales (2102 Cr movements)
+        BigDecimal inputTax   = BigDecimal.ZERO; // VAT paid on purchases (1130 Dr movements)
+        BigDecimal outputAdj  = BigDecimal.ZERO; // Dr movements on 2102 (credit notes, discounts)
+        BigDecimal inputAdj   = BigDecimal.ZERO; // Cr movements on 1130 (purchase returns)
+
+        for (LedgerEntry e : entries) {
+            String code = e.getAccountCode();
+            if ("2100".equals(code)) {
+                outputTax = outputTax.add(safe(e.getCreditAmount()));
+                outputAdj = outputAdj.add(safe(e.getDebitAmount()));
+            } else if ("1310".equals(code)) {
+                inputTax = inputTax.add(safe(e.getDebitAmount()));
+                inputAdj = inputAdj.add(safe(e.getCreditAmount()));
+            }
+        }
+
+        BigDecimal netOutput  = outputTax.subtract(outputAdj);
+        BigDecimal netInput   = inputTax.subtract(inputAdj);
+        BigDecimal netPayable = netOutput.subtract(netInput);
+
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("period",          startDate + " to " + endDate);
+        report.put("outputTaxGross",  outputTax);
+        report.put("outputAdjustments", outputAdj);
+        report.put("netOutputTax",    netOutput);
+        report.put("inputTaxGross",   inputTax);
+        report.put("inputAdjustments", inputAdj);
+        report.put("netInputTax",     netInput);
+        report.put("netVatPayable",   netPayable);
+        report.put("status",          netPayable.compareTo(BigDecimal.ZERO) >= 0 ? "PAYABLE" : "REFUND_CLAIM");
+        return report;
+    }
+
+    // ==================== DETAILED TRIAL BALANCE (F-15) ====================
+
+    /**
+     * Detailed Trial Balance: one row per ledger entry line rather than one row per account.
+     * Enables drill-down from account totals to individual transactions.
+     *
+     * PDF §17 / RPTGAP-010.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> generateDetailedTrialBalance(LocalDate startDate, LocalDate endDate, Long branchId) {
+        if (startDate == null) startDate = LocalDate.now().withDayOfYear(1);
+        if (endDate   == null) endDate   = LocalDate.now();
+
+        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
+
+        // Build per-account running balance and line list
+        Map<String, List<Map<String, Object>>> byAccount = new LinkedHashMap<>();
+        Map<String, BigDecimal> accountDr = new LinkedHashMap<>();
+        Map<String, BigDecimal> accountCr = new LinkedHashMap<>();
+
+        for (LedgerEntry e : entries) {
+            String code = e.getAccountCode() != null ? e.getAccountCode() : "UNKNOWN";
+            byAccount.computeIfAbsent(code, k -> new ArrayList<>());
+            accountDr.merge(code, safe(e.getDebitAmount()),  BigDecimal::add);
+            accountCr.merge(code, safe(e.getCreditAmount()), BigDecimal::add);
+
+            Map<String, Object> line = new LinkedHashMap<>();
+            line.put("date",        e.getTransactionDate());
+            line.put("voucherNo",   e.getVoucherNo());
+            line.put("accountCode", code);
+            line.put("accountName", e.getAccountName());
+            line.put("description", e.getDescription());
+            line.put("debit",       safe(e.getDebitAmount()));
+            line.put("credit",      safe(e.getCreditAmount()));
+            byAccount.get(code).add(line);
+        }
+
+        BigDecimal totalDr = accountDr.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCr = accountCr.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        List<Map<String, Object>> accountSummaries = new ArrayList<>();
+        for (String code : byAccount.keySet()) {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("accountCode", code);
+            summary.put("totalDebit",  accountDr.getOrDefault(code, BigDecimal.ZERO));
+            summary.put("totalCredit", accountCr.getOrDefault(code, BigDecimal.ZERO));
+            summary.put("lines",       byAccount.get(code));
+            accountSummaries.add(summary);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("startDate",   startDate);
+        result.put("endDate",     endDate);
+        result.put("totalDebit",  totalDr);
+        result.put("totalCredit", totalCr);
+        result.put("balanced",    totalDr.subtract(totalCr).abs().compareTo(new BigDecimal("0.01")) <= 0);
+        result.put("accounts",    accountSummaries);
+        return result;
+    }
+
+    // ==================== COMMITMENT REPORT (F-14) ====================
+
+    /**
+     * Commitment Report: open LPOs represent committed purchase obligations
+     * not yet received. Shows outstanding purchase commitments for cash flow forecasting.
+     *
+     * PDF §09 / RPTGAP-009.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> generateCommitmentReport(Long branchId) {
+        // Open LPOs: approved or sent-to-vendor or partially received
+        List<Lpo> openLpos = new ArrayList<>();
+        openLpos.addAll(lpoRepository.findByStatus(LpoStatus.APPROVED));
+        openLpos.addAll(lpoRepository.findByStatus(LpoStatus.SENT_TO_VENDOR));
+        openLpos.addAll(lpoRepository.findByStatus(LpoStatus.PARTIALLY_RECEIVED));
+
+        if (branchId != null) {
+            openLpos = openLpos.stream()
+                    .filter(l -> l.getBranch() != null && branchId.equals(l.getBranch().getId()))
+                    .collect(Collectors.toList());
+        }
+
+        BigDecimal totalCommitment = BigDecimal.ZERO;
+        List<Map<String, Object>> lines = new ArrayList<>();
+
+        for (Lpo lpo : openLpos) {
+            BigDecimal committed = lpo.getGrandTotal() != null ? lpo.getGrandTotal() : BigDecimal.ZERO;
+            totalCommitment = totalCommitment.add(committed);
+
+            Map<String, Object> line = new LinkedHashMap<>();
+            line.put("lpoNumber",    lpo.getLpoNumber());
+            line.put("lpoDate",      lpo.getLpoDate());
+            line.put("vendorName",   lpo.getVendorName());
+            line.put("branchName",   lpo.getBranchName());
+            line.put("status",       lpo.getStatus());
+            line.put("grandTotal",   committed);
+            lines.add(line);
+        }
+
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("reportDate",       LocalDate.now());
+        report.put("totalCommitment",  totalCommitment);
+        report.put("openLpoCount",     lines.size());
+        report.put("commitments",      lines);
+        return report;
     }
 }

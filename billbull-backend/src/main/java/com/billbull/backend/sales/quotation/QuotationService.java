@@ -148,6 +148,29 @@ public class QuotationService {
     }
 
     // -------------------------------------------------
+    // -------------------------------------------------
+    // STATS
+    // -------------------------------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        LocalDate today = LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        LocalDate monthStart = month.atDay(1);
+        LocalDate monthEnd = month.atEndOfMonth();
+
+        long totalThisMonth = quotationRepo.countBetween(monthStart, monthEnd);
+        long convertedThisMonth = quotationRepo.countConvertedBetween(monthStart, monthEnd);
+        double conversionRate = totalThisMonth > 0 ? (convertedThisMonth * 100.0 / totalThisMonth) : 0.0;
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("thisMonthCount", totalThisMonth);
+        stats.put("thisMonthValue", quotationRepo.sumTotalBetween(monthStart, monthEnd));
+        stats.put("convertedCount", convertedThisMonth);
+        stats.put("conversionRate", Math.round(conversionRate * 10.0) / 10.0);
+        stats.put("openQuotations", quotationRepo.countOpen());
+        return stats;
+    }
+
     // GET ALL
     // -------------------------------------------------
     @Transactional(readOnly = true)
@@ -384,7 +407,11 @@ public class QuotationService {
         BigDecimal gross = quantity.multiply(price);
         BigDecimal discountAmount = gross.multiply(discount)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal taxable = gross.subtract(discountAmount);
+        BigDecimal footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : BigDecimal.ZERO;
+        BigDecimal taxable = gross.subtract(discountAmount).subtract(footerDisc);
+        if (taxable.compareTo(BigDecimal.ZERO) < 0) {
+            taxable = BigDecimal.ZERO;
+        }
         BigDecimal taxAmount = taxable.multiply(taxRate)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         BigDecimal lineTotal = taxable.add(taxAmount).setScale(2, RoundingMode.HALF_UP);
@@ -506,6 +533,9 @@ public class QuotationService {
                     "Add at least one item before saving or approving the quotation.");
         }
 
+        com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
+        boolean allowZeroPrice = settings != null && settings.getZeroPricePolicy() == com.billbull.backend.sales.settings.ZeroPricePolicy.ALLOW;
+
         List<String> issues = new ArrayList<>();
         for (int i = 0; i < quotation.getItems().size(); i++) {
             QuotationItem item = quotation.getItems().get(i);
@@ -517,7 +547,7 @@ public class QuotationService {
             if (!isPositive(item.getQuantity())) {
                 issues.add("Line " + lineNo + ": quantity must be greater than 0.00.");
             }
-            if (!isPositive(item.getPrice())) {
+            if (!isPositive(item.getPrice()) && !allowZeroPrice) {
                 issues.add("Line " + lineNo + ": price must be greater than 0.00.");
             }
         }
@@ -688,15 +718,22 @@ public class QuotationService {
             for (QuotationItem item : quotation.getItems()) {
                 double lineTotal = item.getLineTotal() != null ? item.getLineTotal().doubleValue() : 0;
                 double taxAmt    = item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : 0;
-                subTotal += (lineTotal - taxAmt);
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount().doubleValue() : 0;
+                
+                subTotal += (lineTotal - taxAmt + footerDisc);
                 taxTotal += taxAmt;
             }
         }
 
-        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
+        double billDiscAmt = quotation.getBillDiscountAmount() != null ? quotation.getBillDiscountAmount().doubleValue() : 0;
+        if (billDiscAmt == 0 && billDiscPct > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        }
+
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
@@ -919,6 +956,27 @@ public class QuotationService {
             i.setBatchControlled(!isService && p.isBatch());
             i.setFefoEnabled(p.isFefoEnabled());
             i.setMinExpiryDaysForSale(p.getMinExpiryDaysForSale());
+            // Hydrate transient product identity fields so print templates can
+            // render Brand, SKU, Product Name, Short Desc, Detailed Desc, and
+            // Arabic Name without requiring an extra client-side fetch.
+            if (i.getBrandName() == null && p.getBrand() != null) {
+                i.setBrandName(p.getBrand().getName());
+            }
+            if (i.getProductName() == null) {
+                i.setProductName(p.getName());
+            }
+            if (i.getSku() == null) {
+                i.setSku(p.getSku());
+            }
+            if (i.getShortDesc() == null) {
+                i.setShortDesc(p.getShortDesc());
+            }
+            if (i.getDetailedDesc() == null && p.getDetailedDesc() != null) {
+                i.setDetailedDesc(p.getDetailedDesc());
+            }
+            if (i.getLocalName() == null) {
+                i.setLocalName(p.getLocalName());
+            }
         });
     }
 }

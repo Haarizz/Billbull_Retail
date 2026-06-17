@@ -88,9 +88,9 @@ public class JournalEntryService {
                         .map(l -> l.getDebit() != null ? l.getDebit() : BigDecimal.ZERO)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
                 journalVoucher.setStatus(totalDebit.compareTo(approvalThresholdAed) > 0
-                        ? "PENDING_APPROVAL" : "Draft");
+                        ? JournalEntry.STATUS_PENDING_APPROVAL : JournalEntry.STATUS_DRAFT);
             } else {
-                journalVoucher.setStatus("Draft");
+                journalVoucher.setStatus(JournalEntry.STATUS_DRAFT);
             }
         }
 
@@ -115,7 +115,7 @@ public class JournalEntryService {
         branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Journal Voucher");
         // Branch is immutable on update — never copy from request body.
 
-        if ("Posted".equalsIgnoreCase(existingJV.getStatus())) {
+        if (JournalEntry.STATUS_POSTED.equalsIgnoreCase(existingJV.getStatus())) {
             throw new RuntimeException("Cannot update a Posted journal voucher");
         }
 
@@ -147,18 +147,14 @@ public class JournalEntryService {
     public JournalEntry postEntry(Long id, String postedBy) {
         JournalEntry entry = getEntryById(id);
 
-        if ("Posted".equalsIgnoreCase(entry.getStatus())) {
+        if (JournalEntry.STATUS_POSTED.equalsIgnoreCase(entry.getStatus())) {
             throw new RuntimeException("Journal Entry is already posted.");
         }
 
-        // Posting rules (PDF §21A / Phase 8.5):
-        //   System-generated JVs (PostingEngineService) post from Draft directly — they bypass approval.
-        //   Manual JVs below threshold: post from Draft or Approved.
-        //   Manual JVs above threshold: must be Approved first (PENDING_APPROVAL blocks posting).
         boolean isSystemGenerated = "System".equalsIgnoreCase(entry.getPreparedBy());
         if (!isSystemGenerated) {
-            boolean canPost = "Approved".equalsIgnoreCase(entry.getStatus())
-                    || "Draft".equalsIgnoreCase(entry.getStatus());
+            boolean canPost = JournalEntry.STATUS_APPROVED.equalsIgnoreCase(entry.getStatus())
+                    || JournalEntry.STATUS_DRAFT.equalsIgnoreCase(entry.getStatus());
             if (!canPost) {
                 throw new RuntimeException(
                         "Journal Entry must be Approved before posting. Current status: "
@@ -204,7 +200,7 @@ public class JournalEntryService {
             ledgerService.recordTransaction(le);
         }
 
-        entry.setStatus("Posted");
+        entry.setStatus(JournalEntry.STATUS_POSTED);
         entry.setPostedBy(postedBy != null ? postedBy : "System");
         entry.setPostedAt(LocalDateTime.now());
 
@@ -218,10 +214,10 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher submitForApproval(Long id, String submittedBy) {
         JournalVoucher jv = (JournalVoucher) getEntryById(id);
-        if (!"Draft".equalsIgnoreCase(jv.getStatus())) {
+        if (!JournalEntry.STATUS_DRAFT.equalsIgnoreCase(jv.getStatus())) {
             throw new RuntimeException("Only Draft journal vouchers can be submitted for approval.");
         }
-        jv.setStatus("Submitted");
+        jv.setStatus(JournalEntry.STATUS_SUBMITTED);
         JournalVoucher saved = journalVoucherRepository.save(jv);
         auditService.logEvent("JOURNAL_VOUCHER", saved.getEntryNumber(), "SUBMITTED",
                 submittedBy != null ? submittedBy : "System",
@@ -232,12 +228,12 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher approveJournalVoucher(Long id, String approvedBy) {
         JournalVoucher jv = (JournalVoucher) getEntryById(id);
-        boolean approvable = "Submitted".equalsIgnoreCase(jv.getStatus())
-                || "PENDING_APPROVAL".equalsIgnoreCase(jv.getStatus());
+        boolean approvable = JournalEntry.STATUS_SUBMITTED.equalsIgnoreCase(jv.getStatus())
+                || JournalEntry.STATUS_PENDING_APPROVAL.equalsIgnoreCase(jv.getStatus());
         if (!approvable) {
             throw new RuntimeException("Only Submitted or PENDING_APPROVAL journal vouchers can be approved. Current: " + jv.getStatus());
         }
-        jv.setStatus("Approved");
+        jv.setStatus(JournalEntry.STATUS_APPROVED);
         jv.setApprovedBy(approvedBy != null ? approvedBy : "System");
         jv.setApprovedAt(LocalDateTime.now());
         JournalVoucher saved = journalVoucherRepository.save(jv);
@@ -249,10 +245,10 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher rejectJournalVoucher(Long id, String rejectedBy, String reason) {
         JournalVoucher jv = (JournalVoucher) getEntryById(id);
-        if (!"Submitted".equalsIgnoreCase(jv.getStatus())) {
+        if (!JournalEntry.STATUS_SUBMITTED.equalsIgnoreCase(jv.getStatus())) {
             throw new RuntimeException("Only Submitted journal vouchers can be rejected.");
         }
-        jv.setStatus("Rejected");
+        jv.setStatus(JournalEntry.STATUS_REJECTED);
         jv.setRejectionReason(reason);
         JournalVoucher saved = journalVoucherRepository.save(jv);
         auditService.logEvent("JOURNAL_VOUCHER", saved.getEntryNumber(), "REJECTED",
@@ -322,12 +318,12 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher voidJournalVoucher(Long id, String voidedBy) {
         JournalVoucher jv = (JournalVoucher) getEntryById(id);
-        if ("Voided".equalsIgnoreCase(jv.getStatus())) {
+        if (JournalEntry.STATUS_VOIDED.equalsIgnoreCase(jv.getStatus())) {
             throw new RuntimeException("Journal voucher is already voided.");
         }
 
-        boolean wasPosted = "Posted".equalsIgnoreCase(jv.getStatus());
-        jv.setStatus("Voided");
+        boolean wasPosted = JournalEntry.STATUS_POSTED.equalsIgnoreCase(jv.getStatus());
+        jv.setStatus(JournalEntry.STATUS_VOIDED);
         JournalVoucher voided = journalVoucherRepository.save(jv);
         auditService.logEvent("JOURNAL_VOUCHER", jv.getEntryNumber(), "VOIDED",
                 voidedBy != null ? voidedBy : "System", "JV voided.");
@@ -341,7 +337,7 @@ public class JournalEntryService {
             reversal.setReference("VOID-" + jv.getEntryNumber());
             reversal.setNarration("Reversal of " + jv.getEntryNumber() + ": " + (jv.getNarration() != null ? jv.getNarration() : ""));
             reversal.setPreparedBy(voidedBy != null ? voidedBy : "System");
-            reversal.setStatus("Draft");
+            reversal.setStatus(JournalEntry.STATUS_DRAFT);
 
             for (JournalLine original : jv.getLines()) {
                 JournalLine rev = new JournalLine();

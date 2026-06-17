@@ -156,6 +156,79 @@ const sanitizeCssColor = (value, fallback) => {
     return fallback;
 };
 
+const clampColorByte = (value) => Math.max(0, Math.min(255, Math.round(value)));
+
+const parseCssColor = (value) => {
+    const text = asText(value).trim();
+    if (!text) return null;
+
+    const hexMatch = text.match(/^#([0-9a-fA-F]{3,8})$/);
+    if (hexMatch) {
+        const hex = hexMatch[1];
+        if (hex.length === 3 || hex.length === 4) {
+            const [r, g, b, a = 'f'] = hex.split('');
+            return {
+                r: parseInt(r + r, 16),
+                g: parseInt(g + g, 16),
+                b: parseInt(b + b, 16),
+                a: parseInt(a + a, 16) / 255
+            };
+        }
+        if (hex.length === 6 || hex.length === 8) {
+            return {
+                r: parseInt(hex.slice(0, 2), 16),
+                g: parseInt(hex.slice(2, 4), 16),
+                b: parseInt(hex.slice(4, 6), 16),
+                a: hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1
+            };
+        }
+    }
+
+    const rgbMatch = text.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i);
+    if (rgbMatch) {
+        return {
+            r: clampColorByte(Number(rgbMatch[1])),
+            g: clampColorByte(Number(rgbMatch[2])),
+            b: clampColorByte(Number(rgbMatch[3])),
+            a: rgbMatch[4] === undefined ? 1 : Math.max(0, Math.min(1, Number(rgbMatch[4])))
+        };
+    }
+
+    return null;
+};
+
+const toRgbaCss = ({ r, g, b, a = 1 }) =>
+    `rgba(${clampColorByte(r)}, ${clampColorByte(g)}, ${clampColorByte(b)}, ${Math.max(0, Math.min(1, Number(a))).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')})`;
+
+const boostPrintFill = (value, fallback, { minAlpha = 1, darken = 0.06 } = {}) => {
+    const parsed = parseCssColor(value) || parseCssColor(fallback);
+    if (!parsed) {
+        return fallback;
+    }
+
+    const brightness = (parsed.r + parsed.g + parsed.b) / 3;
+    const darkenRatio = brightness >= 245 ? darken : brightness >= 225 ? darken * 0.65 : 0;
+    const alpha = Math.max(parsed.a ?? 1, minAlpha);
+
+    return toRgbaCss({
+        r: parsed.r * (1 - darkenRatio),
+        g: parsed.g * (1 - darkenRatio),
+        b: parsed.b * (1 - darkenRatio),
+        a: alpha
+    });
+};
+
+const scaleCssSize = (value, multiplier = 1) => {
+    const text = asText(value).trim();
+    const match = text.match(/^(-?\d*\.?\d+)([a-z%]+)$/i);
+    if (!match) {
+        return `calc(${text} * ${multiplier})`;
+    }
+
+    const scaled = Number(match[1]) * multiplier;
+    return `${Number(scaled.toFixed(3))}${match[2]}`;
+};
+
 const sanitizeCssFontFamily = (value, fallback = "'Inter', sans-serif") => {
     const text = asText(value).trim();
     if (!text) return fallback;
@@ -200,9 +273,13 @@ const renderCurrencySymbol = (value) => {
     return escapeHtml(currencyConfig.label);
 };
 
-const renderCurrencySymbolHtml = (value, imgHeight = '0.85em') => {
+const renderCurrencySymbolHtml = (value, imgHeight = '0.85em', options = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(value);
     if (currencyConfig.hasImage) {
+        if (options.inheritColor) {
+            const width = scaleCssSize(imgHeight, 1.28);
+            return `<span role="img" aria-label="${escapeHtml(currencyConfig.ariaLabel)}" style="display:inline-block;height:${imgHeight};width:${width};vertical-align:-0.08em;background-color:currentColor;-webkit-mask-image:url('${UAE_DIRHAM_SYMBOL_IMAGE}');mask-image:url('${UAE_DIRHAM_SYMBOL_IMAGE}');-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;"></span>`;
+        }
         return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:${imgHeight};width:auto;display:inline-block;vertical-align:-0.07em;" />`;
     }
     return escapeHtml(currencyConfig.label);
@@ -310,6 +387,31 @@ const resolveStampUrl = (companyProfile = {}) => {
         '';
 
     return resolveDocumentImageUrl(stampPath) || null;
+};
+
+/**
+ * Resolves logo and stamp URLs using the three-tier priority chain:
+ *   1. Template-level asset (designer upload inside the template)
+ *   2. Branch asset (already merged into companyProfile by buildDocumentHeaderProfile)
+ *   3. Company asset (global fallback from company profile)
+ *
+ * The branch tier is transparent here — callers must pass a companyProfile that
+ * has already been resolved through buildDocumentHeaderProfile so that
+ * companyProfile.logoUrl / stampUrl already reflect the branch override.
+ */
+const resolveDocumentAssets = (designerSettings = {}, companyProfile = {}) => {
+    const templateLogo = resolveTemplateImageUrl(
+        designerSettings.logoUrl || designerSettings.companyLogoUrl
+    );
+    const templateStamp = resolveTemplateImageUrl(
+        designerSettings.stampUrl || designerSettings.stampImage
+    );
+    const branchOrCompanyLogo = companyProfile.logoUrl || null;
+    const branchOrCompanyStamp = companyProfile.stampUrl || null;
+    return {
+        logoUrl: templateLogo || branchOrCompanyLogo || null,
+        stampUrl: templateStamp || branchOrCompanyStamp || null,
+    };
 };
 
 export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
@@ -436,6 +538,8 @@ const applyDesignerColumnVisibility = (columns = {}, settings = {}) => ({
     showItemIdentity: visibleWhen(settings, ['colItemCode', 'showItemCode'], true),
     uom: visibleWhen(settings, ['colUOM', 'showUOM'], Boolean(columns.uom)),
     description: visibleWhen(settings, ['colDescription', 'showItemDescription'], columns.description !== false),
+    shortDesc: visibleWhen(settings, ['showShortDescription', 'colShortDescription'], columns.shortDesc !== false),
+    detailedDesc: visibleWhen(settings, ['showDetailedDescription', 'colDetailedDescription'], Boolean(columns.detailedDesc)),
     qty: visibleWhen(settings, ['colQty', 'showQty'], columns.qty !== false),
     unitPrice: visibleWhen(settings, ['colUnitPrice', 'showUnitPrice'], columns.unitPrice !== false),
     taxableAmount: visibleWhen(settings, ['colTaxableAmount', 'showTaxableAmount'], Boolean(columns.taxableAmount)),
@@ -567,8 +671,12 @@ const normaliseItem = (item = {}) => {
     const qty = asNumber(item.qty ?? item.quantity ?? 0);
     const price = asNumber(item.price ?? item.unitPrice ?? item.unitCost ?? 0);
     const discountPercent = asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0);
+    const grossAmount = qty * price;
+    const discountAmount = asNumber(
+        item.discountAmount ?? item.discountAmt ?? item.lineDiscount ?? (grossAmount * (discountPercent || 0) / 100)
+    );
     const taxableAmount = asNumber(
-        item.taxableAmount ?? (qty * price * (1 - (discountPercent || 0) / 100))
+        item.taxableAmount ?? (grossAmount - discountAmount)
     );
     const taxAmount = asNumber(item.taxAmt ?? item.taxAmount ?? 0);
     const total = asNumber(item.total ?? item.lineAmount ?? (taxableAmount + taxAmount));
@@ -591,6 +699,7 @@ const normaliseItem = (item = {}) => {
         taxAmount,
         taxPercent: asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0),
         discountPercent,
+        discountAmount,
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
         location: item.location || item.branch || item.branchName || item.locationName || '',
         batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
@@ -607,15 +716,24 @@ const normaliseItem = (item = {}) => {
 
 const getColumnDefaults = (category, isPurchaseDocument) => {
     const isVoucherLike = ['Payment Voucher', 'Cheque', 'Customer Statement of Account', 'Vendor Statement of Account'].includes(category);
-    return isPurchaseDocument
-        ? {
+    if (isPurchaseDocument) {
+        return {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucherLike,
             unitPrice: !isVoucherLike,
             taxableAmount: !isVoucherLike,
             tax: category === 'Purchase Invoice'
-        }
-        : DEFAULT_TEMPLATE_COLUMNS;
+        };
+    }
+    if (category === 'Quotation') {
+        return {
+            ...DEFAULT_TEMPLATE_COLUMNS,
+            sku: true,
+            brand: true,
+            barcode: true
+        };
+    }
+    return DEFAULT_TEMPLATE_COLUMNS;
 };
 
 const createColumnModel = (rawColumns = {}) => {
@@ -626,27 +744,45 @@ const createColumnModel = (rawColumns = {}) => {
     // only when their "(separate column)" checkbox is toggled. The Taxable
     // Amount cell shows an inline Discount sub-line when "Discount % (in
     // Taxable Amount col)" is on.
-    return [
-        { key: 'index', label: '#', align: 'center', width: '4%', enabled: c.showIndex !== false },
-        { key: 'image', label: 'Image', align: 'center', width: '7%', enabled: Boolean(c.image) },
-        { key: 'description', label: 'Product / Services', align: 'left', width: c.batchBarcode ? '16%' : '22%', enabled: c.showItemIdentity !== false },
-        { key: 'details', label: 'Description of Product / Services', align: 'left', width: c.batchBarcode ? '14%' : '24%', enabled: c.description !== false },
-        { key: 'uom', label: 'UOM', align: 'center', width: '6%', enabled: Boolean(c.uom) },
-        { key: 'batchBarcode', label: 'Batch Barcode', align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
-        { key: 'expiry', label: 'Expiry', align: 'center', width: '8%', enabled: Boolean(c.expiry) },
-        { key: 'qty', label: 'Qty', align: 'right', width: '6%', enabled: c.qty !== false },
-        { key: 'unitPrice', label: 'Unit Price', align: 'right', width: '9%', enabled: c.unitPrice !== false },
-        { key: 'taxableAmount', label: 'Taxable Amount', align: 'right', width: '12%', enabled: Boolean(c.taxableAmount) },
-        { key: 'discountPercent', label: 'Discount %', align: 'center', width: '7%', enabled: Boolean(c.discountPercent) },
-        { key: 'taxPercent', label: 'VAT %', align: 'center', width: '6%', enabled: Boolean(c.taxPercent) },
-        { key: 'tax', label: 'VAT Amount', align: 'right', width: '9%', enabled: c.tax !== false },
-        { key: 'total', label: 'Line Total', align: 'right', width: '9%', enabled: c.total !== false },
-        { key: 'lpoQty', label: 'LPO Qty', align: 'right', width: '6%', enabled: Boolean(c.lpoQty) },
-        { key: 'received', label: 'Received', align: 'right', width: '6%', enabled: Boolean(c.received) },
-        { key: 'accepted', label: 'Accepted', align: 'right', width: '6%', enabled: Boolean(c.accepted) },
-        { key: 'receivedBy', label: 'Received By', align: 'left', width: '10%', enabled: Boolean(c.receivedBy) },
-        { key: 'checkedBy', label: 'Checked By', align: 'left', width: '10%', enabled: Boolean(c.checkedBy) },
+    const columns = [
+        { key: 'index', label: '#', compactLabel: '#', align: 'center', weight: 0.45, enabled: c.showIndex !== false },
+        { key: 'image', label: 'Image', compactLabel: 'Image', align: 'center', weight: 0.78, enabled: Boolean(c.image) },
+        { key: 'description', label: 'Product / Services', compactLabel: 'Product / Services', align: 'left', weight: c.batchBarcode ? 1.95 : 2.45, enabled: c.showItemIdentity !== false },
+        { key: 'details', label: 'Description of Product / Services', compactLabel: 'Description of Product / Services', align: 'left', weight: c.batchBarcode ? 2.35 : 3.15, enabled: c.description !== false },
+        { key: 'uom', label: 'UOM', compactLabel: 'UOM', align: 'center', weight: 0.52, enabled: Boolean(c.uom) },
+        { key: 'batchBarcode', label: 'Batch Barcode', compactLabel: 'Batch Barcode', align: 'center', weight: 2.15, enabled: Boolean(c.batchBarcode) },
+        { key: 'expiry', label: 'Expiry', compactLabel: 'Expiry', align: 'center', weight: 0.82, enabled: Boolean(c.expiry) },
+        { key: 'qty', label: 'Qty', compactLabel: 'Qty', align: 'right', weight: 0.5, enabled: c.qty !== false },
+        { key: 'unitPrice', label: 'Unit Price', compactLabel: 'Unit Price', align: 'right', weight: 0.86, enabled: c.unitPrice !== false },
+        { key: 'taxableAmount', label: 'Taxable Amount', compactLabel: 'Taxable Amount', align: 'right', weight: 1.05, enabled: Boolean(c.taxableAmount) },
+        { key: 'discountPercent', label: 'Discount %', compactLabel: 'Discount %', align: 'center', weight: 0.78, enabled: Boolean(c.discountPercent) },
+        { key: 'taxPercent', label: 'VAT %', compactLabel: 'VAT %', align: 'center', weight: 0.55, enabled: Boolean(c.taxPercent) },
+        { key: 'tax', label: 'VAT Amount', compactLabel: 'VAT Amount', align: 'right', weight: 0.92, enabled: c.tax !== false },
+        { key: 'total', label: 'Line Total', compactLabel: 'Line Total', align: 'right', weight: 0.92, enabled: c.total !== false },
+        { key: 'lpoQty', label: 'LPO Qty', compactLabel: 'LPO Qty', align: 'right', weight: 0.72, enabled: Boolean(c.lpoQty) },
+        { key: 'received', label: 'Received', compactLabel: 'Received', align: 'right', weight: 0.82, enabled: Boolean(c.received) },
+        { key: 'accepted', label: 'Accepted', compactLabel: 'Accepted', align: 'right', weight: 0.82, enabled: Boolean(c.accepted) },
+        { key: 'receivedBy', label: 'Received By', compactLabel: 'Received By', align: 'left', weight: 1.08, enabled: Boolean(c.receivedBy) },
+        { key: 'checkedBy', label: 'Checked By', compactLabel: 'Checked By', align: 'left', weight: 1.08, enabled: Boolean(c.checkedBy) },
     ].filter((col) => col.enabled);
+
+    const compactHeaders = columns.length >= 10;
+    const headerDensity = columns.length >= 12
+        ? 'dense-3'
+        : columns.length >= 10
+            ? 'dense-2'
+            : columns.length >= 8
+                ? 'dense-1'
+                : 'normal';
+    const totalWeight = columns.reduce((sum, col) => sum + (col.weight || 1), 0) || 1;
+
+    return columns.map((col) => ({
+        ...col,
+        label: col.label,
+        width: `${(((col.weight || 1) / totalWeight) * 100).toFixed(2)}%`,
+        compactHeaders,
+        headerDensity
+    }));
 };
 
 const buildItemDetailLines = (item) =>
@@ -710,19 +846,18 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
     `;
 };
 
-// QA-029: Description column = short desc (italic bullet) + detailed desc
-// rendered line-by-line as bullets. The "Detailed Description" checkbox in
-// the template designer gates the detailed bullets; short desc always shows
-// when present.
+// QA-029: Description column = short desc + detailed desc rendered as bullets.
 const buildDetailsCell = (item, columnOptions = {}) => {
     const shortDesc = asText(item.shortDesc).trim();
     const detailedDesc = asText(item.detailedDesc).trim();
+    const showShortDesc = columnOptions.shortDesc !== false;
+    const showDetailedDesc = columnOptions.detailedDesc !== false;
     const bullets = [];
 
-    if (shortDesc) {
+    if (showShortDesc && shortDesc) {
         bullets.push(`<li class="desc-bullet desc-bullet-short">${escapeHtml(shortDesc)}</li>`);
     }
-    if (columnOptions.detailedDesc !== false && detailedDesc) {
+    if (showDetailedDesc && detailedDesc) {
         detailedDesc
             .split(/\r?\n/)
             .map((line) => line.trim())
@@ -732,7 +867,7 @@ const buildDetailsCell = (item, columnOptions = {}) => {
             });
     }
 
-    if (bullets.length === 0) {
+    if (bullets.length === 0 && (showShortDesc || showDetailedDesc)) {
         const lines = buildItemDetailLines(item);
         lines.forEach((line) => bullets.push(`<li class="desc-bullet">${escapeHtml(line)}</li>`));
     }
@@ -829,20 +964,24 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `
                 <td class="table-cell cell-right">
                     <div>${formatNumber(item.taxableAmount)}</div>
-                    ${columnOptions.discount && item.discountPercent > 0
-                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber((item.taxableAmount * item.discountPercent) / 100)}</div>`
+                    ${columnOptions.discount && !columnOptions.discountPercent && item.discountPercent > 0
+                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>`
                     : ''}
                 </td>
             `;
         case 'discount':
             return `<td class="table-cell cell-center">${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</td>`;
         case 'discountPercent':
-            return `<td class="table-cell cell-center">${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</td>`;
+            return `
+                <td class="table-cell cell-center cell-discount">
+                    <div>${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</div>
+                    ${item.discountPercent > 0 ? `<div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>` : ''}
+                </td>
+            `;
         case 'tax':
             return `
                 <td class="table-cell cell-right">
                     <div>${formatNumber(item.taxAmount)}</div>
-                    ${item.taxPercent > 0 ? `<div class="cell-sub">@ VAT ${formatNumber(item.taxPercent, 0)}%</div>` : ''}
                 </td>
             `;
         case 'taxPercent':
@@ -869,6 +1008,8 @@ const buildItemsTable = (layout) => {
 
     const colSpan = layout.columnModel.length;
     const isPickList = layout.category === 'Pick List';
+    const compactHeaders = layout.columnModel.some((column) => column.compactHeaders);
+    const headerDensity = layout.columnModel[0]?.headerDensity || 'normal';
 
     let rows;
     if (isPickList) {
@@ -903,7 +1044,7 @@ const buildItemsTable = (layout) => {
 
     return `
         <section class="table-section">
-            <table class="document-table">
+            <table class="document-table${compactHeaders ? ' document-table-compact' : ''}${headerDensity !== 'normal' ? ` document-table-${headerDensity}` : ''}">
                 <thead>
                     <tr>
                         ${layout.columnModel.map((column) => `
@@ -926,13 +1067,23 @@ const buildItemsTable = (layout) => {
 const buildTotalsTable = (layout, amountInWordsText = null) => {
     if (!layout.showTotalsSection) return '';
 
-    const discountAmount = asNumber(layout.totals.billDiscountAmount ?? layout.totals.discountAmount ?? 0);
+    // Item-level discount and footer (bill-level) discount are tracked separately
+    // so they can be shown as distinct rows matching the on-screen Order Summary.
+    const itemDiscountAmount = asNumber(layout.totals.itemDiscountAmount ?? 0);
+    const footerDiscountAmount = asNumber(layout.totals.footerDiscountAmount ?? 0);
+    // Legacy combined field — used when separate fields are absent (old print data).
+    const combinedDiscountAmount = asNumber(layout.totals.billDiscountAmount ?? layout.totals.discountAmount ?? 0);
+    const hasSeparate = (layout.totals.itemDiscountAmount !== undefined || layout.totals.footerDiscountAmount !== undefined);
     const discountPercent = asNumber(layout.totals.billDiscount ?? 0);
     const deliveryCharge = asNumber(layout.totals.deliveryCharge ?? 0);
     const roundOff = asNumber(layout.totals.roundOff ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
     const currency = renderCurrencySymbolHtml(layout.currency);
+    // The dirham symbol is a raster <img>, so `color` can't tint it. Use the
+    // mask-based variant (inheritColor) for the discount row so the symbol
+    // follows the red `.amount-negative` text colour.
+    const currencyNegative = renderCurrencySymbolHtml(layout.currency, '0.85em', { inheritColor: true });
 
     const row = (label, amount, className = '') => `
             <tr class="${className}">
@@ -941,6 +1092,13 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
                 <td class="tot-amount">${formatNumber(amount)}</td>
             </tr>
         `;
+    const negRow = (label, amount) => amount > 0 ? `
+            <tr class="amount-negative">
+                <td class="tot-label">${label}</td>
+                <td class="tot-currency">${currencyNegative}</td>
+                <td class="tot-amount">- ${formatNumber(amount)}</td>
+            </tr>
+        ` : '';
     const visibility = {
         taxable: false,
         subTotal: true,
@@ -954,16 +1112,24 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
         ...(layout.totalVisibility || {})
     };
 
+    // Total combined discount for taxable-amount calculation.
+    const totalDiscountForTaxable = hasSeparate
+        ? itemDiscountAmount + footerDiscountAmount
+        : combinedDiscountAmount;
+
+    // Order: SubTotal → Item Discount → Footer Discount → Taxable → VAT → Delivery → RoundOff → Total → AmountPaid → BalanceDue
+    const discountRows = visibility.discount
+        ? hasSeparate
+            ? [negRow('Discount', itemDiscountAmount), negRow(`Footer Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}`, footerDiscountAmount)].join('')
+            : negRow(`Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}`, combinedDiscountAmount)
+        : '';
+
+    // Order matches ClassicPreview exactly:
+    // SubTotal → Discount → Taxable → VAT → Delivery → RoundOff → Total → AmountPaid → BalanceDue
     const rows = [
-        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal) : '',
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
-        visibility.discount && discountAmount > 0 ? `
-                <tr class="amount-negative">
-                    <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                    <td class="tot-currency">${currency}</td>
-                    <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
-                </tr>
-            ` : '',
+        discountRows,
+        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal - totalDiscountForTaxable) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
         visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
@@ -1179,14 +1345,26 @@ const buildFooterAddon = (layout) =>
         ? `<div class="layout-addon layout-addon-footer">${layout.footerAddon}</div>`
         : '';
 
-const buildGrandTotal = (layout) => {
+const buildGrandTotal = (layout, renderTarget = 'print') => {
     if (!layout.showHighlight) return '';
     // Cap-height of Inter/Arial digits ≈ 73% of em-square.
     // Use absolute px so the image size is never affected by em inheritance
     // issues in print iframe contexts (where em always resolves to body 9px).
     const gtFontPx = (layout.theme?.fontSize || 9) + 22;
     const imgPx = Math.round(gtFontPx * 0.73);
-    const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`);
+    const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`, {
+        inheritColor: renderTarget === 'print'
+    });
+    // Email: use inline styles so Gmail/Outlook honour text-align:right without
+    // relying on class-based flex or grid rules that get stripped.
+    if (renderTarget === 'email') {
+        return `
+            <div style="text-align:right;padding:12px 0 6px;">
+                <div style="font-size:11px;color:#888888;font-weight:500;margin-bottom:4px;">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
+                <div style="font-size:${gtFontPx}px;font-weight:800;color:#000000;line-height:1.2;">${currHtml} ${formatNumber(layout.highlight.value)}</div>
+            </div>
+        `;
+    }
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
@@ -1287,7 +1465,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
         ${layout.displayOptions.showCustomerDetails !== false && partyVisibility.address && layout.party ? `
             <div class="bill-to-block">
                 <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
-                <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
+                <div class="bill-to-name"><span class="bill-to-name-text">${escapeHtml(layout.party.name || '')}</span></div>
                 ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
@@ -1317,9 +1495,40 @@ const buildHeader = (layout, renderTarget = 'print') => {
             <div class="doc-meta-value">${escapeHtml(item.value)}</div>
         </div>
     `).join('');
-    const centerContent = (layout.isPurchaseDesigner || layout.isSalesDesigner)
-        ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
-        : centerItemHtml;
+
+    // Email: replace CSS grid with a real 2-column table so Gmail/Outlook
+    // don't collapse the meta pairs into a single column.
+    const centerContentEmail = (() => {
+        if (centerItems.length === 0) return '';
+        const metaCellStyle = 'padding:3px 6px 3px 0;vertical-align:top;';
+        const labelStyle = 'font-size:8px;color:#999999;font-weight:500;white-space:nowrap;';
+        const valueStyle = 'font-size:9px;color:#111827;font-weight:600;white-space:nowrap;';
+        // Pair items into rows of 2 (mirrors the 2-column grid)
+        const rows = [];
+        for (let i = 0; i < centerItems.length; i += 2) {
+            const a = centerItems[i];
+            const b = centerItems[i + 1];
+            rows.push(`
+                <tr>
+                    <td style="${metaCellStyle}">
+                        <div style="${labelStyle}">${escapeHtml(a.label)}</div>
+                        <div style="${valueStyle}">${escapeHtml(a.value)}</div>
+                    </td>
+                    ${b ? `<td style="${metaCellStyle}padding-left:12px;">
+                        <div style="${labelStyle}">${escapeHtml(b.label)}</div>
+                        <div style="${valueStyle}">${escapeHtml(b.value)}</div>
+                    </td>` : '<td></td>'}
+                </tr>
+            `);
+        }
+        return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows.join('')}</table>`;
+    })();
+
+    const centerContent = renderTarget === 'email'
+        ? centerContentEmail
+        : (layout.isPurchaseDesigner || layout.isSalesDesigner)
+            ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
+            : centerItemHtml;
 
     const rightContent = `
         ${buildLogoBlock(layout)}
@@ -1329,6 +1538,9 @@ const buildHeader = (layout, renderTarget = 'print') => {
                 ${companyVisibility.name ? `<div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>` : ''}
                 ${companyVisibility.name && layout.company.localName && layout.company.localName !== layout.company.companyName
                 ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
+                : ''}
+                ${layout.company.branchName && layout.company.branchName !== layout.company.companyName
+                ? `<div class="company-copy" style="font-weight:500;">${escapeHtml(layout.company.branchName)}</div>`
                 : ''}
                 ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
             </div>
@@ -1375,16 +1587,24 @@ const buildFooterBar = (layout, renderTarget, billBullLogo) => {
         return '';
     }
 
+    // Email: table layout so Gmail/Outlook don't flatten the flex footer.
+    const footerCellStyle = 'font-size:9px;color:#6b7280;padding:6px 4px 0;vertical-align:middle;';
     return `
-        <footer class="document-footer">
-            <div class="footer-bar">
-                <div>${escapeHtml(layout.company.companyName || '')}</div>
-                <div class="footer-center">Document ${escapeHtml(layout.docNo || '-')}</div>
-                <div class="footer-right">${escapeHtml(layout.title)}</div>
-            </div>
-            ${billBullLogo
-            ? `<div class="footer-brand"><img src="${billBullLogo}" alt="Powered by BillBull" /></div>`
-            : ''}
+        <footer style="margin-top:16px;padding-top:8px;border-top:1px solid #e0e0e0;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                <tr>
+                    <td style="${footerCellStyle}text-align:left;">${escapeHtml(layout.company.companyName || '')}</td>
+                    <td style="${footerCellStyle}text-align:center;">Document ${escapeHtml(layout.docNo || '-')}</td>
+                    <td style="${footerCellStyle}text-align:right;">${escapeHtml(layout.title)}</td>
+                </tr>
+                ${billBullLogo ? `
+                <tr>
+                    <td colspan="3" style="text-align:right;padding-top:4px;">
+                        <img src="${billBullLogo}" alt="Powered by BillBull" style="height:14px;width:auto;opacity:0.62;" />
+                    </td>
+                </tr>
+                ` : ''}
+            </table>
         </footer>
     `;
 };
@@ -1438,46 +1658,73 @@ const buildCoreStyles = () => `
         margin-bottom: 16px;
     }
     .document-header-designer {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
+        display: grid;
+        grid-template-columns: 24fr 31fr 45fr;
+        grid-template-rows: auto;
+        align-items: start;
+        gap: 0 16px;
         margin-bottom: 18px;
     }
     .document-header-designer .header-left {
-        flex: 1 1 0;
+        grid-column: 1;
         min-width: 0;
+        overflow: visible;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-designer .header-center {
-        flex: 0 0 292px;
-        align-self: flex-end;
+        grid-column: 2;
+        min-width: 0;
+        padding-top: 64px;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-designer .header-right {
-        flex: 0 0 170px;
+        grid-column: 3;
+        min-width: 0;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: visible;
     }
-    /* Sales designer header — matches ClassicPreview flex layout */
+    /* Sales designer header — fixed 27/33/40 grid so long names never
+       collapse or expand adjacent columns. Mirrors ClassicPreview proportions. */
     .document-header-sales {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
+        display: grid;
+        grid-template-columns: 27fr 33fr 40fr;
+        grid-template-rows: auto;
+        align-items: start;
+        gap: 0 16px;
         margin-bottom: 18px;
     }
     .document-header-sales .header-left {
-        flex: 1 1 0;
+        grid-column: 1;
         min-width: 0;
+        overflow: visible;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-sales .header-center {
-        display: block;
-        flex: 0 0 auto;
-        align-self: flex-end;
-        padding-top: 0;
+        grid-column: 2;
+        min-width: 0;
+        /* Padding-top clears the document title (≈20px text + 14px margin)
+           and the bill-to eyebrow + customer name line (≈30px) so the meta
+           grid always starts below the primary identity lines in col 1 & col 3.
+           No align-self:end — we want a fixed offset from the top, not bottom-anchoring,
+           so the block stays stable regardless of content length in adjacent columns. */
+        padding-top: 64px;
         padding-bottom: 2px;
         text-align: left;
-        justify-items: stretch;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-sales .header-right {
-        flex: 0 0 170px;
+        grid-column: 3;
+        min-width: 0;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        overflow: hidden;
     }
     .document-header-sales .document-title {
         margin: 0 0 14px;
@@ -1486,9 +1733,18 @@ const buildCoreStyles = () => `
         letter-spacing: -0.5px;
         line-height: 1.35;
     }
+    .document-header-sales .company-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 8.5px;
+        letter-spacing: -0.3px;
+    }
     .document-header-sales .doc-meta-item {
         justify-items: start;
         text-align: left;
+        min-width: 0;
+        overflow: hidden;
     }
     .document-header-sales .doc-meta-label {
         font-size: 8px;
@@ -1500,6 +1756,9 @@ const buildCoreStyles = () => `
         font-size: 9px;
         line-height: 1.2;
         font-weight: 700;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
     }
     .document-header-sales .bill-to-eyebrow {
         margin-bottom: 4px;
@@ -1508,11 +1767,27 @@ const buildCoreStyles = () => `
     }
     .document-header-sales .bill-to-name {
         margin: 0 0 2px;
+        font-weight: 700;
+        white-space: nowrap;
+        word-break: keep-all;
+        overflow-wrap: normal;
+        overflow: visible;
+    }
+    .document-header-sales .bill-to-name-text {
+        display: inline-block;
+        max-width: 100%;
+        white-space: nowrap;
+        font-weight: 700;
+        transform-origin: left center;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-sales .bill-to-line {
         color: #444444;
         line-height: 1.65;
         white-space: pre-line;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-title {
         font-size: 20px;
@@ -1520,15 +1795,21 @@ const buildCoreStyles = () => `
         font-weight: 700;
         margin: 0 0 24px;
         color: #000000;
+        width: auto;
+        min-width: fit-content;
+        overflow: visible;
         white-space: nowrap;
-        word-break: keep-all;
+        word-break: break-word;
     }
     .document-header-designer .document-title {
         margin: 0 0 14px;
-        white-space: nowrap;
-        word-break: keep-all;
         letter-spacing: -0.5px;
         line-height: 1.35;
+        width: auto;
+        min-width: fit-content;
+        overflow: visible;
+        white-space: nowrap;
+        word-break: break-word;
     }
     .header-center {
         display: grid;
@@ -1546,7 +1827,7 @@ const buildCoreStyles = () => `
     }
     .designer-meta-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(118px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px 20px;
         align-items: start;
     }
@@ -1592,8 +1873,9 @@ const buildCoreStyles = () => `
         display: grid;
         gap: 0;
         justify-items: end;
-        max-width: 260px;
         text-align: right;
+        word-break: break-word;
+        overflow-wrap: break-word;
     }
     .document-header-designer .company-panel {
         line-height: 1.55;
@@ -1601,6 +1883,9 @@ const buildCoreStyles = () => `
     .company-name,
     .company-local-name {
         font-weight: 700;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
     }
     .bill-to-block {
         margin-bottom: 16px;
@@ -1620,6 +1905,7 @@ const buildCoreStyles = () => `
     }
     .bill-to-name {
         margin-top: 8px;
+        font-weight: 700;
     }
     .document-header-designer .bill-to-block {
         margin-bottom: 12px;
@@ -1662,8 +1948,8 @@ const buildCoreStyles = () => `
         font-size: 9px;
         line-height: 1.2;
         font-weight: 700;
-        word-break: normal;
-        overflow-wrap: normal;
+        word-break: break-word;
+        overflow-wrap: break-word;
         white-space: normal;
     }
     .grand-total-display {
@@ -1685,7 +1971,7 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .grand-total-label {
         color: #888888;
-        font-weight: 600;
+        font-weight: 500;
         margin: 0 0 2px;
     }
     .grand-total-value {
@@ -1794,6 +2080,44 @@ const buildCoreStyles = () => `
         text-align: center;
         border-bottom: 0;
     }
+    .document-table.document-table-compact thead th {
+        white-space: nowrap;
+        word-break: normal;
+        overflow-wrap: normal;
+        line-height: 1.05;
+        letter-spacing: 0;
+        font-size: 0.84em;
+        padding: 6px 4px;
+    }
+    .document-shell-designer .document-table.document-table-compact thead th {
+        font-size: 0.78em;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-1 thead th {
+        font-size: 0.8em;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-2 thead th {
+        font-size: 0.72em;
+        padding-left: 3px;
+        padding-right: 3px;
+    }
+    .document-table.document-table-dense-3 thead th {
+        font-size: 0.64em;
+        font-weight: 500;
+        padding: 5px 2px;
+    }
+    .document-shell-designer .document-table.document-table-dense-1 thead th {
+        font-size: 0.74em;
+    }
+    .document-shell-designer .document-table.document-table-dense-2 thead th {
+        font-size: 0.66em;
+    }
+    .document-shell-designer .document-table.document-table-dense-3 thead th {
+        font-size: 0.58em;
+    }
     .document-table thead th.cell-right {
         text-align: right;
     }
@@ -1813,6 +2137,15 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .table-cell {
         padding: 5px 8px;
+    }
+    .document-table.document-table-compact .table-cell {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .document-table.document-table-dense-2 .table-cell,
+    .document-table.document-table-dense-3 .table-cell {
+        padding-left: 3px;
+        padding-right: 3px;
     }
     .table-empty {
         padding: 16px 8px;
@@ -1932,7 +2265,7 @@ const buildCoreStyles = () => `
         margin-top: 4px;
         color: #e11d48;
         font-size: 0.89em;
-        font-weight: 600;
+        font-weight: 500;
     }
     .summary-section {
         display: flex;
@@ -2096,6 +2429,11 @@ const buildCoreStyles = () => `
     .amount-negative td {
         color: #b91c1c;
     }
+    .amount-negative .tot-currency,
+    .amount-negative .tot-label,
+    .document-shell-designer .amount-negative .tot-label {
+        color: #b91c1c;
+    }
     .signature-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2255,6 +2593,14 @@ const buildTemplateThemeStyles = (layout) => {
     const mutedBorder = theme.borderColor;
     const mutedBorderSoft = theme.borderColor.startsWith('#') ? `${theme.borderColor}18` : theme.borderColor;
     const accentSoft = theme.accentColor.startsWith('#') ? `${theme.accentColor}22` : theme.accentColor;
+    const zebraRowBg = (layout.isPurchaseDesigner || layout.isSalesDesigner) ? '#fafafa' : 'transparent';
+    const printTableHeaderBg = boostPrintFill(theme.tableHeaderBg, '#f1f5f9', { minAlpha: 1, darken: 0.07 });
+    const printTotalRowBg = boostPrintFill(theme.totalRowBg, '#f1f5f9', { minAlpha: 1, darken: 0.07 });
+    const printAccentSoft = boostPrintFill(accentSoft, theme.accentColor, { minAlpha: 0.18, darken: 0.05 });
+    const printZebraRowBg = zebraRowBg;
+    const printBankBg = '#f0f9ff';
+    const printTermsBg = '#fffbeb';
+    const printSalesThumbSize = layout.isSalesDesigner ? 32 : 42;
 
     return `
         .document-shell,
@@ -2282,8 +2628,10 @@ const buildTemplateThemeStyles = (layout) => {
             border-top: 0;
         }
         .document-header-designer .company-name {
-            font-size: ${theme.fontSize + 3}px;
+            font-size: ${theme.fontSize - 1}px;
             font-weight: 700;
+            white-space: nowrap;
+            letter-spacing: -0.5px;
         }
         .document-header-designer .bill-to-name {
             font-size: ${theme.fontSize + 1}px;
@@ -2333,7 +2681,7 @@ const buildTemplateThemeStyles = (layout) => {
             color: ${theme.tableHeaderText};
         }
         .document-table tbody tr:nth-child(even) {
-            background: ${layout.isPurchaseDesigner ? '#fafafa' : 'transparent'};
+            background: ${zebraRowBg};
         }
         .document-shell-designer .table-cell {
             border-bottom-color: ${mutedBorderSoft};
@@ -2363,6 +2711,42 @@ const buildTemplateThemeStyles = (layout) => {
         .document-table thead th { border-bottom: 0; }
         .table-cell, .table-empty { border-bottom: 0; }
         ` : ''}
+        @media print {
+            .document-table thead th {
+                background: ${printTableHeaderBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTableHeaderBg} !important;
+            }
+            ${printZebraRowBg === 'transparent' ? '' : `
+            .document-table tbody tr:nth-child(even) > td {
+                background: ${printZebraRowBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printZebraRowBg} !important;
+            }
+            `}
+            .totals-table .grand-total-row td,
+            .totals-table .balance-due-row td {
+                background: ${printTotalRowBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTotalRowBg} !important;
+            }
+            .bank-box {
+                background: ${printBankBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printBankBg} !important;
+            }
+            .terms-box {
+                background: ${printTermsBg} !important;
+                box-shadow: inset 0 0 0 9999px ${printTermsBg} !important;
+            }
+            .item-thumb-small {
+                width: ${printSalesThumbSize}px !important;
+                height: ${printSalesThumbSize}px !important;
+                max-width: ${printSalesThumbSize}px !important;
+                max-height: ${printSalesThumbSize}px !important;
+                flex-basis: ${printSalesThumbSize}px !important;
+            }
+            .item-thumb-placeholder {
+                background: ${printAccentSoft} !important;
+                box-shadow: inset 0 0 0 9999px ${printAccentSoft} !important;
+            }
+        }
     `;
 };
 
@@ -2370,15 +2754,16 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
     const resolvedPaperSize = paperSize || 'A4';
     const resolvedOrientation = orientation || 'Portrait';
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
-    const shellPadding = layout.isPurchaseDesigner ? '28px 32px' : '12mm';
+    const isDesignerLayout = layout.isPurchaseDesigner || layout.isSalesDesigner;
+    const shellPadding = isDesignerLayout ? '28px 32px' : '12mm';
     // Strategy: @page handles top+bottom margins on every page (incl. continuation).
     // Shell padding handles left+right, plus a small cloned top buffer for rows
     // that start on a continuation page when browser print margins are tight.
-    // Purchase-designer keeps its own padding without @page adjustment.
-    const pageTopBottom = layout.isPurchaseDesigner ? '0' : '12mm';
-    const continuousPageTop = layout.isPurchaseDesigner ? '0' : '26mm';
-    const continuationInnerGap = layout.isPurchaseDesigner ? '0' : '4mm';
-    const shellPaddingPrint = layout.isPurchaseDesigner ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
+    // Designer layouts (purchase + sales) keep their own padding without @page adjustment.
+    const pageTopBottom = isDesignerLayout ? '0' : '12mm';
+    const continuousPageTop = isDesignerLayout ? '0' : '26mm';
+    const continuationInnerGap = isDesignerLayout ? '0' : '4mm';
+    const shellPaddingPrint = isDesignerLayout ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
 
     return `
         @page {
@@ -2449,6 +2834,9 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .content-stack > * {
                 margin-bottom: 16px;
             }
+            .content-stack > .document-footer-group {
+                margin-bottom: 0 !important;
+            }
             /* Explicitly allow page breaks inside the table and between rows */
             .table-section,
             .document-table {
@@ -2473,22 +2861,33 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 gap: 20px !important;
             }
             .document-header-designer {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: flex-start !important;
-                gap: 16px !important;
+                display: grid !important;
+                grid-template-columns: 27fr 33fr 40fr !important;
+                gap: 0 16px !important;
+                align-items: start !important;
                 margin-bottom: 18px !important;
             }
             .document-header-designer .header-left {
-                flex: 1 1 0 !important;
+                grid-column: 1 !important;
                 min-width: 0 !important;
+                overflow: visible !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
             }
             .document-header-designer .header-center {
-                flex: 0 0 292px !important;
-                align-self: flex-end !important;
+                grid-column: 2 !important;
+                min-width: 0 !important;
+                align-self: end !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-designer .header-right {
-                flex: 0 0 170px !important;
+                grid-column: 3 !important;
+                min-width: 0 !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .signature-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -2498,9 +2897,12 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-header-designer .document-title {
                 margin-bottom: 14px !important;
-                white-space: nowrap !important;
-                word-break: keep-all !important;
                 line-height: 1.35 !important;
+                width: auto !important;
+                min-width: fit-content !important;
+                overflow: visible !important;
+                white-space: nowrap !important;
+                word-break: break-word !important;
             }
             .document-table thead {
                 display: table-row-group !important;
@@ -2512,60 +2914,78 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-header-designer .header-center {
                 display: block !important;
-                padding-top: 0 !important;
+                padding-top: 64px !important;
                 padding-bottom: 2px !important;
                 text-align: left !important;
                 justify-items: stretch !important;
             }
             .document-header-designer .designer-meta-grid {
                 display: grid !important;
-                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
                 gap: 10px 20px !important;
             }
             .document-header-designer .doc-meta-item {
                 text-align: left !important;
                 justify-items: start !important;
             }
-            /* Sales designer print overrides — keep header matching ClassicPreview */
+            /* Sales designer print overrides — fixed 27/33/40 grid, mirrors ClassicPreview */
             .document-header-sales {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: flex-start !important;
-                gap: 16px !important;
+                display: grid !important;
+                grid-template-columns: 27fr 33fr 40fr !important;
+                gap: 0 16px !important;
+                align-items: start !important;
                 margin-bottom: 18px !important;
             }
             .document-header-sales .header-left {
-                flex: 1 1 0 !important;
+                grid-column: 1 !important;
                 min-width: 0 !important;
+                overflow: visible !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
             }
             .document-header-sales .header-center {
-                display: block !important;
-                flex: 0 0 auto !important;
-                align-self: flex-end !important;
-                padding-top: 0 !important;
+                grid-column: 2 !important;
+                min-width: 0 !important;
+                padding-top: 64px !important;
                 padding-bottom: 2px !important;
                 text-align: left !important;
-                justify-items: start !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-sales .header-right {
-                flex: 0 0 170px !important;
+                grid-column: 3 !important;
+                min-width: 0 !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: hidden !important;
             }
             .document-header-sales .designer-meta-grid {
                 display: grid !important;
-                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
                 gap: 10px 20px !important;
             }
             .document-header-sales .doc-meta-item {
                 text-align: left !important;
                 justify-items: start !important;
             }
+            .document-header-sales .bill-to-name {
+                white-space: nowrap !important;
+                word-break: keep-all !important;
+                overflow-wrap: normal !important;
+                overflow: visible !important;
+            }
+            .document-header-sales .bill-to-name-text {
+                font-weight: 700 !important;
+            }
             /* Footer area (totals + bank + terms + signature + stamp/QR):
                The JS spacer (injected before print) pushes it toward the
-               bottom margin of the final page.
-               break-inside:avoid keeps all footer sections together. */
+               bottom margin of the final page. break-before:page is set
+               by JS when the footer must move to the next page; the inner
+               spacer then bottom-aligns it within that page. */
             .document-footer-group {
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
+                break-inside: auto !important;
+                page-break-inside: auto !important;
             }
             /* Each atomic footer group (totals, bank/terms/notes, signature,
                stamp/QR) must never be split across pages. */
@@ -2638,6 +3058,44 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .footer-right {
                 text-align: right !important;
             }
+            /* Fix 4: watermark on every page — switch from absolute (page 1 only)
+               to fixed so the browser repeats it across all printed pages */
+            .document-watermark {
+                position: fixed !important;
+                inset: 0 !important;
+            }
+            /* Fix 3: prevent long company/customer/branch names from overflowing
+               or clipping — let them wrap gracefully in print */
+            .company-name,
+            .company-copy {
+                white-space: normal !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+            }
+            .document-header-sales .company-name {
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+            }
+            .document-header-designer .company-name {
+                white-space: nowrap !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+                word-break: normal !important;
+                overflow-wrap: normal !important;
+            }
+            .bill-to-name {
+                white-space: normal !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+            }
+            .bill-to-line {
+                white-space: pre-line !important;
+                word-break: break-word !important;
+                overflow-wrap: break-word !important;
+            }
         }
     `;
 };
@@ -2660,6 +3118,8 @@ const buildEmailStyles = () => `
         border-radius: 8px;
         background: #ffffff;
         box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        /* Override print flex-column so Gmail doesn't collapse the shell */
+        display: block !important;
     }
     /* Email clients ignore CSS Grid / Flex on these blocks — force block
        layout so the right column stacks: logo on top, company address
@@ -2693,6 +3153,59 @@ const buildEmailStyles = () => `
     .totals-table td.tot-currency,
     .totals-table td.tot-amount {
         padding: 4px 0 4px 8px !important;
+    }
+    /* Bill-to block: render as plain block stacking in email */
+    .bill-to-block,
+    .bill-to-eyebrow,
+    .bill-to-name,
+    .bill-to-line {
+        display: block !important;
+    }
+    /* Document title: block display, no grid/flex needed */
+    .document-title {
+        display: block !important;
+        text-align: left;
+    }
+    /* Left meta block */
+    .left-meta-block,
+    .left-meta-item,
+    .left-meta-label,
+    .left-meta-value {
+        display: block !important;
+    }
+    /* Content stack: block in email (overrides display:grid) */
+    .content-stack {
+        display: block !important;
+    }
+    /* Footer group: block in email (overrides display:flex) */
+    .document-footer-group {
+        display: block !important;
+        margin-top: 16px;
+    }
+    /* Footer spacers serve no purpose in email */
+    .footer-push-spacer,
+    .footer-inner-spacer {
+        display: none !important;
+    }
+    /* Table section: full width block */
+    .table-section {
+        display: block !important;
+        width: 100%;
+        overflow-x: auto;
+    }
+    /* Summary section */
+    .summary-section {
+        display: block !important;
+    }
+    /* Signature card */
+    .signature-card,
+    .signature-grid {
+        display: block !important;
+    }
+    /* Stamp row */
+    .stamp-row {
+        display: block !important;
+        text-align: right;
     }
 `;
 
@@ -2741,8 +3254,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
     const isSalesDesigner = isSalesDesignerTemplate(template);
-    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
-    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(designerSettings, company);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
     const theme = buildTheme(template);
@@ -2821,6 +3333,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
+        footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };
@@ -2845,8 +3359,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         company,
         currency,
         isPurchaseDesigner: true,
-        logoUrl: templateLogoUrl || company.logoUrl,
-        stampUrl: templateStampUrl || company.stampUrl,
+        logoUrl: resolvedLogoUrl,
+        stampUrl: resolvedStampUrl,
         companyVisibility,
         partyVisibility,
         theme,
@@ -2868,7 +3382,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         columnOptions,
         columnModel,
         totals,
-        notes: asText(data.notes || ''),
+        notes: asText(data.notes || data.meta?.notes || ''),
         terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
         displayOptions,
         totalVisibility,
@@ -2894,7 +3408,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
         // Default showCompanyStamp to true when a stamp image is available (branch or template),
         // so branch stamps render automatically without requiring a saved template toggle.
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(resolvedStampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -2916,10 +3430,12 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
 const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarget, options = {}) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
-    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
-    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(designerSettings, company);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
+    if (template.category === 'Quotation') {
+        partyVisibility.code = false;
+    }
     const theme = buildTheme(template);
     const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
     const columnOptions = applyDesignerColumnVisibility(
@@ -2949,6 +3465,8 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
+        footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };
@@ -3022,8 +3540,8 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         currency,
         isPurchaseDesigner: false,
         isSalesDesigner: true,
-        logoUrl: templateLogoUrl || company.logoUrl,
-        stampUrl: templateStampUrl || company.stampUrl,
+        logoUrl: resolvedLogoUrl,
+        stampUrl: resolvedStampUrl,
         companyVisibility,
         partyVisibility,
         theme,
@@ -3074,7 +3592,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         showHighlight: summaryValue > 0 && pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar'], true),
         showPaymentDetails: false,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip'], false),
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(resolvedStampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -3116,6 +3634,8 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
+        footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };
@@ -3302,9 +3822,8 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
     const showClosingBalance = pickSetting(settings, ['showClosingBalance'], true);
     const companyVisibility = buildCompanyVisibility(settings);
     const partyVisibility = buildPartyVisibility(settings);
-    const logoUrl = showLogo
-        ? (resolveTemplateImageUrl(settings.logoUrl || settings.companyLogoUrl) || company.logoUrl)
-        : '';
+    const { logoUrl: resolvedStatementLogoUrl } = resolveDocumentAssets(settings, company);
+    const logoUrl = showLogo ? (resolvedStatementLogoUrl || '') : '';
     const party = data.party || {};
     const statement = data.statement || {};
     const rows = normalizeStatementRows(data).filter((row) => isStatementRowVisible(row, settings, isCustomerStatement ? 'customer' : 'vendor'));
@@ -3417,7 +3936,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .company-name {
             font-size: ${Math.max(16, baseFontSize + 4)}px;
-            font-weight: 800;
+            font-weight: 700;
             margin-bottom: 7px;
         }
         .company-line,
@@ -3433,7 +3952,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             font-size: ${Math.max(22, baseFontSize + 11)}px;
             line-height: 1.1;
             letter-spacing: 0;
-            font-weight: 800;
+            font-weight: 700;
             text-transform: uppercase;
         }
         .statement-pill {
@@ -3443,7 +3962,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             background: ${accentColor};
             color: #111827;
             padding: 5px 11px;
-            font-weight: 800;
+            font-weight: 600;
             font-size: ${Math.max(10, baseFontSize - 3)}px;
             text-transform: uppercase;
         }
@@ -3465,14 +3984,14 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .card-label {
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             letter-spacing: 0.12em;
             text-transform: uppercase;
             margin-bottom: 8px;
         }
         .vendor-name {
             font-size: ${Math.max(15, baseFontSize + 2)}px;
-            font-weight: 800;
+            font-weight: 700;
             color: #111827;
             margin-bottom: 5px;
         }
@@ -3484,7 +4003,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .balance-value {
             color: #111827;
             font-size: ${Math.max(19, baseFontSize + 7)}px;
-            font-weight: 900;
+            font-weight: 700;
             margin-top: 2px;
         }
         .summary-grid {
@@ -3504,7 +4023,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         .summary-label {
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             letter-spacing: 0.1em;
             text-transform: uppercase;
         }
@@ -3512,7 +4031,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             margin-top: 6px;
             color: #111827;
             font-size: ${Math.max(16, baseFontSize + 4)}px;
-            font-weight: 850;
+            font-weight: 700;
         }
         .summary-value.strong {
             color: ${accentColor};
@@ -3521,7 +4040,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             margin-top: 2px;
             color: #64748b;
             font-size: ${Math.max(9, baseFontSize - 3)}px;
-            font-weight: 800;
+            font-weight: 600;
             text-transform: uppercase;
         }
         .soa-table {
@@ -3536,7 +4055,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             border: 1px solid ${borderColor};
             padding: 6px 5px;
             font-size: ${Math.max(7, baseFontSize - 5)}px;
-            font-weight: 850;
+            font-weight: 600;
             text-transform: uppercase;
             text-align: left;
             line-height: 1.18;
@@ -3564,7 +4083,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .soa-table .debit { color: ${isCustomerStatement ? '#dc2626' : '#15803d'}; }
         .soa-table .credit { color: ${isCustomerStatement ? '#15803d' : '#c2410c'}; }
-        .soa-table .balance { color: #111827; font-weight: 800; }
+        .soa-table .balance { color: #111827; font-weight: 600; }
         .type-badge {
             display: block;
             border-radius: 4px;
@@ -3572,7 +4091,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
             color: #334155;
             padding: 0;
             font-size: ${Math.max(7, baseFontSize - 5)}px;
-            font-weight: 800;
+            font-weight: 600;
             line-height: 1.15;
             text-transform: none;
             overflow-wrap: normal;
@@ -3580,7 +4099,7 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
         }
         .closing-row td {
             background: #f8fafc;
-            font-weight: 850;
+            font-weight: 700;
             color: #111827;
         }
         .empty-row td {
@@ -3807,8 +4326,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
     const currencyConfig = resolveCurrencyDisplayConfig(company);
     const currencyLabel = renderCurrencySymbolHtml(company);
 
-    // ── header logo ──
-    const logoUrl = company.logoUrl;
+    // ── header logo: template > branch > company ──
+    const { logoUrl } = resolveDocumentAssets(s, company);
     const logoHtml = on('showCompanyLogo')
         ? (logoUrl
             ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" style="width:42px;height:42px;border-radius:8px;object-fit:contain;background:rgba(0,0,0,0.06);flex-shrink:0;" />`
@@ -3816,7 +4335,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
         : '';
 
     const companyContact = [
-        on('showCompanyAddress') && company.address ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div><div>${txt(company.address)}</div>` : (on('showCompanyName') && company.companyName ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div>` : ''),
+        on('showCompanyName') && company.companyName ? `<div style="font-weight:600;color:rgba(0,0,0,0.85);">${txt(company.companyName)}</div>` : '',
+        on('showCompanyAddress') && company.address ? `<div>${txt(company.address)}</div>` : '',
         on('showCompanyPhone') && company.phone ? `<div>${txt(company.phone)}</div>` : '',
         on('showCompanyEmail') && company.email ? `<div>${txt(company.email)}</div>` : '',
         on('showCompanyWebsite') && company.website ? `<div>${txt(company.website)}</div>` : '',
@@ -3938,10 +4458,13 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
                     return `<td style="padding:10px;text-align:center;color:#a0aab4;font-size:10px;">${escapeHtml(String(it.rowNo || i + 1).padStart(2, '0'))}</td>`;
                 case 'desc': {
                     const idLine = [it.code && `${txt(it.code)}`, it.sku && it.sku !== it.code ? `SKU: ${txt(it.sku)}` : ''].filter(Boolean).join(' · ');
+                    const shortDetail = firstNonEmpty(it.shortDesc, it.desc);
+                    const detailedDetail = firstNonEmpty(it.detailedDesc);
                     return `<td style="padding:10px;vertical-align:top;">
                         <div style="font-weight:600;font-size:12px;color:#0f1923;">${txt(it.name) || '-'}</div>
                         ${idLine ? `<div style="font-family:monospace;font-size:10px;color:#1040b0;margin-top:1px;">${idLine}</div>` : ''}
-                        ${it.desc ? `<div style="font-size:10px;color:#6b7a8a;margin-top:1px;">${txt(it.desc)}</div>` : ''}
+                        ${on('showShortDescription') && shortDetail ? `<div style="font-size:10px;color:#6b7a8a;margin-top:1px;">${txt(shortDetail)}</div>` : ''}
+                        ${on('showDetailedDescription') && detailedDetail ? `<div style="font-size:10px;color:#a0aab4;font-style:italic;margin-top:1px;white-space:pre-line;">${txt(detailedDetail)}</div>` : ''}
                     </td>`;
                 }
                 case 'barcode':
@@ -4170,9 +4693,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
         ${watermark}
         <div style="background:${headerBg};display:grid;grid-template-columns:1fr auto;align-items:stretch;position:relative;z-index:1;">
             <div style="padding:24px 28px;display:flex;flex-direction:column;gap:6px;text-align:${s.companyDetailsAlign || 'left'};">
-                ${logoHtml || on('showCompanyName') ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                ${logoHtml ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                     ${logoHtml}
-                    ${on('showCompanyName') && company.companyName ? `<div><div style="font-size:${headerFontSize}px;font-weight:600;color:#0f1923;letter-spacing:-0.5px;">${txt(company.companyName)}</div></div>` : ''}
                 </div>` : ''}
                 <div style="font-size:11px;color:rgba(0,0,0,0.6);line-height:1.7;margin-top:4px;">${companyContact}</div>
             </div>
@@ -4220,47 +4742,108 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
     return `<script>
 (function () {
     'use strict';
+    function fitSingleLineHeaderText() {
+        var nodes = document.querySelectorAll('.document-header-sales .bill-to-name-text');
+        nodes.forEach(function (node) {
+            var container = node.closest('.bill-to-name');
+            if (!container) return;
+
+            node.style.transform = '';
+            container.style.whiteSpace = 'nowrap';
+
+            var available = container.clientWidth;
+            var required = node.scrollWidth;
+            if (!available || !required || required <= available) return;
+
+            node.style.transform = 'scaleX(' + (available / required).toFixed(4) + ')';
+        });
+    }
+
     function run() {
         try {
-            var spacer   = document.getElementById('footer-push-spacer');
-            var footer   = document.querySelector('.document-footer-group');
-            var shell    = document.querySelector('.document-shell');
+            fitSingleLineHeaderText();
+
+            var spacer      = document.getElementById('footer-push-spacer');
+            var innerSpacer = document.getElementById('footer-inner-spacer');
+            var footer      = document.querySelector('.document-footer-group');
+            var shell       = document.querySelector('.document-shell');
             if (!spacer || !footer || !shell) return;
 
-            // Remove any previously injected height so measurements are fresh
+            // Reset everything so measurements reflect natural layout
             spacer.style.height = '0px';
+            if (innerSpacer) innerSpacer.style.height = '0px';
+            footer.style.breakBefore = '';
+            footer.style.pageBreakBefore = '';
 
-            // @page margins: 26 mm first page top / 12 mm bottom / continuation 26 mm top
-            // Use 12 mm top + 12 mm bottom = 24 mm as a conservative usable-height deduction.
-            var pageMarginsPx = Math.round(24 * (96 / 25.4));
-            var shellPadPx    = ${shellPaddingPx};
-            var rawPageH      = ${pageHeightPx};
-            var usableH       = rawPageH - pageMarginsPx - shellPadPx * 2;
-            if (usableH < 100) usableH = rawPageH * 0.80;
+            var _ = spacer.getBoundingClientRect(); // force reflow
 
-            var shellTop     = shell.getBoundingClientRect().top;
-            var spacerTop    = spacer.getBoundingClientRect().top;
-            var footerH      = footer.getBoundingClientRect().height;
+            var rawPageH = ${pageHeightPx};
+            var MM = 96 / 25.4;
 
-            // How far into the document (in px) does the spacer start?
-            var offsetFromShellTop = spacerTop - shellTop;
+            // Usable content height per print page after @page margins:
+            //   page 0  : 12mm top + 12mm bottom = 24mm margins
+            //   page 1+ : 26mm top + 12mm bottom = 38mm margins
+            var usableH0 = rawPageH - Math.round(24 * MM);
+            var usableHN = rawPageH - Math.round(38 * MM);
+            if (usableH0 < 200) usableH0 = rawPageH * 0.82;
+            if (usableHN < 200) usableHN = rawPageH * 0.82;
 
-            // Which page number is that on (0-indexed)?
-            var pageIndex    = Math.floor(offsetFromShellTop / usableH);
+            var shellRect  = shell.getBoundingClientRect();
+            var footerRect = footer.getBoundingClientRect();
+            var footerH    = footerRect.height;
 
-            // How many px have been used on that page so far (above the spacer)?
-            var usedOnPage   = offsetFromShellTop - (pageIndex * usableH);
+            // Use the footer's actual rendered top (which includes the spacer's
+            // margin-bottom and any other spacing) to determine how much of the
+            // current page has been consumed before the footer begins.
+            var footerTopFromShell = footerRect.top - shellRect.top;
 
-            // How many px are left on that page after the spacer?
-            var remaining    = usableH - usedOnPage;
+            // Determine which print page the footer starts on
+            var pageIndex   = 0;
+            var accumulated = usableH0;
+            while (footerTopFromShell >= accumulated) {
+                pageIndex++;
+                accumulated += usableHN;
+            }
 
-            if (remaining >= footerH + 4) {
-                // Footer fits on this page — push it to the very bottom
-                spacer.style.height = (remaining - footerH) + 'px';
+            var usableH    = pageIndex === 0 ? usableH0 : usableHN;
+            var pageStart  = pageIndex === 0 ? 0 : usableH0 + (pageIndex - 1) * usableHN;
+            var usedOnPage = footerTopFromShell - pageStart;
+            var remaining  = usableH - usedOnPage;
+            if (remaining < 0) remaining = 0;
+
+            if (remaining >= footerH) {
+                // Footer fits on this page — push it to the bottom by expanding
+                // the outer spacer. gap = remaining - footerH positions the footer
+                // so its bottom lands exactly at the page boundary. The spacer's
+                // margin-bottom is already included in footerTopFromShell (since we
+                // measured the footer's actual rendered top), so expanding the
+                // spacer by gap px shifts the footer down by exactly gap px.
+                var gap = remaining - footerH;
+                spacer.style.height = (gap > 0 ? gap : 0) + 'px';
             } else {
-                // Footer doesn't fit — let it flow to the next page naturally,
-                // no spacer needed (break-inside:avoid keeps it whole)
+                // Footer does not fit on this page.
+                // Use break-before:page to force it onto the next page, then
+                // use the inner spacer (inside the footer group, before the
+                // content) to bottom-align the footer on that new page.
+                // The outer spacer stays 0 — the page break handles the jump.
+                // The inner spacer only pushes content within the new page;
+                // since footer-group-atomic blocks have break-inside:avoid,
+                // they won't split even if the inner spacer height is large.
+                footer.style.breakBefore = 'page';
+                footer.style.pageBreakBefore = 'always';
                 spacer.style.height = '0px';
+                if (innerSpacer) {
+                    // The footer group is a flex column with a row-gap, so a gap
+                    // is inserted BETWEEN the inner spacer and the first footer
+                    // block. That gap is not part of footerH (which measured only
+                    // the content blocks), so innerSpacer + gap + footerH would
+                    // overshoot the page and spill a trailing blank page. Subtract
+                    // the gap (plus a small rounding buffer) so the footer bottom
+                    // still lands at the page bottom without crossing the boundary.
+                    var footerGap = parseFloat(getComputedStyle(footer).rowGap) || 0;
+                    var topGap = usableHN - footerH - footerGap - 4;
+                    innerSpacer.style.height = (topGap > 0 ? topGap : 0) + 'px';
+                }
             }
         } catch (e) {
             // silently fall back — footer flows naturally after the table
@@ -4281,7 +4864,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     const layout = buildLayout(template, data, options, renderTarget);
     const shellClasses = [
         'document-shell',
-        layout.isPurchaseDesigner ? 'document-shell-designer' : ''
+        (layout.isPurchaseDesigner || layout.isSalesDesigner) ? 'document-shell-designer' : ''
     ].filter(Boolean).join(' ');
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`
@@ -4312,12 +4895,13 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
             <div class="${shellClasses}">
                 ${buildHeader(layout, renderTarget)}
                 ${buildHeaderAddon(layout)}
-                ${buildGrandTotal(layout)}
+                ${buildGrandTotal(layout, renderTarget)}
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
                     <div class="footer-push-spacer" id="footer-push-spacer"></div>
                     <div class="document-footer-group">
+                        <div class="footer-inner-spacer" id="footer-inner-spacer"></div>
                         ${buildSummarySection(layout, renderTarget)}
                         ${buildSignatureBlock(layout)}
                         ${buildStampBlock(layout, renderTarget)}
@@ -4344,12 +4928,13 @@ const defaultPaymentReceiptSettings = () => ({
     showLogo: true, showStatusBadge: true,
     showCustomerName: true, showCustomerCode: true, showCustomerAddress: true,
     showCustomerPhone: true, showCustomerEmail: false, showCustomerTRN: false, showVATNumber: true,
-    showReceiptNumber: true, showReceiptDate: true, showReceiptSession: true,
+    showReceiptNumber: true, showReceiptDate: true, showCurrencyField: true, showReceiptSession: true,
     showInvoiceCount: true, showAccountCurrency: true, showBankAccount: true,
     showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
-    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true,
+    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true, showPayMode: true,
     showTotalOutstanding: true, showDiscountAllowed: true, showRemainingBalance: true, showTotalReceivedBold: true,
     showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: true,
+    showAmountInWords: true, showPaymentDetails: true,
     showNote: true, showCompanyStamp: true, showQRCode: false, stampUrl: '',
     showGeneratedBy: true, showReceivedByLine: true,
     showCompanyName: true, showCompanyAddress: true, showCompanyPhone: true, showCompanyEmail: true, showTRN: true,
@@ -4364,9 +4949,11 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
     const esc = escapeHtml;
     const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    // Use plain currency label (e.g. "AED") to match the designer preview — avoid
-    // the dirham image which breaks inline table cell layout.
-    const currLabel = esc(renderCurrencySymbol(co));
+    // Use the HTML symbol renderer so AED shows the dirham glyph; same approach
+    // as other document renderers. Use mask-image variant so it inherits color.
+    const currHtml = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: false });
+    const currHtmlInherit = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: true });
+    const currHtmlGold = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: true });
 
     const r = data.receiptData || {};
     const cust = data.customerData || {};
@@ -4374,8 +4961,8 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const sum = data.summary || {};
     const pay = data.payment || {};
 
-    // Logo: designer-uploaded URL takes priority, then company profile logo, then initial circle
-    const resolvedLogoUrl = resolveTemplateImageUrl(s.logoUrl) || co.logoUrl || '';
+    // Asset resolution: template > branch > company (branch already merged into co by buildDocumentHeaderProfile)
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(s, co);
     const logoHtml = s.showLogo
         ? (resolvedLogoUrl
             ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
@@ -4404,8 +4991,8 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
         const statusColor = (inv.status || '').toLowerCase().includes('full') ? '#059669' : '#d97706';
         const statusBg = (inv.status || '').toLowerCase().includes('full') ? '#ecfdf5' : '#fffbeb';
         const statusBorder = (inv.status || '').toLowerCase().includes('full') ? '#6ee7b7' : '#fcd34d';
-        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:top;`;
-        const tdRight = `${tdBase}text-align:right;`;
+        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:middle;`;
+        const tdRight = `${tdBase}text-align:right;white-space:nowrap;`;
         return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'};">
             <td style="${tdBase}">
                 ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f - 1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
@@ -4413,18 +5000,18 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
                 ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f - 1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
             </td>
             ${s.showInvoiceDate ? `<td style="${tdRight}color:#64748b;">${esc(inv.date || '')}</td>` : ''}
-            ${s.showInvoiceTotal ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.total)}</div></td>` : ''}
-            ${s.showOutstanding ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.outstanding)}</div></td>` : ''}
-            ${s.showReceivedNow ? `<td style="${tdRight}"><div style="color:${gold};font-size:${f - 1}px;font-weight:600;">${currLabel}</div><div style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</div></td>` : ''}
-            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currLabel} 0.00</span>`}</td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="${tdRight}">${currHtml} ${fmt(inv.total)}</td>` : ''}
+            ${s.showOutstanding ? `<td style="${tdRight}">${currHtml} ${fmt(inv.outstanding)}</td>` : ''}
+            ${s.showReceivedNow ? `<td style="${tdRight}font-weight:700;color:#1a1a2e;">${currHtmlGold} ${fmt(inv.received)}</td>` : ''}
+            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
+            ${s.showPayMode ? `<td style="padding:5px 8px;text-align:center;white-space:nowrap;">${inv.mode ? `<span style="font-size:${f - 1}px;font-weight:600;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:1px 7px;">${esc(inv.mode)}</span>` : '—'}</td>` : ''}
         </tr>`;
     }).join('');
 
-    // Stamp: use uploaded image if stampUrl is set, otherwise show dashed placeholder
     const stampHtml = s.showCompanyStamp ? `
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
-            ${s.stampUrl
-            ? `<img src="${esc(s.stampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
+            ${resolvedStampUrl
+            ? `<img src="${esc(resolvedStampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
             : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;">
                        <span style="font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</span>
                    </div>`
@@ -4514,6 +5101,7 @@ table { width: 100%; border-collapse: collapse; }
           ${s.showOutstanding ? `<th style="${thStyle}text-align:right;">Outstanding</th>` : ''}
           ${s.showReceivedNow ? `<th style="${thStyle}text-align:right;color:#92400e;">Received now</th>` : ''}
           ${s.showBalanceAfter ? `<th style="${thStyle}text-align:right;">Balance after</th>` : ''}
+          ${s.showPayMode ? `<th style="${thStyle}text-align:center;">Pay mode</th>` : ''}
         </tr>
       </thead>
       <tbody>${invoiceRows}</tbody>
@@ -4526,23 +5114,35 @@ table { width: 100%; border-collapse: collapse; }
 
     <!-- SUMMARY (right-aligned) -->
     <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-      <table style="min-width:300px;border-collapse:collapse;font-size:${f}px;">
+      <table style="width:auto;border-collapse:collapse;font-size:${f}px;">
         <tbody>
-          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Total outstanding</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.totalOutstanding)}</td></tr>` : ''}
-          ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Discount allowed</td><td style="padding:3px 0 3px 12px;text-align:right;color:#e11d48;">${currLabel} —${fmt(sum.discount || 0)}</td></tr>` : ''}
-          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Remaining balance</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.remaining)}</td></tr>` : ''}
-          ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;">Total received now</td><td style="padding:6px 0 6px 12px;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;">${currLabel} ${fmt(sum.totalReceived)}</td></tr>` : ''}
+          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Total outstanding</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalOutstanding)}</span></td></tr>` : ''}
+          ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Discount allowed</td><td style="padding:3px 0;text-align:right;color:#e11d48;white-space:nowrap;min-width:100px;">${currHtmlInherit} <span style="display:inline-block;min-width:70px;text-align:right;">—${fmt(sum.discount || 0)}</span></td></tr>` : ''}
+          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Remaining balance</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.remaining)}</span></td></tr>` : ''}
+          ${pay.isSplit && Array.isArray(pay.entries) && pay.entries.length > 0 ? pay.entries.map(e => `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">${esc(e.method)}</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(e.amount)}</span></td></tr>`).join('') : ''}
+          ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;white-space:nowrap;">Total received now</td><td style="padding:6px 0;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalReceived)}</span></td></tr>` : ''}
         </tbody>
       </table>
     </div>
 
+    <!-- AMOUNT IN WORDS -->
+    ${s.showAmountInWords && sum.totalReceived ? `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <div style="font-size:${f}px;font-weight:600;color:#1a1a2e;text-align:right;background:#f8fafc;padding:6px 12px;border-radius:4px;border:1px solid #e2e8f0;">
+        <span style="color:#64748b;margin-right:4px;">Amount in words:</span> <span style="font-weight:700;color:#1a1a2e;">${formatAmountInWords(sum.totalReceived, r.accountCurrency || co.currency)}</span>
+      </div>
+    </div>` : ''}
+
     <!-- PAYMENT DETAILS -->
     ${s.showPaymentMethod && pay.method ? `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
+      ${pay.isSplit && Array.isArray(pay.entries) && pay.entries.length > 0 ? `
+      <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;flex-shrink:0;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
+      <div></div>` : `
       <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
       ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : '<div></div>'}
       ${s.showDepositedTo && pay.depositedTo ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Deposited to</span><span style="font-weight:600;">${esc(pay.depositedTo)}</span></div>` : ''}
-      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
+      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}`}
     </div>` : ''}
 
     <!-- NOTE -->
@@ -4568,6 +5168,258 @@ table { width: 100%; border-collapse: collapse; }
 </body></html>`;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Vendor Payment Voucher — mirrors VendorPaymentVoucherDesigner.jsx preview.
+// Renders with 3-col header, invoice table, summary block, payment details.
+// Triggered for 'Payment Voucher' category.
+// ─────────────────────────────────────────────────────────────────────────────
+const defaultVendorPaymentVoucherSettings = () => ({
+    accentColor: '#F5C742', fontFamily: 'Inter, sans-serif', fontSize: 9, paperSize: 'A4',
+    showLogo: true, showStatusBadge: true,
+    showVendorName: true, showVendorCode: true, showVendorAddress: true,
+    showVendorPhone: true, showVendorEmail: false, showVendorTRN: true,
+    showVoucherNumber: true, showVoucherDate: true, showVoucherSession: true,
+    showInvoiceCount: true, showAccountCurrency: true, showBankAccount: true,
+    showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
+    showOutstanding: true, showPaidNow: true, showBalanceAfter: true, showLinkedLPO: true,
+    showTotalOutstanding: true, showDiscountTaken: true, showRemainingBalance: true, showTotalPaidBold: true,
+    showPaymentMethod: true, showChequeRef: true, showDepositedFrom: true, showChequeDate: true,
+    showAmountInWords: true, showNote: true, showCompanyStamp: true, showQRCode: false, stampUrl: '',
+    showGeneratedBy: true, showAuthorisedByLine: true,
+    showCompanyName: true, showCompanyAddress: true, showCompanyPhone: true, showCompanyEmail: true, showTRN: true,
+    // legacy aliases kept for backwards compatibility
+    showCustomerName: true, showCustomerCode: true, showCustomerAddress: true,
+    showCustomerPhone: true, showCustomerEmail: false, showCustomerTRN: true,
+    showReceiptNumber: true, showReceiptDate: true,
+});
+
+const renderVendorPaymentVoucherHtml = (template, data, options = {}) => {
+    const raw = getTemplateDesignerSettings(template);
+    const s = { ...defaultVendorPaymentVoucherSettings(), ...raw };
+    // honour legacy toggle aliases from old templates
+    if (raw.showCustomerName !== undefined && raw.showVendorName === undefined) s.showVendorName = raw.showCustomerName;
+    if (raw.showCustomerCode !== undefined && raw.showVendorCode === undefined) s.showVendorCode = raw.showCustomerCode;
+    if (raw.showCustomerAddress !== undefined && raw.showVendorAddress === undefined) s.showVendorAddress = raw.showCustomerAddress;
+    if (raw.showCustomerPhone !== undefined && raw.showVendorPhone === undefined) s.showVendorPhone = raw.showCustomerPhone;
+    if (raw.showCustomerEmail !== undefined && raw.showVendorEmail === undefined) s.showVendorEmail = raw.showCustomerEmail;
+    if (raw.showCustomerTRN !== undefined && raw.showVendorTRN === undefined) s.showVendorTRN = raw.showCustomerTRN;
+    if (raw.showReceiptNumber !== undefined && raw.showVoucherNumber === undefined) s.showVoucherNumber = raw.showReceiptNumber;
+    if (raw.showReceiptDate !== undefined && raw.showVoucherDate === undefined) s.showVoucherDate = raw.showReceiptDate;
+    if (raw.showReceivedByLine !== undefined && raw.showAuthorisedByLine === undefined) s.showAuthorisedByLine = raw.showReceivedByLine;
+
+    const co = normalizeDocumentCompanyProfile(options.companyProfile || {});
+    const esc = escapeHtml;
+    const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const gold = sanitizeCssColor(s.accentColor, '#F5C742');
+    const fontFamily = sanitizeCssFontFamily(s.fontFamily, "'Inter', sans-serif");
+    const f = Math.min(13, Math.max(8, Number(s.fontSize) || 9));
+    const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
+
+    // Support both new shape (vendorData) and old shape (party) for backwards compat
+    const vendor = data.vendorData || data.party || {};
+    const voucherData = data.voucherData || {};
+    const sum = data.summary || {};
+    const pay = data.payment || {};
+    const invoices = Array.isArray(data.invoices) ? data.invoices : [];
+
+    const voucherNo = data.docNo || voucherData.voucherNumber || '';
+    const docDate = data.date || voucherData.date || '';
+    const totalPaid = Number(sum.totalPaid ?? data.totals?.grandTotal ?? data.summaryAmount?.amount ?? 0);
+
+    const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(s, co);
+
+    const currHtml = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: false });
+    const currHtmlRed = renderCurrencySymbolHtml(co, '0.9em', { inheritColor: true });
+
+    const logoHtml = s.showLogo
+        ? (resolvedLogoUrl
+            ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
+            : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:${gold};">${esc((co.companyName || 'G').charAt(0))}</div>`)
+        : '';
+
+    const metaItems = [
+        s.showVoucherNumber && voucherNo ? ['Voucher No.', voucherNo] : null,
+        s.showVoucherDate && docDate ? ['Date', docDate] : null,
+        s.showVoucherSession && voucherData.session ? ['Payment Session', voucherData.session] : null,
+        s.showInvoiceCount && voucherData.invoiceCount ? ['Invoices', voucherData.invoiceCount] : null,
+        s.showAccountCurrency && voucherData.account ? ['Account', voucherData.account] : null,
+        s.showBankAccount && voucherData.bankAccount ? ['Cash / Bank', voucherData.bankAccount] : null,
+    ].filter(Boolean);
+
+    const metaGridHtml = metaItems.length > 0
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaItems.map(([lbl, val]) =>
+            `<div><p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`
+        ).join('')}</div>`
+        : '';
+
+    const thStyle = `padding:5px 8px;font-size:${f - 0.5}px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid #e2e8f0;background:#f8fafc;white-space:nowrap;`;
+
+    const invoiceRows = invoices.map((inv, i) => {
+        const isFull = (inv.status || '').toLowerCase().includes('full');
+        const statusColor = isFull ? '#059669' : '#d97706';
+        const statusBg = isFull ? '#ecfdf5' : '#fffbeb';
+        const statusBorder = isFull ? '#6ee7b7' : '#fcd34d';
+        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:middle;`;
+        const tdRight = `${tdBase}text-align:right;white-space:nowrap;`;
+        return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'};">
+            <td style="${tdBase}">
+                ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f - 1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
+                <span style="font-weight:600;color:#1d4ed8;font-size:${f}px;">${esc(inv.ref || '—')}</span>
+                ${s.showLinkedLPO && inv.lpoRef ? `<div style="color:#94a3b8;font-size:${f - 1.5}px;margin-top:1px;">LPO: ${esc(inv.lpoRef)}</div>` : ''}
+            </td>
+            ${s.showInvoiceDate ? `<td style="${tdRight}color:#64748b;">${esc(inv.date || '')}</td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="${tdRight}">${currHtml} ${fmt(inv.total)}</td>` : ''}
+            ${s.showOutstanding ? `<td style="${tdRight}">${currHtml} ${fmt(inv.outstanding)}</td>` : ''}
+            ${s.showPaidNow ? `<td style="${tdRight}font-weight:700;color:#1a1a2e;">${currHtml} ${fmt(inv.paid)}</td>` : ''}
+            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
+        </tr>`;
+    }).join('');
+
+    const stampHtml = s.showCompanyStamp ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+            ${resolvedStampUrl
+                ? `<img src="${esc(resolvedStampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
+                : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</div>`}
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Official Stamp</span>
+        </div>` : '';
+
+    const qrHtml = s.showQRCode ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            ${options.qrCodeDataUrl ? `<img src="${esc(options.qrCodeDataUrl)}" style="width:52px;height:52px;" />` : `<div style="width:52px;height:52px;background:#1a1a2e;border-radius:4px;"></div>`}
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Scan to verify</span>
+        </div>` : '';
+
+    const now = new Date();
+    const generatedStr = `${now.toLocaleDateString('en-AE')} ${now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })}`;
+    const generatedUser = co.email || '';
+    const needsInterImport = /\bInter\b/i.test(fontFamily);
+
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Payment Voucher ${esc(voucherNo)}</title>
+${needsInterImport ? `<link rel="preconnect" href="https://fonts.googleapis.com"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>` : ''}
+<style>
+@page { size: ${paper.cssSize}; margin: 12mm; }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: ${esc(fontFamily)}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
+table { width: 100%; border-collapse: collapse; }
+</style></head>
+<body style="padding:0;min-height:100%;">
+<div style="font-family:${esc(fontFamily)};font-size:${f}px;background:#fff;color:#1a1a2e;padding:0 32px 28px 32px;min-height:calc(100vh - 24mm);display:flex;flex-direction:column;">
+
+  <!-- BODY CONTENT (grows) -->
+  <div style="flex:1;padding-top:28px;">
+
+    <!-- HEADER: 3 columns — Vendor | Meta | Logo + Company -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
+
+      <!-- COL 1: Title + Status + Vendor -->
+      <div style="flex:1;">
+        <h1 style="font-size:${f + 11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px 0;letter-spacing:-0.3px;white-space:nowrap;">Vendor Payment Voucher</h1>
+        ${s.showStatusBadge && data.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f - 1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(data.status)}</span></div>` : ''}
+        ${s.showVendorName && vendor.name ? `<div>
+          <p style="font-weight:700;font-size:${f - 0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Vendor</p>
+          <p style="font-weight:700;font-size:${f + 1}px;margin-bottom:2px;">${esc(vendor.name)}</p>
+          ${s.showVendorCode && vendor.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${esc(vendor.code)}</p>` : ''}
+          ${s.showVendorAddress && vendor.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:2px 0 0;">${esc(vendor.address)}</p>` : ''}
+          ${s.showVendorPhone && vendor.phone ? `<p style="margin-top:2px;color:#555;">${esc(vendor.phone)}</p>` : ''}
+          ${s.showVendorEmail && vendor.email ? `<p style="margin-top:1px;color:#555;">${esc(vendor.email)}</p>` : ''}
+          ${s.showVendorTRN && vendor.taxId ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">TRN: ${esc(vendor.taxId)}</p>` : ''}
+        </div>` : ''}
+      </div>
+
+      <!-- COL 2: Voucher meta grid — aligns to bottom of col1 (same as customer receipt) -->
+      <div style="align-self:flex-end;padding-bottom:2px;">${metaGridHtml}</div>
+
+      <!-- COL 3: Logo + Company — name always single line -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        ${logoHtml}
+        ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
+          <p style="font-weight:700;font-size:${f - 1.5}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
+          ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;font-size:${f - 1}px;white-space:pre-line;">${esc(co.address)}</p>` : ''}
+          ${s.showCompanyPhone && co.phone ? `<p style="margin:0;font-size:${f - 1}px;">${esc(co.phone)}</p>` : ''}
+          ${s.showCompanyEmail && co.email ? `<p style="margin:0;font-size:${f - 1}px;">${esc(co.email)}</p>` : ''}
+          ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;font-size:${f - 1}px;">TRN · ${esc(co.trn)}</p>` : ''}
+        </div>` : ''}
+      </div>
+    </div>
+
+    <!-- INVOICES TABLE LABEL -->
+    <div style="font-size:${f - 0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Invoices included in this payment</div>
+
+    <!-- INVOICE TABLE -->
+    <table style="margin-bottom:12px;">
+      <thead>
+        <tr>
+          <th style="${thStyle}text-align:left;">Invoice ref.</th>
+          ${s.showInvoiceDate ? `<th style="${thStyle}text-align:right;">Invoice date</th>` : ''}
+          ${s.showInvoiceTotal ? `<th style="${thStyle}text-align:right;">Invoice total</th>` : ''}
+          ${s.showOutstanding ? `<th style="${thStyle}text-align:right;">Outstanding</th>` : ''}
+          ${s.showPaidNow ? `<th style="${thStyle}text-align:right;color:#92400e;">Paid now</th>` : ''}
+          ${s.showBalanceAfter ? `<th style="${thStyle}text-align:right;">Balance after</th>` : ''}
+        </tr>
+      </thead>
+      <tbody>${invoiceRows || `<tr><td colspan="6" style="padding:12px 8px;font-size:${f}px;color:#94a3b8;text-align:center;">No linked invoices</td></tr>`}</tbody>
+    </table>
+
+  </div><!-- end flex:1 body content -->
+
+  <!-- FOOTER GROUP: pushed to bottom -->
+  <div style="margin-top:auto;">
+
+    <!-- SUMMARY (right-aligned) -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <table style="width:auto;border-collapse:collapse;font-size:${f}px;">
+        <tbody>
+          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Total outstanding</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.totalOutstanding)}</span></td></tr>` : ''}
+          ${s.showDiscountTaken ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Discount taken</td><td style="padding:3px 0;text-align:right;color:#e11d48;white-space:nowrap;min-width:100px;"><span style="color:#e11d48;">${currHtmlRed}</span> <span style="display:inline-block;min-width:70px;text-align:right;">—${fmt(sum.discount || 0)}</span></td></tr>` : ''}
+          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;white-space:nowrap;">Remaining balance</td><td style="padding:3px 0;text-align:right;font-weight:600;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(sum.remaining)}</span></td></tr>` : ''}
+          ${s.showTotalPaidBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;white-space:nowrap;">Total paid now</td><td style="padding:6px 0;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;white-space:nowrap;min-width:100px;">${currHtml} <span style="display:inline-block;min-width:70px;text-align:right;">${fmt(totalPaid)}</span></td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- AMOUNT IN WORDS -->
+    ${s.showAmountInWords && totalPaid ? `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <div style="font-size:${f}px;font-weight:600;color:#1a1a2e;text-align:right;background:#f8fafc;padding:6px 12px;border-radius:4px;border:1px solid #e2e8f0;">
+        <span style="color:#64748b;margin-right:4px;">Amount in words:</span><span style="font-weight:700;color:#1a1a2e;">${esc(formatAmountInWords(totalPaid, co.currency))}</span>
+      </div>
+    </div>` : ''}
+
+    <!-- PAYMENT DETAILS -->
+    ${s.showPaymentMethod && pay.method ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
+      <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
+      ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : '<div></div>'}
+      ${s.showDepositedFrom && pay.depositedFrom ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Paid from</span><span style="font-weight:600;">${esc(pay.depositedFrom)}</span></div>` : ''}
+      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
+    </div>` : ''}
+
+    <!-- NOTE -->
+    ${s.showNote && data.notes ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.notes)}</div>` : ''}
+
+    <!-- STAMP + QR -->
+    ${(s.showCompanyStamp || s.showQRCode) ? `
+    <div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
+      ${stampHtml}
+      ${qrHtml}
+    </div>` : ''}
+
+    <!-- FOOTER STRIP -->
+    ${(s.showGeneratedBy || s.showAuthorisedByLine) ? `
+    <div style="border-top:2px solid ${gold};margin-top:8px;padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f - 0.5}px;color:#64748b;">
+      <div>${s.showGeneratedBy ? `BillBull ERP · Generated: ${esc(generatedStr)}${generatedUser ? ` · User: ${esc(generatedUser)}` : ''}` : ''}</div>
+      ${s.showAuthorisedByLine ? `<div style="display:flex;align-items:center;gap:6px;"><span>Authorised by:</span><span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
+    </div>` : ''}
+
+  </div><!-- end footer group -->
+
+</div>
+</body></html>`;
+};
+
 export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
@@ -4580,6 +5432,9 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
+    }
+    if (template?.category === 'Payment Voucher' && data?.paymentDetails) {
+        return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'print');
 };
@@ -4596,6 +5451,9 @@ export const generateDocumentEmailHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Receipt Voucher' && data?.receiptData) {
         return renderCustomerPaymentReceiptHtml(template, data, options);
+    }
+    if (template?.category === 'Payment Voucher' && data?.paymentDetails) {
+        return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'email');
 };

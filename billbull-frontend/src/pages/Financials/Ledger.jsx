@@ -42,6 +42,7 @@ import { employeesApi } from '../../api/employeesApi';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
@@ -165,8 +166,16 @@ const CustomSelect = ({ label, placeholder, options = [], value, onChange, searc
   );
 };
 
+const SUB_GROUP_OPTIONS_MAP = {
+  Assets: ['Current Assets', 'Fixed Assets', 'Non-Current Assets', 'Cash and Cash Equivalents', 'Accounts Receivable', 'Inventory', 'Other Assets'],
+  Liabilities: ['Current Liabilities', 'Long-Term Liabilities', 'Accounts Payable', 'Accrued Liabilities', 'Other Liabilities'],
+  Equity: ['Owner\'s Equity', 'Retained Earnings', 'Share Capital', 'Drawings'],
+  Income: ['Operating Income', 'Non-Operating Income', 'Sales Revenue', 'Service Revenue', 'Other Income'],
+  Expenses: ['Operating Expenses', 'Cost of Goods Sold (COGS)', 'Administrative Expenses', 'Selling Expenses', 'Payroll Expenses', 'Other Expenses']
+};
+
 const Ledger = () => {
-  const { branches, defaultBranchName } = useBranch();
+  const { branches, defaultBranchName, activeBranch } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
@@ -546,6 +555,34 @@ const Ledger = () => {
   const [ccManager, setCcManager] = useState('');
   const [ccBudget, setCcBudget] = useState('');
   const [ccDescription, setCcDescription] = useState('');
+
+  // --- DERIVED OPTIONS (Must be below state declarations) ---
+  const parentAccountSelectOptions = useMemo(() => {
+    return [
+      { value: '', label: '— None (Root Account) —', searchText: 'none root account' },
+      ...accounts
+        .filter(a => !accId || a.id !== accId)
+        .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+        .map(a => ({
+          value: a.code,
+          label: `${a.code} — ${a.name}`,
+          searchText: `${a.code} ${a.name}`
+        }))
+    ];
+  }, [accounts, accId]);
+
+  const subGroupSelectOptions = useMemo(() => {
+    const defaultOptions = SUB_GROUP_OPTIONS_MAP[selectedGroup] || [];
+    const optionsSet = new Set(defaultOptions);
+    
+    accounts.forEach(acc => {
+      if (acc.group === selectedGroup && acc.sub && acc.sub !== '-' && !optionsSet.has(acc.sub)) {
+        optionsSet.add(acc.sub);
+      }
+    });
+    
+    return Array.from(optionsSet).sort();
+  }, [selectedGroup, accounts]);
 
   // --- FORM STATES: TRANSACTION ---
   const [txnAccount, setTxnAccount] = useState('');
@@ -1024,7 +1061,7 @@ const Ledger = () => {
           <td className={`px-4 py-2 text-xs text-right font-bold ${(node.balanceType || 'Dr') === 'Dr' ? 'text-emerald-600' : 'text-red-600'}`}>
             {(node.balanceAmount === null || node.balanceAmount === undefined) && !node.balanceType
               ? '-'
-              : formatBalance(node.balanceAmount, node.balanceType)}
+              : <><CurrencySymbol /> {parseFloat(node.balanceAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {node.balanceType || 'Dr'}</>}
           </td>
           <td className="px-4 py-2 text-xs text-center">
             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${node.normalBalance === 'Dr'
@@ -1148,18 +1185,20 @@ const glAccountOptions = accounts
   });
 
   const handleExportExcel = () => {
+    const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
     if (activeTab === 'chart') {
-      exportToExcel(accounts, COA_COLUMNS, 'Chart_of_Accounts');
+      exportToExcel(accounts, COA_COLUMNS, 'Chart_of_Accounts', branchMeta);
     } else if (activeTab === 'gl') {
-      exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
+      exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger', branchMeta);
     }
   };
 
   const handleExportPdf = () => {
+    const branchMeta = { companyProfile: company, branch: activeBranch?.name || '' };
     if (activeTab === 'chart') {
-      exportToPDF(accounts, COA_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
+      exportToPDF(accounts, COA_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts', branchMeta);
     } else if (activeTab === 'gl') {
-      exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
+      exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger', branchMeta);
     }
   };
 
@@ -1246,18 +1285,34 @@ const glAccountOptions = accounts
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
               const typeAccounts = accounts.filter(a => {
                 if (a.status === 'archived') return false;
+                if (a.isGroup) return false; // Avoid double counting groups
                 
                 const group = (a.group || '').toLowerCase().trim();
                 const actType = (a.accountType || '').toLowerCase().trim();
                 const target = type.toLowerCase();
-                
+
                 // Robust matching for plural/singular and empty groups
-                return group === target || 
+                return group === target ||
                        group === target.replace(/s$/, '').replace(/ies$/, 'y') ||
-                       actType === target || 
+                       actType === target ||
                        actType === target.replace(/s$/, '').replace(/ies$/, 'y');
               });
-              const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
+              
+              let total = 0;
+              typeAccounts.forEach(acc => {
+                const amount = parseFloat(acc.balanceAmount || 0);
+                if (amount === 0) return;
+                
+                const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
+                const isDebit = balType.toLowerCase().startsWith('dr');
+                const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
+                
+                if (isCrNormal) {
+                  total += isDebit ? -amount : amount;
+                } else {
+                  total += isDebit ? amount : -amount;
+                }
+              });
 
               let icon = Wallet;
               let color = 'text-blue-700';
@@ -1276,7 +1331,7 @@ const glAccountOptions = accounts
                     <IconComp size={16} className={color} />
                     <span className="text-xs font-bold text-slate-500">{type}</span>
                   </div>
-                  <div className="text-xl font-bold text-slate-800 mb-1">{currency} {total.toLocaleString()}</div>
+                  <div className="text-xl font-bold text-slate-800 mb-1"><CurrencySymbol /> {total.toLocaleString()}</div>
                   <div className="text-[10px] text-slate-400 font-medium">{typeAccounts.length} active</div>
                 </div>
               )
@@ -1475,8 +1530,8 @@ const glAccountOptions = accounts
                       </td>
 
                       <td className={`px-4 py-3 font-bold ${row.balColor}`}>
-                        <span className={row.balance.includes('Dr') ? 'text-emerald-600' : 'text-red-600'}>
-                          {row.balance.includes('Dr') ? '▲' : '▼'} {row.balance}
+                        <span className={row.balType === 'Dr' ? 'text-emerald-600' : 'text-red-600'}>
+                          {row.balType === 'Dr' ? '▲' : '▼'} <CurrencySymbol /> {row.balance.replace(/^[A-Z]+ /, '')}
                         </span>
                       </td>
 
@@ -1725,13 +1780,13 @@ const glAccountOptions = accounts
                         <div className="text-[10px] text-slate-400">{entry.ref}</div>
                       </td>
                       <td className="px-4 py-3 text-right text-emerald-600 font-medium">
-                        {entry.debit && `↑ ${entry.debit}`}
+                        {entry.debit && <>↑ <CurrencySymbol /> {entry.debit.replace(/^[A-Z]+ /, '')}</>}
                       </td>
                       <td className="px-4 py-3 text-right text-red-600 font-medium">
-                        {entry.credit && `↓ ${entry.credit}`}
+                        {entry.credit && <>↓ <CurrencySymbol /> {entry.credit.replace(/^[A-Z]+ /, '')}</>}
                       </td>
                       <td className={`px-4 py-3 text-right font-bold ${entry.balType === 'Dr' ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {entry.balance}
+                        <CurrencySymbol /> {entry.balance.replace(/^[A-Z]+ /, '')}
                       </td>
                     </tr>
                   ))}
@@ -1811,11 +1866,11 @@ const glAccountOptions = accounts
                       <div className="flex justify-between items-end mb-4">
                         <div>
                           <div className="text-[10px] text-slate-400">Spent</div>
-                          <div className="text-xs font-bold text-red-600">{currency} {parseFloat(cc.spent).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-red-600"><CurrencySymbol /> {parseFloat(cc.spent).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] text-slate-400">Budget</div>
-                          <div className="text-xs font-bold text-slate-700">{currency} {parseFloat(cc.budget).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-slate-700"><CurrencySymbol /> {parseFloat(cc.budget).toLocaleString()}</div>
                         </div>
                       </div>
 
@@ -1983,8 +2038,8 @@ const glAccountOptions = accounts
                           <div className="text-slate-400">{entry.accName}</div>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{entry.desc}</td>
-                        <td className="px-4 py-3 text-right text-emerald-600 font-medium">{entry.debit}</td>
-                        <td className="px-4 py-3 text-right text-red-600 font-medium">{entry.credit}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600 font-medium">{entry.debit && <><CurrencySymbol /> {entry.debit.replace(/^[A-Z]+ /, '')}</>}</td>
+                        <td className="px-4 py-3 text-right text-red-600 font-medium">{entry.credit && <><CurrencySymbol /> {entry.credit.replace(/^[A-Z]+ /, '')}</>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2075,7 +2130,7 @@ const glAccountOptions = accounts
               </div>
               <div className="pt-4 border-t border-slate-100">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Current Balance</p>
-                <p className={`text-xl font-bold ${selectedAccountForView.balColor}`}>{selectedAccountForView.balance}</p>
+                <p className={`text-xl font-bold ${selectedAccountForView.balColor}`}><CurrencySymbol /> {selectedAccountForView.balance.replace(/^[A-Z]+ /, '')}</p>
               </div>
             </div>
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
@@ -2116,31 +2171,35 @@ const glAccountOptions = accounts
 
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Account Group <span className="text-red-500">*</span></label>
-                  <CustomSelect placeholder="Select account group" options={['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity']} value={selectedGroup} onChange={setSelectedGroup} />
+                  <CustomSelect 
+                    placeholder="Select account group" 
+                    options={['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity']} 
+                    value={selectedGroup} 
+                    onChange={(newGrp) => {
+                      setSelectedGroup(newGrp);
+                      setAccSubGroup('');
+                    }} 
+                  />
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Sub Group</label>
-                  <input type="text" value={accSubGroup} onChange={(e) => setAccSubGroup(e.target.value)} placeholder="e.g., Current Assets, Fixed Asset" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400" />
+                  <CustomSelect 
+                    placeholder="Select or enter sub group" 
+                    options={subGroupSelectOptions} 
+                    value={accSubGroup} 
+                    onChange={setAccSubGroup} 
+                  />
                 </div>
 
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Parent Account</label>
-                  <select
+                  <CustomSelect
+                    placeholder="— None (Root Account) —"
+                    options={parentAccountSelectOptions}
                     value={accParentCode}
-                    onChange={(e) => setAccParentCode(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none bg-white text-slate-700"
-                  >
-                    <option value="">— None (Root Account) —</option>
-                    {accounts
-                      .filter(a => !accId || a.id !== accId)
-                      .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
-                      .map(a => (
-                        <option key={a.id} value={a.code}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))
-                    }
-                  </select>
+                    onChange={setAccParentCode}
+                    searchable
+                  />
                   <p className="text-[10px] text-slate-400 mt-1">Select a parent to nest this account in the tree hierarchy</p>
                 </div>
 

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import com.billbull.backend.util.DocumentOrderingUtil;
+import org.hibernate.Hibernate;
 
 @Service
 public class PaymentVoucherService {
@@ -114,8 +115,9 @@ public class PaymentVoucherService {
 
         PaymentVoucher saved = repository.save(voucher);
         saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
-
-        return repository.save(saved);
+        PaymentVoucher result = repository.save(saved);
+        Hibernate.initialize(result.getBranch());
+        return result;
     }
 
     @Transactional
@@ -130,12 +132,16 @@ public class PaymentVoucherService {
 
         voucher.setStatus(status);
 
-        // 🔥 LOGIC: If Voucher is POSTED (Approved), update the Purchase Invoice
-        if (status == PaymentStatus.POSTED && voucher.getInvoiceId() != null) {
-            applyPaymentToInvoice(voucher);
+        if (status == PaymentStatus.POSTED) {
+            if (voucher.getInvoiceId() != null) {
+                applyPaymentToInvoice(voucher);
+            }
+            postingEngineService.createJournalFromPaymentVoucher(voucher, voucher.getVendorName());
         }
 
-        return repository.save(voucher);
+        PaymentVoucher result = repository.save(voucher);
+        Hibernate.initialize(result.getBranch());
+        return result;
     }
 
     private void applyPaymentToInvoice(PaymentVoucher voucher) {
@@ -190,11 +196,6 @@ public class PaymentVoucherService {
         voucher.setUnallocated(BigDecimal.ZERO);
 
         invoiceRepository.save(invoice);
-
-        // 🔵 AUTO-GENERATE JOURNAL ENTRY
-        // Dr. Accounts Payable (amount)
-        // Cr. Bank (amount)
-        postingEngineService.createJournalFromPaymentVoucher(voucher, invoice.getVendorName());
     }
 
     private BigDecimal sumInvoicePayments(PurchaseInvoice invoice) {

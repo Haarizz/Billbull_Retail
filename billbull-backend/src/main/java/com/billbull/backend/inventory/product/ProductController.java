@@ -126,7 +126,7 @@ public class ProductController {
     // GET ALL (kept for backward-compat — edit/detail screens)
     // -------------------------------------------------
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> list() {
         return ResponseEntity.ok(service.getAll());
     }
@@ -136,13 +136,13 @@ public class ProductController {
     // pickers)
     // -------------------------------------------------
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> searchExact(@RequestParam(defaultValue = "") String q) {
         return ResponseEntity.ok(service.searchProducts(q));
     }
 
     @GetMapping("/by-barcode")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> getByBarcode(@RequestParam String barcode) {
         return ResponseEntity.ok(service.searchProductsByBarcode(barcode));
     }
@@ -151,7 +151,7 @@ public class ProductController {
     // GET BY ID
     // -------------------------------------------------
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductAggregateResponse> get(@PathVariable Long id) {
         return ResponseEntity.ok(service.getById(id));
     }

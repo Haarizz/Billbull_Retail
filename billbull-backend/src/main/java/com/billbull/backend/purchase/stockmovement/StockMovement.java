@@ -47,6 +47,10 @@ public class StockMovement extends BaseEntity {
 	// Used to compute weighted average cost for COGS at delivery.
 	private java.math.BigDecimal unitCost;
 
+	// True when this deduction was permitted to proceed despite insufficient stock
+	// because the product's allowNegative flag was set. Enables negative-stock audit queries.
+	private boolean negativeOverride;
+
 	// Getters and Setters
 
 	public Long getZoneId() {
@@ -151,5 +155,13 @@ public class StockMovement extends BaseEntity {
 
 	public void setUnitCost(java.math.BigDecimal unitCost) {
 		this.unitCost = unitCost;
+	}
+
+	public boolean isNegativeOverride() {
+		return negativeOverride;
+	}
+
+	public void setNegativeOverride(boolean negativeOverride) {
+		this.negativeOverride = negativeOverride;
 	}
 }

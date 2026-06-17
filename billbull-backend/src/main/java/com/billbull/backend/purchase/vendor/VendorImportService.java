@@ -38,88 +38,134 @@ public class VendorImportService {
         try (Workbook workbook = new XSSFWorkbook(file.getInputStream())) {
             for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
                 Sheet sheet = workbook.getSheetAt(i);
+
+                // Detect format: standard BillBull export vs. legacy "Name/Address/Phone" format
                 int headerRowNum = findHeaderRow(sheet, "Vendor Code");
+                boolean legacyFormat = false;
                 if (headerRowNum < 0) {
-                    errors.add("Sheet '" + sheet.getSheetName() + "': Vendor Code header not found.");
+                    headerRowNum = findLegacyHeaderRow(sheet);
+                    legacyFormat = headerRowNum >= 0;
+                }
+                if (headerRowNum < 0) {
+                    errors.add("Sheet '" + sheet.getSheetName() + "': no recognised header row found.");
                     continue;
                 }
 
                 for (int r = headerRowNum + 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
-                    if (row == null || isReportFooterRow(row, 17)) {
+                    if (row == null || isReportFooterRow(row, legacyFormat ? 6 : 17)) {
                         skippedCount++;
                         continue;
                     }
 
                     try {
-                        String code = cell(row, 1);
-                        String vendorName = cell(row, 4);
-                        if (isBlank(code) || isBlank(vendorName)) {
-                            skippedCount++;
-                            continue;
-                        }
+                        if (legacyFormat) {
+                            // Legacy format: A=serial#, B=Name, C=Address, D=Phone, E=Contact person, F=Phone2
+                            String serial = cell(row, 1);
+                            String vendorName = cell(row, 2);
+                            if (isBlank(vendorName)) {
+                                skippedCount++;
+                                continue;
+                            }
+                            String address = cell(row, 3);
+                            String phone = cell(row, 4);
+                            String contact = cell(row, 5);
+                            String phone2 = cell(row, 6);
 
-                        Optional<Vendor> existing = repository.findByCode(code.trim());
-                        boolean isUpdate = existing.isPresent();
-                        Vendor vendor = existing.orElseGet(Vendor::new);
+                            String code = buildLegacyCode("V", serial, vendorName, r);
+                            Optional<Vendor> existing = repository.findByCode(code);
+                            boolean isUpdate = existing.isPresent();
+                            Vendor vendor = existing.orElseGet(Vendor::new);
 
-                        String groupA = cell(row, 2);
-                        String groupB = cell(row, 3);
-                        String type = cell(row, 5);
-                        String profitRate = cell(row, 6);
-                        String address = cell(row, 7);
-                        String city = cell(row, 8);
-                        String state = cell(row, 9);
-                        String country = cell(row, 10);
-                        String trn = cell(row, 11);
-                        String phone = cell(row, 12);
-                        String salesPerson = cell(row, 13);
-                        String mobile = cell(row, 14);
-                        String email = cell(row, 15);
-                        String inactive = firstNonBlank(cell(row, 16), cell(row, 17));
+                            String cleanPhone = cleanPhone(phone);
+                            String cleanPhone2 = cleanPhone(phone2);
+                            String cleanContact = cleanTrailing(contact);
 
-                        vendor.setCode(limit(code.trim(), 255));
-                        vendor.setName(limit(vendorName.trim(), 255));
-                        vendor.setActive(true);
-                        vendor.setStatus(isChecked(inactive) ? "Blocked" : "Active");
-                        vendor.setVendorGroup(limit(firstNonBlank(groupA, groupB, "General"), 255));
-                        vendor.setVendorType(limit(firstNonBlank(type, "Purchase"), 255));
-                        vendor.setCategory(limit(firstNonBlank(groupA, groupB, "General"), 255));
-                        vendor.setCountry(limit(firstNonBlank(country, "United Arab Emirates"), 255));
-                        vendor.setTaxId(limit(trn, 255));
-                        vendor.setPrimaryPhone(limit(phone, 255));
-                        vendor.setMobile(limit(mobile, 255));
-                        vendor.setEmail(limit(email, 255));
-                        vendor.setContact(limit(firstNonBlank(mobile, phone, salesPerson), 255));
-                        vendor.setPrefComm(resolvePreferredCommunication(email, mobile, phone));
-                        vendor.setPriority(firstNonBlank(vendor.getPriority(), "P2 - High"));
-                        vendor.setCurrency(firstNonBlank(vendor.getCurrency(), "AED"));
-                        vendor.setPayTerms(firstNonBlank(vendor.getPayTerms(), "Cash on Delivery"));
-                        vendor.setBalType(firstNonBlank(vendor.getBalType(), "Payable (We owe vendor)"));
-                        vendor.setPayPref(firstNonBlank(vendor.getPayPref(), "Bank Transfer"));
-                        if (vendor.getOpeningBalance() == null) {
-                            vendor.setOpeningBalance(BigDecimal.ZERO);
-                        }
-                        if (vendor.getBalance() == null) {
-                            vendor.setBalance(BigDecimal.ZERO);
-                        }
-                        if (vendor.getRating() == null) {
-                            vendor.setRating(BigDecimal.ZERO);
-                        }
-                        vendor.setAddress(limit(joinNonBlank(", ", address, city, state, country), 255));
-                        vendor.setCommNotes(limit(buildNotes(
-                                "Sales Person", salesPerson,
-                                "Def Profit Rate", profitRate,
-                                "City", city,
-                                "State", state,
-                                "Group 2", groupB,
-                                "Inactive", inactive), 255));
+                            vendor.setCode(code);
+                            vendor.setName(limit(vendorName.trim(), 255));
+                            vendor.setActive(true);
+                            vendor.setStatus("Active");
+                            vendor.setVendorGroup("General");
+                            vendor.setVendorType("Purchase");
+                            vendor.setCategory("General");
+                            vendor.setCountry("United Arab Emirates");
+                            vendor.setAddress(limit(cleanTrailing(address), 255));
+                            vendor.setPrimaryPhone(limit(cleanPhone, 255));
+                            vendor.setMobile(limit(firstNonBlank(cleanPhone2, cleanPhone), 255));
+                            vendor.setContact(limit(firstNonBlank(cleanContact, cleanPhone), 255));
+                            vendor.setPrefComm(resolvePreferredCommunication(null, cleanPhone2, cleanPhone));
+                            vendor.setPriority(firstNonBlank(vendor.getPriority(), "P2 - High"));
+                            vendor.setCurrency(firstNonBlank(vendor.getCurrency(), "AED"));
+                            vendor.setPayTerms(firstNonBlank(vendor.getPayTerms(), "Cash on Delivery"));
+                            vendor.setBalType(firstNonBlank(vendor.getBalType(), "Payable (We owe vendor)"));
+                            vendor.setPayPref(firstNonBlank(vendor.getPayPref(), "Bank Transfer"));
+                            if (vendor.getOpeningBalance() == null) vendor.setOpeningBalance(BigDecimal.ZERO);
+                            if (vendor.getBalance() == null) vendor.setBalance(BigDecimal.ZERO);
+                            if (vendor.getRating() == null) vendor.setRating(BigDecimal.ZERO);
 
-                        repository.save(vendor);
-                        if (isUpdate) {
-                            updatedCount++;
+                            repository.save(vendor);
+                            if (isUpdate) updatedCount++; else createdCount++;
                         } else {
-                            createdCount++;
+                            // Standard BillBull format
+                            String code = cell(row, 1);
+                            String vendorName = cell(row, 4);
+                            if (isBlank(code) || isBlank(vendorName)) {
+                                skippedCount++;
+                                continue;
+                            }
+
+                            Optional<Vendor> existing = repository.findByCode(code.trim());
+                            boolean isUpdate = existing.isPresent();
+                            Vendor vendor = existing.orElseGet(Vendor::new);
+
+                            String groupA = cell(row, 2);
+                            String groupB = cell(row, 3);
+                            String type = cell(row, 5);
+                            String profitRate = cell(row, 6);
+                            String address = cell(row, 7);
+                            String city = cell(row, 8);
+                            String state = cell(row, 9);
+                            String country = cell(row, 10);
+                            String trn = cell(row, 11);
+                            String phone = cell(row, 12);
+                            String salesPerson = cell(row, 13);
+                            String mobile = cell(row, 14);
+                            String email = cell(row, 15);
+                            String inactive = firstNonBlank(cell(row, 16), cell(row, 17));
+
+                            vendor.setCode(limit(code.trim(), 255));
+                            vendor.setName(limit(vendorName.trim(), 255));
+                            vendor.setActive(true);
+                            vendor.setStatus(isChecked(inactive) ? "Blocked" : "Active");
+                            vendor.setVendorGroup(limit(firstNonBlank(groupA, groupB, "General"), 255));
+                            vendor.setVendorType(limit(firstNonBlank(type, "Purchase"), 255));
+                            vendor.setCategory(limit(firstNonBlank(groupA, groupB, "General"), 255));
+                            vendor.setCountry(limit(firstNonBlank(country, "United Arab Emirates"), 255));
+                            vendor.setTaxId(limit(trn, 255));
+                            vendor.setPrimaryPhone(limit(phone, 255));
+                            vendor.setMobile(limit(mobile, 255));
+                            vendor.setEmail(limit(email, 255));
+                            vendor.setContact(limit(firstNonBlank(mobile, phone, salesPerson), 255));
+                            vendor.setPrefComm(resolvePreferredCommunication(email, mobile, phone));
+                            vendor.setPriority(firstNonBlank(vendor.getPriority(), "P2 - High"));
+                            vendor.setCurrency(firstNonBlank(vendor.getCurrency(), "AED"));
+                            vendor.setPayTerms(firstNonBlank(vendor.getPayTerms(), "Cash on Delivery"));
+                            vendor.setBalType(firstNonBlank(vendor.getBalType(), "Payable (We owe vendor)"));
+                            vendor.setPayPref(firstNonBlank(vendor.getPayPref(), "Bank Transfer"));
+                            if (vendor.getOpeningBalance() == null) vendor.setOpeningBalance(BigDecimal.ZERO);
+                            if (vendor.getBalance() == null) vendor.setBalance(BigDecimal.ZERO);
+                            if (vendor.getRating() == null) vendor.setRating(BigDecimal.ZERO);
+                            vendor.setAddress(limit(joinNonBlank(", ", address, city, state, country), 255));
+                            vendor.setCommNotes(limit(buildNotes(
+                                    "Sales Person", salesPerson,
+                                    "Def Profit Rate", profitRate,
+                                    "City", city,
+                                    "State", state,
+                                    "Group 2", groupB,
+                                    "Inactive", inactive), 255));
+
+                            repository.save(vendor);
+                            if (isUpdate) updatedCount++; else createdCount++;
                         }
                     } catch (Exception e) {
                         errorCount++;
@@ -150,6 +196,42 @@ public class VendorImportService {
             }
         }
         return -1;
+    }
+
+    // Detects legacy format: header row where column B = "Name", column D = "Phone"
+    private int findLegacyHeaderRow(Sheet sheet) {
+        for (int r = 0; r <= Math.min(sheet.getLastRowNum(), 20); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            String colB = cell(row, 2);
+            String colD = cell(row, 4);
+            if ("Name".equalsIgnoreCase(colB) && "Phone".equalsIgnoreCase(colD)) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    private String buildLegacyCode(String prefix, String serial, String name, int rowIndex) {
+        if (!isBlank(serial)) {
+            String digits = serial.trim().replaceAll("[^0-9]", "");
+            if (!digits.isEmpty()) {
+                return prefix + String.format("%04d", Integer.parseInt(digits));
+            }
+        }
+        String slug = name.trim().replaceAll("[^a-zA-Z0-9]", "").toUpperCase();
+        if (slug.length() > 8) slug = slug.substring(0, 8);
+        return prefix + slug + rowIndex;
+    }
+
+    private String cleanPhone(String phone) {
+        if (isBlank(phone)) return null;
+        return phone.trim().replaceAll("[,\\s]+$", "");
+    }
+
+    private String cleanTrailing(String value) {
+        if (isBlank(value)) return null;
+        return value.trim().replaceAll("[,\\s]+$", "");
     }
 
     private String resolvePreferredCommunication(String email, String mobile, String phone) {

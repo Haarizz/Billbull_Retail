@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,6 +17,8 @@ public interface BinRepository extends JpaRepository<Bin, Long> {
     Optional<Bin> findByIdEager(@Param("id") Long id);
 
     List<Bin> findByLocatorId(Long locatorId);
+
+    List<Bin> findByLocatorIdIn(Collection<Long> locatorIds);
 
     List<Bin> findByLocatorIdAndStatus(Long locatorId, String status);
 

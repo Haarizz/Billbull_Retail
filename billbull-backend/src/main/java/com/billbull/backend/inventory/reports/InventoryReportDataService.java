@@ -70,6 +70,7 @@ public class InventoryReportDataService {
     private final SalesInvoiceRepository salesInvoiceRepo;
     private final PurchaseInvoiceRepository purchaseInvoiceRepo;
     private final GrnRepository grnRepo;
+    private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo;
 
     public InventoryReportDataService(
             InventoryReportService stockReportService,
@@ -83,7 +84,8 @@ public class InventoryReportDataService {
             StockTransferRepository stockTransferRepo,
             SalesInvoiceRepository salesInvoiceRepo,
             PurchaseInvoiceRepository purchaseInvoiceRepo,
-            GrnRepository grnRepo) {
+            GrnRepository grnRepo,
+            com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo) {
         this.stockReportService = stockReportService;
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
@@ -96,6 +98,7 @@ public class InventoryReportDataService {
         this.salesInvoiceRepo = salesInvoiceRepo;
         this.purchaseInvoiceRepo = purchaseInvoiceRepo;
         this.grnRepo = grnRepo;
+        this.glBalanceRepo = glBalanceRepo;
     }
 
     public InventoryReportDataResponse getReport(String reportId, Long warehouseId) {
@@ -247,29 +250,50 @@ public class InventoryReportDataService {
     }
 
     private InventoryReportDataResponse negativeStock(Long warehouseId) {
+        // Build a map of productId -> override count so we can flag intentional negatives
+        Map<Long, Long> overrideCountByProduct = stockRepo.findAll().stream()
+                .filter(m -> m.isNegativeOverride())
+                .collect(Collectors.groupingBy(
+                        com.billbull.backend.purchase.stockmovement.StockMovement::getProductId,
+                        Collectors.counting()));
+
         List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId).stream()
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) < 0)
                 .sorted(Comparator.comparing(StockReportResponse::getValue))
                 .toList();
+
         List<Map<String, Object>> rows = source.stream()
-                .map(r -> row(
-                        "sku", r.getSku(),
-                        "item", r.getItem(),
-                        "category", r.getCategory(),
-                        "warehouse", r.getWarehouse(),
-                        "qty", r.getOnHand(),
-                        "rootIssue", "Negative stock ledger balance",
-                        "lastTxn", r.getLastSold(),
-                        "costImpact", r.getValue(),
-                        "severity", severityForCost(r.getValue().abs()),
-                        "batchNumber", r.getBatchNumber()))
+                .map(r -> {
+                    Product p = productRepo.findByCodeAndIsActiveTrue(r.getSku()).orElse(null);
+                    long overrides = p != null ? overrideCountByProduct.getOrDefault(p.getId(), 0L) : 0L;
+                    boolean allowNegative = p != null && p.getInventory() != null && p.getInventory().isAllowNegative();
+                    String rootIssue = allowNegative && overrides > 0
+                            ? "Intentional — product allows negative stock (" + overrides + " override txns)"
+                            : "Negative stock ledger balance — investigate";
+                    return row(
+                            "sku", r.getSku(),
+                            "item", r.getItem(),
+                            "category", r.getCategory(),
+                            "warehouse", r.getWarehouse(),
+                            "qty", r.getOnHand(),
+                            "rootIssue", rootIssue,
+                            "allowNegative", allowNegative,
+                            "overrideTxns", overrides,
+                            "lastTxn", r.getLastSold(),
+                            "costImpact", r.getValue(),
+                            "severity", allowNegative ? "Intentional" : severityForCost(r.getValue().abs()),
+                            "batchNumber", r.getBatchNumber());
+                })
                 .toList();
+
+        long intentional = rows.stream().filter(r -> Boolean.TRUE.equals(r.get("allowNegative"))).count();
+        long unintentional = rows.size() - intentional;
         InventoryReportDataResponse report = base("negative-stock-mismatch", "Negative Stock / Mismatch",
-                "Items with stock below zero and cost exposure.");
+                "Items with stock below zero. Intentional = product has Allow Negative Stock enabled. Unintentional = data error.");
         report.setCards(List.of(
-                card("Negative SKUs", rows.size(), "data integrity issues", "number"),
-                card("Critical", countRows(rows, "severity", "Critical"), "immediate fix needed", "number"),
-                card("High Severity", countRows(rows, "severity", "High"), "action required", "number"),
+                card("Negative SKUs", rows.size(), "total below-zero items", "number"),
+                card("Intentional (Override)", intentional, "product allows negative stock", "number"),
+                card("Unintentional", unintentional, "investigate — possible data error", "number"),
                 card("Cost Impact", sum(rows, "costImpact"), "financial exposure", "currency")));
         report.setColumns(List.of(
                 column("SKU", "sku", "text"),
@@ -277,6 +301,7 @@ public class InventoryReportDataService {
                 column("Category", "category", "text"),
                 column("Warehouse", "warehouse", "text"),
                 column("Qty", "qty", "number"),
+                column("Override Txns", "overrideTxns", "number"),
                 column("Root Issue", "rootIssue", "text"),
                 column("Cost Impact", "costImpact", "currency"),
                 column("Severity", "severity", "badge")));
@@ -310,12 +335,22 @@ public class InventoryReportDataService {
                     "expiryDate", r.getExpiryDate());
         }).toList();
 
+        // GL reconciliation: sum all GlAccountBalance rows for account 1120 (Inventory).
+        // A non-zero variance indicates an unposted adjustment or WAC drift — flag it for review.
+        java.math.BigDecimal glInventoryBalance = glBalanceRepo.findByAccountCode("1200").stream()
+                .map(b -> b.getClosingBalance() != null ? b.getClosingBalance() : java.math.BigDecimal.ZERO)
+                .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+        java.math.BigDecimal wacTotal = sum(rows, "value");
+        java.math.BigDecimal glVariance = glInventoryBalance.subtract(wacTotal);
+
         InventoryReportDataResponse report = base("stock-valuation", "Stock Valuation",
-                "Inventory valuation by configured cost, FIFO, and last purchase cost.");
+                "Inventory valuation by configured cost, FIFO, and last purchase cost. GL account 1120 balance shown for reconciliation.");
         report.setCards(List.of(
-                card("Average/Method Cost", sum(rows, "value"), "configured cost method", "currency"),
+                card("Average/Method Cost", wacTotal, "configured cost method", "currency"),
                 card("FIFO Cost Method", sum(rows, "fifoValue"), "first-in first-out basis", "currency"),
-                card("Last Purchase Cost", sum(rows, "lastPurchaseValue"), "latest purchase price", "currency")));
+                card("Last Purchase Cost", sum(rows, "lastPurchaseValue"), "latest purchase price", "currency"),
+                card("GL Account 1120 Balance", glInventoryBalance, "inventory control account (ledger)", "currency"),
+                card("GL vs WAC Variance", glVariance, glVariance.abs().compareTo(new java.math.BigDecimal("0.01")) < 1 ? "reconciled" : "INVESTIGATE — see audit log", "currency")));
         report.setCharts(List.of(
                 chart("Valuation by Category", "bar", sumBy(rows, "category", "value")),
                 chart("Warehouse Distribution", "pie", sumBy(rows, "warehouse", "value"))));
@@ -405,17 +440,21 @@ public class InventoryReportDataService {
                             "outQty", qty.compareTo(BigDecimal.ZERO) < 0 ? qty.abs() : null,
                             "balance", currentBalance.getOrDefault(key(m.getProductId(), m.getWarehouseId()), BigDecimal.ZERO),
                             "unitCost", bd(m.getUnitCost()),
-                            "batchNumber", m.getBatchNumber());
+                            "batchNumber", m.getBatchNumber(),
+                            "negativeOverride", m.isNegativeOverride());
                 })
                 .toList();
 
+        long negativeOverrideCount = rows.stream()
+                .filter(r -> Boolean.TRUE.equals(r.get("negativeOverride")))
+                .count();
         InventoryReportDataResponse report = base("stock-movement-ledger", "Stock Movement Ledger",
                 "All stock in/out transactions with current balance.");
         report.setCards(List.of(
                 card("Transactions", rows.size(), "latest ledger rows", "number"),
                 card("Inbound Qty", sum(rows, "inQty"), "units", "number"),
                 card("Outbound Qty", sum(rows, "outQty"), "units", "number"),
-                card("Net Qty", sum(rows, "inQty").subtract(sum(rows, "outQty")), "units", "number")));
+                card("Negative Overrides", negativeOverrideCount, "sold below zero stock", "number")));
         report.setColumns(List.of(
                 column("Date", "date", "date"),
                 column("Type", "type", "badge"),
@@ -426,7 +465,8 @@ public class InventoryReportDataService {
                 column("In", "inQty", "number"),
                 column("Out", "outQty", "number"),
                 column("Balance", "balance", "number"),
-                column("Unit Cost", "unitCost", "currency")));
+                column("Unit Cost", "unitCost", "currency"),
+                column("Neg. Override", "negativeOverride", "badge")));
         report.setRows(rows);
         return report;
     }

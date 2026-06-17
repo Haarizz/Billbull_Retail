@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.brand;
 
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -15,26 +16,32 @@ import java.util.List;
 @RequestMapping("/api/brands")
 public class BrandController {
 
+    private static final String MODULE = "inventory";
+
     private final BrandService service;
     private final BrandExportService exportService;
+    private final ModulePermissionService modulePermissionService;
 
-    public BrandController(BrandService service, BrandExportService exportService) {
+    public BrandController(BrandService service, BrandExportService exportService, ModulePermissionService modulePermissionService) {
         this.service = service;
         this.exportService = exportService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // ---------------------------
     // LIST (ONLY ONE GET)
     // ---------------------------
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','ACCOUNTANT','PURCHASE_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public List<BrandResponse> list() {
+        modulePermissionService.requireCanView(MODULE);
         return service.list();
     }
 
     @GetMapping("/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<InputStreamResource> exportBrandsToExcel() {
+        modulePermissionService.requireCanExport(MODULE);
         List<BrandResponse> brands = service.list(); // Changed from getAll() to list() to match existing method
         ByteArrayInputStream in = exportService.export(brands);
 
@@ -52,10 +59,11 @@ public class BrandController {
     // CREATE
     // ---------------------------
     @PostMapping(consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BrandResponse> create(
             @RequestPart("data") BrandRequest req,
             @RequestPart(value = "logo", required = false) MultipartFile logo) {
+        modulePermissionService.requireCanCreate(MODULE);
         return ResponseEntity.ok(service.create(req, logo));
     }
 
@@ -63,11 +71,12 @@ public class BrandController {
     // UPDATE
     // ---------------------------
     @PutMapping(value = "/{id}", consumes = "multipart/form-data")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<BrandResponse> update(
             @PathVariable Long id,
             @RequestPart("data") BrandRequest req,
             @RequestPart(value = "logo", required = false) MultipartFile logo) {
+        modulePermissionService.requireCanEdit(MODULE);
         return ResponseEntity.ok(service.update(id, req, logo));
     }
 
@@ -77,6 +86,7 @@ public class BrandController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit(MODULE);
         service.delete(id);
         return ResponseEntity.ok().build();
     }

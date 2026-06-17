@@ -142,6 +142,7 @@ public class SalesOrderService {
         double tax = 0;
         SalesOrderStatus requestedStatus = order.getStatus();
         boolean confirmingOrder = requestedStatus != SalesOrderStatus.DRAFT;
+        boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
         Map<Long, List<DeliveryBatchSelectionResponse>> existingBatchSelections =
                 order.getId() != null
                         ? batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, order.getId())
@@ -152,9 +153,6 @@ public class SalesOrderService {
                 item.setSalesOrder(order);
                 hydrateOrderItemDisplayData(item);
 
-                // 🏗️ HARD VALIDATION: Sales Orders are Hard Reservations
-                // Check if the business has enough available stock (which deducts previous SOs)
-                // before confirming this SO
                 if (order.getWarehouse() != null && item.getItemCode() != null && item.getQuantity() != null) {
                     com.billbull.backend.inventory.product.Product product = productRepo
                             .findByCodeAndIsActiveTrue(item.getItemCode())
@@ -182,7 +180,7 @@ public class SalesOrderService {
                             available = available.add(BigDecimal.valueOf(sumActiveBatchSelections(
                                     existingBatchSelections.getOrDefault(item.getId(), List.of()))));
                         }
-                        if (available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
+                        if (stockCheckRequired && available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
                             throw new IllegalStateException(
                                     "Insufficient available stock for item " + item.getItemCode() +
                                             ". Available: " + available + ", Required (base units): " + baseRequired);
@@ -195,16 +193,22 @@ public class SalesOrderService {
 
                 double lineTotal = item.getLineTotal() != null ? item.getLineTotal() : 0;
                 double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
+                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
 
-                subTotal += (lineTotal - taxAmount);
+                subTotal += (lineTotal - taxAmount + footerDisc);
                 tax += taxAmount;
             }
         }
 
-        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
-        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        
+        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
+        double billDiscAmt = order.getBillDiscountAmount() != null ? order.getBillDiscountAmount() : 0;
+        if (billDiscAmt == 0 && billDiscPct > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        }
+
         double tax2 = BigDecimal.valueOf(tax).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double total = BigDecimal.valueOf(subTotal - billDiscAmt + tax2).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : 0;
@@ -232,23 +236,64 @@ public class SalesOrderService {
             order.setStatus(SalesOrderStatus.CONFIRMED);
         } else if (advance > 0 && advance < total) {
             order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
-        } else if (advance >= total) {
-            order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
+        } else if (advance >= total && total > 0) {
+            order.setStatus(SalesOrderStatus.FULLY_PAID);
         } else {
             order.setStatus(SalesOrderStatus.CONFIRMED);
         }
 
+        // Release any RESERVED batch allocations whose source line no longer exists in
+        // the incoming item list. This covers the case where item IDs changed (e.g. due to
+        // a re-link to a quotation that cleared soItemId) causing orphanRemoval to recreate
+        // items with new IDs, leaving the old allocations stranded.
+        if (order.getId() != null && order.getItems() != null) {
+            java.util.Set<Long> survivingItemIds = order.getItems().stream()
+                    .map(SalesOrderItem::getId)
+                    .filter(id -> id != null)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!survivingItemIds.isEmpty()) {
+                batchSelectionService.releaseStaleOrderLines(order.getId(), survivingItemIds);
+            }
+        }
+
         SalesOrder saved = orderRepo.save(order);
 
-        // QA-032: Auto-create a Receipt Voucher when a Sales Order is saved
-        // with an advance payment. The RV is what the user prints from the SO
-        // (and what the downstream invoice will credit). Skip drafts, only
-        // create once per SO (subsequent edits don't duplicate the receipt).
+        // QA-032: Auto-create a Receipt Voucher for each payment instalment on this SO.
+        // Previously-recorded RVs are summed to find the already-receipted total; a new RV
+        // is created only for the delta (newAdvance − alreadyReceipited). This supports
+        // split / top-up payments without duplicating existing receipts.
+        // Wrapped in try/catch so posting-engine failures don't roll back the SO save.
         if (saved.getStatus() != SalesOrderStatus.DRAFT
                 && saved.getAdvanceAmount() != null
-                && saved.getAdvanceAmount() > 0
-                && receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(saved.getId()).isEmpty()) {
-            createAdvanceReceiptForOrder(saved);
+                && saved.getAdvanceAmount() > 0) {
+            try {
+                List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> existing =
+                        receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(saved.getId());
+                double alreadyReceipted = existing.stream()
+                        .mapToDouble(rv -> rv.getAmount() != null ? rv.getAmount().doubleValue() : 0.0)
+                        .sum();
+                double delta = BigDecimal.valueOf(saved.getAdvanceAmount() - alreadyReceipted)
+                        .setScale(2, RoundingMode.HALF_UP).doubleValue();
+                if (delta > 0.001) {
+                    createAdvanceReceiptForOrder(saved, delta);
+                    // Re-read the true receipted total (includes the RV just created in its own txn)
+                    // and write it back so advanceAmount always equals the sum of posted RVs.
+                    double trueReceipted = receiptVoucherRepository
+                            .findBySalesOrderIdOrderByDateDesc(saved.getId()).stream()
+                            .mapToDouble(rv -> rv.getAmount() != null ? rv.getAmount().doubleValue() : 0.0)
+                            .sum();
+                    double capped = BigDecimal.valueOf(Math.min(trueReceipted, saved.getOrderTotal()))
+                            .setScale(2, RoundingMode.HALF_UP).doubleValue();
+                    saved.setAdvanceAmount(capped);
+                    saved.setBalanceDue(BigDecimal.valueOf(saved.getOrderTotal() - capped)
+                            .setScale(2, RoundingMode.HALF_UP).doubleValue());
+                    orderRepo.save(saved);
+                }
+            } catch (Exception ex) {
+                // Log and continue — receipt-voucher GL failure must not roll back the payment save.
+                org.slf4j.LoggerFactory.getLogger(getClass())
+                        .error("Failed to auto-create advance receipt for SO {}: {}", saved.getSoNumber(), ex.getMessage());
+            }
         }
 
         // ✅ MARK LINKED QUOTATION AS CONVERTED and stamp current revision number
@@ -269,6 +314,12 @@ public class SalesOrderService {
         // Force the lazy warehouse proxy to load while the transaction is still open,
         // so Jackson can serialize it after the session closes (open-in-view=false).
         Hibernate.initialize(saved.getWarehouse());
+
+        // Populate transient batch-selection data so the frontend receives the
+        // current reservations immediately after save (without a separate GET).
+        // Without this, batchSelections is always [] in the save response, causing
+        // the modal to show a stale FEFO preview instead of the actual reserved batch.
+        hydrateOrderItemDisplayData(saved);
 
         return saved;
     }
@@ -318,6 +369,25 @@ public class SalesOrderService {
         Hibernate.initialize(order.getWarehouse());
         hydrateOrderItemDisplayData(order);
         return order;
+    }
+
+    // ----------------------------
+    // STATS
+    // ----------------------------
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats() {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.YearMonth month = java.time.YearMonth.now();
+        java.time.LocalDate monthStart = month.atDay(1);
+        java.time.LocalDate monthEnd = month.atEndOfMonth();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("todayOrders", orderRepo.countBetween(today, today));
+        stats.put("thisMonthOrders", orderRepo.countBetween(monthStart, monthEnd));
+        stats.put("thisMonthValue", orderRepo.sumOrderTotalBetween(monthStart, monthEnd));
+        stats.put("confirmedOrders", orderRepo.countConfirmedBetween(monthStart, monthEnd));
+        stats.put("outstandingBalance", orderRepo.sumOutstandingBalance());
+        return stats;
     }
 
     // ----------------------------
@@ -398,6 +468,11 @@ public class SalesOrderService {
             order.setStatus(status);
             orderRepo.save(order);
         });
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<Long> findIdBySoNumber(String soNumber) {
+        return orderRepo.findBySoNumber(soNumber).map(SalesOrder::getId);
     }
 
     @Caching(evict = {
@@ -731,7 +806,7 @@ public class SalesOrderService {
         return vouchers;
     }
 
-    private void createAdvanceReceiptForOrder(SalesOrder order) {
+    private void createAdvanceReceiptForOrder(SalesOrder order, double amount) {
         com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv =
                 new com.billbull.backend.financials.receiptvoucher.ReceiptVoucher();
         rv.setDate(order.getOrderDate() != null
@@ -744,7 +819,7 @@ public class SalesOrderService {
         rv.setReference(order.getPaymentReference() != null && !order.getPaymentReference().isBlank()
                 ? order.getPaymentReference()
                 : "Advance against SO: " + order.getSoNumber());
-        rv.setAmount(java.math.BigDecimal.valueOf(order.getAdvanceAmount()));
+        rv.setAmount(java.math.BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP));
         rv.setMemberName(order.getCustomerName() != null
                 ? order.getCustomerName()
                 : "Walk-in Customer");
@@ -753,6 +828,6 @@ public class SalesOrderService {
         rv.setSalesOrderId(order.getId());
         rv.setCustomerCode(order.getCustomerCode());
 
-        receiptVoucherService.createReceipt(rv, null);
+        receiptVoucherService.createReceiptInNewTransaction(rv, null);
     }
 }

@@ -5,6 +5,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.user.UserService;
 import com.billbull.backend.user.UserRepository;
 
@@ -12,6 +14,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class EmployeeServiceImpl implements EmployeeService {
@@ -20,16 +23,19 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final UserRepository userRepository;
     private final AdminSafeguardService adminSafeguardService;
     private final UserService userService;
+    private final BranchRepository branchRepository;
 
     public EmployeeServiceImpl(
             EmployeeRepository repository,
             UserRepository userRepository,
             AdminSafeguardService adminSafeguardService,
-            UserService userService) {
+            UserService userService,
+            BranchRepository branchRepository) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.adminSafeguardService = adminSafeguardService;
         this.userService = userService;
+        this.branchRepository = branchRepository;
     }
 
     @Override
@@ -60,6 +66,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee employee = request.toEmployee();
         employee.setStatus("Pending");
         employee.setWorkflowStage("HR Review");
+        resolveBranchEntity(employee);
         handleAvatarUpload(employee, avatar);
         Employee saved = repository.save(employee);
 
@@ -104,14 +111,40 @@ public class EmployeeServiceImpl implements EmployeeService {
         existing.setBasicSalary(updated.getBasicSalary());
         existing.setEmiratesId(updated.getEmiratesId());
         existing.setEmiratesIdExpiry(updated.getEmiratesIdExpiry());
+        existing.setPassportNumber(updated.getPassportNumber());
+        existing.setPassportIssueDate(updated.getPassportIssueDate());
+        existing.setPassportExpiryDate(updated.getPassportExpiryDate());
+        existing.setVisaType(updated.getVisaType());
+        existing.setVisaNumber(updated.getVisaNumber());
+        existing.setVisaExpiryDate(updated.getVisaExpiryDate());
 
+        // Emergency contact
+        existing.setEmergencyContactName(updated.getEmergencyContactName());
+        existing.setEmergencyContactRelation(updated.getEmergencyContactRelation());
+        existing.setEmergencyContactPhone(updated.getEmergencyContactPhone());
+
+        // Attendance / shift
+        existing.setShiftType(updated.getShiftType());
+        existing.setWorkDays(updated.getWorkDays());
+        existing.setWeeklyOffDays(updated.getWeeklyOffDays());
+        existing.setLeavePolicy(updated.getLeavePolicy());
+
+        // Additional branch access
+        existing.setAdditionalBranchIds(updated.getAdditionalBranchIds());
+        existing.setAdditionalWarehouseIds(updated.getAdditionalWarehouseIds());
+
+        // Notes & tags
+        existing.setHrNotes(updated.getHrNotes());
+        existing.setTags(updated.getTags());
+
+        resolveBranchEntity(existing);
         handleAvatarUpload(existing, avatar);
         Employee saved = repository.save(existing);
 
-        // Sync linked user email if employee email changed
         String newEmail = updated.getEmail();
-        if (newEmail != null && !newEmail.equals(oldEmail)) {
-            userRepository.findByLinkedEmployee_Id(id).ifPresent(user -> {
+        userRepository.findByLinkedEmployee_Id(id).ifPresent(user -> {
+            boolean userChanged = false;
+            if (newEmail != null && !newEmail.equals(oldEmail)) {
                 // Only sync username if it was originally derived from the old email
                 if (oldEmail != null && oldEmail.equals(user.getUsername())) {
                     boolean usernameConflict = userRepository.findByUsername(newEmail).isPresent();
@@ -120,9 +153,39 @@ public class EmployeeServiceImpl implements EmployeeService {
                     }
                 }
                 user.setEmail(newEmail);
+                userChanged = true;
+            }
+
+            Branch primaryBranch = existing.getBranchEntity();
+
+            // Sync primary branch
+            if (primaryBranch != null && (user.getBranch() == null || !primaryBranch.getId().equals(user.getBranch().getId()))) {
+                user.setBranch(primaryBranch);
+                userChanged = true;
+            } else if (primaryBranch == null && user.getBranch() != null) {
+                user.setBranch(null);
+                userChanged = true;
+            }
+
+            // Sync additional branches
+            java.util.Set<com.billbull.backend.settings.branch.Branch> nextAdditionalBranches = new java.util.HashSet<>();
+            if (existing.getAdditionalBranchIds() != null && !existing.getAdditionalBranchIds().isEmpty()) {
+                String[] parts = existing.getAdditionalBranchIds().split(",");
+                for (String part : parts) {
+                    try {
+                        Long bid = Long.parseLong(part.trim());
+                        if (primaryBranch != null && bid.equals(primaryBranch.getId())) continue;
+                        branchRepository.findById(bid).ifPresent(nextAdditionalBranches::add);
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+            user.setAdditionalBranches(nextAdditionalBranches);
+            userChanged = true;
+
+            if (userChanged) {
                 userRepository.save(user);
-            });
-        }
+            }
+        });
 
         return saved;
     }
@@ -194,6 +257,46 @@ public class EmployeeServiceImpl implements EmployeeService {
         emp.setStatus("Rejected");
         emp.setWorkflowStage("Rejected");
         return repository.save(emp);
+    }
+
+    private void resolveBranchEntity(Employee employee) {
+        String branchName = employee.getBranch();
+        if (branchName == null || branchName.isBlank()) {
+            employee.setBranchEntity(null);
+            return;
+        }
+
+        String label = branchName.trim();
+        employee.setBranchEntity(
+                branchRepository.findByCodeIgnoreCase(label)
+                        .or(() -> branchRepository.findByNameIgnoreCase(label))
+                        .or(() -> resolveBranchFromFormattedLabel(label))
+                        .orElse(null));
+    }
+
+    private Optional<Branch> resolveBranchFromFormattedLabel(String label) {
+        int openParenIndex = label.lastIndexOf('(');
+        int closeParenIndex = label.lastIndexOf(')');
+
+        if (openParenIndex < 0 || closeParenIndex <= openParenIndex) {
+            return Optional.empty();
+        }
+
+        String code = label.substring(openParenIndex + 1, closeParenIndex).trim();
+        String name = label.substring(0, openParenIndex).trim();
+
+        if (!code.isBlank()) {
+            Optional<Branch> byCode = branchRepository.findByCodeIgnoreCase(code);
+            if (byCode.isPresent()) {
+                return byCode;
+            }
+        }
+
+        if (!name.isBlank()) {
+            return branchRepository.findByNameIgnoreCase(name);
+        }
+
+        return Optional.empty();
     }
 
     private void handleAvatarUpload(Employee employee, MultipartFile avatar) {

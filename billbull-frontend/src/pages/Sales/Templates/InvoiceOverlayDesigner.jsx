@@ -104,6 +104,8 @@ const OVERLAY_TABLE_COLUMNS = [
   { key: "code", label: "Item Code", align: "left", flex: 1.1 },
   { key: "name", label: "Product / Service", align: "left", flex: 2 },
   { key: "description", label: "Description", align: "left", flex: 2.4 },
+  { key: "shortDesc", label: "Short Description", align: "left", flex: 1.8 },
+  { key: "detailedDesc", label: "Detailed Description", align: "left", flex: 2.4 },
   { key: "brand", label: "Brand", align: "left", flex: 1 },
   { key: "sku", label: "SKU", align: "left", flex: 1 },
   { key: "barcode", label: "Barcode", align: "left", flex: 1.2 },
@@ -123,7 +125,7 @@ const TOTALS_NUMERIC_IDS = new Set(['taxable_total', 'subtotal', 'discount_total
 // Sample item row used to render a realistic preview inside the designer canvas.
 const SAMPLE_TABLE_ROW = {
   lineNo: "1", image: "", code: "JSW-POS-001", name: "JASEWAY POS Machine",
-  description: "i5 / 8GB / 256GB SSD / 10\" LCD", brand: "JASEWAY", sku: "JSW-POS-001-BLK",
+  description: "i5 / 8GB / 256GB SSD / 10\" LCD", shortDesc: "Compact POS terminal", detailedDesc: "10 inch customer display / built-in printer", brand: "JASEWAY", sku: "JSW-POS-001-BLK",
   barcode: "6291041500213", batchNumber: "BTH-2025-0441", location: "WH-3 / B-12",
   unit: "PCS", qty: "12.00", price: "1,500.00", taxableAmount: "18,000.00", disc: "0.00",
   taxPercent: "5%", taxAmt: "900.00", total: "18,900.00"

@@ -1,10 +1,10 @@
 package com.billbull.backend.inventory.reports;
 
+import com.billbull.backend.security.ModulePermissionService;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -12,40 +12,48 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/inventory/reports")
-@CrossOrigin(origins = "*")
 public class InventoryReportController {
+
+    private static final String MODULE = "inventory";
 
     private final InventoryReportService reportService;
     private final InventoryReportDataService reportDataService;
+    private final ModulePermissionService modulePermissionService;
 
     public InventoryReportController(
             InventoryReportService reportService,
-            InventoryReportDataService reportDataService) {
+            InventoryReportDataService reportDataService,
+            ModulePermissionService modulePermissionService) {
         this.reportService = reportService;
         this.reportDataService = reportDataService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/stock-on-hand")
     public ResponseEntity<List<StockReportResponse>> getStockOnHand(
             @RequestParam(required = false) Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getStockOnHand(warehouseId));
     }
 
     @GetMapping("/low-stock")
     public ResponseEntity<List<StockReportResponse>> getLowStock(
             @RequestParam(required = false) Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getLowStock(warehouseId));
     }
 
     @GetMapping("/out-of-stock")
     public ResponseEntity<List<StockReportResponse>> getOutOfStock(
             @RequestParam(required = false) Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getOutOfStock(warehouseId));
     }
 
     @GetMapping("/stock-valuation")
     public ResponseEntity<List<StockReportResponse>> getStockValuation(
             @RequestParam(required = false) Long warehouseId) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportService.getStockValuation(warehouseId));
     }
 
@@ -59,6 +67,7 @@ public class InventoryReportController {
             @RequestParam(required = false) String brand,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String stockCondition) {
+        modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
                 warehouseId,

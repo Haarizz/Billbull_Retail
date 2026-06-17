@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { ArrowLeft, Save, Printer, Upload } from "lucide-react";
+import { ArrowLeft, Save, Printer, Upload, X, Image } from "lucide-react";
 const MOCK = {
   company: {
     name: "Al Noor Trading & Contracting LLC",
@@ -16,7 +16,7 @@ const MOCK = {
     salesOrder: "SO000188",
     salesInvoice: "SI000521",
     warehouse: "Main Warehouse",
-    branch: "Dubai \u2014 DXB Branch"
+    branch: "Dubai — DXB Branch"
   },
   customer: {
     name: "ABC Trading LLC",
@@ -31,11 +31,11 @@ const MOCK = {
     zones: 4
   },
   items: [
-    { seq: 1, zone: "A01", description: "Brake Pad Premium Grade Heavy Duty", brand: "Brembo", barcode: "123456789", sku: "SKU-882", qtyRequired: "5 PCS", pickedQty: "5 PCS", batch: "PU29042026-L01-102-1", pickBatch: "PU29042026-L01-102-1", binLocation: "R1-S2-B4" },
-    { seq: 2, zone: "A04", description: "Oil Filter Standard 8L", brand: "Mann Filter", barcode: "998877665", sku: "SKU-118", qtyRequired: "8 PCS", pickedQty: "8 PCS", batch: "PU29042026-L01-105-2", pickBatch: "PU29042026-L01-105-2", binLocation: "R2-S1-B3" },
-    { seq: 3, zone: "B02", description: "Engine Coolant 5L Bottle", brand: "Prestone", barcode: "554433221", sku: "SKU-307", qtyRequired: "12 PCS", pickedQty: "10 PCS", batch: "PU30042026-L02-201-1", pickBatch: "PU30042026-L02-201-1", binLocation: "R1-S3-B2" },
-    { seq: 4, zone: "B02", description: "Windshield Wiper Blade 22 inch", brand: "Bosch", barcode: "776655443", sku: "SKU-441", qtyRequired: "20 PCS", pickedQty: "20 PCS", batch: "PU01052026-L01-089-3", pickBatch: "PU01052026-L01-089-3", binLocation: "R3-S1-B6" },
-    { seq: 5, zone: "C03", description: "Spark Plug Iridium Set of 4", brand: "NGK", barcode: "332211009", sku: "SKU-659", qtyRequired: "10 SET", pickedQty: "10 SET", batch: "PU28042026-L03-112-2", pickBatch: "PU28042026-L03-112-2", binLocation: "R2-S4-B1" }
+    { seq: 1, zone: "A01", description: "Brake Pad Premium Grade Heavy Duty", shortDesc: "Ceramic brake pad set", detailedDesc: "Front axle fitment\nLow-dust compound", brand: "Brembo", barcode: "123456789", sku: "SKU-882", qtyRequired: "5 PCS", pickedQty: "5 PCS", batch: "PU29042026-L01-102-1", pickBatch: "PU29042026-L01-102-1", binLocation: "R1-S2-B4" },
+    { seq: 2, zone: "A04", description: "Oil Filter Standard 8L", shortDesc: "Standard spin-on oil filter", detailedDesc: "Check gasket before packing", brand: "Mann Filter", barcode: "998877665", sku: "SKU-118", qtyRequired: "8 PCS", pickedQty: "8 PCS", batch: "PU29042026-L01-105-2", pickBatch: "PU29042026-L01-105-2", binLocation: "R2-S1-B3" },
+    { seq: 3, zone: "B02", description: "Engine Coolant 5L Bottle", shortDesc: "Ready-mix coolant bottle", detailedDesc: "Pack upright\nAvoid dented containers", brand: "Prestone", barcode: "554433221", sku: "SKU-307", qtyRequired: "12 PCS", pickedQty: "10 PCS", batch: "PU30042026-L02-201-1", pickBatch: "PU30042026-L02-201-1", binLocation: "R1-S3-B2" },
+    { seq: 4, zone: "B02", description: "Windshield Wiper Blade 22 inch", shortDesc: "Universal 22 inch blade", detailedDesc: "Left side application", brand: "Bosch", barcode: "776655443", sku: "SKU-441", qtyRequired: "20 PCS", pickedQty: "20 PCS", batch: "PU01052026-L01-089-3", pickBatch: "PU01052026-L01-089-3", binLocation: "R3-S1-B6" },
+    { seq: 5, zone: "C03", description: "Spark Plug Iridium Set of 4", shortDesc: "Iridium plug pack", detailedDesc: "Set of four\nVerify heat range", brand: "NGK", barcode: "332211009", sku: "SKU-659", qtyRequired: "10 SET", pickedQty: "10 SET", batch: "PU28042026-L03-112-2", pickBatch: "PU28042026-L03-112-2", binLocation: "R2-S4-B1" }
   ],
   pickRoute: ["A01", "A04", "B02", "Packing Area"]
 };
@@ -74,6 +74,8 @@ function defaultPickListSettings(name = "Default Pick List") {
     colSubBinLocation: true,
     colSeq: true,
     colDescription: true,
+    showShortDescription: true,
+    showDetailedDescription: true,
     colQtyRequired: true,
     colBatch: true,
     colPickedQty: true,
@@ -99,22 +101,59 @@ function Toggle({ label, checked, onChange }) {
 function SLabel({ children }) {
   return <p style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: 0.8, margin: "14px 0 6px" }}>{children}</p>;
 }
-function ImageUpload({ label, value, onChange }) {
+
+function ImageUploadField({ label, value, onChange, onRemove, placeholder = "Click to upload" }) {
   const ref = useRef(null);
-  return <div style={{ marginTop: 6 }}>
-    <p style={{ fontSize: 12, color: "#374151", marginBottom: 6 }}>{label}</p>
-    <div onClick={() => ref.current?.click()} style={{ border: "2px dashed #E5E7EB", borderRadius: 8, padding: "12px", cursor: "pointer", textAlign: "center", background: "#FAFAFA" }}>
-      {value ? <img src={value} alt="stamp" style={{ maxHeight: 60, objectFit: "contain" }} /> : <><Upload size={16} style={{ margin: "0 auto 4px", display: "block", color: "#9CA3AF" }} /><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Click to upload</p></>}
+  return (
+    <div style={{ marginTop: 8 }}>
+      <p style={{ fontSize: 12, color: "#374151", marginBottom: 6, fontWeight: 600 }}>{label}</p>
+      {value ? (
+        <div style={{ border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden", background: "#FAFAFA" }}>
+          <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+            <img src={value} alt={label} style={{ height: 48, maxWidth: 100, objectFit: "contain", borderRadius: 4, border: "1px solid #E5E7EB", background: "#fff" }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 11, color: "#6B7280", marginBottom: 6 }}>Image uploaded</p>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => ref.current?.click()}
+                  style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", fontSize: 11, border: "1px solid #E5E7EB", borderRadius: 6, background: "#fff", cursor: "pointer", color: "#374151", fontWeight: 600 }}
+                >
+                  <Image size={11} /> Replace
+                </button>
+                <button
+                  onClick={onRemove}
+                  style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", fontSize: 11, border: "1px solid #FCA5A5", borderRadius: 6, background: "#FEF2F2", cursor: "pointer", color: "#DC2626", fontWeight: 600 }}
+                >
+                  <X size={11} /> Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          onClick={() => ref.current?.click()}
+          style={{ border: "2px dashed #E5E7EB", borderRadius: 8, padding: "14px 12px", cursor: "pointer", textAlign: "center", background: "#FAFAFA", transition: "border-color 0.15s" }}
+          onMouseEnter={(e) => e.currentTarget.style.borderColor = "#F5C742"}
+          onMouseLeave={(e) => e.currentTarget.style.borderColor = "#E5E7EB"}
+        >
+          <Upload size={16} style={{ margin: "0 auto 4px", display: "block", color: "#9CA3AF" }} />
+          <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{placeholder}</p>
+        </div>
+      )}
+      <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => onChange(ev.target.result);
+          reader.readAsDataURL(file);
+          e.target.value = "";
+        }
+      }} />
     </div>
-    <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        const url = URL.createObjectURL(file);
-        onChange(url);
-      }
-    }} />
-  </div>;
+  );
 }
+
 function PickListPreview({ s }) {
   const f = s.fontSize;
   const gold = s.accentColor;
@@ -144,16 +183,16 @@ function PickListPreview({ s }) {
     s.showWarehouse && ["Warehouse", MOCK.pick.warehouse],
     s.showBranchOutlet && ["Branch / Outlet", MOCK.pick.branch]
   ].filter(Boolean);
+
+  const showPickRouteBarcode = s.showPickRoute || s.showBarcodeSection;
+  const bothVisible = s.showPickRoute && s.showBarcodeSection;
+
   return <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px", position: "relative" }}>
 
-    {
-      /* ── HEADER — copied exactly from ClassicPreview in document-template-designer ── */
-    }
+    {/* ── HEADER ── */}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 16 }}>
 
-      {
-        /* COL 1: Title + Customer (Delivering To) */
-      }
+      {/* COL 1: Title + Customer (Delivering To) */}
       <div style={{ flex: 1 }}>
         <h1 style={{ fontSize: `${f + 17}px`, fontWeight: 700, color: "#1a1a2e", margin: "0 0 14px 0", letterSpacing: "-0.5px" }}>
           PICK LIST
@@ -167,26 +206,25 @@ function PickListPreview({ s }) {
         </div>}
       </div>
 
-      {
-        /* COL 2: Doc info — label on top, value below, 2-column grid */
-      }
-      {(() => {
-        if (!metaItems.length) return null;
-        return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", alignSelf: "flex-end", paddingBottom: 2 }}>
+      {/* COL 2: Doc meta grid */}
+      {metaItems.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", alignSelf: "flex-end", paddingBottom: 2 }}>
           {metaItems.map(([label, val], i) => <div key={i}>
             <p style={{ margin: 0, fontSize: `${f - 1}px`, color: "#999", fontWeight: 500 }}>{label}</p>
             <p style={{ margin: "1px 0 0", fontSize: `${f}px`, fontWeight: 700, color: "#1a1a2e" }}>{val}</p>
           </div>)}
-        </div>;
-      })()}
+        </div>
+      )}
 
-      {
-        /* COL 3: Logo + Company */
-      }
+      {/* COL 3: Logo + Company */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-        {s.showLogo && (s.logoUrl ? <img src={s.logoUrl} alt="logo" style={{ height: 72, objectFit: "contain" }} /> : <div style={{ width: 72, height: 72, borderRadius: "50%", background: `${gold}22`, border: `3px solid ${gold}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ fontSize: 32, fontWeight: 900, color: gold }}>G</span>
-        </div>)}
+        {s.showLogo && (
+          s.logoUrl
+            ? <img src={s.logoUrl} alt="logo" style={{ height: 72, objectFit: "contain" }} />
+            : <div style={{ width: 72, height: 72, borderRadius: "50%", background: `${gold}22`, border: `3px solid ${gold}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 32, fontWeight: 900, color: gold }}>G</span>
+              </div>
+        )}
         {s.showCompanyName && <div style={{ textAlign: "right", lineHeight: 1.55 }}>
           <p style={{ fontWeight: 700, fontSize: `${f + 3}px`, color: "#1a1a2e", margin: 0 }}>{MOCK.company.name}</p>
           {s.showCompanyAddress && <p style={{ margin: 0, color: "#555", whiteSpace: "pre-line" }}>{MOCK.company.address}</p>}
@@ -197,14 +235,10 @@ function PickListPreview({ s }) {
       </div>
     </div>
 
-    {
-      /* ── GOLD SEPARATOR ── */
-    }
+    {/* ── GOLD SEPARATOR ── */}
     <div style={{ height: 3, background: gold, borderRadius: 2, marginBottom: 14 }} />
 
-    {
-      /* ── INFO CARDS ── */
-    }
+    {/* ── INFO CARDS ── */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
       <div style={{ background: `${gold}0d`, border: `1px solid ${gold}44`, borderRadius: 8, padding: "10px 14px" }}>
         <p style={{ fontSize: `${f - 0.5}px`, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 7 }}>Customer · Delivery</p>
@@ -231,9 +265,7 @@ function PickListPreview({ s }) {
       </div>
     </div>
 
-    {
-      /* ── SUMMARY CARDS ── */
-    }
+    {/* ── SUMMARY CARDS ── */}
     {s.showSummaryCards && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
       {[
         { label: "Items", value: String(MOCK.summary.items) },
@@ -246,9 +278,7 @@ function PickListPreview({ s }) {
       </div>)}
     </div>}
 
-    {
-      /* ── PICK TABLE ── */
-    }
+    {/* ── PICK TABLE ── */}
     <div style={{ marginBottom: 14 }}>
       <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Pick List Items</p>
       <table style={{ width: "100%", borderCollapse: "collapse", border: `1px solid ${gold}44` }}>
@@ -266,11 +296,10 @@ function PickListPreview({ s }) {
           {MOCK.items.map((item, idx) => <tr key={item.seq} style={{ background: idx % 2 === 1 ? `${gold}08` : "#fff" }}>
             {s.colSeq && <td style={{ ...tdS(true), fontWeight: 700, color: "#888" }}>{item.seq}</td>}
 
-            {
-              /* Description column: item name + sub-info line by line below */
-            }
             {s.colDescription && <td style={tdS()}>
               <p style={{ margin: 0, fontWeight: 700, color: "#1a1a2e", fontSize: `${f}px` }}>{item.description}</p>
+              {s.showShortDescription !== false && item.shortDesc && <p style={{ margin: "2px 0 0", color: "#475569", fontSize: `${f - 1}px` }}>{item.shortDesc}</p>}
+              {s.showDetailedDescription !== false && item.detailedDesc && <p style={{ margin: "2px 0 0", color: "#94a3b8", fontSize: `${f - 1}px`, fontStyle: "italic", whiteSpace: "pre-line" }}>{item.detailedDesc}</p>}
               <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 2 }}>
                 {s.colSubZone && <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontSize: `${f - 1.5}px`, color: "#9CA3AF", fontWeight: 600, width: 42, flexShrink: 0 }}>Zone</span>
@@ -297,9 +326,6 @@ function PickListPreview({ s }) {
 
             {s.colQtyRequired && <td style={{ ...tdS(true), fontWeight: 700, color: "#1a1a2e" }}>{item.qtyRequired}</td>}
             {s.colBatch && <td style={{ ...tdS(), fontFamily: "monospace", fontSize: `${f - 1}px`, color: "#6B7280" }}>{item.batch}</td>}
-            {
-              /* Picked Qty — qty actually scanned/picked against delivery note */
-            }
             {s.colPickedQty && <td style={{ ...tdS(true) }}>
               <p style={{ margin: 0, fontWeight: 700, color: item.pickedQty === item.qtyRequired ? "#15803D" : "#DC2626", fontSize: `${f}px` }}>
                 {item.pickedQty}
@@ -308,9 +334,6 @@ function PickListPreview({ s }) {
                 {item.pickedQty === item.qtyRequired ? "Full" : "Partial"}
               </p>
             </td>}
-            {
-              /* Pick Batch — batch scanned during pick list execution */
-            }
             {s.colPickBatch && <td style={tdS()}>
               <p style={{ margin: 0, fontFamily: "monospace", fontSize: `${f - 1}px`, color: "#374151", fontWeight: 600 }}>{item.pickBatch}</p>
               <p style={{ margin: "2px 0 0", fontSize: `${f - 2}px`, color: "#9CA3AF" }}>Scanned</p>
@@ -320,56 +343,52 @@ function PickListPreview({ s }) {
       </table>
     </div>
 
-    {
-      /* ── PICK ROUTE + BARCODE ── */
-    }
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-      {s.showPickRoute && <div style={{ background: `${gold}10`, border: `1.5px solid ${gold}66`, borderRadius: 8, padding: "12px 14px" }}>
-        <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Suggested Pick Route</p>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-          {MOCK.pickRoute.map((stop, i) => <React.Fragment key={stop}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 26, height: 26, borderRadius: "50%", background: i === MOCK.pickRoute.length - 1 ? "#10B981" : gold, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ fontSize: `${f - 0.5}px`, fontWeight: 800, color: "#fff" }}>{i === MOCK.pickRoute.length - 1 ? "\u2713" : i + 1}</span>
+    {/* ── PICK ROUTE + BARCODE ── */}
+    {showPickRouteBarcode && (
+      <div style={{ display: "grid", gridTemplateColumns: bothVisible ? "1fr 1fr" : "1fr", gap: 12, marginBottom: 14 }}>
+        {s.showPickRoute && <div style={{ background: `${gold}10`, border: `1.5px solid ${gold}66`, borderRadius: 8, padding: "12px 14px" }}>
+          <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Suggested Pick Route</p>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+            {MOCK.pickRoute.map((stop, i) => <React.Fragment key={stop}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 26, height: 26, borderRadius: "50%", background: i === MOCK.pickRoute.length - 1 ? "#10B981" : gold, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: `${f - 0.5}px`, fontWeight: 800, color: "#fff" }}>{i === MOCK.pickRoute.length - 1 ? "✓" : i + 1}</span>
+                </div>
+                <span style={{ fontSize: `${f}px`, fontWeight: 700, color: "#1a1a2e" }}>{stop}</span>
               </div>
-              <span style={{ fontSize: `${f}px`, fontWeight: 700, color: "#1a1a2e" }}>{stop}</span>
-            </div>
-            {i < MOCK.pickRoute.length - 1 && <div style={{ width: 26, display: "flex", justifyContent: "center" }}>
-              <span style={{ fontSize: `${f + 2}px`, color: "#9CA3AF", lineHeight: 1 }}>↓</span>
-            </div>}
-          </React.Fragment>)}
-        </div>
-      </div>}
-
-      {s.showBarcodeSection && <div style={{ border: `1px solid ${gold}44`, borderRadius: 8, padding: "12px 14px" }}>
-        <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Barcode Verification</p>
-        {[
-          { label: "Delivery Note", ref: MOCK.pick.deliveryNote },
-          { label: "Pick List", ref: MOCK.pick.number }
-        ].map((bc) => <div key={bc.label} style={{ marginBottom: 10 }}>
-          <p style={{ fontSize: `${f - 1}px`, color: "#9CA3AF", marginBottom: 4 }}>{bc.label}</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ display: "flex", gap: 1 }}>
-              {Array.from({ length: 32 }).map((_, i) => <div key={i} style={{ width: i % 3 === 0 ? 3 : i % 5 === 0 ? 1 : 2, height: 26, background: i % 7 === 0 ? "#fff" : "#374151" }} />)}
-            </div>
-            <span style={{ fontSize: `${f - 1}px`, fontFamily: "monospace", color: "#555", whiteSpace: "nowrap" }}>{bc.ref}</span>
+              {i < MOCK.pickRoute.length - 1 && <div style={{ width: 26, display: "flex", justifyContent: "center" }}>
+                <span style={{ fontSize: `${f + 2}px`, color: "#9CA3AF", lineHeight: 1 }}>↓</span>
+              </div>}
+            </React.Fragment>)}
           </div>
-        </div>)}
-      </div>}
-    </div>
+        </div>}
 
-    {
-      /* ── WAREHOUSE NOTES ── */
-    }
+        {s.showBarcodeSection && <div style={{ border: `1px solid ${gold}44`, borderRadius: 8, padding: "12px 14px" }}>
+          <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Barcode Verification</p>
+          {[
+            { label: "Delivery Note", ref: MOCK.pick.deliveryNote },
+            { label: "Pick List", ref: MOCK.pick.number }
+          ].map((bc) => <div key={bc.label} style={{ marginBottom: 10 }}>
+            <p style={{ fontSize: `${f - 1}px`, color: "#9CA3AF", marginBottom: 4 }}>{bc.label}</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", gap: 1 }}>
+                {Array.from({ length: 32 }).map((_, i) => <div key={i} style={{ width: i % 3 === 0 ? 3 : i % 5 === 0 ? 1 : 2, height: 26, background: i % 7 === 0 ? "#fff" : "#374151" }} />)}
+              </div>
+              <span style={{ fontSize: `${f - 1}px`, fontFamily: "monospace", color: "#555", whiteSpace: "nowrap" }}>{bc.ref}</span>
+            </div>
+          </div>)}
+        </div>}
+      </div>
+    )}
+
+    {/* ── WAREHOUSE NOTES ── */}
     {s.showWarehouseNotes && <div style={{ border: `1px solid ${gold}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
       <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Warehouse Notes</p>
       <div style={{ borderBottom: "1px solid #E5E7EB", marginBottom: 8, height: 18 }} />
       <div style={{ borderBottom: "1px solid #E5E7EB", height: 18 }} />
     </div>}
 
-    {
-      /* ── PACKING VERIFICATION ── */
-    }
+    {/* ── PACKING VERIFICATION ── */}
     {s.showPackingVerification && <div style={{ border: `1px solid ${gold}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
       <p style={{ fontSize: `${f}px`, fontWeight: 700, color: "#374151", marginBottom: 10 }}>Packing Verification</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
@@ -380,9 +399,7 @@ function PickListPreview({ s }) {
       </div>
     </div>}
 
-    {
-      /* ── SIGNATURE STRIP + STAMP ── */
-    }
+    {/* ── SIGNATURE STRIP + STAMP ── */}
     {(s.showSignatureStrip || s.showCompanyStamp) && <div style={{ display: "flex", gap: 20, alignItems: "flex-end", marginBottom: 14 }}>
       {s.showSignatureStrip && <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
         {["Prepared By", "Picked By", "Verified By"].map((role) => <div key={role} style={{ textAlign: "center" }}>
@@ -392,16 +409,16 @@ function PickListPreview({ s }) {
         </div>)}
       </div>}
       {s.showCompanyStamp && <div style={{ textAlign: "center", flexShrink: 0 }}>
-        {s.stampUrl ? <img src={s.stampUrl} alt="stamp" style={{ width: 80, height: 80, objectFit: "contain" }} /> : <div style={{ width: 80, height: 80, borderRadius: "50%", border: `2px dashed ${gold}`, display: "flex", alignItems: "center", justifyContent: "center", background: `${gold}0a` }}>
-          <span style={{ fontSize: `${f - 1}px`, color: "#92400e", fontWeight: 600, textAlign: "center", lineHeight: 1.3 }}>Company<br />Stamp</span>
-        </div>}
+        {s.stampUrl
+          ? <img src={s.stampUrl} alt="stamp" style={{ width: 80, height: 80, objectFit: "contain" }} />
+          : <div style={{ width: 80, height: 80, borderRadius: "50%", border: `2px dashed ${gold}`, display: "flex", alignItems: "center", justifyContent: "center", background: `${gold}0a` }}>
+              <span style={{ fontSize: `${f - 1}px`, color: "#92400e", fontWeight: 600, textAlign: "center", lineHeight: 1.3 }}>Company<br />Stamp</span>
+            </div>}
         <p style={{ fontSize: `${f - 1}px`, color: "#9CA3AF", marginTop: 4 }}>Official Stamp</p>
       </div>}
     </div>}
 
-    {
-      /* ── FOOTER BAR ── */
-    }
+    {/* ── FOOTER BAR ── */}
     {s.showFooterBar && <div style={{ background: `${gold}14`, borderTop: `2px solid ${gold}`, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderRadius: "0 0 4px 4px" }}>
       <span style={{ fontSize: `${f - 1}px`, color: "#888" }}>Generated from Delivery Note {MOCK.pick.deliveryNote}</span>
       <span style={{ fontSize: `${f - 1}px`, color: "#888" }}>System Generated Document</span>
@@ -421,9 +438,7 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
     { id: "footer", label: "Footer" }
   ];
   return <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#F8F9FA", fontFamily: "Inter, sans-serif" }}>
-    {
-      /* Top bar */
-    }
+    {/* Top bar */}
     <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={onClose} style={{ display: "flex", alignItems: "center", gap: 6, color: "#6B7280", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>
@@ -445,13 +460,9 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
       </div>
     </div>
 
-    {
-      /* Body */
-    }
+    {/* Body */}
     <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-      {
-        /* Settings panel */
-      }
+      {/* Settings panel */}
       <div style={{ width: 280, background: "#fff", borderRight: "1px solid #E5E7EB", display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <div style={{ display: "flex", borderBottom: "1px solid #E5E7EB" }}>
           {tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "10px 4px", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#111827" : "#9CA3AF", background: "none", border: "none", borderBottom: tab === t.id ? "2px solid #F5C742" : "2px solid transparent", cursor: "pointer" }}>
@@ -492,6 +503,15 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
           {tab === "header" && <>
             <SLabel>Company (Right Column)</SLabel>
             <Toggle label="Logo" checked={s.showLogo} onChange={(v) => set({ showLogo: v })} />
+            {s.showLogo && (
+              <ImageUploadField
+                label="Company Logo"
+                value={s.logoUrl}
+                onChange={(url) => set({ logoUrl: url })}
+                onRemove={() => set({ logoUrl: "" })}
+                placeholder="Upload logo image"
+              />
+            )}
             <Toggle label="Company Name" checked={s.showCompanyName} onChange={(v) => set({ showCompanyName: v })} />
             <Toggle label="Address" checked={s.showCompanyAddress} onChange={(v) => set({ showCompanyAddress: v })} />
             <Toggle label="Phone" checked={s.showCompanyPhone} onChange={(v) => set({ showCompanyPhone: v })} />
@@ -522,6 +542,8 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
             <SLabel>Table Columns</SLabel>
             <Toggle label="Seq #" checked={s.colSeq} onChange={(v) => set({ colSeq: v })} />
             <Toggle label="Item Name" checked={s.colDescription} onChange={(v) => set({ colDescription: v })} />
+            <Toggle label="Short Description" checked={s.showShortDescription !== false} onChange={(v) => set({ showShortDescription: v })} />
+            <Toggle label="Detailed Description" checked={s.showDetailedDescription !== false} onChange={(v) => set({ showDetailedDescription: v })} />
             <Toggle label="Qty Required" checked={s.colQtyRequired} onChange={(v) => set({ colQtyRequired: v })} />
             <Toggle label="Batch / Lot" checked={s.colBatch} onChange={(v) => set({ colBatch: v })} />
             <Toggle label="Picked Qty" checked={s.colPickedQty} onChange={(v) => set({ colPickedQty: v })} />
@@ -538,16 +560,22 @@ function PickListDesigner({ templateName, initialSettings = {}, onClose, onSave 
           {tab === "footer" && <>
             <SLabel>Company Stamp</SLabel>
             <Toggle label="Show Company Stamp" checked={s.showCompanyStamp} onChange={(v) => set({ showCompanyStamp: v })} />
-            {s.showCompanyStamp && <ImageUpload label="Upload Stamp Image" value={s.stampUrl} onChange={(url) => set({ stampUrl: url })} />}
+            {s.showCompanyStamp && (
+              <ImageUploadField
+                label="Stamp Image"
+                value={s.stampUrl}
+                onChange={(url) => set({ stampUrl: url })}
+                onRemove={() => set({ stampUrl: "" })}
+                placeholder="Upload stamp image"
+              />
+            )}
             <SLabel>Footer</SLabel>
             <Toggle label="Footer Bar" checked={s.showFooterBar} onChange={(v) => set({ showFooterBar: v })} />
           </>}
         </div>
       </div>
 
-      {
-        /* Preview */
-      }
+      {/* Preview */}
       <div style={{ flex: 1, overflow: "auto", background: "#F0F0F0", padding: 24 }}>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 14, alignItems: "center" }}>
           <span style={{ fontSize: 12, color: "#6B7280" }}>Zoom:</span>
