@@ -16,6 +16,11 @@ import { UAE_DIRHAM_SYMBOL_IMAGE } from '../../utils/countryCurrencyOptions';
 import { getProductsList, searchProductByBarcode } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { sendSalesInvoiceEmail } from '../../api/salesInvoiceApi';
+import {
+  registerPosTerminal, getPosSettings, openPosSession, getActivePosSession,
+  closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
+} from '../../api/posApi';
 import { getImageUrl } from '../../utils/urlUtils';
 import {
   Calculator,
@@ -679,6 +684,22 @@ export default function POSSales() {
   const [analyticsPayMode, setAnalyticsPayMode] = useState('All');
   const [analyticsTab, setAnalyticsTab] = useState('pipeline');
   const [currentSession, setCurrentSession] = useState(null);
+  const [posSettings, setPosSettings] = useState(null);
+  const [currentTerminal, setCurrentTerminal] = useState(null);
+  const [posInitLoading, setPosInitLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState(null);
+  // Supervisor PIN dialog for void
+  const [showSupervisorPin, setShowSupervisorPin] = useState(false);
+  const [supervisorPinValue, setSupervisorPinValue] = useState('');
+  const [supervisorPinError, setSupervisorPinError] = useState('');
+  const [pendingVoidItemId, setPendingVoidItemId] = useState(null);
+  // X-Report / Z-Report live data
+  const [xReportData, setXReportData] = useState(null);
+  const [xReportLoading, setXReportLoading] = useState(false);
+  const [zReportData, setZReportData] = useState(null);
+  const [zReportLoading, setZReportLoading] = useState(false);
+  const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
@@ -1038,6 +1059,48 @@ export default function POSSales() {
     };
   }, []);
 
+  // ── POS initialization: load settings + register terminal + resume session ──
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      try {
+        // Load POS settings
+        const settings = await getPosSettings().catch(() => null);
+        if (!cancelled && settings) setPosSettings(settings);
+
+        // Generate device fingerprint (browser-based, stable across refreshes)
+        const nav = window.navigator;
+        const fp = btoa([nav.userAgent, screen.width, screen.height, screen.colorDepth, Intl.DateTimeFormat().resolvedOptions().timeZone].join('|')).slice(0, 64);
+        const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
+
+        const regResult = await registerPosTerminal({ deviceFingerprint: fp, deviceInfo }).catch(() => null);
+        if (!cancelled && regResult?.terminal) {
+          setCurrentTerminal(regResult.terminal);
+
+          // Try to resume an existing open session for this terminal
+          const termId = regResult.terminal.terminalId;
+          const active = await getActivePosSession(termId).catch(() => null);
+          if (!cancelled && active?.id) {
+            setCurrentSession(active);
+          }
+        }
+      } catch (e) {
+        console.warn('POS init error', e);
+      } finally {
+        if (!cancelled) setPosInitLoading(false);
+      }
+    };
+    init();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Auto-load report data when entering report views
+  useEffect(() => {
+    if (currentView === 'x-report') loadXReport();
+    if (currentView === 'z-report') loadZReport(zReportDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView]);
+
   const loadPosProducts = useCallback(async (page = 0, append = false, signal = undefined) => {
     const departmentId = selectedCategory === 'all' ? null : Number(selectedCategory);
     if (append) {
@@ -1101,23 +1164,42 @@ export default function POSSales() {
     }, 0);
   };
 
-  const handleStartSession = () => {
+  const handleStartSession = async () => {
     const total = calculateDenominationTotal(denominations);
-    const newSession = {
-      id: `SES-${Date.now()}`,
-      openingCash: total,
-      openingDenominations: { ...denominations },
-      startTime: new Date().toISOString(),
-      status: 'active'
-    };
-    setCurrentSession(newSession);
+    try {
+      const terminalId = currentTerminal?.terminalId || `T001-${Date.now()}`;
+      const counterName = currentTerminal?.counterName || 'Main Counter';
+      const session = await openPosSession({ terminalId, counterName, openingCash: total });
+      setCurrentSession(session);
+    } catch (err) {
+      // Fallback to in-memory session if backend unavailable
+      console.warn('Session API unavailable, falling back to local session', err);
+      setCurrentSession({
+        id: `SES-${Date.now()}`,
+        openingCash: total,
+        openingDenominations: { ...denominations },
+        openedAt: new Date().toISOString(),
+        status: 'OPEN'
+      });
+    }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
   };
 
-  const handleCloseSession = () => {
+  const handleCloseSession = async () => {
     if (currentSession) {
-      setCurrentSession({ ...currentSession, status: 'closed' });
+      try {
+        if (currentSession.id && typeof currentSession.id === 'number') {
+          const closingTotal = calculateDenominationTotal(closingDenominations);
+          const closed = await closePosSession(currentSession.id, { closingCash: closingTotal });
+          setCurrentSession(closed);
+        } else {
+          setCurrentSession({ ...currentSession, status: 'CLOSED' });
+        }
+      } catch (err) {
+        console.warn('Close session API error', err);
+        setCurrentSession({ ...currentSession, status: 'CLOSED' });
+      }
       setShowCloseSessionDialog(false);
       setCurrentView('x-report');
     }
@@ -1214,12 +1296,85 @@ export default function POSSales() {
     });
   };
 
+  const voidFromInvoice = (itemId) => {
+    // If item is already voided, un-void it (toggle back) without PIN
+    const item = currentInvoice.items.find(i => i.id === itemId);
+    if (item?.isVoided) {
+      setCurrentInvoice(prev => {
+        const newItems = prev.items.map(i => i.id === itemId ? { ...i, isVoided: false } : i);
+        return recalculateInvoice(newItems);
+      });
+      return;
+    }
+    // If supervisor approval required, show PIN dialog
+    if (posSettings?.requireSupervisorForVoid) {
+      setPendingVoidItemId(itemId);
+      setSupervisorPinValue('');
+      setSupervisorPinError('');
+      setShowSupervisorPin(true);
+      return;
+    }
+    applyVoid(itemId);
+  };
+
+  const applyVoid = (itemId) => {
+    setCurrentInvoice(prev => {
+      const newItems = prev.items.map(item =>
+        item.id === itemId ? { ...item, isVoided: true } : item
+      );
+      return recalculateInvoice(newItems);
+    });
+  };
+
+  const handleSupervisorPinSubmit = () => {
+    const correctPin = posSettings?.supervisorPin || '1234';
+    if (supervisorPinValue === correctPin) {
+      setShowSupervisorPin(false);
+      if (pendingVoidItemId) {
+        applyVoid(pendingVoidItemId);
+        setPendingVoidItemId(null);
+      }
+      setSupervisorPinValue('');
+      setSupervisorPinError('');
+    } else {
+      setSupervisorPinError('Incorrect PIN. Please try again.');
+    }
+  };
+
+  const loadXReport = async () => {
+    if (!currentSession?.id || typeof currentSession.id !== 'number') return;
+    setXReportLoading(true);
+    try {
+      const data = await getPosXReport(currentSession.id);
+      setXReportData(data);
+    } catch (err) {
+      console.warn('X-Report load failed', err);
+    } finally {
+      setXReportLoading(false);
+    }
+  };
+
+  const loadZReport = async (date) => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    if (!branchId) return;
+    setZReportLoading(true);
+    try {
+      const data = await getPosZReport(branchId, date || zReportDate);
+      setZReportData(data);
+    } catch (err) {
+      console.warn('Z-Report load failed', err);
+    } finally {
+      setZReportLoading(false);
+    }
+  };
+
   const recalculateInvoice = (items) => {
-    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const totalDiscount = items.reduce((sum, item) => sum + (item.price * item.quantity * item.discount / 100), 0);
+    const activeItems = items.filter(i => !i.isVoided);
+    const subtotal = activeItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const totalDiscount = activeItems.reduce((sum, item) => sum + (item.price * item.quantity * item.discount / 100), 0);
     const tax = (subtotal - totalDiscount) * 0.05;
     const total = subtotal - totalDiscount + tax;
-    
+
     return { items, subtotal, totalDiscount, tax, total };
   };
 
@@ -1245,9 +1400,70 @@ export default function POSSales() {
     setHeldInvoices(heldInvoices.filter((_, i) => i !== index));
   };
 
-  const processPayment = () => {
-    if (currentInvoice.items.length > 0) {
-      const paid = { total: currentInvoice.total, items: currentInvoice.items.length, id: `INV-${String(invoiceCounter + 1).padStart(4, '0')}` };
+  const processPayment = async () => {
+    if (currentInvoice.items.length === 0 || checkoutLoading) return;
+    setCheckoutLoading(true);
+    setCheckoutError(null);
+    try {
+      const grandTotal = currentInvoice.total;
+      const tenderedNum = parseFloat(tenderedAmount) || 0;
+      const mixedCashNum = parseFloat(mixedCashAmount) || 0;
+      const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+
+      // Build payment mode string
+      let paymentMode = checkoutPayMode === 'cash' ? 'Cash'
+        : checkoutPayMode === 'card' ? (checkoutCardType || 'Card')
+        : checkoutPayMode === 'credit' ? 'Credit'
+        : 'Cash + Card';
+      let combinedPaymentMode = checkoutPayMode === 'mixed' ? `Cash + ${mixedCardType || 'Card'}` : null;
+      let amountTendered = checkoutPayMode === 'cash' ? tenderedNum
+        : checkoutPayMode === 'card' ? grandTotal
+        : checkoutPayMode === 'credit' ? 0
+        : mixedCashNum + mixedCardNum;
+
+      const customer = selectedCustomerData;
+      const items = currentInvoice.items
+        .filter(item => !item.isVoided)
+        .map(item => ({
+          itemCode: item.code || item.id,
+          itemName: item.name,
+          quantity: item.quantity,
+          unit: 'Each',
+          price: item.price,
+          discount: item.discount || 0,
+          taxRate: 5,
+        }));
+
+      const payload = {
+        customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
+        customerName: customer.name,
+        paymentMode,
+        combinedPaymentMode,
+        amountTendered,
+        cashAmount: checkoutPayMode === 'mixed' ? mixedCashNum : (checkoutPayMode === 'cash' ? amountTendered : 0),
+        cardAmount: checkoutPayMode === 'mixed' ? mixedCardNum : (checkoutPayMode === 'card' ? grandTotal : 0),
+        cardReference: checkoutCardRef || null,
+        cardType: checkoutCardType || mixedCardType || null,
+        sessionId: currentSession?.id || null,
+        terminalId: currentTerminal?.terminalId || null,
+        counterName: currentTerminal?.counterName || null,
+        branchId: currentTerminal?.branchId || null,
+        branchName: currentTerminal?.branchName || null,
+        items,
+      };
+
+      const savedInvoice = await posCheckout(payload);
+
+      const paid = {
+        id: savedInvoice.invoiceNumber,
+        total: savedInvoice.invoiceTotal,
+        items: currentInvoice.items.length,
+        invoice: savedInvoice,
+        changeAmount: checkoutPayMode === 'cash' ? Math.max(0, tenderedNum - grandTotal) : 0,
+        customer,
+        paymentMode,
+      };
+
       setLastPaidInvoice(paid);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
@@ -1268,6 +1484,11 @@ export default function POSSales() {
       setCheckoutCreditCustomer(null);
       setCheckoutCreditCustomerSearch('');
       setShowReceiptShare(true);
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
+      setCheckoutError(typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
+    } finally {
+      setCheckoutLoading(false);
     }
   };
   
@@ -1285,9 +1506,21 @@ export default function POSSales() {
     }
   };
 
-  const handleCashDrop = () => {
-    // Process cash drop/out
-    alert(`Cash ${cashDropType === 'in' ? 'Drop' : 'Out'} recorded: ${formatCurrencyStr(parseFloat(cashDropAmount) || 0)}`);
+  const handleCashDrop = async () => {
+    const amount = parseFloat(cashDropAmount) || 0;
+    if (amount <= 0) return;
+    const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
+    try {
+      if (currentSession?.id && typeof currentSession.id === 'number') {
+        await addPosCashMovement(currentSession.id, {
+          movementType,
+          amount,
+          description: cashDropDescription || (cashDropType === 'in' ? 'Cash Drop In' : 'Cash Out'),
+        });
+      }
+    } catch (err) {
+      console.warn('Cash movement API error', err);
+    }
     setCashDropAmount('');
     setCashDropDescription('');
     setShowCashDropDialog(false);
@@ -2060,10 +2293,11 @@ export default function POSSales() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Start/Continue Session Tile */}
-        <Card 
+        <Card
           className={posDashboardTileClass}
           onClick={() => {
-            if (currentSession?.status === 'active') {
+            if (posInitLoading) return;
+            if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
               setCurrentView('touch-screen');
             } else {
               setShowStartSessionDialog(true);
@@ -2073,30 +2307,32 @@ export default function POSSales() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg">
-                {currentSession?.status === 'active' ? (
+                {posInitLoading ? (
+                  <div className="h-8 w-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (currentSession?.status === 'active' || currentSession?.status === 'OPEN') ? (
                   <Play className="h-8 w-8 text-white" />
                 ) : (
                   <Unlock className="h-8 w-8 text-white" />
                 )}
               </div>
-              {currentSession?.status === 'active' && (
+              {(currentSession?.status === 'active' || currentSession?.status === 'OPEN') && (
                 <Badge className="bg-green-500">Active</Badge>
               )}
             </div>
             <CardTitle className="mt-4">
-              {currentSession?.status === 'active' ? 'Continue Session' : 'Start Session'}
+              {posInitLoading ? 'Connecting...' : (currentSession?.status === 'active' || currentSession?.status === 'OPEN') ? 'Continue Session' : 'Start Session'}
             </CardTitle>
             <CardDescription>
-              {currentSession?.status === 'active' 
-                ? 'Resume your active POS session' 
+              {posInitLoading ? 'Checking terminal & session status...' : (currentSession?.status === 'active' || currentSession?.status === 'OPEN')
+                ? 'Resume your active POS session'
                 : 'Open cash drawer and start new session'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {currentSession?.status === 'active' && (
+            {currentSession?.status === 'active' || currentSession?.status === 'OPEN' && (
               <div className="text-sm space-y-1">
                 <p className="text-gray-600">Opening Cash: {formatCurrency(currentSession.openingCash)}</p>
-                <p className="text-gray-600">Started: {new Date(currentSession.startTime).toLocaleTimeString()}</p>
+                <p className="text-gray-600">Started: {currentSession.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : currentSession.startTime ? new Date(currentSession.startTime).toLocaleTimeString() : '—'}</p>
               </div>
             )}
           </CardContent>
@@ -2126,10 +2362,10 @@ export default function POSSales() {
         {/* X-Report / Close Session Tile */}
         <Card 
           className={`${posDashboardTileClass} ${
-            currentSession?.status !== 'active' ? 'opacity-50' : ''
+            currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
           }`}
           onClick={() => {
-            if (currentSession?.status === 'active') {
+            if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
               setShowCloseSessionDialog(true);
             }
           }}
@@ -2145,7 +2381,7 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              {currentSession?.status === 'active' 
+              {currentSession?.status === 'active' || currentSession?.status === 'OPEN' 
                 ? 'End session with denomination count' 
                 : 'No active session to close'}
             </p>
@@ -2238,7 +2474,7 @@ export default function POSSales() {
       </div>
 
       {/* Quick Stats */}
-      {currentSession?.status === 'active' && (
+      {currentSession?.status === 'active' || currentSession?.status === 'OPEN' && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-8">
           <Card>
             <CardContent className="pt-6">
@@ -2765,24 +3001,27 @@ export default function POSSales() {
               ) : (
                 currentInvoice.items.map((item, idx) => {
                   return (
-                    <div key={item.id} onClick={() => { if (posActionMode !== 'none') setSelectedFocusItemId(item.id); }} className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' ? 'cursor-pointer' : ''}`}>
+                    <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
+                      className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
                       <div className="col-span-6 min-w-0">
-                        <p className="text-xs font-semibold text-[#1E293B] leading-tight truncate">{item.name}</p>
-                        {item.nameAr && <p className="text-[10px] text-gray-400 leading-tight truncate" dir="rtl">{item.nameAr}</p>}
-                        <p className="text-[9px] font-mono text-[#F5C742] mt-0.5">{item.barcode || item.code || item.id}</p>
+                        <p className={`text-xs font-semibold leading-tight truncate ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                        {item.isVoided
+                          ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
+                          : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight truncate" dir="rtl">{item.nameAr}</p> : null}
+                        {!item.isVoided && <p className="text-[9px] font-mono text-[#F5C742] mt-0.5">{item.barcode || item.code || item.id}</p>}
                       </div>
                       <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
-                        <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>
-                        <span className="text-xs font-bold text-[#1E293B] w-5 text-center">{item.quantity}</span>
-                        <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>
+                        {!item.isVoided && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
+                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
+                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                        {!item.isVoided && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
                       </div>
-                      <span className="col-span-2 text-[10px] text-gray-400 text-right pt-1">{formatCurrency(item.price)}</span>
-                      <span className="col-span-1 text-xs font-bold text-[#F5C742] text-right pt-1">{formatCurrency(item.total)}</span>
-                      <button type="button" onClick={() => removeFromInvoice(item.id)}
-                        className="col-span-1 flex justify-center pt-1 text-gray-300 hover:text-red-400 transition-colors">
-                        <X className="h-3.5 w-3.5" />
+                      <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
+                      <span className={`col-span-1 text-xs font-bold text-right pt-1 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#F5C742]'}`}>{formatCurrency(item.total)}</span>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                        className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
+                        <XCircle className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   );
@@ -3368,28 +3607,31 @@ export default function POSSales() {
             ) : (
               currentInvoice.items.map((item, idx) => (
                 <div key={item.id}
-                  className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                  onClick={() => setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
+                  className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
+                  onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
                   <div className="col-span-5 min-w-0 pr-1">
-                    <p className="text-[11px] font-semibold text-[#1E293B] truncate leading-tight">{item.name}</p>
-                    {item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
+                    <p className={`text-[11px] font-semibold truncate leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                    {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
+                    {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
                   </div>
                   <div className="col-span-2 flex items-center justify-center gap-0.5">
-                    <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                      className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
-                      <Minus className="h-2.5 w-2.5" />
-                    </button>
-                    <span className="text-xs font-bold text-[#1E293B] w-5 text-center">{item.quantity}</span>
-                    <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                    {!item.isVoided && <>
+                      <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
+                        className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
+                        <Minus className="h-2.5 w-2.5" />
+                      </button>
+                    </>}
+                    <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                    {!item.isVoided && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                       className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                       <Plus className="h-2.5 w-2.5" />
-                    </button>
+                    </button>}
                   </div>
-                  <span className="col-span-2 text-[10px] text-gray-500 text-right">{item.price.toFixed(0)}</span>
-                  <span className="col-span-2 text-[11px] font-bold text-[#1E293B] text-right pr-2">{formatCurrency(item.total)}</span>
-                  <button type="button" onClick={e => { e.stopPropagation(); removeFromInvoice(item.id); }}
-                    className="col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all">
-                    <Trash2 className="h-3 w-3" />
+                  <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-500'}`}>{item.price.toFixed(0)}</span>
+                  <span className={`col-span-2 text-[11px] font-bold text-right pr-2 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{formatCurrency(item.total)}</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                    className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
+                    <XCircle className="h-3 w-3" />
                   </button>
                 </div>
               ))
@@ -3789,7 +4031,7 @@ export default function POSSales() {
               disabled={currentInvoice.items.length === 0}
               className="w-full h-12 rounded-xl bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-sm shadow-[#F5C742]/30">
               <CreditCard className="h-4 w-4" />
-              {currentInvoice.items.length > 0 ? `Checkout · ${formatCurrency(currentInvoice.total)}` : 'Checkout'}
+              {currentInvoice.items.length > 0 ? `Checkout · ${formatCurrencyStr(currentInvoice.total)}` : 'Checkout'}
             </button>
           </div>
         </div>
@@ -3801,28 +4043,41 @@ export default function POSSales() {
 
   // Z-Report View
   const renderZReport = () => {
+    const zSummary = zReportData?.summary || {};
+    const zTotalSales = zSummary.totalSales ?? 0;
+    const zCashSales = zSummary.cashSales ?? 0;
+    const zCardSales = zSummary.cardSales ?? 0;
+    const zCreditSales = zSummary.creditSales ?? 0;
+    const zInvoiceCount = zSummary.invoiceCount ?? 0;
+    const zTotalTax = zSummary.totalTax ?? 0;
+    const zSalesExTax = zSummary.salesAmountExTax ?? 0;
+    const zTotalDiscount = zSummary.totalDiscount ?? 0;
+    const zTotalItemsSold = zSummary.totalItemsSold ?? 0;
+    const zSessions = zReportData?.sessions || [];
+    const zOpeningCash = zSessions.reduce((sum, s) => sum + (s.openingCash ?? 0), 0);
+    const zExpectedCash = zOpeningCash + zCashSales;
+    const zSessionCount = zSummary.sessionCount ?? zSessions.length;
+
     const zrFilterBar = (
       <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
-        {[
-          { label: 'Business Date', type: 'date', placeholder: '2026-05-28' },
-          { label: 'Branch / Outlet', type: 'text', placeholder: 'Main Branch' },
-          { label: 'POS Terminal', type: 'text', placeholder: 'POS-01' },
-          { label: 'Shift / Session', type: 'text', placeholder: 'Shift 1' },
-          { label: 'Cashier', type: 'text', placeholder: 'Select Cashier' },
-        ].map(f => (
-          <div key={f.label} className="flex flex-col gap-1 min-w-[130px]">
-            <label className="text-xs text-gray-500">{f.label}</label>
-            <input type={f.type} placeholder={f.placeholder} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-[#F7F7FA] focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-          </div>
-        ))}
-        <div className="flex flex-col gap-1 min-w-[130px]">
-          <label className="text-xs text-gray-500">Report Status</label>
-          <select className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-[#F7F7FA] focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-            <option>All</option><option>Draft</option><option>Closed</option><option>Reopened</option>
-          </select>
+        <div className="flex flex-col gap-1 min-w-[140px]">
+          <label className="text-xs text-gray-500">Business Date</label>
+          <input
+            type="date"
+            value={zReportDate}
+            onChange={e => setZReportDate(e.target.value)}
+            className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-[#F7F7FA] focus:outline-none focus:ring-1 focus:ring-[#327F74]"
+          />
         </div>
-        <button className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-4 py-2 rounded flex items-center gap-1">
-          <Search className="h-3 w-3" /> Generate
+        <button
+          onClick={() => loadZReport(zReportDate)}
+          disabled={zReportLoading}
+          className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"
+        >
+          {zReportLoading
+            ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Loading...</>
+            : <><Search className="h-3 w-3" />Generate</>
+          }
         </button>
       </div>
     );
@@ -3831,12 +4086,21 @@ export default function POSSales() {
       <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1 text-xs">
-            {[['Company Name', 'BillBull Retail LLC'], ['TRN', '100234567890003'], ['Branch / Outlet', 'Main Branch - Dubai Mall'], ['POS Terminal', 'POS-01'], ['Report Type', 'Z-Report (End-of-Day)']].map(([k,v]) => (
+            {[
+              ['Report Date', zReportDate || new Date().toLocaleDateString()],
+              ['Sessions', String(zSessionCount)],
+              ['Report Type', 'Z-Report (End-of-Day)'],
+            ].map(([k,v]) => (
               <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
             ))}
           </div>
           <div className="space-y-1 text-xs">
-            {[['Business Date', '28 May 2026'], ['Shift / Session No.', 'SESS-20260528-001'], ['Opened By', 'Ahmad Al-Farsi'], ['Opened Time', '08:00 AM'], ['Closed By', 'Ahmad Al-Farsi'], ['Closed Time', '10:02 PM'], ['Printed On', '28 May 2026, 10:15 PM']].map(([k,v]) => (
+            {[
+              ['Total Invoices', String(zInvoiceCount)],
+              ['Total Sales', formatCurrencyStr(zTotalSales)],
+              ['Cash Sales', formatCurrencyStr(zCashSales)],
+              ['Card Sales', formatCurrencyStr(zCardSales)],
+            ].map(([k,v]) => (
               <div key={k} className="flex gap-2"><span className="text-gray-500 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
             ))}
           </div>
@@ -3847,17 +4111,16 @@ export default function POSSales() {
     const zrKpiCards = (
       <div className="grid grid-cols-6 gap-3 mb-4">
         {[
-          { label: 'Gross Sales', value: 'AED 13,250.00', sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" />, color: 'text-[#327F74]' },
-          { label: 'Net Sales Inc. VAT', value: 'AED 12,485.50', sub: 'After disc. + VAT', icon: <DollarSign className="h-4 w-4" />, color: 'text-[#327F74]' },
-          { label: 'Total Collection', value: 'AED 12,485.50', sub: 'All pay modes', icon: <Banknote className="h-4 w-4" />, color: 'text-[#327F74]' },
-          { label: 'Expected Cash', value: 'AED 6,890.50', sub: 'Opening + cash sales', icon: <Wallet className="h-4 w-4" />, color: 'text-[#1E293B]' },
-          { label: 'Actual Cash Counted', value: 'AED 6,890.50', sub: 'Physical count', icon: <Calculator className="h-4 w-4" />, color: 'text-[#1E293B]' },
-          { label: 'Cash Variance', value: 'AED 0.00', sub: null, icon: <AlertCircle className="h-4 w-4" />, color: 'text-[#327F74]', badge: 'Balanced' },
+          { label: 'Gross Sales', value: <CurrencyAmount amount={zTotalSales} />, sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" /> },
+          { label: 'Cash Sales', value: <CurrencyAmount amount={zCashSales} />, sub: 'Cash payments', icon: <Banknote className="h-4 w-4" /> },
+          { label: 'Card Sales', value: <CurrencyAmount amount={zCardSales} />, sub: 'Card payments', icon: <CreditCard className="h-4 w-4" /> },
+          { label: 'VAT Amount', value: <CurrencyAmount amount={zTotalTax} />, sub: '5% VAT', icon: <FileBarChart className="h-4 w-4" /> },
+          { label: 'Expected Cash', value: <CurrencyAmount amount={zExpectedCash} />, sub: 'Opening + cash sales', icon: <Wallet className="h-4 w-4" /> },
+          { label: 'Total Invoices', value: String(zInvoiceCount), sub: `${zSessionCount} session(s)`, icon: <FileText className="h-4 w-4" /> },
         ].map(k => (
           <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-3 flex flex-col gap-1">
             <div className="flex items-center gap-1 text-[#327F74]">{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
-            <div className={`text-base font-bold ${k.color}`}>{renderAED(k.value)}</div>
-            {k.badge && <span className="text-xs bg-green-100 text-green-700 rounded px-1.5 py-0.5 w-fit">&#x2713; {k.badge}</span>}
+            <div className="text-base font-bold text-[#1E293B]">{k.value}</div>
             {k.sub && <span className="text-xs text-gray-400">{k.sub}</span>}
           </div>
         ))}
@@ -3928,11 +4191,11 @@ export default function POSSales() {
         icon={<BarChart2 className="h-4 w-4" />}
         cols={['Description', 'Amount']}
         rows={[
-          ['Gross Sales', 'AED 13,250.00'],
-          ['Discount Given', '(AED 764.50)'],
-          ['Net Sales Before VAT', 'AED 12,485.50'],
-          ['VAT Amount (5%)', 'AED 594.55'],
-          ['Net Sales Including VAT', <span key="nsi" className="font-semibold text-[#327F74]"><DirhamSymbol /> 13,080.05</span>],
+          ['Gross Sales', <CurrencyAmount key="z1g" amount={zTotalSales} />],
+          ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z1d" amount={0} />],
+          ['Net Sales Before VAT', <CurrencyAmount key="z1n" amount={zSalesExTax} />],
+          ['VAT Amount (5%)', <CurrencyAmount key="z1v" amount={zTotalTax} />],
+          ['Net Sales Including VAT', <span key="z1s" className="font-semibold text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>],
         ]}
       />
 
@@ -3942,12 +4205,7 @@ export default function POSSales() {
         icon={<FileText className="h-4 w-4" />}
         cols={['Description', 'Count', 'Amount']}
         rows={[
-          ['Total Sales Invoices', '48', 'AED 13,080.05'],
-          ['Sales Returns', '3', '(AED 285.00)'],
-          ['Credit Notes', '1', '(AED 95.00)'],
-          ['Cancelled Bills', '2', '—'],
-          ['Void Transactions', '1', '—'],
-          ['Suspended / Hold Bills', '0', '—'],
+          ['Total Sales Invoices', String(zInvoiceCount), <CurrencyAmount key="z2s" amount={zTotalSales} />],
         ]}
       />
 
@@ -3957,14 +4215,11 @@ export default function POSSales() {
         icon={<CreditCard className="h-4 w-4" />}
         cols={['Payment Mode', 'Count', 'Amount']}
         rows={[
-          ['Cash', '28', 'AED 6,340.50'],
-          ['Card', '15', 'AED 4,890.00'],
-          ['Bank Transfer', '2', 'AED 700.00'],
-          ['Credit Customer', '1', 'AED 300.00'],
-          ['Gift Voucher / Coupon', '1', 'AED 0.00'],
-          ['Wallet / Other Payments', '1', 'AED 255.00'],
+          ['Cash', zSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="z3c" amount={zCashSales} />],
+          ['Card', zSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="z3d" amount={zCardSales} />],
+          ['Credit', zSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="z3cr" amount={zCreditSales} />],
         ]}
-        footerRow={['Total Collected', '48', <span key="tc" className="text-[#327F74]"><DirhamSymbol /> 12,485.50</span>]}
+        footerRow={['Total Collected', String(zInvoiceCount), <span key="z3t" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>]}
       />
 
       {/* Section 4: Cash Drawer Summary */}
@@ -3982,29 +4237,17 @@ export default function POSSales() {
           </thead>
           <tbody>
             {[
-              ['Opening Cash / Float', 'AED 500.00'],
-              ['Cash Sales', 'AED 6,340.50'],
-              ['Cash Returns / Refunds', '(AED 150.00)'],
-              ['Cash Paid Out', '(AED 50.00)'],
-              ['Cash Received / Paid In', 'AED 250.00'],
-              ['Expected Cash in Drawer', 'AED 6,890.50'],
-              ['Actual Cash Counted', 'AED 6,890.50'],
+              ['Opening Cash / Float', <CurrencyAmount key="z4oc" amount={zOpeningCash} />],
+              ['Cash Sales', <CurrencyAmount key="z4cs" amount={zCashSales} />],
+              ['Expected Cash in Drawer', <CurrencyAmount key="z4ec" amount={zExpectedCash} />],
             ].map(([d,a], i) => (
               <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
                 <td className="px-4 py-2 text-[#1E293B]">{d}</td>
                 <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
               </tr>
             ))}
-            <tr className="bg-[#F7F7FA] border-t border-[#327F74]/20">
-              <td className="px-4 py-2 font-semibold text-[#1E293B]">Cash Difference / Variance</td>
-              <td className="px-4 py-2 text-right font-semibold text-[#327F74]"><DirhamSymbol /> 0.00</td>
-            </tr>
           </tbody>
         </table>
-        <div className="px-4 py-2 border-t border-[#327F74]/10">
-          <span className="text-xs text-gray-500 mr-2">Cash Status:</span>
-          <span className="text-xs bg-green-100 text-green-700 rounded px-2 py-0.5">&#x2713; Balanced</span>
-        </div>
       </div>
 
       {/* Section 5: Card / Bank Settlement Summary */}
@@ -4013,11 +4256,8 @@ export default function POSSales() {
         icon={<CreditCard className="h-4 w-4" />}
         cols={['Description', 'Amount']}
         rows={[
-          ['Total Card Sales', 'AED 4,890.00'],
-          ['Card Refunds', '(AED 135.00)'],
-          ['Net Card Settlement Expected', 'AED 4,755.00'],
-          ['Total Bank Transfer Sales', 'AED 700.00'],
-          ['Total Online / Wallet Payments', 'AED 255.00'],
+          ['Total Card Sales', <CurrencyAmount key="z5c" amount={zCardSales} />],
+          ['Net Card Settlement Expected', <CurrencyAmount key="z5n" amount={zCardSales} />],
         ]}
       />
 
@@ -4027,90 +4267,39 @@ export default function POSSales() {
         icon={<FileBarChart className="h-4 w-4" />}
         cols={['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount']}
         rows={[
-          ['VAT 5%', 'AED 11,890.50', 'AED 594.55', 'AED 12,485.05'],
-          ['Zero Rated', 'AED 595.00', 'AED 0.00', 'AED 595.00'],
-          ['Exempt', 'AED 0.00', 'AED 0.00', 'AED 0.00'],
+          ['VAT 5%',
+            <CurrencyAmount key="z6t" amount={zSalesExTax} />,
+            <CurrencyAmount key="z6a" amount={zTotalTax} />,
+            <CurrencyAmount key="z6g" amount={zTotalSales} />],
         ]}
-        footerRow={['Total', 'AED 12,485.50', 'AED 594.55', <span key="tt" className="text-[#327F74]"><DirhamSymbol /> 13,080.05</span>]}
+        footerRow={[
+          'Total',
+          <CurrencyAmount key="z6ft" amount={zSalesExTax} />,
+          <CurrencyAmount key="z6fa" amount={zTotalTax} />,
+          <span key="z6fg" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>
+        ]}
       />
 
       {/* Section 7: Discount Summary */}
       <ZRTable
         title="7. Discount Summary"
         icon={<Tag className="h-4 w-4" />}
-        cols={['Discount Type', 'Count', 'Amount']}
+        cols={['Description', 'Amount']}
         rows={[
-          ['Item Level Discount', '12', 'AED 310.00'],
-          ['Bill Level Discount', '5', 'AED 240.50'],
-          ['Promotion Discount', '3', 'AED 150.00'],
-          ['Manager Approved Discount', '2', 'AED 64.00'],
+          ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z7d" amount={0} />],
         ]}
-        footerRow={['Total Discount', '22', <span key="td" className="text-red-600">(<DirhamSymbol /> 764.50)</span>]}
       />
 
-      {/* Section 8: Returns / Refund Summary */}
+      {/* Section 8: Item Movement Summary */}
       <ZRTable
-        title="8. Returns / Refund Summary"
-        icon={<RotateCcw className="h-4 w-4" />}
-        cols={['Description', 'Count', 'Amount']}
+        title="8. Item Movement Summary"
+        icon={<Package className="h-4 w-4" />}
+        cols={['Description', 'Quantity', 'Amount']}
         rows={[
-          ['Sales Returns', '3', '(AED 285.00)'],
-          ['Cash Refunds', '2', '(AED 150.00)'],
-          ['Card Refunds', '1', '(AED 135.00)'],
-          ['Credit Notes Issued', '1', '(AED 95.00)'],
-          ['Exchange Transactions', '1', 'AED 0.00'],
+          ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z8s" amount={zTotalSales} />],
+          ['Net Quantity Sold', String(zTotalItemsSold), <CurrencyAmount key="z8n" amount={zTotalSales} />],
         ]}
       />
-
-      {/* Section 9: Product / Item Movement Summary */}
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-          <span className="text-[#327F74]"><Package className="h-4 w-4" /></span>
-          <span className="text-sm text-[#1E293B]">9. Product / Item Movement Summary</span>
-        </div>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-[#F7F7FA] text-gray-500">
-              {['Description', 'Quantity', 'Amount'].map((c,i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i>0?'text-right':''}`}>{c}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {[['Total Items Sold','188','AED 13,080.05'],['Total Items Returned','6','(AED 285.00)'],['Net Quantity Sold','182','AED 12,795.05']].map(([d,q,a],i) => (
-              <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                <td className="px-4 py-2 text-[#1E293B]">{d}</td>
-                <td className="px-4 py-2 text-right text-[#1E293B]">{q}</td>
-                <td className="px-4 py-2 text-right text-[#1E293B]">{renderAED(a)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="px-4 py-2 border-t border-[#327F74]/20">
-          <div className="text-xs text-gray-500 mb-1 font-medium">Top Selling Items</div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-gray-400">
-                {['Item Code','Item Name','Qty','Amount'].map((c,i) => <th key={i} className={`py-1 text-left ${i>1?'text-right':''}`}>{c}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['PRD-001','Whey Protein 1kg','22','AED 2,640.00'],
-                ['PRD-007','Creatine Monohydrate 500g','18','AED 1,260.00'],
-                ['PRD-022','Resistance Band Set','15','AED 975.00'],
-                ['PRD-015','Pre-Workout Mix 300g','14','AED 896.00'],
-                ['PRD-033','Sports Water Bottle','12','AED 360.00'],
-              ].map((r,i) => (
-                <tr key={i} className="border-t border-gray-50">
-                  <td className="py-1 text-gray-500">{r[0]}</td>
-                  <td className="py-1 text-[#1E293B]">{r[1]}</td>
-                  <td className="py-1 text-right text-[#1E293B]">{r[2]}</td>
-                  <td className="py-1 text-right text-[#327F74]">{renderAED(r[3])}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       {/* Section 10: Category / Department Sales */}
       <ZRTable
@@ -4251,16 +4440,23 @@ export default function POSSales() {
     const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
     const actualCash = calculateDenominationTotal(closingDenominations);
-    const openingCash = currentSession?.openingCash || 500;
-    const cashSales = 4210.00;
-    const cashRefunds = 150.00;
-    const cashPaidOut = 50.00;
-    const cashPaidIn = 250.00;
-    const expectedCash = openingCash + cashSales + cashPaidIn - cashRefunds - cashPaidOut;
-    const cashVariance = actualCash - expectedCash;
-    const isBalanced = Math.abs(cashVariance) < 0.01;
-    const varStatus = isBalanced ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
-    const varColor = isBalanced ? 'text-green-600 bg-green-50' : cashVariance < 0 ? 'text-red-600 bg-red-50' : 'text-amber-600 bg-amber-50';
+
+    // Pull live figures from xReportData when available, fall back to session state
+    const xSummary = xReportData?.summary || {};
+    const openingCashVal = xSummary.openingCash ?? currentSession?.openingCash ?? 0;
+    const cashSales = xSummary.cashSales ?? 0;
+    const cashDropIn = xSummary.cashDropIn ?? 0;
+    const cashDropOut = xSummary.cashDropOut ?? 0;
+    const totalSales = xSummary.totalSales ?? 0;
+    const cardSales = xSummary.cardSales ?? 0;
+    const creditSales = xSummary.creditSales ?? 0;
+    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
+    const expectedCashVal = xSummary.expectedCash ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
+
+    const cashVariance = actualCash - expectedCashVal;
+    const isBalanced = actualCash === 0 || Math.abs(cashVariance) < 0.01;
+    const varStatus = actualCash === 0 ? 'Pending Count' : isBalanced ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
+    const varColor = actualCash === 0 ? 'text-gray-500 bg-gray-50' : isBalanced ? 'text-green-600 bg-green-50' : cashVariance < 0 ? 'text-red-600 bg-red-50' : 'text-amber-600 bg-amber-50';
 
     const XRTable = ({ title, icon, cols, rows, footerRow, highlightLast }) => (
       <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
@@ -4344,15 +4540,33 @@ export default function POSSales() {
         </div>
 
         {/* Session Information Card */}
+        {xReportLoading && (
+          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4 text-sm text-blue-600">
+            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            Loading session data...
+          </div>
+        )}
         <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1 text-xs">
-              {[['Company Name','BillBull Retail LLC'],['TRN','100234567890003'],['Branch / Outlet','Main Branch - Dubai Mall'],['POS Terminal','POS-01'],['Report Type','X-Report / Close Session Report']].map(([k,v]) => (
+              {[
+                ['Branch / Outlet', xReportData?.session?.branchName || currentSession?.branchName || '—'],
+                ['POS Terminal', xReportData?.session?.terminalId || currentTerminal?.terminalId || '—'],
+                ['Counter', xReportData?.session?.counterName || currentTerminal?.counterName || '—'],
+                ['Report Type', 'X-Report / Close Session Report'],
+              ].map(([k,v]) => (
                 <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
               ))}
             </div>
             <div className="space-y-1 text-xs">
-              {[['Session No.','SESS-20260528-001'],['Business Date','28 May 2026'],['Cashier','Ahmad Al-Farsi'],['Session Opened Time','08:00 AM'],['Session Closed Time','—'],['Closed By','—'],['Printed On','28 May 2026, 10:15 PM'],['Report Status','Open']].map(([k,v]) => (
+              {[
+                ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6,'0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6,'0')}` : '—'],
+                ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
+                ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
+                ['Opened At', xReportData?.session?.openedAt ? new Date(xReportData.session.openedAt).toLocaleTimeString() : currentSession?.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : '—'],
+                ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
+                ['Invoice Count', String(invoiceCount)],
+              ].map(([k,v]) => (
                 <div key={k} className="flex gap-2"><span className="text-gray-500 w-40 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
               ))}
             </div>
@@ -4362,11 +4576,11 @@ export default function POSSales() {
         {/* KPI Cards */}
         <div className="grid grid-cols-7 gap-2 mb-4">
           {[
-            {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCash} />,icon:<Wallet className="h-4 w-4" />},
-            {label:'Total Sales Amount',value:<CurrencyAmount amount={8785.50} />,icon:<TrendingUp className="h-4 w-4" />},
-            {label:'Net Sales Inc. VAT',value:<CurrencyAmount amount={9224.78} />,icon:<DollarSign className="h-4 w-4" />},
-            {label:'Total Collection',value:<CurrencyAmount amount={9224.78} />,icon:<Banknote className="h-4 w-4" />},
-            {label:'Expected Cash',value:<CurrencyAmount amount={expectedCash} />,icon:<Calculator className="h-4 w-4" />},
+            {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCashVal} />,icon:<Wallet className="h-4 w-4" />},
+            {label:'Total Sales',value:<CurrencyAmount amount={totalSales} />,icon:<TrendingUp className="h-4 w-4" />},
+            {label:'Cash Sales',value:<CurrencyAmount amount={cashSales} />,icon:<Banknote className="h-4 w-4" />},
+            {label:'Card Sales',value:<CurrencyAmount amount={cardSales} />,icon:<CreditCard className="h-4 w-4" />},
+            {label:'Expected Cash',value:<CurrencyAmount amount={expectedCashVal} />,icon:<Calculator className="h-4 w-4" />},
             {label:'Actual Cash Counted',value:<CurrencyAmount amount={actualCash} />,icon:<CheckCircle className="h-4 w-4" />},
             {label:'Cash Variance',value:<CurrencyAmount amount={Math.abs(cashVariance)} />,icon:<AlertCircle className="h-4 w-4" />,badge:actualCash===0?'Pending':varStatus,badgeColor:isBalanced?'bg-green-100 text-green-700':cashVariance<0?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'},
           ].map(k => (
@@ -4431,12 +4645,11 @@ export default function POSSales() {
               icon={<Banknote className="h-4 w-4" />}
               cols={['Description','Amount']}
               rows={[
-                ['Opening Cash / Float',<CurrencyAmount amount={openingCash} />],
-                ['Cash Sales','AED 4,210.00'],
-                ['Cash Receipts / Paid In','AED 250.00'],
-                ['Less: Cash Refunds','(AED 150.00)'],
-                ['Less: Cash Paid Out','(AED 50.00)'],
-                ['Expected Cash in Drawer',<span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCash} /></span>],
+                ['Opening Cash / Float',<CurrencyAmount key="oc" amount={openingCashVal} />],
+                ['Cash Sales',<CurrencyAmount key="cs" amount={cashSales} />],
+                ['Cash Paid In',<CurrencyAmount key="ci" amount={cashDropIn} />],
+                ['Less: Cash Paid Out',cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="co" amount={0} />],
+                ['Expected Cash in Drawer',<span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCashVal} /></span>],
               ]}
               highlightLast
             />
@@ -4449,7 +4662,7 @@ export default function POSSales() {
               </div>
               <div className="p-4 space-y-2 text-xs">
                 {[
-                  ['Expected Cash in Drawer',<CurrencyAmount amount={expectedCash} />,'text-[#1E293B]'],
+                  ['Expected Cash in Drawer',<CurrencyAmount amount={expectedCashVal} />,'text-[#1E293B]'],
                   ['Actual Cash Counted',<CurrencyAmount amount={actualCash} />,'text-[#1E293B]'],
                   ['Cash Difference / Variance',<>{cashVariance<0?'(':''}<CurrencyAmount amount={Math.abs(cashVariance)} />{cashVariance<0?')':''}</>, cashVariance<0?'text-red-600':cashVariance>0?'text-amber-600':'text-green-600'],
                 ].map(([l,v,c]) => (
@@ -4536,14 +4749,11 @@ export default function POSSales() {
               icon={<CreditCard className="h-4 w-4" />}
               cols={['Payment Mode','Count','Amount']}
               rows={[
-                ['Cash','31','AED 4,210.00'],
-                ['Card','19','AED 3,615.78'],
-                ['Bank Transfer','3','AED 700.00'],
-                ['Credit Customer','2','AED 450.00'],
-                ['Gift Voucher / Coupon','1','AED 0.00'],
-                ['Wallet / Other Payments','2','AED 249.00'],
-              ]}
-              footerRow={['Total Collection','58','AED 9,224.78']}
+                ['Cash', xSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="cs4" amount={cashSales} />],
+                ['Card', xSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="cd4" amount={cardSales} />],
+                ['Credit', xSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="cr4" amount={creditSales} />],
+              ].filter(r => r[2] !== undefined)}
+              footerRow={['Total Collection', String(invoiceCount), <CurrencyAmount key="tc4" amount={totalSales} />]}
             />
 
             {/* Section 5: Card / Bank Settlement */}
@@ -4583,14 +4793,12 @@ export default function POSSales() {
               icon={<BarChart2 className="h-4 w-4" />}
               cols={['Description','Value']}
               rows={[
-                ['Opening Cash / Float',<CurrencyAmount amount={openingCash} />],
-                ['Total Sales Invoices','58'],
-                ['Total Sales Amount','AED 8,785.50'],
-                ['Total Returns / Refunds','(AED 285.00)'],
-                ['Net Sales Amount','AED 8,500.50'],
-                ['Total Discount','(AED 764.50)'],
-                ['VAT Amount','AED 439.28'],
-                ['Net Sales Including VAT',<span key="ns" className="font-bold text-[#327F74]"><DirhamSymbol /> 9,224.78</span>],
+                ['Opening Cash / Float',<CurrencyAmount key="s6oc" amount={openingCashVal} />],
+                ['Total Sales Invoices', String(invoiceCount)],
+                ['Total Sales Amount',<CurrencyAmount key="s6ts" amount={xSummary.salesAmountExTax ?? totalSales} />],
+                ['Total Discount',xSummary.totalDiscount > 0 ? `(${formatCurrencyStr(xSummary.totalDiscount ?? 0)})` : <CurrencyAmount key="s6td" amount={0} />],
+                ['VAT Amount',<CurrencyAmount key="s6vat" amount={xSummary.totalTax ?? 0} />],
+                ['Net Sales Including VAT',<span key="s6ns" className="font-bold text-[#327F74]"><CurrencyAmount amount={totalSales} /></span>],
               ]}
               highlightLast
             />
@@ -4601,12 +4809,8 @@ export default function POSSales() {
               icon={<FileText className="h-4 w-4" />}
               cols={['Description','Count','Amount']}
               rows={[
-                ['Sales Invoices','58','AED 9,224.78'],
-                ['Sales Returns','3','(AED 285.00)'],
-                ['Credit Notes','1','(AED 95.00)'],
-                ['Cancelled Bills','2','—'],
-                ['Void Bills','1','—'],
-                ['Hold / Suspended Bills','0','—'],
+                ['Sales Invoices', String(invoiceCount), <CurrencyAmount key="s7si" amount={totalSales} />],
+                ['Void Items', String(xSummary.voidItemCount ?? 0), '—'],
               ]}
             />
 
@@ -4644,11 +4848,17 @@ export default function POSSales() {
               icon={<FileBarChart className="h-4 w-4" />}
               cols={['Tax Type','Taxable Amount','Tax Amount','Total Amount']}
               rows={[
-                ['VAT 5%','AED 8,785.50','AED 439.28','AED 9,224.78'],
-                ['Zero Rated','AED 0.00','AED 0.00','AED 0.00'],
-                ['Exempt','AED 0.00','AED 0.00','AED 0.00'],
+                ['VAT 5%',
+                  <CurrencyAmount key="vat5t" amount={xSummary.salesAmountExTax ?? 0} />,
+                  <CurrencyAmount key="vat5a" amount={xSummary.totalTax ?? 0} />,
+                  <CurrencyAmount key="vat5g" amount={totalSales} />],
               ]}
-              footerRow={['Total','AED 8,785.50','AED 439.28','AED 9,224.78']}
+              footerRow={[
+                'Total',
+                <CurrencyAmount key="vatft" amount={xSummary.salesAmountExTax ?? 0} />,
+                <CurrencyAmount key="vatfa" amount={xSummary.totalTax ?? 0} />,
+                <CurrencyAmount key="vatfg" amount={totalSales} />
+              ]}
             />
 
             {/* Section 11: Item Movement */}
@@ -4657,9 +4867,8 @@ export default function POSSales() {
               icon={<Package className="h-4 w-4" />}
               cols={['Description','Quantity','Amount']}
               rows={[
-                ['Total Items Sold','172','AED 9,224.78'],
-                ['Total Items Returned','5','(AED 285.00)'],
-                ['Net Quantity Sold','167','AED 8,939.78'],
+                ['Total Items Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im1" amount={totalSales} />],
+                ['Net Quantity Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im3" amount={totalSales} />],
               ]}
             />
 
@@ -5295,18 +5504,36 @@ export default function POSSales() {
                   {checkoutPayMode === 'cash' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Cash Payment</p>
-                      {/* Quick denominations */}
+                      {/* Smart dynamic tender buttons based on invoice amount */}
                       <div className="flex flex-wrap gap-1.5">
-                        {[50,100,200,500,1000].map(d => (
-                          <button key={d} type="button" onClick={() => { setTenderedAmount(String(d)); setCheckoutKeypadTarget('tender'); }}
-                            className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${tenderedAmount === String(d) ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
-                            {d}
-                          </button>
-                        ))}
-                        <button type="button" onClick={() => { setTenderedAmount(grandTotal > 0 ? String(Math.ceil(grandTotal / 10) * 10) : ''); setCheckoutKeypadTarget('tender'); }}
-                          className="px-3 py-1.5 text-sm font-bold rounded-lg border-2 border-gray-200 text-gray-500 hover:border-[#F5C742] transition-all">
-                          Exact
-                        </button>
+                        {(() => {
+                          // Generate smart denominations: invoice total + rounded-up options
+                          const total = grandTotal;
+                          const rounds = [];
+                          // Exact total
+                          rounds.push(total);
+                          // Next 5 AED round-up
+                          const r5 = Math.ceil(total / 5) * 5;
+                          if (r5 !== total) rounds.push(r5);
+                          // Next 10 AED round-up
+                          const r10 = Math.ceil(total / 10) * 10;
+                          if (!rounds.includes(r10)) rounds.push(r10);
+                          // Next 50 AED round-up
+                          const r50 = Math.ceil(total / 50) * 50;
+                          if (!rounds.includes(r50)) rounds.push(r50);
+                          // Next 100 AED round-up
+                          const r100 = Math.ceil(total / 100) * 100;
+                          if (!rounds.includes(r100)) rounds.push(r100);
+                          // Standard 500, 1000 only if applicable
+                          if (total > 100 && !rounds.includes(500)) rounds.push(500);
+                          if (total > 400 && !rounds.includes(1000)) rounds.push(1000);
+                          return [...new Set(rounds)].sort((a,b)=>a-b).slice(0, 6).map(d => (
+                            <button key={d} type="button" onClick={() => { setTenderedAmount(d === total ? String(total.toFixed(2)) : String(d)); setCheckoutKeypadTarget('tender'); }}
+                              className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${parseFloat(tenderedAmount) === d ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
+                              {d === total ? 'Exact' : d}
+                            </button>
+                          ));
+                        })()}
                       </div>
                       {/* Tendered display */}
                       <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer"
@@ -5637,16 +5864,25 @@ export default function POSSales() {
                     </p>
                   </div>
                 </div>
+                {/* Error display */}
+                {checkoutError && (
+                  <div className="mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {checkoutError}
+                  </div>
+                )}
                 {/* Action buttons */}
                 <div className="flex gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); }}
+                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); }}
                     className="flex-none px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
-                  <button type="button" onClick={processPayment} disabled={!canSettle || currentInvoice.items.length === 0}
-                    className={`flex-1 py-3.5 rounded-xl font-black text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
-                    <CheckCircle className="h-5 w-5" />
-                    Settle Payment · <DirhamSymbol /> {grandTotal.toFixed(2)}
+                  <button type="button" onClick={processPayment} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
+                    className={`flex-1 py-3.5 rounded-xl font-black text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                    {checkoutLoading
+                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />Processing...</>
+                      : <><CheckCircle className="h-5 w-5" />Settle Payment · <DirhamSymbol /> {grandTotal.toFixed(2)}</>
+                    }
                   </button>
                 </div>
               </div>
@@ -5655,6 +5891,68 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* Supervisor PIN Dialog */}
+      {showSupervisorPin && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-t-2xl px-6 pt-6 pb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-white/20">
+                  <Shield className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white">Supervisor Approval</h2>
+                  <p className="text-xs text-amber-100 mt-0.5">Enter PIN to authorize void</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Supervisor PIN</label>
+                <input
+                  type="password"
+                  value={supervisorPinValue}
+                  onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
+                  autoFocus
+                  maxLength={8}
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] focus:outline-none focus:border-amber-400"
+                  placeholder="····"
+                />
+                {supervisorPinError && (
+                  <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="h-3.5 w-3.5" />{supervisorPinError}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[1,2,3,4,5,6,7,8,9,'C',0,'✓'].map(k => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => {
+                      if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
+                      else if (k === '✓') handleSupervisorPinSubmit();
+                      else setSupervisorPinValue(p => (p + k).slice(0, 8));
+                    }}
+                    className={`py-3 rounded-xl text-sm font-bold transition-colors ${
+                      k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
+                      k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
+                      'bg-gray-100 hover:bg-gray-200 text-[#1E293B]'
+                    }`}
+                  >{k}</button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowSupervisorPin(false); setPendingVoidItemId(null); setSupervisorPinValue(''); setSupervisorPinError(''); }}
+                className="w-full py-2.5 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Receipt Share Dialog */}
 <Dialog open={showReceiptShare} onOpenChange={setShowReceiptShare}>
@@ -5674,17 +5972,42 @@ export default function POSSales() {
     </DialogHeader>
     <div className="py-4 space-y-3">
       <div className="grid grid-cols-3 gap-2">
-        {[
-          { label: 'WhatsApp', color: 'bg-green-500', icon: <Smartphone className="h-5 w-5" /> },
-          { label: 'SMS', color: 'bg-blue-500', icon: <Smartphone className="h-5 w-5" /> },
-          { label: 'Email', color: 'bg-[#327F74]', icon: <FileText className="h-5 w-5" /> },
-        ].map(opt => (
-          <button key={opt.label} type="button"
-            className="flex flex-col items-center gap-2 py-4 rounded-xl border-2 border-[#327F74]/20 hover:border-[#327F74]/50 hover:bg-[#327F74]/5 transition-all">
-            <div className={`w-10 h-10 rounded-xl ${opt.color} flex items-center justify-center text-white`}>{opt.icon}</div>
-            <span className="text-xs font-bold text-gray-600">{opt.label}</span>
-          </button>
-        ))}
+        <button type="button"
+          onClick={() => {
+            if (!receiptSharePhone) return;
+            const phone = receiptSharePhone.replace(/\D/g, '');
+            const msg = encodeURIComponent(`Your receipt ${lastPaidInvoice?.id || ''} - Total: ${formatCurrencyStr(lastPaidInvoice?.total || 0)}`);
+            window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+          }}
+          className="flex flex-col items-center gap-2 py-4 rounded-xl border-2 border-[#327F74]/20 hover:border-green-400 hover:bg-green-50 transition-all">
+          <div className="w-10 h-10 rounded-xl bg-green-500 flex items-center justify-center text-white"><Smartphone className="h-5 w-5" /></div>
+          <span className="text-xs font-bold text-gray-600">WhatsApp</span>
+        </button>
+        <button type="button"
+          onClick={() => {
+            if (!receiptSharePhone) return;
+            alert(`SMS to ${receiptSharePhone}: Receipt ${lastPaidInvoice?.id || ''} - ${formatCurrencyStr(lastPaidInvoice?.total || 0)}`);
+          }}
+          className="flex flex-col items-center gap-2 py-4 rounded-xl border-2 border-[#327F74]/20 hover:border-blue-400 hover:bg-blue-50 transition-all">
+          <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center text-white"><Smartphone className="h-5 w-5" /></div>
+          <span className="text-xs font-bold text-gray-600">SMS</span>
+        </button>
+        <button type="button"
+          onClick={async () => {
+            if (!receiptShareEmail || !lastPaidInvoice?.invoice?.id) return;
+            try {
+              await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
+                toEmail: receiptShareEmail,
+                subject: `Receipt ${lastPaidInvoice.id || ''}`,
+                htmlBody: `<p>Thank you for your purchase. Invoice: ${lastPaidInvoice.id || ''}, Total: ${formatCurrencyStr(lastPaidInvoice.total || 0)}</p>`,
+              });
+              setShowReceiptShare(false); setReceiptShareEmail(''); setReceiptSharePhone('');
+            } catch(e) { alert('Failed to send email. Please try again.'); }
+          }}
+          className="flex flex-col items-center gap-2 py-4 rounded-xl border-2 border-[#327F74]/20 hover:border-[#327F74]/50 hover:bg-[#327F74]/5 transition-all">
+          <div className="w-10 h-10 rounded-xl bg-[#327F74] flex items-center justify-center text-white"><FileText className="h-5 w-5" /></div>
+          <span className="text-xs font-bold text-gray-600">Email</span>
+        </button>
       </div>
       <div>
         <label className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1 block">Phone (WhatsApp / SMS)</label>
@@ -5705,7 +6028,24 @@ export default function POSSales() {
         Skip
       </button>
       <button type="button"
-        onClick={() => { setShowReceiptShare(false); setReceiptSharePhone(''); setReceiptShareEmail(''); }}
+        onClick={async () => {
+          const invoiceId = lastPaidInvoice?.invoice?.id;
+          if (receiptShareEmail && invoiceId) {
+            try {
+              await sendSalesInvoiceEmail(invoiceId, {
+                toEmail: receiptShareEmail,
+                subject: `Receipt ${lastPaidInvoice?.id || ''}`,
+                htmlBody: `<p>Thank you for your purchase. Invoice: ${lastPaidInvoice?.id || ''}, Total: ${formatCurrencyStr(lastPaidInvoice?.total || 0)}</p>`,
+              });
+            } catch(e) { /* best effort */ }
+          }
+          if (receiptSharePhone) {
+            const phone = receiptSharePhone.replace(/\D/g, '');
+            const msg = encodeURIComponent(`Your receipt ${lastPaidInvoice?.id || ''} - Total: ${formatCurrencyStr(lastPaidInvoice?.total || 0)}`);
+            window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+          }
+          setShowReceiptShare(false); setReceiptSharePhone(''); setReceiptShareEmail('');
+        }}
         className="flex-1 py-2.5 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] text-white text-sm font-bold transition-colors">
         Send Receipt
       </button>
@@ -6249,16 +6589,28 @@ export default function POSSales() {
 
       {/* ─── PRICE CHECK MODAL ─── */}
       {showPriceCheck && (() => {
-        const mockItem = priceCheckResult === 'found' ? {
-          code: 'PRD-001', barcode: '6291003081561', name: 'Whey Protein 1kg – Chocolate', brand: 'Optimum Nutrition',
-          dept: 'Supplements', unit: 'Each', price: 115.00, vat: 5, finalPrice: 120.75,
-          stock: 24, batch: 'BT-2026-03', expiry: '2027-06-30',
-          outlets: [
-            { branch: 'Dubai Mall', warehouse: 'Main Store', avail: 24, reserved: 3, net: 21, status: 'In Stock' },
-            { branch: 'Jumeirah', warehouse: 'Main Store', avail: 6, reserved: 0, net: 6, status: 'Low Stock' },
-            { branch: 'Deira City', warehouse: 'Main Store', avail: 0, reserved: 0, net: 0, status: 'Out of Stock' },
-          ]
-        } : null;
+        const foundProduct = priceCheckResult && priceCheckResult !== 'searching' && priceCheckResult !== 'notfound' ? priceCheckResult : null;
+        const vatRate = foundProduct ? toNumber(foundProduct.salesTax, 5) : 5;
+        const basePrice = foundProduct ? toNumber(foundProduct.price, 0) : 0;
+        const finalPrice = basePrice * (1 + vatRate / 100);
+        const doSearch = async () => {
+          const q = priceCheckQuery.trim();
+          if (!q) { setPriceCheckResult('notfound'); return; }
+          setPriceCheckResult('searching');
+          try {
+            const barcodeMatches = await searchProductByBarcode(q);
+            if (Array.isArray(barcodeMatches) && barcodeMatches.length > 0) {
+              setPriceCheckResult(mapPosProductAggregateItem(barcodeMatches[0], q));
+              return;
+            }
+            const searchData = await getProductsList(0, 1, q);
+            if (Array.isArray(searchData?.content) && searchData.content.length > 0) {
+              setPriceCheckResult(mapPosProductListItem(searchData.content[0]));
+              return;
+            }
+            setPriceCheckResult('notfound');
+          } catch { setPriceCheckResult('notfound'); }
+        };
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
@@ -6272,9 +6624,9 @@ export default function POSSales() {
               </div>
               {/* Search */}
               <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0">
-                <input value={priceCheckQuery} onChange={e => setPriceCheckQuery(e.target.value)} onKeyDown={e => e.key==='Enter' && setPriceCheckResult(priceCheckQuery.trim()==='' ? 'notfound' : 'found')}
+                <input value={priceCheckQuery} onChange={e => setPriceCheckQuery(e.target.value)} onKeyDown={e => e.key==='Enter' && doSearch()}
                   placeholder="Scan barcode or type item name / code..." className="flex-1 border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                <button onClick={() => setPriceCheckResult(priceCheckQuery.trim()===''?'notfound':'found')} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
+                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
                 <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
               </div>
               <div className="overflow-auto flex-1 p-5">
@@ -6284,55 +6636,47 @@ export default function POSSales() {
                     <p className="text-sm text-gray-400">Scan a barcode or type an item name to check price and availability.</p>
                   </div>
                 )}
+                {priceCheckResult === 'searching' && (
+                  <div className="flex flex-col items-center justify-center h-40 text-center">
+                    <div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" />
+                    <p className="text-sm text-gray-400">Searching...</p>
+                  </div>
+                )}
                 {priceCheckResult === 'notfound' && (
                   <div className="flex flex-col items-center justify-center h-40 text-center">
                     <AlertCircle className="h-10 w-10 text-gray-300 mb-3" />
                     <p className="text-sm text-gray-500">No item found for the scanned barcode or search keyword.</p>
                   </div>
                 )}
-                {priceCheckResult === 'found' && mockItem && (
+                {foundProduct && (
                   <div className="space-y-4">
                     {/* Item Card */}
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 flex gap-4 shadow-sm">
-                      <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 text-gray-300 text-xs">IMG</div>
+                      {foundProduct.image
+                        ? <img src={foundProduct.image} className="w-20 h-20 rounded-lg object-cover shrink-0" alt={foundProduct.name} />
+                        : <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 text-gray-300 text-xs">IMG</div>}
                       <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                        {[['Item Code',mockItem.code],['Barcode',mockItem.barcode],['Item Name',mockItem.name],['Brand',mockItem.brand],['Department',mockItem.dept],['Unit',mockItem.unit]].map(([k,v])=>(
+                        {[['Item Code',foundProduct.code],['Barcode',foundProduct.barcode],['Item Name',foundProduct.name],['Department',foundProduct.departmentName||'—']].map(([k,v])=>(
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
                         ))}
                       </div>
                       <div className="shrink-0 text-right space-y-1">
-                        <div className="text-2xl font-bold text-[#327F74]"><CurrencyAmount amount={mockItem.finalPrice} /></div>
-                        <div className="text-xs text-gray-400">Selling Price: <DirhamSymbol /> {mockItem.price.toFixed(2)}</div>
-                        <div className="text-xs text-gray-400">VAT {mockItem.vat}% included</div>
-                        <div className="mt-2"><span className="text-xs bg-green-100 text-green-700 rounded px-2 py-0.5">In Stock: {mockItem.stock} units</span></div>
-                        <div className="text-xs text-gray-400">Batch: {mockItem.batch}</div>
-                        <div className="text-xs text-gray-400">Exp: {mockItem.expiry}</div>
+                        <div className="text-2xl font-bold text-[#327F74]"><CurrencyAmount amount={finalPrice} /></div>
+                        <div className="text-xs text-gray-400">Base: <DirhamSymbol /> {basePrice.toFixed(2)}</div>
+                        <div className="text-xs text-gray-400">VAT {vatRate}% included</div>
+                        <div className="mt-2"><span className={`text-xs rounded px-2 py-0.5 ${foundProduct.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>{foundProduct.stock > 0 ? `In Stock: ${foundProduct.stock}` : 'Out of Stock'}</span></div>
                       </div>
-                    </div>
-                    {/* Stock Table */}
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Stock Availability</div>
-                      <table className="w-full text-xs">
-                        <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Branch / Outlet','Warehouse','Available','Reserved','Net Avail.','Status'].map(h=><th key={h} className="px-3 py-2 text-left font-medium">{h}</th>)}</tr></thead>
-                        <tbody>
-                          {mockItem.outlets.map((o,i)=>(
-                            <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                              <td className="px-3 py-2 text-[#1E293B]">{o.branch}</td>
-                              <td className="px-3 py-2 text-gray-500">{o.warehouse}</td>
-                              <td className="px-3 py-2 text-right">{o.avail}</td>
-                              <td className="px-3 py-2 text-right text-amber-600">{o.reserved}</td>
-                              <td className="px-3 py-2 text-right font-semibold">{o.net}</td>
-                              <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${o.status==='In Stock'?'bg-green-100 text-green-700':o.status==='Low Stock'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>{o.status}</span></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
                     </div>
                   </div>
                 )}
               </div>
               <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                {priceCheckResult === 'found' && <button onClick={() => setShowPriceCheck(false)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />Add to Cart</button>}
+                {foundProduct && (
+                  <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
+                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1">
+                    <Plus className="h-3.5 w-3.5" />Add to Cart
+                  </button>
+                )}
                 <button onClick={() => setShowPriceCheck(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>

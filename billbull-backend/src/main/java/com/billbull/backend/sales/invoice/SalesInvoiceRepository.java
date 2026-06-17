@@ -316,6 +316,11 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         + "HAVING COALESCE(SUM(i.recognizedRevenue), 0) > s.subTotal")
         List<SalesInvoice> findOverRecognizedInvoices();
 
+        // POS session queries
+        List<SalesInvoice> findByPosSessionId(Long posSessionId);
+
+        List<SalesInvoice> findByBranchIdAndPosSessionIdIn(Long branchId, java.util.Collection<Long> sessionIds);
+
         /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         java.math.BigDecimal sumGlobalOutstandingBalance();

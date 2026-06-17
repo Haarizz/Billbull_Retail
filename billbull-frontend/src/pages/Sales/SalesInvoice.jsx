@@ -69,7 +69,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -2860,7 +2860,7 @@ const SalesInvoice = () => {
     // using the default Sales Invoice print template. Returns the HTML string,
     // or null if no template could be resolved. `titleOverride` lets callers
     // stamp the document title (e.g. DRAFT INVOICE / TAX INVOICE) for previews.
-    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride } = {}) => {
+    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride, forPdf = false } = {}) => {
         // Resolve which template to print with: an explicit choice from the
         // dropdown, else the last-used one, else the category default, else first.
         let selectedTemplate = chosenTemplate;
@@ -2906,6 +2906,7 @@ const SalesInvoice = () => {
                     date: dataToPrint.invoiceDate,
                     customer: {
                         name: dataToPrint.customerName || '',
+                        code: dataToPrint.customerCode || fullCustomer?.code || '',
                         address: fullCustomer?.address || fullCustomer?.billingAddress || '',
                         shippingAddress: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
                         phone: fullCustomer?.mobile || fullCustomer?.phone || '',
@@ -2985,6 +2986,8 @@ const SalesInvoice = () => {
                 });
                 const html = isOverlayInvoiceTemplate(defaultTemplate)
                     ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
+                    : forPdf
+                    ? await generatePdfHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo })
                     : await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 return html;
             }
@@ -3016,13 +3019,16 @@ const SalesInvoice = () => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
         if (!dataToPrint.items || dataToPrint.items.length === 0) return;
-        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
-        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
-        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+        // Always stamp the document title as TAX INVOICE — drafts and finalized
+        // invoices alike print/download with the VAT-compliant title.
+        const titleOverride = 'TAX INVOICE';
         setIsPrinting(true);
         try {
-            const html = await buildInvoiceHtml(dataToPrint, { titleOverride });
-            if (html) await downloadPdf(html, dataToPrint.invoiceNumber || 'Sales-Invoice');
+            // forPdf:false -> use the PRINT renderer (real @page / page-break CSS);
+            // the backend renders it with headless Chromium for a correctly
+            // paginated, vector PDF (same engine as the print preview).
+            const html = await buildInvoiceHtml(dataToPrint, { titleOverride, forPdf: false });
+            if (html) await downloadPdfViaServer(html, dataToPrint.invoiceNumber || 'Sales-Invoice');
         } catch (e) { console.error('Download error:', e); }
         finally { setIsPrinting(false); }
     };
@@ -3036,11 +3042,9 @@ const SalesInvoice = () => {
             return;
         }
 
-        // Determine the document title: confirmed/posted/paid invoices are
-        // Tax Invoices (VAT-compliant); drafts remain Sales Invoices.
-        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
-        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
-        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+        // Always stamp the document title as TAX INVOICE — drafts and finalized
+        // invoices alike print with the VAT-compliant title.
+        const titleOverride = 'TAX INVOICE';
 
         setIsPrinting(true);
         try {

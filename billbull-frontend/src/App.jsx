@@ -80,6 +80,7 @@ import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemp
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
 import CompanySettings from "./pages/Settings/CompanySettings";
+import DocumentNumbering from "./pages/Settings/DocumentNumbering";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
@@ -692,6 +693,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <EmailSettings />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/document-numbering"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <DocumentNumbering />
                         </ResourceGuard>
                       }
                     />

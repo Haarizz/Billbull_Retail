@@ -187,6 +187,8 @@ function defaultSettings(docType) {
     bankSWIFT: "EBILAEAD",
     showTerms: true,
     termsText: isInv ? "1. Payment is due within the terms stated above.\n2. Late payments attract 2% monthly interest.\n3. Goods remain property of seller until full payment received." : docType === "quotation" ? "1. This quotation is valid for 30 days from the date of issue.\n2. Prices are subject to change without prior notice.\n3. Delivery subject to stock availability." : isLPO ? "1. This purchase order is binding upon confirmation by vendor.\n2. Goods must match specifications and be delivered by the stated date.\n3. Any substitutions require prior written approval." : isCN ? "1. This debit/return note is issued per agreed terms.\n2. The corresponding credit will be applied against outstanding balances.\n3. For disputes contact accounts@company.ae." : "Terms & conditions apply.",
+    termsBgColor: "#fffbeb",
+    notesBgColor: "",
     showCompanyStamp: true,
     showQRCode: isInv,
     showNotes: true,
@@ -489,7 +491,7 @@ function ClassicPreview({ s, currencyConfig }) {
       {
     /* ── TERMS & CONDITIONS (below bank details) ── */
   }
-      {s.showTerms && <div style={{ marginBottom: 12, background: "#fffbeb", border: `1px solid #fde68a`, borderRadius: 6, padding: "10px 14px", fontSize: `${f}px` }}>
+      {s.showTerms && <div style={{ marginBottom: 12, background: s.termsBgColor || "#fffbeb", border: `1px solid ${s.termsBgColor || "#fde68a"}`, borderRadius: 6, padding: "10px 14px", fontSize: `${f}px` }}>
           <p style={{ fontWeight: 700, marginBottom: 6, color: "#92400e" }}>Terms & Conditions</p>
           <p style={{ whiteSpace: "pre-line", lineHeight: 1.7, color: "#374151", margin: 0 }}>{s.termsText}</p>
         </div>}
@@ -497,7 +499,7 @@ function ClassicPreview({ s, currencyConfig }) {
       {
     /* ── NOTES ── */
   }
-      {s.showNotes && <div style={{ marginBottom: 14 }}>
+      {s.showNotes && <div style={{ marginBottom: 14, ...(s.notesBgColor ? { background: s.notesBgColor, borderRadius: 6, padding: "10px 14px" } : {}) }}>
           <p style={{ fontWeight: 700, fontSize: `${f}px`, marginBottom: 3 }}>{s.notesLabel}</p>
           <p style={{ color: "#94a3b8", fontSize: `${f - 0.5}px`, margin: 0 }}>&mdash;</p>
         </div>}
@@ -896,22 +898,54 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
 
               <SectionLabel icon={<AlignLeft className="h-3 w-3" />} label="Terms & Conditions" />
               <Row label="Show Terms"><Toggle value={s.showTerms} onChange={(v) => upd("showTerms", v)} /></Row>
-              {s.showTerms && <textarea
-    value={s.termsText}
-    onChange={(e) => upd("termsText", e.target.value)}
-    rows={5}
-    className="w-full text-[10px] border border-slate-200 rounded px-2 py-1.5 bg-slate-50 mt-1 resize-none focus:outline-none"
-  />}
+              {s.showTerms && <>
+                <textarea
+                  value={s.termsText}
+                  onChange={(e) => upd("termsText", e.target.value)}
+                  rows={5}
+                  className="w-full text-[10px] border border-slate-200 rounded px-2 py-1.5 bg-slate-50 mt-1 resize-none focus:outline-none"
+                />
+                <Row label="Background Color">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={s.termsBgColor || "#fffbeb"}
+                      onChange={(e) => upd("termsBgColor", e.target.value)}
+                      className="w-7 h-7 rounded cursor-pointer border border-slate-200 p-0.5"
+                    />
+                    <button
+                      onClick={() => upd("termsBgColor", "#fffbeb")}
+                      className="text-[9px] text-slate-400 hover:text-slate-600 underline"
+                    >reset</button>
+                  </div>
+                </Row>
+              </>}
 
               <SectionLabel icon={<FileText className="h-3 w-3" />} label="Notes Section" />
               <Row label="Show Notes"><Toggle value={s.showNotes} onChange={(v) => upd("showNotes", v)} /></Row>
-              {s.showNotes && <Row label="Notes Label">
+              {s.showNotes && <>
+                <Row label="Notes Label">
                   <input
-    value={s.notesLabel}
-    onChange={(e) => upd("notesLabel", e.target.value)}
-    className="w-24 text-[10px] border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none"
-  />
-                </Row>}
+                    value={s.notesLabel}
+                    onChange={(e) => upd("notesLabel", e.target.value)}
+                    className="w-24 text-[10px] border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none"
+                  />
+                </Row>
+                <Row label="Background Color">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={s.notesBgColor || "#ffffff"}
+                      onChange={(e) => upd("notesBgColor", e.target.value)}
+                      className="w-7 h-7 rounded cursor-pointer border border-slate-200 p-0.5"
+                    />
+                    {s.notesBgColor && <button
+                      onClick={() => upd("notesBgColor", "")}
+                      className="text-[9px] text-slate-400 hover:text-slate-600 underline"
+                    >reset</button>}
+                  </div>
+                </Row>
+              </>}
 
               <SectionLabel icon={<Check className="h-3 w-3" />} label="Stamp & Verification" />
               <Row label="Company Stamp"><Toggle value={s.showCompanyStamp} onChange={(v) => upd("showCompanyStamp", v)} /></Row>

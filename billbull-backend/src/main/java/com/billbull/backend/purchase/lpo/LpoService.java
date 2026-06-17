@@ -62,6 +62,7 @@ public class LpoService {
     private final BranchAccessService branchAccessService;
     private final PaymentVoucherRepository paymentVoucherRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+    private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
     public LpoService(
             LpoRepository repository,
@@ -79,7 +80,8 @@ public class LpoService {
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
             PaymentVoucherRepository paymentVoucherRepository,
-            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
+            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -96,6 +98,7 @@ public class LpoService {
         this.branchAccessService = branchAccessService;
         this.paymentVoucherRepository = paymentVoucherRepository;
         this.notifPublisher = notifPublisher;
+        this.documentNumberingService = documentNumberingService;
     }
 
     /* ================= CREATE ================= */
@@ -423,7 +426,8 @@ public class LpoService {
     }
 
     private String generateLpoNumber() {
-        return "LPO-" + System.currentTimeMillis();
+        return documentNumberingService.resolveNumberForCreate(
+                com.billbull.backend.purchase.settings.PurchaseDocumentType.LPO, null);
     }
 
     private LpoListResponse toListDto(Lpo lpo) {

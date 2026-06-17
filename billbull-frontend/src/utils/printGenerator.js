@@ -1,7 +1,8 @@
 import QRCode from 'qrcode';
 import {
     generateDocumentEmailHtml,
-    generateDocumentPrintHtml
+    generateDocumentPrintHtml,
+    generateDocumentPdfHtml
 } from './documentTemplateRenderer';
 import {
     resolveCurrencyDisplayConfig,
@@ -158,6 +159,30 @@ export const generatePrintHtmlAsync = async (template, data, options = {}) => {
     }
 
     return generateDocumentPrintHtml(template, data, options);
+};
+
+// Same as generatePrintHtmlAsync but uses the 'pdf' render target so the
+// output has flat CSS (no @media/@page) suitable for html2canvas capture.
+export const generatePdfHtmlAsync = async (template, data, options = {}) => {
+    const settings = getTemplateDesignerSettingsQuick(template);
+    const showQR = Boolean(settings.showQRCode || settings.showQR);
+
+    if (showQR) {
+        try {
+            const companyName = options.companyProfile?.companyName || options.companyProfile?.name || '';
+            const qrContent = buildQrContent(data, companyName);
+            const qrCodeDataUrl = await QRCode.toDataURL(qrContent, {
+                width: 160,
+                margin: 1,
+                errorCorrectionLevel: 'L'
+            });
+            return generateDocumentPdfHtml(template, data, { ...options, qrCodeDataUrl });
+        } catch (e) {
+            console.warn('QR code generation failed, continuing without QR:', e);
+        }
+    }
+
+    return generateDocumentPdfHtml(template, data, options);
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -751,10 +776,34 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 </html>`;
 };
 
+// Server-side PDF: posts the (working) PRINT HTML to the backend, which renders
+// it with headless Chromium — the same layout engine that produces the perfect
+// print preview. The result is a vector, selectable-text PDF with correct page
+// breaks and alignment, identical to Ctrl+P → Save as PDF. This replaces the
+// html2canvas slice-and-dice path (downloadPdf below) which cuts content
+// mid-row because it screenshots the page and chops the bitmap at fixed offsets.
+export const downloadPdfViaServer = async (htmlContent, filename = 'document') => {
+    const { default: api } = await import('../api/axiosConfig');
+    const res = await api.post(
+        '/api/documents/pdf',
+        { html: htmlContent, filename },
+        { responseType: 'blob' }
+    );
+
+    const blob = new Blob([res.data], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${String(filename).replace(/\.pdf$/i, '')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke after the click has had a chance to start the download.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
 // Renders the generated HTML to a real PDF file and downloads it directly —
-// no print dialog, no new tab. Uses a hidden iframe for layout fidelity, then
-// html2canvas to rasterise each A4 page, assembled by jsPDF.
-export const downloadPdf = async (htmlContent, filename = 'document', pageFooter = null) => {
+export const downloadPdf = async (htmlContent, filename = 'document') => {
     const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
@@ -762,72 +811,81 @@ export const downloadPdf = async (htmlContent, filename = 'document', pageFooter
 
     const A4_W_MM = 210;
     const A4_H_MM = 297;
+    const PAGE_W_PX = 794;
 
-    // Render in a hidden off-screen iframe so all inline styles and @font-face
-    // rules apply correctly (can't do this with a plain div).
+    // Strip residual scripts, then make all root-relative asset URLs absolute
+    // so they resolve correctly inside an srcdoc iframe (which has no origin).
+    const origin = window.location.origin;
+    const flatHtml = htmlContent
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/(src=["'])(\/[^"']+["'])/gi, `$1${origin}$2`)
+        .replace(/url\((['"]?)(\/[^)'"]+)\1\)/g, `url($1${origin}$2$1)`);
+
+    // Use opacity:0 not visibility:hidden — html2canvas cannot capture visibility:hidden elements.
+    // Position off-screen (left:-9999px) so user never sees the render frame.
     const iframe = document.createElement('iframe');
     iframe.style.cssText =
-        'position:fixed;left:-9999px;top:0;width:794px;height:1123px;' +
-        'border:none;visibility:hidden;background:#fff;';
+        `position:fixed;left:-9999px;top:0;width:${PAGE_W_PX}px;height:1123px;` +
+        'border:none;opacity:0;pointer-events:none;background:#fff;';
     document.body.appendChild(iframe);
 
     try {
         await new Promise((resolve, reject) => {
             iframe.onload = resolve;
             iframe.onerror = reject;
-            iframe.srcdoc = htmlContent;
+            iframe.srcdoc = flatHtml;
         });
 
-        // Allow fonts / images to finish loading
-        await new Promise(r => setTimeout(r, 1200));
+        // Wait for embedded fonts and images to fully load and render
+        try {
+            await iframe.contentDocument.fonts.ready;
+        } catch { /* ignore if fonts API not available */ }
+        await new Promise(r => setTimeout(r, 600));
 
         const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
         const totalH = iframeDoc.documentElement.scrollHeight;
         iframe.style.height = `${totalH}px`;
-
-        // Re-allow layout to settle at the new height
+        // Force layout recalculation after resize
+        void iframeDoc.documentElement.offsetHeight;
         await new Promise(r => setTimeout(r, 200));
 
+        const scale = 2;
         const fullCanvas = await html2canvas(iframeDoc.body, {
-            scale: 2,
+            scale,
             useCORS: true,
             allowTaint: true,
             backgroundColor: '#ffffff',
-            width: 794,
+            width: PAGE_W_PX,
             height: totalH,
-            windowWidth: 794,
+            windowWidth: PAGE_W_PX,
+            scrollX: 0,
+            scrollY: 0,
             logging: false,
         });
 
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        const canvasW = fullCanvas.width;
-        // How many canvas pixels equal one A4 page in height?
-        const a4PagePx = Math.round(canvasW * (A4_H_MM / A4_W_MM));
+        // A4 page height in canvas pixels (scale already baked into fullCanvas)
+        const a4PagePx = Math.round(fullCanvas.width * (A4_H_MM / A4_W_MM));
         const totalPages = Math.ceil(fullCanvas.height / a4PagePx);
+
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
         for (let page = 0; page < totalPages; page++) {
             if (page > 0) pdf.addPage();
 
-            const srcY = page * a4PagePx;
-            const srcH = Math.min(a4PagePx, fullCanvas.height - srcY);
+            const srcY  = page * a4PagePx;
+            const srcH  = Math.min(a4PagePx, fullCanvas.height - srcY);
 
             const pageCanvas = document.createElement('canvas');
-            pageCanvas.width = canvasW;
+            pageCanvas.width  = fullCanvas.width;
             pageCanvas.height = a4PagePx;
             const ctx = pageCanvas.getContext('2d');
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvasW, a4PagePx);
-            ctx.drawImage(fullCanvas, 0, srcY, canvasW, srcH, 0, 0, canvasW, srcH);
+            ctx.fillRect(0, 0, fullCanvas.width, a4PagePx);
+            ctx.drawImage(fullCanvas, 0, srcY, fullCanvas.width, srcH,
+                                      0, 0,    fullCanvas.width, srcH);
 
-            pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, A4_W_MM, A4_H_MM);
-
-            // Per-page footer + "Page X of Y" so multi-page PDFs are paginated
-            // even though html2canvas only rasterises the document once.
-            pdf.setFontSize(7);
-            pdf.setTextColor(148, 163, 184);
-            const footY = A4_H_MM - 5;
-            if (pageFooter) pdf.text(String(pageFooter), 10, footY);
-            pdf.text(`Page ${page + 1} of ${totalPages}`, A4_W_MM - 10, footY, { align: 'right' });
+            pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.95),
+                'JPEG', 0, 0, A4_W_MM, A4_H_MM);
         }
 
         pdf.save(`${filename}.pdf`);

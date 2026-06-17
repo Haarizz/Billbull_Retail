@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { useCompany } from '../../context/CompanyContext';
@@ -596,7 +596,7 @@ const SalesReturn = () => {
          const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
          const printData = { title: 'CREDIT NOTE', docNo: ret.returnNumber, date: ret.returnDate, customer: { name: ret.customerName || '', address: '', shippingAddress: '', phone: '', email: '', trn: '' }, items: (ret.items || []).map(item => ({ name: item.itemName || item.itemCode || '', description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] }, code: item.itemCode || '', unit: item.unit || 'PCS', qty: Number(item.returnQty), price: Number(item.price), taxableAmount: Number(item.price) * Number(item.returnQty), taxAmt: 0, taxPercent: 0, total: Number(item.total) })), totals: { subTotal, tax: taxAmt, grandTotal, currency: company?.currencySymbol || company?.currency || 'AED', billDiscount: 0, billDiscountAmount: 0 }, meta: { status: ret.status || '', paymentTerm: '', validTill: '', validTillLabel: 'Original Invoice', notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`, location: printBranch.name || '', locationStore: printBranch.name || printBranch.code || '', warehouse: printBranch.defaultWarehouseName || '', deliveryTerms: '', salesPerson: '' } };
          const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id }), billBullLogo });
-         await downloadPdf(html, ret.returnNumber || 'Credit-Note');
+         await downloadPdfViaServer(html, ret.returnNumber || 'Credit-Note');
       } catch (err) { console.error('Download error', err); }
    };
 

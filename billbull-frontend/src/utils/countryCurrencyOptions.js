@@ -1,4 +1,4 @@
-import uaeDirhamSymbolImage from "../assets/uae-dirham-symbol.png";
+import { UAE_DIRHAM_SYMBOL_DATA_URI } from "./dirhamSymbolBase64";
 
 const WORLD_CURRENCY_CODES = [
   "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
@@ -61,7 +61,7 @@ const CURRENCY_SYMBOL_OVERRIDES = {
   AED: "AED"
 };
 
-export const UAE_DIRHAM_SYMBOL_IMAGE = uaeDirhamSymbolImage;
+export const UAE_DIRHAM_SYMBOL_IMAGE = UAE_DIRHAM_SYMBOL_DATA_URI;
 
 const normalizeCurrencyProfileInput = (profileOrCurrency = {}, fallbackProfile = {}) => {
   const primary = typeof profileOrCurrency === "string"

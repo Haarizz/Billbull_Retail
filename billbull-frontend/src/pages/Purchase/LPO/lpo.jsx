@@ -62,7 +62,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
@@ -945,7 +945,7 @@ const HistoryView = ({ lpos }) => {
 // EDITOR COMPONENT (UPDATED FOR VIEW ONLY)
 // ==========================================
 
-const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onDownload, onExportExcel, onRevert, isReadOnly, followUpNotes }) => {
+const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onPrintForm, onDownload, onExportExcel, onRevert, isReadOnly, followUpNotes }) => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   // --- Editor Logic ---
@@ -1523,8 +1523,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   };
 
   return (
-    <div className="space-y-6 flex-1 flex flex-col">
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Scrollable body: only this region scrolls; the action bar below stays pinned */}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pb-4">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 min-h-full content-start">
         {/* Left Column (Vendor & Details) */}
         <div className="xl:col-span-1 space-y-4">
           <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
@@ -2054,9 +2056,13 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
           </div>
         </div>
       </div>
+      </div>
 
-      {/* Bottom Bar */}
-      <div className="sticky bottom-0 left-0 right-0 bg-white border-t-2 border-slate-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-4 z-50 -mx-4 md:-mx-6 -mb-4 md:-mb-6">
+      {/* Bottom Bar — pinned to the editor's bottom; only the body above scrolls.
+          Horizontal negative margins bleed it edge-to-edge. The bottom negative
+          margin cancels main's bottom padding so the bar sits flush with the
+          viewport edge without overflowing it. */}
+      <div className="shrink-0 bg-white border-t-2 border-slate-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-4 z-50 relative">
         <div className="max-w-[1920px] mx-auto flex flex-col xl:flex-row justify-between items-center text-xs text-slate-400 gap-3 xl:gap-0 px-4">
           <div className="flex items-center gap-2 w-full xl:w-auto justify-center xl:justify-start">
             <Clock size={14} />
@@ -2075,12 +2081,21 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 Revert to Draft
               </button>
             )}
-            {initialData?.lpoNumber && (
+            {initialData?.lpoNumber ? (
               <ExportDropdown
                 onExportPdf={() => onDownload && onDownload(initialData)}
                 onExportExcel={() => onExportExcel && onExportExcel(initialData)}
                 onPrint={() => onPrint(initialData)}
               />
+            ) : (
+              <button
+                onClick={() => onPrintForm && onPrintForm(formData)}
+                disabled={loading || !formData.vendorName || formData.items.length === 0}
+                className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Printer size={14} />
+                Print
+              </button>
             )}
             {!isReadOnly && (
               <>
@@ -2437,6 +2452,44 @@ const LPOList = () => {
     }
   };
 
+  // Print directly from the in-editor form data, without requiring a saved LPO number.
+  // Mirrors the always-available Print in Purchase Invoice / Sales editors so unsaved
+  // drafts can still be previewed/printed.
+  const handlePrintLpoFromForm = async (formLpo) => {
+    const loadingToast = toast.loading('Generating print layout...');
+    try {
+      setLoading(true);
+
+      const [templates, latestVendors] = await Promise.all([
+        getTemplatesByCategory('Local Purchase Order'),
+        getVendors().catch(() => vendors || [])
+      ]);
+      if (Array.isArray(latestVendors) && latestVendors.length > 0) {
+        setVendors(latestVendors);
+      }
+
+      const defaultTemplate = resolvePurchasePrintTemplate('Local Purchase Order', templates);
+
+      if (defaultTemplate) {
+        const fullVendor = findVendorRecord(latestVendors, formLpo, formLpo?.vendorName);
+        const printData = buildLpoPrintData(formLpo, fullVendor, company);
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+          companyProfile: company,
+          billBullLogo
+        });
+        printHtml(html);
+      } else {
+        toast.error("No default template for LPO found.");
+      }
+    } catch (error) {
+      console.error("Print error:", error);
+      toast.error("Failed to generate print layout.");
+    } finally {
+      toast.dismiss(loadingToast);
+      setLoading(false);
+    }
+  };
+
   const handleDownloadLPO = async (lpo) => {
     const loadingToast = toast.loading('Preparing download...');
     try {
@@ -2448,7 +2501,7 @@ const LPOList = () => {
         const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
         const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
-        await downloadPdf(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
+        await downloadPdfViaServer(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
       } else {
         toast.error("No default template for LPO found.");
       }
@@ -2782,12 +2835,12 @@ const LPOList = () => {
   };
 
   return (
-    <div className="flex min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#F7F7FA] font-sans text-slate-900 relative">
+    <div className="flex h-full min-h-0 w-full max-w-[100vw] overflow-hidden bg-[#F7F7FA] font-sans text-slate-900 relative">
       {/* Main Content */}
-      <main className="flex-1 p-4 md:p-6 flex flex-col min-w-0">
+      <main className="flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-hidden">
 
         {/* Sticky Header */}
-        <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-5 sticky top-0 z-40 shadow-sm mb-6 -mx-4 md:-mx-6 mt-[-16px] md:mt-[-24px]">
+        <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-5 sticky top-0 z-40 shadow-sm mb-6">
           <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-6">
             {/* Title and Controls */}
             <div className="space-y-1">
@@ -2912,6 +2965,10 @@ const LPOList = () => {
           )}
         </div>
 
+        {/* Content body fills the space below the header. For the editor tab it must
+            NOT scroll (the editor manages its own scroll so its action bar stays pinned);
+            every other tab scrolls here. */}
+        <div className={`flex-1 min-h-0 flex flex-col px-4 md:px-6 ${activeNavTab === 'editor' ? 'overflow-hidden' : 'overflow-y-auto pb-6'}`}>
         {loading && activeNavTab !== 'editor' ? (
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5C742]"></div>
@@ -2977,6 +3034,7 @@ const LPOList = () => {
                 onSave={handleSaveDraft}
                 onSubmit={handleSubmitForApproval}
                 onPrint={handlePrintLPO}
+                onPrintForm={handlePrintLpoFromForm}
                 onDownload={handleDownloadLPO}
                 onExportExcel={handleExportLpoExcel}
                 onRevert={handleRevertLPO}
@@ -3211,6 +3269,7 @@ const LPOList = () => {
             )}
           </>
         )}
+        </div>
       </main>
 
       {/* --- RENDER CONFIRMATION MODAL --- */}

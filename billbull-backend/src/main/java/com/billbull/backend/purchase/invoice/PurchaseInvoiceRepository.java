@@ -13,6 +13,11 @@ public interface PurchaseInvoiceRepository
 
         java.util.Optional<PurchaseInvoice> findByInvoiceNumber(String invoiceNumber);
 
+        boolean existsByInvoiceNumber(String invoiceNumber);
+
+        @Query("SELECT i.invoiceNumber FROM PurchaseInvoice i WHERE i.invoiceNumber LIKE CONCAT(:prefix, '%')")
+        List<String> findInvoiceNumbersByPrefix(@Param("prefix") String prefix);
+
         /** QA-018: batch lookup used by StatementService to populate description/reference. */
         List<PurchaseInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
 

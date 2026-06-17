@@ -54,6 +54,7 @@ public class GrnService {
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+    private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -71,7 +72,8 @@ public class GrnService {
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
-            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
+            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -89,6 +91,7 @@ public class GrnService {
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
         this.notifPublisher = notifPublisher;
+        this.documentNumberingService = documentNumberingService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -596,20 +599,8 @@ public class GrnService {
     }
 
     private String generateGrnNo() {
-        String year = String.valueOf(LocalDate.now().getYear());
-        String prefix = "GRN-" + year + "-";
-
-        return grnRepo.findTopByGrnNoStartingWithOrderByGrnNoDesc(prefix)
-                .map(lastGrn -> {
-                    try {
-                        String lastNo = lastGrn.getGrnNo();
-                        int sequence = Integer.parseInt(lastNo.substring(prefix.length()));
-                        return prefix + String.format("%05d", sequence + 1);
-                    } catch (Exception e) {
-                        return prefix + "00001"; // Fallback if parsing fails
-                    }
-                })
-                .orElse(prefix + "00001");
+        return documentNumberingService.resolveNumberForCreate(
+                com.billbull.backend.purchase.settings.PurchaseDocumentType.GRN, null);
     }
 
     private GrnEntity getScopedGrn(Long id) {

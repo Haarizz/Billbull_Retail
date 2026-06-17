@@ -15,6 +15,11 @@ import org.springframework.stereotype.Repository;
 public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, Long> {
     // Custom query methods can be added here if needed
 
+    boolean existsByVoucherNumber(String voucherNumber);
+
+    @Query("SELECT p.voucherNumber FROM PaymentVoucher p WHERE p.voucherNumber LIKE CONCAT(:prefix, '%')")
+    List<String> findVoucherNumbersByPrefix(@Param("prefix") String prefix);
+
     // --- STATEMENT QUERIES ---
     @org.springframework.data.jpa.repository.Query("SELECT SUM(p.amount) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
     java.math.BigDecimal calculateOpeningBalance(String vendorName, java.time.LocalDate startDate);

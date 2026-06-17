@@ -36,7 +36,7 @@ import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/cus
 import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -433,7 +433,7 @@ const Payment = () => {
             const defaultTemplate = resolveReceiptTemplate(templates);
             const branchProfile = buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: payment?.branchId ?? activeBranch?.id });
             const html = await generatePrintHtmlAsync(defaultTemplate, buildPaymentPrintData(payment), { companyProfile: branchProfile, billBullLogo });
-            await downloadPdf(html, payment.paymentNo || 'Payment-Receipt');
+            await downloadPdfViaServer(html, payment.paymentNo || 'Payment-Receipt');
         } catch (err) { console.error('Download error', err); }
     };
 
