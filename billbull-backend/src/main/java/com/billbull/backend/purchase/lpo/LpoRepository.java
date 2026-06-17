@@ -13,6 +13,11 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
 
     Optional<Lpo> findByLpoNumber(String lpoNumber);
 
+    boolean existsByLpoNumber(String lpoNumber);
+
+    @Query("SELECT l.lpoNumber FROM Lpo l WHERE l.lpoNumber LIKE CONCAT(:prefix, '%')")
+    List<String> findLpoNumbersByPrefix(@Param("prefix") String prefix);
+
     List<Lpo> findByStatus(LpoStatus status);
 
     long countByStatus(LpoStatus status);

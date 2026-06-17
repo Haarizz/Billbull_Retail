@@ -119,6 +119,15 @@ public class SalesInvoice {
     @Enumerated(EnumType.STRING)
     private SalesType salesType = SalesType.STANDARD_FLOW;
 
+    @Column(name = "pos_session_id")
+    private Long posSessionId;
+
+    @Column(name = "pos_terminal_id", length = 100)
+    private String posTerminalId;
+
+    @Column(name = "pos_counter_name", length = 100)
+    private String posCounterName;
+
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
 
@@ -439,6 +448,15 @@ public class SalesInvoice {
     public void setSalesType(SalesType salesType) {
         this.salesType = salesType;
     }
+
+    public Long getPosSessionId() { return posSessionId; }
+    public void setPosSessionId(Long posSessionId) { this.posSessionId = posSessionId; }
+
+    public String getPosTerminalId() { return posTerminalId; }
+    public void setPosTerminalId(String posTerminalId) { this.posTerminalId = posTerminalId; }
+
+    public String getPosCounterName() { return posCounterName; }
+    public void setPosCounterName(String posCounterName) { this.posCounterName = posCounterName; }
 
     public DeliveryStatus getDeliveryStatus() {
         return deliveryStatus;

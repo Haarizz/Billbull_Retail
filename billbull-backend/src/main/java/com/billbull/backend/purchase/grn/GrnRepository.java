@@ -11,6 +11,11 @@ public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
 
         Optional<GrnEntity> findByGrnNo(String grnNo);
 
+        boolean existsByGrnNo(String grnNo);
+
+        @Query("SELECT g.grnNo FROM GrnEntity g WHERE g.grnNo LIKE CONCAT(:prefix, '%')")
+        List<String> findGrnNumbersByPrefix(@Param("prefix") String prefix);
+
         // 🔢 For generating next number safely
         Optional<GrnEntity> findTopByGrnNoStartingWithOrderByGrnNoDesc(String prefix);
 

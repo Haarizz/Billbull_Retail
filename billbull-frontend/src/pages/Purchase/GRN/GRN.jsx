@@ -81,7 +81,7 @@ import useShortcuts from '../../../hooks/useShortcuts';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -2699,7 +2699,7 @@ const GRN = () => {
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
       const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
-      await downloadPdf(html, fullGrn?.grnNumber || grn?.grnNumber || 'GRN');
+      await downloadPdfViaServer(html, fullGrn?.grnNumber || grn?.grnNumber || 'GRN');
     } catch (error) {
       console.error("Error downloading GRN:", error);
       toast.error('Failed to generate download');
