@@ -4,6 +4,7 @@ import com.billbull.backend.common.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -63,17 +64,17 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "cashier_name")
     private String cashierName;
 
-    @Column(name = "sale_total")
-    private Double saleTotal = 0.0;
+    @Column(name = "sale_total", precision = 15, scale = 2)
+    private BigDecimal saleTotal = BigDecimal.ZERO;
 
-    @Column(name = "tax_total")
-    private Double taxTotal = 0.0;
+    @Column(name = "tax_total", precision = 15, scale = 2)
+    private BigDecimal taxTotal = BigDecimal.ZERO;
 
-    @Column(name = "bill_discount_amount")
-    private Double billDiscountAmount = 0.0;
+    @Column(name = "bill_discount_amount", precision = 15, scale = 2)
+    private BigDecimal billDiscountAmount = BigDecimal.ZERO;
 
-    @Column(name = "deposit_amount")
-    private Double depositAmount = 0.0;
+    @Column(name = "deposit_amount", precision = 15, scale = 2)
+    private BigDecimal depositAmount = BigDecimal.ZERO;
 
     @Column(name = "deposit_payment_mode")
     private String depositPaymentMode;
@@ -81,8 +82,8 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "deposit_required")
     private Boolean depositRequired = Boolean.FALSE;
 
-    @Column(name = "balance_amount")
-    private Double balanceAmount = 0.0;
+    @Column(name = "balance_amount", precision = 15, scale = 2)
+    private BigDecimal balanceAmount = BigDecimal.ZERO;
 
     @Column(name = "due_date")
     private LocalDate dueDate;
@@ -170,17 +171,17 @@ public class PosLayaway extends BaseEntity {
     public String getCashierName() { return cashierName; }
     public void setCashierName(String cashierName) { this.cashierName = cashierName; }
 
-    public Double getSaleTotal() { return saleTotal; }
-    public void setSaleTotal(Double saleTotal) { this.saleTotal = saleTotal; }
+    public BigDecimal getSaleTotal() { return saleTotal; }
+    public void setSaleTotal(BigDecimal saleTotal) { this.saleTotal = saleTotal; }
 
-    public Double getTaxTotal() { return taxTotal; }
-    public void setTaxTotal(Double taxTotal) { this.taxTotal = taxTotal; }
+    public BigDecimal getTaxTotal() { return taxTotal; }
+    public void setTaxTotal(BigDecimal taxTotal) { this.taxTotal = taxTotal; }
 
-    public Double getBillDiscountAmount() { return billDiscountAmount; }
-    public void setBillDiscountAmount(Double billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
+    public BigDecimal getBillDiscountAmount() { return billDiscountAmount; }
+    public void setBillDiscountAmount(BigDecimal billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
 
-    public Double getDepositAmount() { return depositAmount; }
-    public void setDepositAmount(Double depositAmount) { this.depositAmount = depositAmount; }
+    public BigDecimal getDepositAmount() { return depositAmount; }
+    public void setDepositAmount(BigDecimal depositAmount) { this.depositAmount = depositAmount; }
 
     public String getDepositPaymentMode() { return depositPaymentMode; }
     public void setDepositPaymentMode(String depositPaymentMode) { this.depositPaymentMode = depositPaymentMode; }
@@ -188,8 +189,8 @@ public class PosLayaway extends BaseEntity {
     public Boolean getDepositRequired() { return depositRequired; }
     public void setDepositRequired(Boolean depositRequired) { this.depositRequired = depositRequired; }
 
-    public Double getBalanceAmount() { return balanceAmount; }
-    public void setBalanceAmount(Double balanceAmount) { this.balanceAmount = balanceAmount; }
+    public BigDecimal getBalanceAmount() { return balanceAmount; }
+    public void setBalanceAmount(BigDecimal balanceAmount) { this.balanceAmount = balanceAmount; }
 
     public LocalDate getDueDate() { return dueDate; }
     public void setDueDate(LocalDate dueDate) { this.dueDate = dueDate; }

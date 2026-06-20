@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,10 +72,10 @@ public class PosLayawayService {
         layaway.setDueDate(req.getDueDate());
         layaway.setRemarks(req.getRemarks());
         layaway.setReserveStockRequested(req.getReserveStockRequested() == null || req.getReserveStockRequested());
-        layaway.setBillDiscountAmount(req.getBillDiscountAmount() != null ? req.getBillDiscountAmount() : 0.0);
+        layaway.setBillDiscountAmount(nz(req.getBillDiscountAmount()));
 
-        double subtotal = 0.0;
-        double taxTotal = 0.0;
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
         List<PosLayawayItem> items = new ArrayList<>();
         for (PosLayawayCreateRequest.PosLayawayItemRequest ir : req.getItems()) {
             PosLayawayItem item = new PosLayawayItem();
@@ -82,7 +84,7 @@ public class PosLayawayService {
             item.setUnit(ir.getUnit() != null ? ir.getUnit() : "Each");
             int qty = ir.getQuantity() != null ? ir.getQuantity() : 0;
             item.setQuantity(qty);
-            double price = ir.getPrice() != null ? ir.getPrice() : 0.0;
+            BigDecimal price = nz(ir.getPrice());
             item.setPrice(price);
             double discountPct = ir.getDiscount() != null ? ir.getDiscount() : 0.0;
             item.setDiscount(discountPct);
@@ -105,9 +107,12 @@ public class PosLayawayService {
 
             // Voided lines are stored for display but excluded from totals/reservations.
             if (!itemVoided) {
-                double net = price * qty * (1 - discountPct / 100.0);
-                subtotal += net;
-                taxTotal += net * (taxRate / 100.0);
+                // net = price * qty * (1 - discountPct/100); tax = net * (taxRate/100).
+                // discountPct/taxRate are percentages (not money) so stay double-derived.
+                BigDecimal discountFactor = BigDecimal.valueOf(1 - discountPct / 100.0);
+                BigDecimal net = price.multiply(BigDecimal.valueOf(qty)).multiply(discountFactor);
+                subtotal = subtotal.add(net);
+                taxTotal = taxTotal.add(net.multiply(BigDecimal.valueOf(taxRate / 100.0)));
             }
 
             item.setPosLayaway(layaway);
@@ -115,17 +120,16 @@ public class PosLayawayService {
         }
         layaway.setItems(items);
 
-        double billDiscount = layaway.getBillDiscountAmount() != null ? layaway.getBillDiscountAmount() : 0.0;
-        double saleTotal = Math.max(0, subtotal - billDiscount) + taxTotal;
+        BigDecimal billDiscount = nz(layaway.getBillDiscountAmount());
+        BigDecimal saleTotal = subtotal.subtract(billDiscount).max(BigDecimal.ZERO).add(taxTotal);
         layaway.setTaxTotal(round2(taxTotal));
         layaway.setSaleTotal(round2(saleTotal));
 
-        double deposit = req.getDepositAmount() != null ? req.getDepositAmount() : 0.0;
-        deposit = Math.min(deposit, layaway.getSaleTotal());
+        BigDecimal deposit = nz(req.getDepositAmount()).min(layaway.getSaleTotal());
         layaway.setDepositAmount(round2(deposit));
         layaway.setDepositPaymentMode(req.getDepositPaymentMode());
         layaway.setDepositRequired(req.getDepositRequired() != null && req.getDepositRequired());
-        layaway.setBalanceAmount(round2(Math.max(0, layaway.getSaleTotal() - deposit)));
+        layaway.setBalanceAmount(round2(layaway.getSaleTotal().subtract(deposit).max(BigDecimal.ZERO)));
         layaway.setStatus(deriveStatus(layaway.getSaleTotal(), deposit));
 
         // Persist first so the layaway + items have ids to anchor batch reservations.
@@ -194,11 +198,11 @@ public class PosLayawayService {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private PosLayawayStatus deriveStatus(double saleTotal, double deposit) {
-        if (deposit >= saleTotal && saleTotal > 0) {
+    private PosLayawayStatus deriveStatus(BigDecimal saleTotal, BigDecimal deposit) {
+        if (deposit.compareTo(saleTotal) >= 0 && saleTotal.signum() > 0) {
             return PosLayawayStatus.READY_TO_CONVERT;
         }
-        if (deposit > 0) {
+        if (deposit.signum() > 0) {
             return PosLayawayStatus.PARTIALLY_PAID;
         }
         return PosLayawayStatus.ACTIVE;
@@ -226,8 +230,20 @@ public class PosLayawayService {
         return LAYAWAY_PREFIX + String.format("%0" + LAYAWAY_PAD + "d", next);
     }
 
-    private double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
+    /** Round a monetary amount to 2 dp, HALF_UP — matches the legacy
+     *  {@code Math.round(v*100)/100} for the non-negative amounts handled here. */
+    private static BigDecimal round2(BigDecimal v) {
+        return v.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** Null-safe Double -> BigDecimal at the request boundary (treats null as zero). */
+    private static BigDecimal nz(Double v) {
+        return v != null ? BigDecimal.valueOf(v) : BigDecimal.ZERO;
+    }
+
+    /** Null-safe view of a persisted BigDecimal money field (treats null as zero). */
+    private static BigDecimal nz(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
     }
 
     private String currentUsername() {
