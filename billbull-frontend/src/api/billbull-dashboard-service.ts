@@ -670,7 +670,7 @@ class BillBullDashboardService {
 export const billbullDashboardService = new BillBullDashboardService();
 
 // Pre-warm "Today" summary at module-import time so the cache is hot before the
-// dashboard component even mounts.
-if (typeof window !== "undefined") {
+// dashboard component even mounts. Only runs when a session token exists.
+if (typeof window !== "undefined" && sessionStorage.getItem("token")) {
   billbullDashboardService.prefetch();
 }

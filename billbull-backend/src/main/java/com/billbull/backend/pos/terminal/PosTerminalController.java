@@ -33,4 +33,26 @@ public class PosTerminalController {
     public ResponseEntity<List<PosTerminal>> getForBranch(@PathVariable Long branchId) {
         return ResponseEntity.ok(service.getForBranch(branchId));
     }
+
+    @GetMapping("/branch/{branchId}/all")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<PosTerminal>> getAllForBranch(@PathVariable Long branchId) {
+        return ResponseEntity.ok(service.getAllForBranch(branchId));
+    }
+
+    @PutMapping("/{terminalId}/rename")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> rename(@PathVariable String terminalId, @RequestBody Map<String, Object> body) {
+        String terminalName = body.get("terminalName") != null ? body.get("terminalName").toString() : null;
+        String counterName  = body.get("counterName")  != null ? body.get("counterName").toString()  : null;
+        return ResponseEntity.ok(service.rename(terminalId, terminalName, counterName));
+    }
+
+    @PutMapping("/{terminalId}/status")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> setStatus(@PathVariable String terminalId, @RequestBody Map<String, Object> body) {
+        String statusStr = body.getOrDefault("status", "ACTIVE").toString();
+        PosTerminalStatus status = PosTerminalStatus.valueOf(statusStr.toUpperCase());
+        return ResponseEntity.ok(service.setStatus(terminalId, status));
+    }
 }

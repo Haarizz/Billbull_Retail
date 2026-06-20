@@ -134,6 +134,7 @@ const INITIAL_FORM_STATE = {
   minPrice: '',
   maxPrice: '',
   onlinePrice: '',
+  defaultDiscount: 0,
   purchaseTax: 5,
   salesTax: 5,
   taxCategory: 'Standard',
@@ -273,7 +274,8 @@ const buildProductPayload = (formData) => {
       maxPrice: formData.maxPrice,
       onlinePrice: formData.onlinePrice,
       markup: formData.markup,
-      gp: formData.gp
+      gp: formData.gp,
+      defaultDiscount: formData.defaultDiscount || 0
     },
     tax: {
       purchaseTax: formData.purchaseTax,
@@ -1152,6 +1154,13 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Online Price</label>
                     <input type="number" value={formData.onlinePrice} onChange={(e) => handleInputChange('onlinePrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
+                  </div>
+                </div>
+                <div className="w-full md:w-1/2 md:pl-3 mt-4 md:mt-0">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">POS Default Discount %</label>
+                    <input type="number" min="0" max="100" value={formData.defaultDiscount} onChange={(e) => handleInputChange('defaultDiscount', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
+                    <p className="text-[11px] text-slate-400">Applied automatically when scanned at POS. Cashier can still edit.</p>
                   </div>
                 </div>
               </div>
@@ -2514,6 +2523,7 @@ const Products = () => {
         minPrice: pricing?.minPrice || '',
         maxPrice: pricing?.maxPrice || '',
         onlinePrice: pricing?.onlinePrice || '',
+        defaultDiscount: pricing?.defaultDiscount ?? 0,
 
         // Use ?? not || here — a deliberate 0% (zero-rated item) must not
         // silently fall through to the 5% default on each save round-trip.

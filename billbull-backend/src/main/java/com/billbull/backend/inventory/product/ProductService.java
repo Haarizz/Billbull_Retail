@@ -374,6 +374,7 @@ public class ProductService {
             pricing.setOnlinePrice(reqPricing.getOnlinePrice());
             pricing.setMarkup(reqPricing.getMarkup());
             pricing.setGp(reqPricing.getGp());
+            pricing.setDefaultDiscount(reqPricing.getDefaultDiscount());
 
             pricingRepo.save(pricing);
         }

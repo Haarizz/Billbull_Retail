@@ -39,6 +39,7 @@ public class BatchSelectionService {
     public static final String DOC_TYPE_SALES_ORDER = "SALES_ORDER";
     public static final String DOC_TYPE_SALES_INVOICE = "SALES_INVOICE";
     public static final String DOC_TYPE_SALES_RETURN = "SALES_RETURN";
+    public static final String DOC_TYPE_POS_LAYAWAY = "POS_LAYAWAY";
     public static final String MANUAL_PERMISSION = "batch_manual_select";
 
     private static final List<BatchAllocationStatus> ACTIVE_STATUSES =
@@ -205,6 +206,108 @@ public class BatchSelectionService {
                 requiredQuantity);
     }
 
+    /**
+     * POS unified-scan pin: reserve the one specific batch unit the cashier
+     * scanned for a Fast-Sale Sales Invoice line (quantity 1). Reserved against
+     * the SALES_INVOICE source so the auto-generated Delivery Note consumes it
+     * via its sourceLineId link, overriding FEFO for that line. Unlike the
+     * interactive manual selection, no manual-select permission is required —
+     * the physical scan is the authorization.
+     */
+    public List<BatchAllocation> reserveScannedBatchForSalesInvoiceLine(
+            SalesInvoice invoice,
+            SalesInvoiceItem item,
+            String batchNumber) {
+        if (invoice == null || invoice.getId() == null || item == null || item.getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved sales invoice and item are required");
+        }
+        if (batchNumber == null || batchNumber.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Scanned batch number is required");
+        }
+        Product product = requireBatchProduct(item.getItemCode());
+        BatchMaster batch = batchRepository.findFirstByBatchNumberIgnoreCase(batchNumber.trim())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Batch not found: " + batchNumber));
+        if (batch.getBinId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Scanned batch " + batchNumber + " has no bin location");
+        }
+        Bin bin = resolveBin(batch.getBinId(), null);
+        item.setBinId(bin.getId());
+
+        BatchSelectionRequest request = new BatchSelectionRequest();
+        request.mode = BatchAllocationMethod.MANUAL;
+        request.binId = bin.getId();
+        request.locationCode = bin.getCode();
+        request.requiredQuantity = 1;
+        request.batchMasterIds = new ArrayList<>(List.of(batch.getId()));
+        return saveSourceLineSelection(
+                DOC_TYPE_SALES_INVOICE,
+                invoice.getId(),
+                item.getId(),
+                product,
+                bin,
+                request,
+                1,
+                false);
+    }
+
+    /**
+     * POS layaway reservation: reserve the one specific batch unit the cashier
+     * scanned for a layaway line (quantity 1), against the POS_LAYAWAY source.
+     * Released when the layaway is cancelled/expired or converted (the conversion
+     * sale re-reserves its own batches through the normal checkout path). Like the
+     * Sales-Invoice scan pin, the physical scan is the authorization, so no manual
+     * batch-select permission is required.
+     *
+     * @param layawayId   the saved layaway id (POS_LAYAWAY source document)
+     * @param lineId      the saved layaway item id (source line)
+     * @param itemCode    the product code (must be batch-controlled)
+     * @param batchNumber the scanned batch number to reserve
+     */
+    public List<BatchAllocation> reserveBatchForLayawayLine(
+            Long layawayId,
+            Long lineId,
+            String itemCode,
+            String batchNumber) {
+        if (layawayId == null || lineId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved layaway and item are required");
+        }
+        if (batchNumber == null || batchNumber.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Scanned batch number is required");
+        }
+        Product product = requireBatchProduct(itemCode);
+        BatchMaster batch = batchRepository.findFirstByBatchNumberIgnoreCase(batchNumber.trim())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Batch not found: " + batchNumber));
+        if (batch.getBinId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Scanned batch " + batchNumber + " has no bin location");
+        }
+        Bin bin = resolveBin(batch.getBinId(), null);
+
+        BatchSelectionRequest request = new BatchSelectionRequest();
+        request.mode = BatchAllocationMethod.MANUAL;
+        request.binId = bin.getId();
+        request.locationCode = bin.getCode();
+        request.requiredQuantity = 1;
+        request.batchMasterIds = new ArrayList<>(List.of(batch.getId()));
+        return saveSourceLineSelection(
+                DOC_TYPE_POS_LAYAWAY,
+                layawayId,
+                lineId,
+                product,
+                bin,
+                request,
+                1,
+                false);
+    }
+
+    /** Release every batch reserved for a layaway (cancel / expire / convert). */
+    public void releaseLayaway(Long layawayId) {
+        releaseSourceDocument(DOC_TYPE_POS_LAYAWAY, layawayId);
+    }
+
     public List<BatchAllocation> saveDeliveryLineSelection(
             DeliveryNote dn,
             DeliveryNoteItem item,
@@ -238,6 +341,19 @@ public class BatchSelectionService {
             Bin bin,
             BatchSelectionRequest request,
             int requiredQuantity) {
+        return saveSourceLineSelection(sourceDocumentType, sourceDocumentId, sourceLineId,
+                product, bin, request, requiredQuantity, true);
+    }
+
+    private List<BatchAllocation> saveSourceLineSelection(
+            String sourceDocumentType,
+            Long sourceDocumentId,
+            Long sourceLineId,
+            Product product,
+            Bin bin,
+            BatchSelectionRequest request,
+            int requiredQuantity,
+            boolean enforceManualPermission) {
 
         int required = normalizeRequiredQuantity(
                 request != null && request.requiredQuantity != null ? request.requiredQuantity : requiredQuantity);
@@ -255,7 +371,11 @@ public class BatchSelectionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "FEFO is disabled for this product. Manual batch selection is required.");
         }
-        if (method == BatchAllocationMethod.MANUAL && !permissionService.currentUserCanEdit(MANUAL_PERMISSION)) {
+        // POS scan pins a physically-handled unit, so the scan itself is the
+        // authorization — callers pass enforceManualPermission=false there.
+        if (enforceManualPermission
+                && method == BatchAllocationMethod.MANUAL
+                && !permissionService.currentUserCanEdit(MANUAL_PERMISSION)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Manual batch selection permission is required");
         }
 

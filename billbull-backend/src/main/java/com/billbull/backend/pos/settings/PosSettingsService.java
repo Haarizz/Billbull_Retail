@@ -52,6 +52,11 @@ public class PosSettingsService {
                     }
                     existing.setVoidMode(settings.getVoidMode());
                     existing.setCartViewMode(settings.getCartViewMode());
+                    existing.setCartShowBarcode(settings.getCartShowBarcode());
+                    existing.setCartShowProductCode(settings.getCartShowProductCode());
+                    existing.setCartShowBatchNumber(settings.getCartShowBatchNumber());
+                    existing.setCartShowSerialNumber(settings.getCartShowSerialNumber());
+                    existing.setCartShowExpiryDate(settings.getCartShowExpiryDate());
                     existing.setPriceCheckShowStock(settings.getPriceCheckShowStock());
                     existing.setZReportAccess(settings.getZReportAccess());
                     existing.setCashDrawerTriggers(settings.getCashDrawerTriggers());

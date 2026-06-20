@@ -11,6 +11,15 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     boolean existsByCode(String code);
     java.util.Optional<Customer> findByCode(String code);
 
+    /**
+     * Exact (case-insensitive) lookup used by the POS unified search resolver.
+     * The same query value is matched against code, mobile, phone and email so a
+     * single scanned/typed identifier resolves to a customer (membership/loyalty
+     * number maps to {@code code} — there is no dedicated loyalty column).
+     */
+    java.util.Optional<Customer> findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(
+            String code, String mobile, String phone, String email);
+
     @org.springframework.data.jpa.repository.Query("SELECT c.code FROM Customer c WHERE c.code LIKE CONCAT(:prefix, '%')")
     List<String> findCodesByPrefix(@org.springframework.data.repository.query.Param("prefix") String prefix);
 

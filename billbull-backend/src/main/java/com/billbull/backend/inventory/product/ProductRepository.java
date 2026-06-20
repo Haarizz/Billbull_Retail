@@ -25,6 +25,11 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         Optional<Product> findByCodeAndIsActiveTrue(String code);
 
+        /** Exact (case-insensitive) code/SKU lookup for the POS unified search resolver. */
+        Optional<Product> findFirstByCodeIgnoreCaseAndIsActiveTrue(String code);
+
+        Optional<Product> findFirstBySkuIgnoreCaseAndIsActiveTrue(String sku);
+
         @org.springframework.data.jpa.repository.Query("SELECT COUNT(p) FROM Product p WHERE p.department.id = :departmentId AND p.isActive = true")
         long countByDepartmentIdAndIsActiveTrue(Long departmentId);
 
@@ -121,7 +126,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
-                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+                        "  OR EXISTS (SELECT 1 FROM BatchMaster bm WHERE bm.productId = p.id AND LOWER(bm.batchNumber) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
                         "ORDER BY p.name ASC")

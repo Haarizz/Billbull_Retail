@@ -1295,6 +1295,7 @@ export const getRecentActivity = async (limit = 5) => {
 };
 
 export const getDashboardData = async (timeRange = 'Today', options = {}) => {
+    if (!sessionStorage.getItem('token')) return createEmptyDashboardData();
     const { force = false, forceClient = false, onStale, filters: rawFilters = {} } = options;
     const filters = normalizeDashboardFilters(rawFilters);
     const filtersActive = hasDashboardFilters(filters);
