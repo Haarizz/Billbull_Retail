@@ -3,6 +3,7 @@ package com.billbull.backend.pos.session;
 import com.billbull.backend.common.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -47,35 +48,35 @@ public class PosSession extends BaseEntity {
     @Column(nullable = false, length = 20)
     private PosSessionStatus status = PosSessionStatus.OPEN;
 
-    @Column(name = "opening_cash")
-    private Double openingCash = 0.0;
+    @Column(name = "opening_cash", precision = 15, scale = 2)
+    private BigDecimal openingCash = BigDecimal.ZERO;
 
-    @Column(name = "closing_cash")
-    private Double closingCash;
+    @Column(name = "closing_cash", precision = 15, scale = 2)
+    private BigDecimal closingCash;
 
-    @Column(name = "expected_cash")
-    private Double expectedCash;
+    @Column(name = "expected_cash", precision = 15, scale = 2)
+    private BigDecimal expectedCash;
 
-    @Column(name = "cash_difference")
-    private Double cashDifference;
+    @Column(name = "cash_difference", precision = 15, scale = 2)
+    private BigDecimal cashDifference;
 
-    @Column(name = "total_sales")
-    private Double totalSales = 0.0;
+    @Column(name = "total_sales", precision = 15, scale = 2)
+    private BigDecimal totalSales = BigDecimal.ZERO;
 
-    @Column(name = "total_cash_sales")
-    private Double totalCashSales = 0.0;
+    @Column(name = "total_cash_sales", precision = 15, scale = 2)
+    private BigDecimal totalCashSales = BigDecimal.ZERO;
 
-    @Column(name = "total_card_sales")
-    private Double totalCardSales = 0.0;
+    @Column(name = "total_card_sales", precision = 15, scale = 2)
+    private BigDecimal totalCardSales = BigDecimal.ZERO;
 
-    @Column(name = "total_credit_sales")
-    private Double totalCreditSales = 0.0;
+    @Column(name = "total_credit_sales", precision = 15, scale = 2)
+    private BigDecimal totalCreditSales = BigDecimal.ZERO;
 
-    @Column(name = "total_mixed_sales")
-    private Double totalMixedSales = 0.0;
+    @Column(name = "total_mixed_sales", precision = 15, scale = 2)
+    private BigDecimal totalMixedSales = BigDecimal.ZERO;
 
-    @Column(name = "total_refunds")
-    private Double totalRefunds = 0.0;
+    @Column(name = "total_refunds", precision = 15, scale = 2)
+    private BigDecimal totalRefunds = BigDecimal.ZERO;
 
     @Column(name = "total_voids")
     private Integer totalVoids = 0;
@@ -128,35 +129,35 @@ public class PosSession extends BaseEntity {
     public PosSessionStatus getStatus() { return status; }
     public void setStatus(PosSessionStatus status) { this.status = status; }
 
-    public Double getOpeningCash() { return openingCash; }
-    public void setOpeningCash(Double openingCash) { this.openingCash = openingCash; }
+    public BigDecimal getOpeningCash() { return openingCash; }
+    public void setOpeningCash(BigDecimal openingCash) { this.openingCash = openingCash; }
 
-    public Double getClosingCash() { return closingCash; }
-    public void setClosingCash(Double closingCash) { this.closingCash = closingCash; }
+    public BigDecimal getClosingCash() { return closingCash; }
+    public void setClosingCash(BigDecimal closingCash) { this.closingCash = closingCash; }
 
-    public Double getExpectedCash() { return expectedCash; }
-    public void setExpectedCash(Double expectedCash) { this.expectedCash = expectedCash; }
+    public BigDecimal getExpectedCash() { return expectedCash; }
+    public void setExpectedCash(BigDecimal expectedCash) { this.expectedCash = expectedCash; }
 
-    public Double getCashDifference() { return cashDifference; }
-    public void setCashDifference(Double cashDifference) { this.cashDifference = cashDifference; }
+    public BigDecimal getCashDifference() { return cashDifference; }
+    public void setCashDifference(BigDecimal cashDifference) { this.cashDifference = cashDifference; }
 
-    public Double getTotalSales() { return totalSales; }
-    public void setTotalSales(Double totalSales) { this.totalSales = totalSales; }
+    public BigDecimal getTotalSales() { return totalSales; }
+    public void setTotalSales(BigDecimal totalSales) { this.totalSales = totalSales; }
 
-    public Double getTotalCashSales() { return totalCashSales; }
-    public void setTotalCashSales(Double totalCashSales) { this.totalCashSales = totalCashSales; }
+    public BigDecimal getTotalCashSales() { return totalCashSales; }
+    public void setTotalCashSales(BigDecimal totalCashSales) { this.totalCashSales = totalCashSales; }
 
-    public Double getTotalCardSales() { return totalCardSales; }
-    public void setTotalCardSales(Double totalCardSales) { this.totalCardSales = totalCardSales; }
+    public BigDecimal getTotalCardSales() { return totalCardSales; }
+    public void setTotalCardSales(BigDecimal totalCardSales) { this.totalCardSales = totalCardSales; }
 
-    public Double getTotalCreditSales() { return totalCreditSales; }
-    public void setTotalCreditSales(Double totalCreditSales) { this.totalCreditSales = totalCreditSales; }
+    public BigDecimal getTotalCreditSales() { return totalCreditSales; }
+    public void setTotalCreditSales(BigDecimal totalCreditSales) { this.totalCreditSales = totalCreditSales; }
 
-    public Double getTotalMixedSales() { return totalMixedSales; }
-    public void setTotalMixedSales(Double totalMixedSales) { this.totalMixedSales = totalMixedSales; }
+    public BigDecimal getTotalMixedSales() { return totalMixedSales; }
+    public void setTotalMixedSales(BigDecimal totalMixedSales) { this.totalMixedSales = totalMixedSales; }
 
-    public Double getTotalRefunds() { return totalRefunds; }
-    public void setTotalRefunds(Double totalRefunds) { this.totalRefunds = totalRefunds; }
+    public BigDecimal getTotalRefunds() { return totalRefunds; }
+    public void setTotalRefunds(BigDecimal totalRefunds) { this.totalRefunds = totalRefunds; }
 
     public Integer getTotalVoids() { return totalVoids; }
     public void setTotalVoids(Integer totalVoids) { this.totalVoids = totalVoids; }
