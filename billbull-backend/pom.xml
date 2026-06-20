@@ -71,6 +71,24 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!-- Versioned DB migrations (ARCHFIX P0 §1.1). Version managed by the Boot 3.5 BOM.
+		     Flyway runs additive, idempotent scripts; ddl-auto stays 'update' for now so the
+		     two coexist safely. Flip to ddl-auto=validate per-tenant once baselined.
+		     NOTE: temporarily commented out — the offline build cache lacks these jars. Run
+		     `mvn dependency:get -Dartifact=org.flywaydb:flyway-core` (online) once, then
+		     uncomment these two deps and remove `spring.flyway.enabled=false` from
+		     application.properties to activate the db/migration scripts. -->
+		<!--
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		-->
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>

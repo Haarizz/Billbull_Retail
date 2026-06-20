@@ -2040,17 +2040,48 @@ public class PostingEngineService {
                         BigDecimal dr = nvl(line.getDebit());
                         BigDecimal cr = nvl(line.getCredit());
 
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
-                                glBalanceRepository.findByAccountCodeAndFiscalPeriodIdAndBranchId(code, periodId, branchId)
-                                        .orElseGet(() -> {
-                                                com.billbull.backend.financials.generalledger.GlAccountBalance b
-                                                        = new com.billbull.backend.financials.generalledger.GlAccountBalance();
-                                                b.setAccountCode(code);
-                                                b.setFiscalPeriodId(periodId);
-                                                b.setBranchId(branchId);
-                                                return b;
-                                        });
+                        applyGlBalanceDelta(code, periodId, branchId, dr, cr);
+                }
+        }
 
+        /**
+         * Atomically applies a (debit, credit) delta to the GlAccountBalance row for a
+         * (accountCode, periodId, branchId) triple, creating it if absent.
+         *
+         * Concurrency (ARCHFIX P0 §1.3): the row is read through a PESSIMISTIC_WRITE lock so
+         * two concurrent postings to the same triple are serialized and no increment is lost.
+         * The first-ever insert for a triple is guarded with a flush + retry: if a concurrent
+         * thread wins the insert, we fall back to the now-existing locked row and re-apply.
+         */
+        private void applyGlBalanceDelta(String code, Long periodId, Long branchId,
+                        BigDecimal dr, BigDecimal cr) {
+                java.util.Optional<com.billbull.backend.financials.generalledger.GlAccountBalance> existing =
+                                glBalanceRepository.findForUpdate(code, periodId, branchId);
+
+                if (existing.isPresent()) {
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal = existing.get();
+                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
+                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
+                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
+                        glBalanceRepository.save(bal);
+                        return;
+                }
+
+                com.billbull.backend.financials.generalledger.GlAccountBalance b
+                                = new com.billbull.backend.financials.generalledger.GlAccountBalance();
+                b.setAccountCode(code);
+                b.setFiscalPeriodId(periodId);
+                b.setBranchId(branchId);
+                b.setDebitTotal(dr);
+                b.setCreditTotal(cr);
+                b.setClosingBalance(dr.subtract(cr));
+                try {
+                        glBalanceRepository.saveAndFlush(b);
+                } catch (org.springframework.dao.DataIntegrityViolationException raceLost) {
+                        // A concurrent posting inserted the row first. Re-read under lock and re-apply.
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
+                                        glBalanceRepository.findForUpdate(code, periodId, branchId)
+                                                .orElseThrow(() -> raceLost);
                         bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
                         bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
                         bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
