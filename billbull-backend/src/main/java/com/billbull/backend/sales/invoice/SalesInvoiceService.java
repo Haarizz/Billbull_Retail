@@ -298,35 +298,11 @@ public class SalesInvoiceService {
             }
         }
 
-        // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
-        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        
-        double billDiscAmt = invoice.getBillDiscountAmount() != null ? invoice.getBillDiscountAmount() : 0;
-        if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
-            billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
-                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
-            invoice.setBillDiscountAmount(billDiscAmt);
-        }
-
-        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
-        double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
-        double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal + deliveryCharge + roundOff)
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        // Finalize header money (subtotal/tax/discount/total/balance) + paid guard.
+        // Pure arithmetic, extracted for characterization testing.
+        finalizeInvoiceTotals(invoice, subTotal, taxTotal);
+        double total = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : 0;
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
-
-        if (paid < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot be negative.");
-        }
-        if (paid > total + 0.0001d) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot exceed invoice total.");
-        }
-
-        invoice.setSubTotal(subTotal);
-        invoice.setTaxTotal(taxTotal);
-        invoice.setInvoiceTotal(total);
-        invoice.setBalance(total - paid);
 
         // Fetch settings ONCE for this entire request — passed through the call chain
         // to avoid redundant DB hits.
@@ -591,6 +567,51 @@ public class SalesInvoiceService {
                 && deliveryItem.getImage() != null && !deliveryItem.getImage().isBlank()) {
             invoiceItem.setImage(deliveryItem.getImage());
         }
+    }
+
+    /**
+     * Finalize the invoice header money from the already-accumulated line totals:
+     * rounds subtotal/tax to 2dp, derives the bill discount (absolute, or from a
+     * percentage when no absolute amount was given), computes the invoice total
+     * (subtotal − discount + tax + delivery + round-off) and the outstanding
+     * balance, and enforces the amount-paid guards.
+     *
+     * <p>Pure arithmetic over the invoice's own fields — no collaborators — so it can
+     * be characterization-tested directly. Package-private for the test.
+     *
+     * @param subTotal raw (un-rounded) sum of line (net − tax + footerDisc)
+     * @param taxTotal raw (un-rounded) sum of line tax amounts
+     */
+    void finalizeInvoiceTotals(SalesInvoice invoice, double subTotal, double taxTotal) {
+        // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+
+        double billDiscAmt = invoice.getBillDiscountAmount() != null ? invoice.getBillDiscountAmount() : 0;
+        if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
+            billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
+                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+            invoice.setBillDiscountAmount(billDiscAmt);
+        }
+
+        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
+        double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal + deliveryCharge + roundOff)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
+
+        if (paid < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot be negative.");
+        }
+        if (paid > total + 0.0001d) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot exceed invoice total.");
+        }
+
+        invoice.setSubTotal(subTotal);
+        invoice.setTaxTotal(taxTotal);
+        invoice.setInvoiceTotal(total);
+        invoice.setBalance(total - paid);
     }
 
     private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {

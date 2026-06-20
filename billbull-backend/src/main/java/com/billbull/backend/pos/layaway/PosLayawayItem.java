@@ -2,6 +2,7 @@ package com.billbull.backend.pos.layaway;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 /**
  * A single reserved line on a {@link PosLayaway}. Mirrors the shape consumed by
@@ -19,7 +20,8 @@ public class PosLayawayItem {
     private String itemName;
     private String unit;
     private Integer quantity;
-    private Double price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
     private Double discount;
     private Double taxRate;
 
@@ -60,8 +62,8 @@ public class PosLayawayItem {
     public Integer getQuantity() { return quantity; }
     public void setQuantity(Integer quantity) { this.quantity = quantity; }
 
-    public Double getPrice() { return price; }
-    public void setPrice(Double price) { this.price = price; }
+    public BigDecimal getPrice() { return price; }
+    public void setPrice(BigDecimal price) { this.price = price; }
 
     public Double getDiscount() { return discount; }
     public void setDiscount(Double discount) { this.discount = discount; }

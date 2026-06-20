@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -83,10 +84,10 @@ class PosLayawayServiceTest {
 
         PosLayaway saved = service.create(req);
 
-        assertEquals(210.0, saved.getSaleTotal());
-        assertEquals(10.0, saved.getTaxTotal());
-        assertEquals(50.0, saved.getDepositAmount());
-        assertEquals(160.0, saved.getBalanceAmount());
+        assertMoney("210.0", saved.getSaleTotal());
+        assertMoney("10.0", saved.getTaxTotal());
+        assertMoney("50.0", saved.getDepositAmount());
+        assertMoney("160.0", saved.getBalanceAmount());
         assertEquals(PosLayawayStatus.PARTIALLY_PAID, saved.getStatus());
     }
 
@@ -99,9 +100,9 @@ class PosLayawayServiceTest {
 
         PosLayaway saved = service.create(req);
 
-        assertEquals(105.0, saved.getSaleTotal());
-        assertEquals(105.0, saved.getDepositAmount());
-        assertEquals(0.0, saved.getBalanceAmount());
+        assertMoney("105.0", saved.getSaleTotal());
+        assertMoney("105.0", saved.getDepositAmount());
+        assertMoney("0.0", saved.getBalanceAmount());
         assertEquals(PosLayawayStatus.READY_TO_CONVERT, saved.getStatus());
     }
 
@@ -158,6 +159,12 @@ class PosLayawayServiceTest {
     }
 
     // ── fixtures ──────────────────────────────────────────────────────────────
+
+    /** Assert money equality by numeric value, scale-independent (210 == 210.00). */
+    private static void assertMoney(String expected, BigDecimal actual) {
+        assertEquals(0, new BigDecimal(expected).compareTo(actual),
+                () -> "expected " + expected + " but was " + actual);
+    }
 
     private PosLayawayCreateRequest baseRequest() {
         PosLayawayCreateRequest req = new PosLayawayCreateRequest();

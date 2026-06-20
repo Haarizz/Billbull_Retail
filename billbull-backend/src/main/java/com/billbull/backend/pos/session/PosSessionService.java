@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +24,14 @@ public class PosSessionService {
     private final PosSessionRepository repo;
     private final SalesInvoiceRepository invoiceRepo;
     private final BranchAccessService branchAccessService;
+
+    /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
+     *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
+    private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
+
+    /** Bridges a still-{@code Double} amount from {@link SalesInvoice} (converted in a
+     *  later slice) into {@code BigDecimal}, null-safe. */
+    private static BigDecimal nz(Double v) { return v != null ? BigDecimal.valueOf(v) : BigDecimal.ZERO; }
 
     public PosSessionService(PosSessionRepository repo,
                              SalesInvoiceRepository invoiceRepo,
@@ -38,7 +47,7 @@ public class PosSessionService {
     }
 
     @Transactional
-    public PosSession openSession(String terminalId, String counterName, Double openingCash) {
+    public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
 
@@ -58,12 +67,12 @@ public class PosSessionService {
         session.setSessionDate(LocalDate.now());
         session.setOpenedAt(LocalDateTime.now());
         session.setStatus(PosSessionStatus.OPEN);
-        session.setOpeningCash(openingCash != null ? openingCash : 0.0);
-        session.setTotalSales(0.0);
-        session.setTotalCashSales(0.0);
-        session.setTotalCardSales(0.0);
-        session.setTotalCreditSales(0.0);
-        session.setTotalMixedSales(0.0);
+        session.setOpeningCash(openingCash != null ? openingCash : BigDecimal.ZERO);
+        session.setTotalSales(BigDecimal.ZERO);
+        session.setTotalCashSales(BigDecimal.ZERO);
+        session.setTotalCardSales(BigDecimal.ZERO);
+        session.setTotalCreditSales(BigDecimal.ZERO);
+        session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
         return repo.save(session);
     }
@@ -92,32 +101,32 @@ public class PosSessionService {
     }
 
     @Transactional
-    public PosSession closeSession(Long sessionId, Double closingCash, String notes) {
+    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
         }
 
         // Compute expected cash = opening + cash drops in - cash drops out + cash sales
-        double cashDropNet = session.getCashMovements().stream()
-                .mapToDouble(m -> "DROP_IN".equals(m.getMovementType()) ? m.getAmount() : -m.getAmount())
-                .sum();
-        double expectedCash = (session.getOpeningCash() != null ? session.getOpeningCash() : 0)
-                + (session.getTotalCashSales() != null ? session.getTotalCashSales() : 0)
-                + cashDropNet;
+        BigDecimal cashDropNet = session.getCashMovements().stream()
+                .map(m -> "DROP_IN".equals(m.getMovementType()) ? nz(m.getAmount()) : nz(m.getAmount()).negate())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal expectedCash = nz(session.getOpeningCash())
+                .add(nz(session.getTotalCashSales()))
+                .add(cashDropNet);
 
         session.setClosedBy(currentUser());
         session.setClosedAt(LocalDateTime.now());
         session.setStatus(PosSessionStatus.CLOSED);
-        session.setClosingCash(closingCash != null ? closingCash : 0.0);
+        session.setClosingCash(closingCash != null ? closingCash : BigDecimal.ZERO);
         session.setExpectedCash(expectedCash);
-        session.setCashDifference(closingCash != null ? closingCash - expectedCash : 0.0);
+        session.setCashDifference(closingCash != null ? closingCash.subtract(expectedCash) : BigDecimal.ZERO);
         session.setNotes(notes);
         return repo.save(session);
     }
 
     @Transactional
-    public PosCashMovement addCashMovement(Long sessionId, String movementType, Double amount, String description) {
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount, String description) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
@@ -141,22 +150,22 @@ public class PosSessionService {
         PosSession session = repo.findById(sessionId).orElse(null);
         if (session == null || session.getStatus() != PosSessionStatus.OPEN) return;
 
-        double total = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : 0;
+        BigDecimal total = nz(invoice.getInvoiceTotal());
         String mode = invoice.getPaymentMode() != null ? invoice.getPaymentMode().toLowerCase() : "";
 
         session.setInvoiceCount((session.getInvoiceCount() != null ? session.getInvoiceCount() : 0) + 1);
-        session.setTotalSales((session.getTotalSales() != null ? session.getTotalSales() : 0) + total);
+        session.setTotalSales(nz(session.getTotalSales()).add(total));
 
         if (mode.contains("cash") && mode.contains("card")) {
-            session.setTotalMixedSales((session.getTotalMixedSales() != null ? session.getTotalMixedSales() : 0) + total);
+            session.setTotalMixedSales(nz(session.getTotalMixedSales()).add(total));
         } else if (mode.contains("cash")) {
-            session.setTotalCashSales((session.getTotalCashSales() != null ? session.getTotalCashSales() : 0) + total);
+            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
         } else if (mode.contains("card") || mode.contains("credit card")) {
-            session.setTotalCardSales((session.getTotalCardSales() != null ? session.getTotalCardSales() : 0) + total);
+            session.setTotalCardSales(nz(session.getTotalCardSales()).add(total));
         } else if (mode.contains("credit")) {
-            session.setTotalCreditSales((session.getTotalCreditSales() != null ? session.getTotalCreditSales() : 0) + total);
+            session.setTotalCreditSales(nz(session.getTotalCreditSales()).add(total));
         } else {
-            session.setTotalCashSales((session.getTotalCashSales() != null ? session.getTotalCashSales() : 0) + total);
+            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
         }
         repo.save(session);
     }
@@ -166,24 +175,26 @@ public class PosSessionService {
         PosSession session = getById(sessionId);
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionId(sessionId);
 
-        double cashSales = session.getTotalCashSales() != null ? session.getTotalCashSales() : 0;
-        double cardSales = session.getTotalCardSales() != null ? session.getTotalCardSales() : 0;
-        double creditSales = session.getTotalCreditSales() != null ? session.getTotalCreditSales() : 0;
-        double mixedSales = session.getTotalMixedSales() != null ? session.getTotalMixedSales() : 0;
-        double totalSales = session.getTotalSales() != null ? session.getTotalSales() : 0;
+        BigDecimal cashSales = nz(session.getTotalCashSales());
+        BigDecimal cardSales = nz(session.getTotalCardSales());
+        BigDecimal creditSales = nz(session.getTotalCreditSales());
+        BigDecimal mixedSales = nz(session.getTotalMixedSales());
+        BigDecimal totalSales = nz(session.getTotalSales());
 
-        double cashDropIn = session.getCashMovements().stream()
-                .filter(m -> "DROP_IN".equals(m.getMovementType())).mapToDouble(PosCashMovement::getAmount).sum();
-        double cashDropOut = session.getCashMovements().stream()
-                .filter(m -> "DROP_OUT".equals(m.getMovementType())).mapToDouble(PosCashMovement::getAmount).sum();
-        double cashDropNet = cashDropIn - cashDropOut;
+        BigDecimal cashDropIn = session.getCashMovements().stream()
+                .filter(m -> "DROP_IN".equals(m.getMovementType()))
+                .map(m -> nz(m.getAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashDropOut = session.getCashMovements().stream()
+                .filter(m -> "DROP_OUT".equals(m.getMovementType()))
+                .map(m -> nz(m.getAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashDropNet = cashDropIn.subtract(cashDropOut);
 
         // Derived from actual invoices for richer reporting
-        double totalTax = invoices.stream()
-                .mapToDouble(inv -> inv.getTaxTotal() != null ? inv.getTaxTotal() : 0).sum();
-        double salesAmountExTax = totalSales - totalTax;
-        double totalDiscount = invoices.stream()
-                .mapToDouble(inv -> inv.getBillDiscountAmount() != null ? inv.getBillDiscountAmount() : 0).sum();
+        BigDecimal totalTax = invoices.stream()
+                .map(inv -> nz(inv.getTaxTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal salesAmountExTax = totalSales.subtract(totalTax);
+        BigDecimal totalDiscount = invoices.stream()
+                .map(inv -> nz(inv.getBillDiscountAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
         int totalItemsSold = invoices.stream()
                 .flatMap(inv -> inv.getItems() != null ? inv.getItems().stream() : java.util.stream.Stream.empty())
                 .mapToInt(item -> item.getQuantity() != null ? item.getQuantity() : 0).sum();
@@ -205,12 +216,12 @@ public class PosSessionService {
         summary.put("creditSales", creditSales);
         summary.put("mixedSales", mixedSales);
         summary.put("invoiceCount", session.getInvoiceCount() != null ? session.getInvoiceCount() : 0);
-        summary.put("openingCash", session.getOpeningCash() != null ? session.getOpeningCash() : 0);
+        summary.put("openingCash", nz(session.getOpeningCash()));
         summary.put("cashDropIn", cashDropIn);
         summary.put("cashDropOut", cashDropOut);
-        summary.put("expectedCash", (session.getOpeningCash() != null ? session.getOpeningCash() : 0) + cashSales + cashDropNet);
+        summary.put("expectedCash", nz(session.getOpeningCash()).add(cashSales).add(cashDropNet));
         summary.put("totalTax", totalTax);
-        summary.put("salesAmountExTax", Math.max(0, salesAmountExTax));
+        summary.put("salesAmountExTax", salesAmountExTax.max(BigDecimal.ZERO));
         summary.put("totalDiscount", totalDiscount);
         summary.put("totalItemsSold", totalItemsSold);
         summary.put("cashInvoiceCount", cashInvoiceCount);
@@ -231,17 +242,17 @@ public class PosSessionService {
         List<SalesInvoice> invoices = invoiceRepo.findByBranchIdAndPosSessionIdIn(
                 branchId, sessions.stream().map(PosSession::getId).toList());
 
-        double totalSales = sessions.stream().mapToDouble(s -> s.getTotalSales() != null ? s.getTotalSales() : 0).sum();
-        double cashSales = sessions.stream().mapToDouble(s -> s.getTotalCashSales() != null ? s.getTotalCashSales() : 0).sum();
-        double cardSales = sessions.stream().mapToDouble(s -> s.getTotalCardSales() != null ? s.getTotalCardSales() : 0).sum();
-        double creditSales = sessions.stream().mapToDouble(s -> s.getTotalCreditSales() != null ? s.getTotalCreditSales() : 0).sum();
+        BigDecimal totalSales = sessions.stream().map(s -> nz(s.getTotalSales())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashSales = sessions.stream().map(s -> nz(s.getTotalCashSales())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cardSales = sessions.stream().map(s -> nz(s.getTotalCardSales())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal creditSales = sessions.stream().map(s -> nz(s.getTotalCreditSales())).reduce(BigDecimal.ZERO, BigDecimal::add);
         int invoiceCount = sessions.stream().mapToInt(s -> s.getInvoiceCount() != null ? s.getInvoiceCount() : 0).sum();
 
-        double totalTax = invoices.stream()
-                .mapToDouble(inv -> inv.getTaxTotal() != null ? inv.getTaxTotal() : 0).sum();
-        double salesAmountExTax = Math.max(0, totalSales - totalTax);
-        double totalDiscount = invoices.stream()
-                .mapToDouble(inv -> inv.getBillDiscountAmount() != null ? inv.getBillDiscountAmount() : 0).sum();
+        BigDecimal totalTax = invoices.stream()
+                .map(inv -> nz(inv.getTaxTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal salesAmountExTax = totalSales.subtract(totalTax).max(BigDecimal.ZERO);
+        BigDecimal totalDiscount = invoices.stream()
+                .map(inv -> nz(inv.getBillDiscountAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
         int totalItemsSold = invoices.stream()
                 .flatMap(inv -> inv.getItems() != null ? inv.getItems().stream() : java.util.stream.Stream.empty())
                 .mapToInt(item -> item.getQuantity() != null ? item.getQuantity() : 0).sum();

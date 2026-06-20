@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Service
@@ -34,7 +35,7 @@ public class PosHeldSaleService {
         held.setCustomerCode(req.getCustomerCode());
         held.setCustomerName(req.getCustomerName());
         held.setCartJson(req.getCartJson());
-        held.setTotal(req.getTotal() != null ? req.getTotal() : 0.0);
+        held.setTotal(req.getTotal() != null ? BigDecimal.valueOf(req.getTotal()) : BigDecimal.ZERO);
         held.setItemCount(req.getItemCount() != null ? req.getItemCount() : 0);
 
         long existing = repo.countByPosSessionIdAndIsActiveTrue(req.getSessionId());
