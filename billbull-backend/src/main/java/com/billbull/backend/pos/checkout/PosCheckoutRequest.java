@@ -1,0 +1,97 @@
+package com.billbull.backend.pos.checkout;
+
+import java.util.List;
+
+public class PosCheckoutRequest {
+
+    private String customerCode;
+    private String customerName;
+    private String paymentMode;
+    private String combinedPaymentMode;
+    private Double amountTendered;
+    private Double cashAmount;
+    private Double cardAmount;
+    private String cardReference;
+    private String cardType;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
+    private Long sessionId;
+    private String terminalId;
+    private String counterName;
+    private Double billDiscountAmount;
+    private String notes;
+    private List<PosCheckoutItem> items;
+
+    public static class PosCheckoutItem {
+        private String itemCode;
+        private String itemName;
+        private Integer quantity;
+        private String unit;
+        private Double price;
+        private Double discount;
+        private Double taxRate;
+        /** Scanned batch number to pin to this line (overrides FEFO). Null = auto FEFO. */
+        private String batchNumber;
+        /** Cashier voided this line — retained for receipt/audit/reports, excluded from totals & stock. */
+        private Boolean voided;
+
+        public String getItemCode() { return itemCode; }
+        public void setItemCode(String itemCode) { this.itemCode = itemCode; }
+        public String getItemName() { return itemName; }
+        public void setItemName(String itemName) { this.itemName = itemName; }
+        public Integer getQuantity() { return quantity; }
+        public void setQuantity(Integer quantity) { this.quantity = quantity; }
+        public String getUnit() { return unit; }
+        public void setUnit(String unit) { this.unit = unit; }
+        public Double getPrice() { return price; }
+        public void setPrice(Double price) { this.price = price; }
+        public Double getDiscount() { return discount; }
+        public void setDiscount(Double discount) { this.discount = discount; }
+        public Double getTaxRate() { return taxRate; }
+        public void setTaxRate(Double taxRate) { this.taxRate = taxRate; }
+        public String getBatchNumber() { return batchNumber; }
+        public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
+        public Boolean getVoided() { return voided; }
+        public void setVoided(Boolean voided) { this.voided = voided; }
+    }
+
+    // Getters & Setters
+
+    public String getCustomerCode() { return customerCode; }
+    public void setCustomerCode(String customerCode) { this.customerCode = customerCode; }
+    public String getCustomerName() { return customerName; }
+    public void setCustomerName(String customerName) { this.customerName = customerName; }
+    public String getPaymentMode() { return paymentMode; }
+    public void setPaymentMode(String paymentMode) { this.paymentMode = paymentMode; }
+    public String getCombinedPaymentMode() { return combinedPaymentMode; }
+    public void setCombinedPaymentMode(String combinedPaymentMode) { this.combinedPaymentMode = combinedPaymentMode; }
+    public Double getAmountTendered() { return amountTendered; }
+    public void setAmountTendered(Double amountTendered) { this.amountTendered = amountTendered; }
+    public Double getCashAmount() { return cashAmount; }
+    public void setCashAmount(Double cashAmount) { this.cashAmount = cashAmount; }
+    public Double getCardAmount() { return cardAmount; }
+    public void setCardAmount(Double cardAmount) { this.cardAmount = cardAmount; }
+    public String getCardReference() { return cardReference; }
+    public void setCardReference(String cardReference) { this.cardReference = cardReference; }
+    public String getCardType() { return cardType; }
+    public void setCardType(String cardType) { this.cardType = cardType; }
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+    public Long getSessionId() { return sessionId; }
+    public void setSessionId(Long sessionId) { this.sessionId = sessionId; }
+    public String getTerminalId() { return terminalId; }
+    public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
+    public String getCounterName() { return counterName; }
+    public void setCounterName(String counterName) { this.counterName = counterName; }
+    public Double getBillDiscountAmount() { return billDiscountAmount; }
+    public void setBillDiscountAmount(Double billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
+    public String getNotes() { return notes; }
+    public void setNotes(String notes) { this.notes = notes; }
+    public List<PosCheckoutItem> getItems() { return items; }
+    public void setItems(List<PosCheckoutItem> items) { this.items = items; }
+}

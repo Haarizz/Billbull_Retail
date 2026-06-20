@@ -70,14 +70,14 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-2 text-yellow-600 font-bold text-sm">
                         <Box size={18} /> Stock Availability & Incoming Orders
                     </div>
                     <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
                 </div>
-                <div className="p-6">
+                <div className="p-6 overflow-y-auto flex-1">
                     <p className="text-xs text-slate-500 mb-4">
                         {isScopedView
                             ? 'View stock for the selected warehouse location and reserve from incoming orders.'
@@ -204,7 +204,7 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                         <span className="text-[10px] text-orange-700 leading-tight">Stock reservations will be created when the order is confirmed. Reserved stock is automatically released if the order expires or is cancelled.</span>
                     </div>
                 </div>
-                <div className="p-4 border-t border-slate-100 flex justify-end">
+                <div className="p-4 border-t border-slate-100 flex justify-end shrink-0">
                     <button onClick={onClose} className="px-4 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-700 hover:bg-slate-50">Close</button>
                 </div>
             </div>

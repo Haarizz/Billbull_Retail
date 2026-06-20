@@ -15,7 +15,7 @@ import {
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
   PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
-  UserCircle, TrendingUp
+  UserCircle, TrendingUp, Hash
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
@@ -156,6 +156,7 @@ const Sidebar = ({ children }) => {
         { path: "/sales/invoice",       label: "Sales Invoice",         module: "sales.invoice",  icon: <FileSpreadsheet size={14} /> },
         { path: "/sales/deliverynote",  label: "Delivery Note",         module: "sales.invoice",  icon: <Truck size={14} /> },
         { path: "/sales/return",        label: "Sales Return",          module: "sales.invoice",  icon: <Undo2 size={14} /> },
+        { path: "/sales/pos",           label: "POS Sales",             module: "sales.invoice",  icon: <Receipt size={14} /> },
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.invoice",  icon: <Printer size={14} /> },
         { path: "/sales/reports",        label: "Reports",              module: "sales.invoice",  icon: <PieChart size={14} /> },
@@ -259,8 +260,9 @@ const Sidebar = ({ children }) => {
       module: "userManagement",
       roles: ["ADMIN"],
       subItems: [
-        { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
-        { path: "/settings/email",     label: "Email Settings",     module: "userManagement.setup", icon: <Mail size={14} /> },
+        { path: "/settings/company",            label: "Company Profile",     module: "userManagement.setup", icon: <Building2 size={14} /> },
+        { path: "/settings/email",              label: "Email Settings",      module: "userManagement.setup", icon: <Mail size={14} /> },
+        { path: "/settings/document-numbering", label: "Document Numbering",  module: "userManagement.setup", icon: <Hash size={14} /> },
       ],
     },
     {
@@ -534,26 +536,25 @@ const Sidebar = ({ children }) => {
     }
     
     .collapse-trigger {
-       position: absolute;
-       right: -12px;
-       top: 28px;
-       width: 24px;
-       height: 24px;
-       background: white;
+       width: 28px;
+       height: 28px;
+       background: transparent;
        border: 1px solid var(--border-color);
-       border-radius: 50%;
+       border-radius: 6px;
        display: flex;
        align-items: center;
        justify-content: center;
        cursor: pointer;
-       z-index: 60;
        color: #64748B;
-       font-size: 10px;
-       display: none; /* Hidden by default, shown on desktop hover */
+       font-size: 12px;
+       flex-shrink: 0;
+       transition: background 0.2s, color 0.2s, border-color 0.2s;
     }
-    
-    .sidebar:hover .collapse-trigger {
-        display: flex;
+
+    .collapse-trigger:hover {
+       background: var(--primary);
+       color: var(--text-dark);
+       border-color: var(--primary);
     }
 
     /* COLLAPSED STATE LOGIC */
@@ -564,8 +565,9 @@ const Sidebar = ({ children }) => {
     .sidebar.collapsed .logout-text { display: none; }
     
     .sidebar.collapsed .sidebar-header { justify-content: center; padding: 16px 0; }
-    .sidebar.collapsed .header-content { justify-content: center; }
+    .sidebar.collapsed .header-content { justify-content: center; flex-direction: column; gap: 8px; }
     .sidebar.collapsed .logo-box { padding: 0; }
+    .sidebar.collapsed .collapse-trigger { margin-left: 0 !important; }
     
     .sidebar.collapsed .nav-item { justify-content: center; padding: 0; }
     .sidebar.collapsed .nav-icon { margin-right: 0; }
@@ -715,13 +717,6 @@ const Sidebar = ({ children }) => {
       {/* SIDEBAR */}
       <aside className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
 
-        {/* DESKTOP COLLAPSE TRIGGER */}
-        {!isMobile && (
-          <button className="collapse-trigger" onClick={() => setCollapsed(!collapsed)}>
-            {collapsed ? <FaChevronRight /> : <FaChevronDown style={{ transform: 'rotate(90deg)' }} />}
-          </button>
-        )}
-
         {/* MOBILE CLOSE */}
         {isMobile && (
           <div className="close-mobile" onClick={() => setMobileOpen(false)}>
@@ -740,6 +735,12 @@ const Sidebar = ({ children }) => {
                 <h2>BillBull</h2>
                 <p>Retail SaaS Platform</p>
               </div>
+            )}
+            {/* DESKTOP COLLAPSE TRIGGER — always visible in header */}
+            {!isMobile && (
+              <button className="collapse-trigger" style={{ marginLeft: 'auto' }} onClick={() => setCollapsed(!collapsed)}>
+                {collapsed ? <FaChevronRight /> : <FaChevronDown style={{ transform: 'rotate(90deg)' }} />}
+              </button>
             )}
           </div>
           {!collapsed && (

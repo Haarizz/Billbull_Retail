@@ -38,6 +38,15 @@ public class SalesInvoiceItem {
     private Long warehouseId;
     private Long binId;
     private Long salesOrderItemId;
+
+    /**
+     * POS void: the cashier removed this line but it is retained for the receipt,
+     * audit log and reports. A voided line contributes nothing to invoice totals
+     * and deducts no stock — it is excluded from every financial/inventory pass.
+     */
+    @Column(name = "voided")
+    private Boolean voided = Boolean.FALSE;
+
     @Transient
     private String barcode;
 
@@ -61,6 +70,15 @@ public class SalesInvoiceItem {
 
     @Transient
     private String batchSelectionMode;
+
+    /**
+     * POS unified-scan: the exact batch number the cashier scanned for this line.
+     * When set, the Fast-Sale post pins this batch unit instead of auto-FEFO.
+     * Carried in only — never persisted or serialized back out.
+     */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
+    private String pinnedBatchNumber;
 
     @Transient
     private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
@@ -257,6 +275,18 @@ public class SalesInvoiceItem {
         this.salesOrderItemId = salesOrderItemId;
     }
 
+    public boolean isVoided() {
+        return Boolean.TRUE.equals(voided);
+    }
+
+    public Boolean getVoided() {
+        return voided != null ? voided : Boolean.FALSE;
+    }
+
+    public void setVoided(Boolean voided) {
+        this.voided = voided != null ? voided : Boolean.FALSE;
+    }
+
     public String getBarcode() {
         return barcode;
     }
@@ -327,6 +357,14 @@ public class SalesInvoiceItem {
 
     public void setBatchSelectionMode(String batchSelectionMode) {
         this.batchSelectionMode = batchSelectionMode;
+    }
+
+    public String getPinnedBatchNumber() {
+        return pinnedBatchNumber;
+    }
+
+    public void setPinnedBatchNumber(String pinnedBatchNumber) {
+        this.pinnedBatchNumber = pinnedBatchNumber;
     }
 
     public List<DeliveryBatchSelectionResponse> getBatchSelections() {

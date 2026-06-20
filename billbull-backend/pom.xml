@@ -47,6 +47,13 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- HTML -> PDF via headless Chromium (Playwright manages the browser binary) -->
+		<dependency>
+			<groupId>com.microsoft.playwright</groupId>
+			<artifactId>playwright</artifactId>
+			<version>1.49.0</version>
+		</dependency>
+
 		 <!-- Excel Export (Apache POI) -->
         <dependency>
             <groupId>org.apache.poi</groupId>

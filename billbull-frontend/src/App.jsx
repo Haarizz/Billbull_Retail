@@ -75,10 +75,12 @@ import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
+import POSSales from "./pages/Sales/POSSales";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
 import CompanySettings from "./pages/Settings/CompanySettings";
+import DocumentNumbering from "./pages/Settings/DocumentNumbering";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
@@ -444,6 +446,15 @@ function App() {
                     />
 
                     <Route
+                      path="/sales/pos"
+                      element={
+                        <ResourceGuard module="sales.invoice">
+                          <POSSales />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
                       path="/finance/ledger"
                       element={
                         <ResourceGuard module="finance.ledger">
@@ -682,6 +693,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <EmailSettings />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/document-numbering"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <DocumentNumbering />
                         </ResourceGuard>
                       }
                     />

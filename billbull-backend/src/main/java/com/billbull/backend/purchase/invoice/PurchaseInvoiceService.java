@@ -63,6 +63,7 @@ public class PurchaseInvoiceService {
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
+    private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -74,7 +75,8 @@ public class PurchaseInvoiceService {
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepository,
-            PurchaseBatchCreationService purchaseBatchCreationService) {
+            PurchaseBatchCreationService purchaseBatchCreationService,
+            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -94,6 +96,7 @@ public class PurchaseInvoiceService {
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
+        this.documentNumberingService = documentNumberingService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -746,10 +749,18 @@ public class PurchaseInvoiceService {
     }
 
     private void mapHeader(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
-        if (req.getInvoiceNumber() != null && !req.getInvoiceNumber().trim().isEmpty()) {
-            invoice.setInvoiceNumber(req.getInvoiceNumber());
-        } else if (invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank()) {
-            invoice.setInvoiceNumber("PINV-" + System.currentTimeMillis());
+        if (invoice.getId() == null) {
+            // New invoice: resolve via the central numbering service. In auto mode the
+            // requested number is ignored and a sequenced PINV-YYYY-NNNN is issued; in
+            // manual mode the user-typed number is validated for uniqueness.
+            invoice.setInvoiceNumber(documentNumberingService.resolveNumberForCreate(
+                    com.billbull.backend.purchase.settings.PurchaseDocumentType.PURCHASE_INVOICE,
+                    req.getInvoiceNumber()));
+        } else if (req.getInvoiceNumber() != null && !req.getInvoiceNumber().trim().isEmpty()) {
+            invoice.setInvoiceNumber(documentNumberingService.resolveNumberForUpdate(
+                    com.billbull.backend.purchase.settings.PurchaseDocumentType.PURCHASE_INVOICE,
+                    invoice.getInvoiceNumber(),
+                    req.getInvoiceNumber()));
         }
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());

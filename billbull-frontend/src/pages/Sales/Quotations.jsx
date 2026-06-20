@@ -97,7 +97,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
@@ -1999,7 +1999,7 @@ const Quotations = () => {
         setInquiryCustomerSnapshot(matchedCustomer ? null : {
             id: qtn.id ? `quotation-${qtn.id}-customer` : 'quotation-customer',
             code: qtn.customerCode || qtn.sourceInquiryNumber || 'Inquiry',
-            name: qtn.customer || '',
+            name: (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer) || '',
             mobile: qtn.customerMobile || '',
             phone: qtn.customerMobile || '',
             email: qtn.customerEmail || '',
@@ -2280,12 +2280,14 @@ const Quotations = () => {
             const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType1, _qtnDiscType1 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
+            const _cleanCustomerName = (qtn) => fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
                 customer: {
-                    name: qtn.customer,
+                    name: _cleanCustomerName(qtn),
+                    code: qtn.customerCode || '',
                     address: fullCustomer?.address || fullCustomer?.billingAddress || '',
                     shippingAddress: qtn.shippingAddress || '',
                     phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '',
@@ -2360,9 +2362,13 @@ const Quotations = () => {
             const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType2, _qtnDiscType2 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            // Use the PRINT HTML (real @page / page-break CSS) and let the
+            // backend render it with headless Chromium — same engine as the
+            // print preview, so the PDF paginates and aligns identically.
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
-            await downloadPdf(html, qtn.qtnNo || 'Quotation');
+            await downloadPdfViaServer(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
     };
 
@@ -2536,7 +2542,8 @@ const Quotations = () => {
         docNo: getQuotationNo(),
         date: qtnDate,
         customer: {
-            name: customer,
+            name: selectedCustomerData?.name || activeCustomerData?.name || (selectedCustomerData?.code && customer?.endsWith(` - ${selectedCustomerData.code}`) ? customer.slice(0, -(` - ${selectedCustomerData.code}`).length) : customer),
+            code: selectedCustomerData?.code || activeCustomerData?.code || '',
             address: selectedCustomerData?.address || selectedCustomerData?.billingAddress || '',
             shippingAddress: shippingAddress || '',
             phone: selectedCustomerData?.mobile || selectedCustomerData?.phone || '',
@@ -3146,7 +3153,7 @@ const Quotations = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3">
-                                                    <div className="font-medium text-slate-700">{qtn.customer}</div>
+                                                    <div className="font-medium text-slate-700">{qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer}</div>
                                                     {qtn.customerCode && <div className="text-[10px] text-slate-400">{qtn.customerCode}</div>}
                                                 </td>
                                                 <td className="px-4 py-3 text-[11px] text-slate-600">

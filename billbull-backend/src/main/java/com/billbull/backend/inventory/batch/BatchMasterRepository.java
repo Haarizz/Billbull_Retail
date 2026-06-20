@@ -46,6 +46,9 @@ public interface BatchMasterRepository extends JpaRepository<BatchMaster, Long> 
 
     Optional<BatchMaster> findByBatchNumber(String batchNumber);
 
+    /** Case-insensitive exact lookup — POS resolver, where a cashier may type a batch number in any case. */
+    Optional<BatchMaster> findFirstByBatchNumberIgnoreCase(String batchNumber);
+
     @Query("""
             SELECT b
             FROM BatchMaster b

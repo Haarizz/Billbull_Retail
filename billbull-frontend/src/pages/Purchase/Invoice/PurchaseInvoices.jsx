@@ -56,7 +56,7 @@ import { getListSerialNumber, withListSerialNumbers } from '../../../utils/seria
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -131,8 +131,14 @@ const SOURCE = {
 const todayAsInputDate = () => new Date().toISOString().split('T')[0];
 
 const compareInvoiceRows = (left, right) => {
-  const documentNumberCompare = compareDocumentValues(left.id, right.id, 'desc');
-  if (documentNumberCompare !== 0) return documentNumberCompare;
+  // Newest-created first. Document numbers come in two incomparable formats
+  // (PINV-<timestamp> from GRN flow vs PI-YYYY-#### direct), so sort by the
+  // backend auto-increment id (dbId) which reliably reflects creation order.
+  const leftDbId = Number(left.dbId);
+  const rightDbId = Number(right.dbId);
+  if (Number.isFinite(leftDbId) && Number.isFinite(rightDbId) && leftDbId !== rightDbId) {
+    return rightDbId - leftDbId;
+  }
 
   const documentDateCompare = (right.documentDate || "").localeCompare(left.documentDate || "");
   if (documentDateCompare !== 0) return documentDateCompare;
@@ -140,7 +146,7 @@ const compareInvoiceRows = (left, right) => {
   const vendorInvoiceDateCompare = (right.vendorInvoiceDate || "").localeCompare(left.vendorInvoiceDate || "");
   if (vendorInvoiceDateCompare !== 0) return vendorInvoiceDateCompare;
 
-  return (right.id || "").localeCompare(left.id || "");
+  return compareDocumentValues(left.id, right.id, 'desc');
 };
 
 const normalizeInvoiceFilterValue = (value) =>
@@ -541,7 +547,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onDownload, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onDownload, onPay, onEditDraft, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -745,6 +751,9 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                   <td className="px-6 py-4 text-center">
                     <div className="flex items-center justify-center gap-1 opacity-100">
                       <button onClick={() => onView(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="View"><Eye className="h-3 w-3" /></button>
+                      {(row.status === 'DRAFT' || row.status === 'Draft') && onEditDraft && (
+                        <button onClick={() => onEditDraft(row)} className="p-1.5 rounded hover:bg-slate-100 text-blue-500" title="Edit"><SquarePenIcon className="h-3 w-3" /></button>
+                      )}
                       <button onClick={() => onPrint(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Print"><Printer className="h-3 w-3" /></button>
                       <button onClick={() => onDownload && onDownload(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Download PDF"><Download className="h-3 w-3" /></button>
                       {row.payment !== 'PAID' && row.status !== 'DRAFT' && row.status !== 'Draft' && (
@@ -2509,7 +2518,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       </div>
 
       {/* --- BOTTOM BAR (STICKY) --- */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-slate-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-4 z-50">
+      <div className="fixed bottom-0 left-0 md:left-64 right-0 bg-white border-t-2 border-slate-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-4 z-50">
         <div className="max-w-[1920px] mx-auto flex flex-col xl:flex-row justify-between items-center text-xs text-slate-400 gap-3 xl:gap-0 px-4">
           <div className="flex items-center gap-2 w-full xl:w-auto justify-center xl:justify-start">
             <History className="h-3 w-3" />
@@ -3083,7 +3092,7 @@ const PurchaseInvoices = () => {
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
       const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
-      await downloadPdf(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
+      await downloadPdfViaServer(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
     } catch (error) {
       console.error("Error downloading Invoice:", error);
       toast.error('Failed to generate download');
@@ -3226,6 +3235,7 @@ const PurchaseInvoices = () => {
             onPrint={handlePrint}
             onDownload={handleDownload}
             onPay={handleOpenPayment}
+            onEditDraft={handleEditDraft}
             onRefresh={loadInvoices}
             dateRange={dateRange}
             setDateRange={setDateRange}
@@ -3300,7 +3310,7 @@ const PurchaseInvoices = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#F7F7FA] font-sans text-slate-900 flex flex-col">
+    <div className="min-h-full bg-[#F7F7FA] font-sans text-slate-900 flex flex-col">
       {/* Modals */}
       <PaymentModal invoice={paymentInvoice} onClose={() => setPaymentInvoice(null)} onConfirm={handleConfirmPayment} />
       <SchedulePaymentModal invoice={scheduleInvoice} onClose={() => setScheduleInvoice(null)} onConfirm={handleConfirmSchedule} />

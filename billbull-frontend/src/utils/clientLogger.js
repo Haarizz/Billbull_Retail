@@ -55,6 +55,10 @@ export const logApiError = (error) => {
   if (!error || error.config?.skipClientLog) {
     return;
   }
+  // Silently ignore aborted requests (AbortController / component unmount)
+  if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
+    return;
+  }
 
   const method = (error.config?.method || "GET").toUpperCase();
   const url = redactUrl(error.config?.url || "");

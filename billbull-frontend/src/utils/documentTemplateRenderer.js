@@ -13,6 +13,7 @@ import {
     UAE_DIRHAM_SYMBOL_IMAGE
 } from './countryCurrencyOptions';
 import { generatePickListHtml } from './pickListPrintTemplate';
+import { INTER_REGULAR_B64, INTER_BOLD_B64 } from './interFontBase64';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -1175,23 +1176,21 @@ const buildPaymentCard = (layout) => {
     `;
 };
 
-const buildSummarySection = (layout, renderTarget = 'print') => {
-    // Show notes section whenever the toggle is on, even if notes content is empty.
+// Builds the bank-details + terms + notes block. This content flows naturally
+// in the document stream (before the spacer) so long terms & conditions split
+// across pages instead of being forced onto a new page as a solid block.
+const buildSummaryNotes = (layout, renderTarget = 'print') => {
+    // Email handles notes+totals together in buildSummarySection's table layout.
+    if (renderTarget === 'email') return '';
     const showNotes = layout.showNotesSection !== false;
-    const hasNotes = showNotes;
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
-    const showAmountInWords = Boolean(layout.showAmountInWords && layout.highlight?.value);
-    const amountInWordsText = showAmountInWords
-        ? `In Words: ${formatAmountInWords(layout.highlight.value, layout.currency)}`
-        : null;
-    const totalsTable = buildTotalsTable(layout, amountInWordsText);
     const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
 
-    if (!showNotes && !hasTerms && !totalsTable && bankRows.length === 0) return '';
+    if (!showNotes && !hasTerms && bankRows.length === 0) return '';
 
     const notesHtml = `
         ${bankRows.length > 0 ? `
-            <div class="bank-box">
+            <div class="bank-box footer-group-atomic">
                 <div class="summary-label summary-label-bank">Bank Details</div>
                 <div class="bank-grid">
                     ${bankRows.map((row) => `
@@ -1204,35 +1203,77 @@ const buildSummarySection = (layout, renderTarget = 'print') => {
             </div>
         ` : ''}
         ${hasTerms ? `
-            <div class="terms-box">
-                <div class="summary-label summary-label-terms">Terms &amp; Conditions</div>
+            <div class="terms-box terms-box-flowable"${layout.termsBgColor ? ` style="background:${escapeHtml(layout.termsBgColor)};border-color:${escapeHtml(layout.termsBgColor)};"` : ''}>
+                <div class="summary-label summary-label-terms footer-group-atomic">Terms &amp; Conditions</div>
                 <div class="notes-copy">${escapeHtml(layout.terms)}</div>
             </div>
         ` : ''}
         ${showNotes ? `
-            <div class="summary-label">${escapeHtml(layout.notesLabel || 'Notes')}</div>
-            <div class="notes-copy">${layout.notes ? escapeHtml(layout.notes) : '<span style="color:#aaa;">&mdash;</span>'}</div>
+            <div class="summary-notes-inline"${layout.notesBgColor ? ` style="background:${escapeHtml(layout.notesBgColor)};border-radius:6px;padding:10px 14px;margin-bottom:12px;"` : ''}>
+                <div class="summary-label footer-group-atomic">${escapeHtml(layout.notesLabel || 'Notes')}</div>
+                <div class="notes-copy">${layout.notes ? escapeHtml(layout.notes) : '<span style="color:#aaa;">&mdash;</span>'}</div>
+            </div>
         ` : ''}
     `;
 
-    // QA-040: Email mirrors the Print layout — totals stacked on the
-    // right at the top, then Notes + Terms below on the left full-width.
-    // Two rows of a presentation table since Gmail/Outlook flatten any
-    // CSS flex/grid we'd otherwise use.
+    return `<section class="summary-notes-section">${notesHtml}</section>`;
+};
+
+const buildSummarySection = (layout, renderTarget = 'print') => {
+    const showAmountInWords = Boolean(layout.showAmountInWords && layout.highlight?.value);
+    const amountInWordsText = showAmountInWords
+        ? `In Words: ${formatAmountInWords(layout.highlight.value, layout.currency)}`
+        : null;
+    const totalsTable = buildTotalsTable(layout, amountInWordsText);
+
+    if (!totalsTable) return '';
+
+    // QA-040: Email mirrors the Print layout — totals stacked on the right,
+    // Notes + Terms below. buildSummaryNotes is called separately for print;
+    // for email we inline both into a single presentation table here.
     if (renderTarget === 'email') {
+        const showNotes = layout.showNotesSection !== false;
+        const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
+        const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
+        const hasNotesBlock = showNotes || hasTerms || bankRows.length > 0;
+        const emailNotesHtml = hasNotesBlock ? `
+            ${bankRows.length > 0 ? `
+                <div class="bank-box">
+                    <div class="summary-label summary-label-bank">Bank Details</div>
+                    <div class="bank-grid">
+                        ${bankRows.map((row) => `
+                            <div class="bank-row">
+                                <span>${escapeHtml(row.label)}</span>
+                                <strong>${escapeHtml(row.value)}</strong>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+            ${hasTerms ? `
+                <div class="terms-box"${layout.termsBgColor ? ` style="background:${escapeHtml(layout.termsBgColor)};border-color:${escapeHtml(layout.termsBgColor)};"` : ''}>
+                    <div class="summary-label summary-label-terms">Terms &amp; Conditions</div>
+                    <div class="notes-copy">${escapeHtml(layout.terms)}</div>
+                </div>
+            ` : ''}
+            ${showNotes ? `
+                <div${layout.notesBgColor ? ` style="background:${escapeHtml(layout.notesBgColor)};border-radius:6px;padding:10px 14px;margin-bottom:12px;"` : ''}>
+                    <div class="summary-label">${escapeHtml(layout.notesLabel || 'Notes')}</div>
+                    <div class="notes-copy">${layout.notes ? escapeHtml(layout.notes) : '<span style="color:#aaa;">&mdash;</span>'}</div>
+                </div>
+            ` : ''}
+        ` : '';
         return `
             <table class="summary-section-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:16px;">
-                ${totalsTable ? `
-                    <tr>
-                        <td align="right" style="text-align:right;padding-bottom:12px;">
-                            ${totalsTable}
-                        </td>
-                    </tr>
-                ` : ''}
-                ${(hasNotes || hasTerms) ? `
+                <tr>
+                    <td align="right" style="text-align:right;padding-bottom:12px;">
+                        ${totalsTable}
+                    </td>
+                </tr>
+                ${hasNotesBlock ? `
                     <tr>
                         <td align="left" style="text-align:left;padding-top:4px;">
-                            ${notesHtml}
+                            ${emailNotesHtml}
                         </td>
                     </tr>
                 ` : ''}
@@ -1242,8 +1283,7 @@ const buildSummarySection = (layout, renderTarget = 'print') => {
 
     return `
         <section class="summary-section">
-            ${totalsTable ? `<div class="footer-group-atomic summary-totals">${totalsTable}</div>` : ''}
-            ${(hasNotes || hasTerms) ? `<div class="footer-group-atomic summary-notes">${notesHtml}</div>` : ''}
+            <div class="footer-group-atomic summary-totals">${totalsTable}</div>
         </section>
     `;
 };
@@ -1436,8 +1476,8 @@ const buildHeader = (layout, renderTarget = 'print') => {
         crn: false,
         ...(layout.companyVisibility || {})
     };
+    const customerCodeLine = partyVisibility.code && layout.party?.code ? layout.party.code : '';
     const customerLines = layout.party ? compactValues(
-        partyVisibility.code && layout.party.code ? `Code: ${layout.party.code}` : '',
         partyVisibility.address ? layout.party.address || '' : '',
         partyVisibility.taxId && layout.party.taxId ? `${layout.partyTaxLabel || 'TRN'} : ${layout.party.taxId}` : '',
         partyVisibility.phone ? layout.party.phone || '' : '',
@@ -1466,6 +1506,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
             <div class="bill-to-block">
                 <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
                 <div class="bill-to-name"><span class="bill-to-name-text">${escapeHtml(layout.party.name || '')}</span></div>
+                ${customerCodeLine ? `<div class="bill-to-code">${escapeHtml(customerCodeLine)}</div>` : ''}
                 ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
@@ -1782,6 +1823,13 @@ const buildCoreStyles = () => `
         word-break: break-word;
         overflow-wrap: break-word;
     }
+    .document-header-sales .bill-to-code {
+        font-size: 0.78em;
+        color: #6b7280;
+        line-height: 1.4;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
     .document-header-sales .bill-to-line {
         color: #444444;
         line-height: 1.65;
@@ -1918,6 +1966,14 @@ const buildCoreStyles = () => `
     .document-header-designer .bill-to-name {
         margin: 0 0 2px;
     }
+    .bill-to-code {
+        font-size: 0.78em;
+        color: #6b7280;
+        line-height: 1.4;
+        max-width: 100%;
+        overflow-wrap: break-word;
+        word-break: break-word;
+    }
     .document-header-designer .bill-to-line {
         color: #444444;
         line-height: 1.65;
@@ -2003,13 +2059,11 @@ const buildCoreStyles = () => `
     .document-shell-designer .content-stack {
         display: block;
     }
-    /* Footer block keeps totals/bank/terms/stamp together and sits at the
-       bottom of the page via margin-top:auto inside the flex-column shell. */
+    /* Footer block (signature + stamp) flows naturally after notes/terms. */
     .document-footer-group {
         display: flex;
         flex-direction: column;
         gap: 16px;
-        margin-top: auto;
     }
     .info-card,
     .signature-card {
@@ -2277,7 +2331,22 @@ const buildCoreStyles = () => `
         display: block;
         padding-top: 0;
     }
+    .document-shell-designer .summary-notes-section {
+        display: block;
+        padding-top: 0;
+    }
     .summary-notes {}
+    /* Notes/terms section flows naturally in the content stream before the
+       push-spacer so long terms & conditions split across pages. */
+    .summary-notes-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        padding-top: 16px;
+    }
+    .summary-notes-inline {
+        margin-top: 4px;
+    }
     .summary-label {
         color: #9ca3af;
         font-weight: 700;
@@ -2599,7 +2668,7 @@ const buildTemplateThemeStyles = (layout) => {
     const printAccentSoft = boostPrintFill(accentSoft, theme.accentColor, { minAlpha: 0.18, darken: 0.05 });
     const printZebraRowBg = zebraRowBg;
     const printBankBg = '#f0f9ff';
-    const printTermsBg = '#fffbeb';
+    const printTermsBg = layout.termsBgColor || '#fffbeb';
     const printSalesThumbSize = layout.isSalesDesigner ? 32 : 42;
 
     return `
@@ -2646,6 +2715,10 @@ const buildTemplateThemeStyles = (layout) => {
         .document-header-designer .bill-to-eyebrow,
         .document-header-designer .doc-meta-label {
             font-size: ${theme.fontSize - 1}px;
+        }
+        .bill-to-code {
+            font-size: ${Math.max(7, theme.fontSize - 2)}px;
+            color: #6b7280;
         }
         .document-header-designer .doc-meta-value {
             overflow-wrap: normal;
@@ -2854,6 +2927,23 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 page-break-before: auto !important;
                 break-before: auto !important;
             }
+            /* Notes/terms flow naturally — allow page breaks inside so
+               long Terms & Conditions split across pages instead of being
+               forced onto a new page as a solid block. */
+            .summary-notes-section {
+                display: block !important;
+                page-break-inside: auto !important;
+                break-inside: auto !important;
+            }
+            .terms-box-flowable {
+                page-break-inside: auto !important;
+                break-inside: auto !important;
+            }
+            .terms-box-flowable .notes-copy {
+                page-break-inside: auto !important;
+                break-inside: auto !important;
+                white-space: pre-wrap !important;
+            }
             /* Force 3-column header layout — prevents the responsive breakpoint
                from collapsing columns on narrow paper sizes like A4 */
             .document-header {
@@ -2978,17 +3068,17 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .document-header-sales .bill-to-name-text {
                 font-weight: 700 !important;
             }
-            /* Footer area (totals + bank + terms + signature + stamp/QR):
-               The JS spacer (injected before print) pushes it toward the
-               bottom margin of the final page. break-before:page is set
-               by JS when the footer must move to the next page; the inner
-               spacer then bottom-aligns it within that page. */
+            /* Footer area (totals + signature + stamp/QR):
+               The JS spacer pushes it toward the bottom margin of the final
+               page. break-before:page is set by JS when the footer must move
+               to the next page; the inner spacer bottom-aligns it there.
+               Notes/terms now live BEFORE the spacer and flow naturally. */
             .document-footer-group {
                 break-inside: auto !important;
                 page-break-inside: auto !important;
             }
-            /* Each atomic footer group (totals, bank/terms/notes, signature,
-               stamp/QR) must never be split across pages. */
+            /* Atomic blocks (totals table, bank box, signature, stamp/QR)
+               must not be split across pages. */
             .footer-group-atomic {
                 break-inside: avoid !important;
                 page-break-inside: avoid !important;
@@ -3098,6 +3188,145 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
         }
     `;
+};
+
+// PDF render mode: same as print but flattened for html2canvas.
+// - @page rules removed (html2canvas ignores them; we use px dimensions instead)
+// - @media print { ... } blocks unwrapped to unconditional rules
+// - mm-based body/shell widths replaced with 794px (A4 at 96dpi)
+// - Dark body background removed (html2canvas needs white)
+const buildPdfStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {}) => {
+    // Start with core + print styles combined so we have one flat CSS string to transform
+    let css = buildCoreStyles() + buildPrintStyles(paperSize, orientation, layout);
+
+    // Helper: strip @media-like blocks whose keyword matches testFn (brace-counting, handles nesting)
+    const stripAtBlocks = (src, atKeyword, testFn) => {
+        let result = '';
+        let pos = 0;
+        const marker = `@${atKeyword}`;
+        while (pos < src.length) {
+            const mIdx = src.indexOf(marker, pos);
+            if (mIdx === -1) { result += src.slice(pos); break; }
+            const braceIdx = src.indexOf('{', mIdx);
+            if (braceIdx === -1) { result += src.slice(pos); break; }
+            const keyword = src.slice(mIdx, braceIdx);
+            if (testFn(keyword)) {
+                let depth = 1, k = braceIdx + 1;
+                while (k < src.length && depth > 0) {
+                    if (src[k] === '{') depth++;
+                    else if (src[k] === '}') depth--;
+                    k++;
+                }
+                result += src.slice(pos, mIdx);
+                pos = k;
+            } else {
+                result += src.slice(pos, braceIdx + 1);
+                pos = braceIdx + 1;
+            }
+        }
+        return result;
+    };
+
+    // 1. Replace Google Fonts @import with embedded base64 font-face declarations.
+    //    srcdoc iframes have no origin so network font requests fail; embed the font
+    //    directly so html2canvas sees correct Inter metrics and renders text properly.
+    const embeddedFonts = `
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 400;
+            src: url('data:font/woff2;base64,${INTER_REGULAR_B64}') format('woff2');
+        }
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 700;
+            src: url('data:font/woff2;base64,${INTER_BOLD_B64}') format('woff2');
+        }
+    `;
+    css = css.replace(/@import\s+url\([^)]*\)[^;]*;/g, embeddedFonts);
+
+    // 2. Remove @page blocks entirely (html2canvas ignores them)
+    css = stripAtBlocks(css, 'page', () => true);
+
+    // 3a. Remove screen-only and responsive media queries (collapse header at ≤720px etc.)
+    css = stripAtBlocks(css, 'media', (kw) => /screen/.test(kw) || /max-width/.test(kw) || /max-device-width/.test(kw));
+
+    // 3b. Unwrap @media print { ... } — extract contents as unconditional rules
+    let out = '';
+    let i = 0;
+    while (i < css.length) {
+        const mIdx = css.indexOf('@media print', i);
+        if (mIdx === -1) { out += css.slice(i); break; }
+        out += css.slice(i, mIdx);
+        const brace = css.indexOf('{', mIdx);
+        if (brace === -1) { out += css.slice(mIdx); break; }
+        let depth = 1, j = brace + 1;
+        while (j < css.length && depth > 0) {
+            if (css[j] === '{') depth++;
+            else if (css[j] === '}') depth--;
+            j++;
+        }
+        out += css.slice(brace + 1, j - 1);
+        i = j;
+    }
+    css = out;
+
+    // 4. Replace mm-based widths with 794px so html2canvas gets pixel dimensions
+    css = css.replace(/width\s*:\s*[\d.]+mm/g, 'width: 794px');
+    css = css.replace(/min-height\s*:\s*[\d.]+mm/g, 'min-height: unset');
+
+    // 5. Replace dark backgrounds with white
+    css = css.replace(/background\s*:\s*#000000/g, 'background: #ffffff');
+
+    // 6. Final overrides — fix everything html2canvas needs
+    css += `
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        html, body {
+            width: 794px !important;
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .document-shell {
+            width: 794px !important;
+            max-width: 794px !important;
+            min-height: unset !important;
+            height: auto !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            overflow: visible !important;
+            display: block !important;
+        }
+        .content-stack {
+            display: block !important;
+            overflow: visible !important;
+        }
+        .content-stack > * { margin-bottom: 16px; }
+        .content-stack > .document-footer-group { margin-bottom: 0 !important; }
+        .document-header {
+            display: grid !important;
+            grid-template-columns: minmax(max-content, 1.25fr) minmax(140px, 0.85fr) minmax(120px, 0.75fr) !important;
+            gap: 20px !important;
+        }
+        .document-header-sales {
+            display: grid !important;
+            grid-template-columns: 27fr 33fr 40fr !important;
+            gap: 0 16px !important;
+            align-items: start !important;
+        }
+        .document-header-designer {
+            display: grid !important;
+            grid-template-columns: 24fr 31fr 45fr !important;
+            gap: 0 16px !important;
+            align-items: start !important;
+        }
+        .summary-notes-section { display: block !important; }
+        .terms-box-flowable { display: block !important; }
+    `;
+
+    return css;
 };
 
 // QA-040: email mode renders on a soft canvas with breathing room around the
@@ -3384,6 +3613,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         totals,
         notes: asText(data.notes || data.meta?.notes || ''),
         terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
+        termsBgColor: designerSettings.termsBgColor || '',
+        notesBgColor: designerSettings.notesBgColor || '',
         displayOptions,
         totalVisibility,
         showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
@@ -3433,9 +3664,6 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
     const { logoUrl: resolvedLogoUrl, stampUrl: resolvedStampUrl } = resolveDocumentAssets(designerSettings, company);
     const companyVisibility = buildCompanyVisibility(designerSettings);
     const partyVisibility = buildPartyVisibility(designerSettings);
-    if (template.category === 'Quotation') {
-        partyVisibility.code = false;
-    }
     const theme = buildTheme(template);
     const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
     const columnOptions = applyDesignerColumnVisibility(
@@ -3573,6 +3801,8 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         notes: asText(data.meta?.notes || ''),
         notesLabel: asText(designerSettings.notesLabel || 'Notes'),
         terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
+        termsBgColor: designerSettings.termsBgColor || '',
+        notesBgColor: designerSettings.notesBgColor || '',
         displayOptions,
         showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
         showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
@@ -4762,92 +4992,7 @@ const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') 
     function run() {
         try {
             fitSingleLineHeaderText();
-
-            var spacer      = document.getElementById('footer-push-spacer');
-            var innerSpacer = document.getElementById('footer-inner-spacer');
-            var footer      = document.querySelector('.document-footer-group');
-            var shell       = document.querySelector('.document-shell');
-            if (!spacer || !footer || !shell) return;
-
-            // Reset everything so measurements reflect natural layout
-            spacer.style.height = '0px';
-            if (innerSpacer) innerSpacer.style.height = '0px';
-            footer.style.breakBefore = '';
-            footer.style.pageBreakBefore = '';
-
-            var _ = spacer.getBoundingClientRect(); // force reflow
-
-            var rawPageH = ${pageHeightPx};
-            var MM = 96 / 25.4;
-
-            // Usable content height per print page after @page margins:
-            //   page 0  : 12mm top + 12mm bottom = 24mm margins
-            //   page 1+ : 26mm top + 12mm bottom = 38mm margins
-            var usableH0 = rawPageH - Math.round(24 * MM);
-            var usableHN = rawPageH - Math.round(38 * MM);
-            if (usableH0 < 200) usableH0 = rawPageH * 0.82;
-            if (usableHN < 200) usableHN = rawPageH * 0.82;
-
-            var shellRect  = shell.getBoundingClientRect();
-            var footerRect = footer.getBoundingClientRect();
-            var footerH    = footerRect.height;
-
-            // Use the footer's actual rendered top (which includes the spacer's
-            // margin-bottom and any other spacing) to determine how much of the
-            // current page has been consumed before the footer begins.
-            var footerTopFromShell = footerRect.top - shellRect.top;
-
-            // Determine which print page the footer starts on
-            var pageIndex   = 0;
-            var accumulated = usableH0;
-            while (footerTopFromShell >= accumulated) {
-                pageIndex++;
-                accumulated += usableHN;
-            }
-
-            var usableH    = pageIndex === 0 ? usableH0 : usableHN;
-            var pageStart  = pageIndex === 0 ? 0 : usableH0 + (pageIndex - 1) * usableHN;
-            var usedOnPage = footerTopFromShell - pageStart;
-            var remaining  = usableH - usedOnPage;
-            if (remaining < 0) remaining = 0;
-
-            if (remaining >= footerH) {
-                // Footer fits on this page — push it to the bottom by expanding
-                // the outer spacer. gap = remaining - footerH positions the footer
-                // so its bottom lands exactly at the page boundary. The spacer's
-                // margin-bottom is already included in footerTopFromShell (since we
-                // measured the footer's actual rendered top), so expanding the
-                // spacer by gap px shifts the footer down by exactly gap px.
-                var gap = remaining - footerH;
-                spacer.style.height = (gap > 0 ? gap : 0) + 'px';
-            } else {
-                // Footer does not fit on this page.
-                // Use break-before:page to force it onto the next page, then
-                // use the inner spacer (inside the footer group, before the
-                // content) to bottom-align the footer on that new page.
-                // The outer spacer stays 0 — the page break handles the jump.
-                // The inner spacer only pushes content within the new page;
-                // since footer-group-atomic blocks have break-inside:avoid,
-                // they won't split even if the inner spacer height is large.
-                footer.style.breakBefore = 'page';
-                footer.style.pageBreakBefore = 'always';
-                spacer.style.height = '0px';
-                if (innerSpacer) {
-                    // The footer group is a flex column with a row-gap, so a gap
-                    // is inserted BETWEEN the inner spacer and the first footer
-                    // block. That gap is not part of footerH (which measured only
-                    // the content blocks), so innerSpacer + gap + footerH would
-                    // overshoot the page and spill a trailing blank page. Subtract
-                    // the gap (plus a small rounding buffer) so the footer bottom
-                    // still lands at the page bottom without crossing the boundary.
-                    var footerGap = parseFloat(getComputedStyle(footer).rowGap) || 0;
-                    var topGap = usableHN - footerH - footerGap - 4;
-                    innerSpacer.style.height = (topGap > 0 ? topGap : 0) + 'px';
-                }
-            }
-        } catch (e) {
-            // silently fall back — footer flows naturally after the table
-        }
+        } catch (e) { /* silent */ }
     }
     // Run after fonts/images settle; also hook beforeprint for the dialog path
     if (document.readyState === 'complete') {
@@ -4868,6 +5013,9 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     ].filter(Boolean).join(' ');
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`
+        : renderTarget === 'pdf'
+        // buildPdfStyles already includes buildCoreStyles() + buildPrintStyles() internally
+        ? `${buildTemplateThemeStyles(layout)}${buildPdfStyles(template.paperSize || 'A4', template.orientation || 'Portrait', layout)}`
         : `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait', layout)}`;
 
     const documentTitle = generateDocFilename(
@@ -4899,10 +5047,11 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
+                    ${buildSummarySection(layout, renderTarget)}
+                    ${buildSummaryNotes(layout, renderTarget)}
                     <div class="footer-push-spacer" id="footer-push-spacer"></div>
                     <div class="document-footer-group">
                         <div class="footer-inner-spacer" id="footer-inner-spacer"></div>
-                        ${buildSummarySection(layout, renderTarget)}
                         ${buildSignatureBlock(layout)}
                         ${buildStampBlock(layout, renderTarget)}
                         ${buildPrintDateStamp(layout, renderTarget)}
@@ -5437,6 +5586,27 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
         return renderVendorPaymentVoucherHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'print');
+};
+
+// PDF render target: identical layout to print but with flat CSS (no @media/@page)
+// so html2canvas captures it correctly for direct file download.
+export const generateDocumentPdfHtml = (template, data, options = {}) => {
+    if (template?.category === 'Pick List') {
+        return generatePickListHtml(template, data, options);
+    }
+    if (template?.category === 'Vendor Statement of Account' || template?.category === 'Customer Statement of Account') {
+        return renderVendorStatementHtml(template, data, options, 'print');
+    }
+    if (template?.category === 'Goods Receipt Note' && isGrnDesignerTemplate(template)) {
+        return renderGrnReceiptHtml(template, data, options, 'print');
+    }
+    if (template?.category === 'Receipt Voucher' && data?.receiptData) {
+        return renderCustomerPaymentReceiptHtml(template, data, options);
+    }
+    if (template?.category === 'Payment Voucher' && data?.paymentDetails) {
+        return renderVendorPaymentVoucherHtml(template, data, options);
+    }
+    return buildDocumentHtml(template, data, options, 'pdf');
 };
 
 export const generateDocumentEmailHtml = (template, data, options = {}) => {

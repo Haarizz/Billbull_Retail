@@ -32,7 +32,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -631,7 +631,7 @@ const PaymentVoucher = () => {
             const linkedInvoice = purchaseInvoices.find((invoice) => Number(invoice.id ?? invoice.dbId) === Number(voucherDetail.invoiceId) || Number(invoice.dbId) === Number(voucherDetail.invoiceId) || String(invoice.invoiceNumber || '') === String(voucherDetail.invoiceId || '')) || null;
             const printData = buildPaymentVoucherPrintData(voucherDetail, fullVendor, company, linkedInvoice);
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: company, billBullLogo });
-            await downloadPdf(html, voucherDetail?.voucherNumber || voucher?.voucherNumber || 'Payment-Voucher');
+            await downloadPdfViaServer(html, voucherDetail?.voucherNumber || voucher?.voucherNumber || 'Payment-Voucher');
         } catch (error) {
             console.error("Error downloading Voucher:", error);
             toast.error('Failed to generate download');

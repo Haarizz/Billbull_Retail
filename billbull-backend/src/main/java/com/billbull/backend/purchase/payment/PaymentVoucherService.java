@@ -34,6 +34,9 @@ public class PaymentVoucherService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
+
     public List<PaymentVoucher> getAllVouchers() {
         List<PaymentVoucher> vouchers = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch));
@@ -112,10 +115,11 @@ public class PaymentVoucherService {
         voucher.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
         voucher.setUnallocated(voucher.getAmount());
+        voucher.setVoucherNumber(documentNumberingService.resolveNumberForCreate(
+                com.billbull.backend.purchase.settings.PurchaseDocumentType.PAYMENT_VOUCHER,
+                voucher.getVoucherNumber()));
 
-        PaymentVoucher saved = repository.save(voucher);
-        saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
-        PaymentVoucher result = repository.save(saved);
+        PaymentVoucher result = repository.save(voucher);
         Hibernate.initialize(result.getBranch());
         return result;
     }

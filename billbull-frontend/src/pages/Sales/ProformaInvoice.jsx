@@ -523,6 +523,7 @@ const ProformaInvoice = () => {
       date: piDate,
       customer: {
         name: selectedCustomer?.name || '',
+        code: selectedCustomer?.code || fullCustomer?.code || '',
         address: fullCustomer?.address || fullCustomer?.billingAddress || '',
         shippingAddress: shippingAddress || '',
         phone: fullCustomer?.mobile || fullCustomer?.phone || '',

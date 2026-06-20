@@ -35,6 +35,13 @@ public class ProductPricing extends BaseEntity {
 
     private BigDecimal markup;
     private BigDecimal gp;
+
+    /** Default discount % applied automatically when this product is added to a POS cart. 0 = no default discount. */
+    private BigDecimal defaultDiscount;
+
+	public BigDecimal getDefaultDiscount() { return defaultDiscount; }
+	public void setDefaultDiscount(BigDecimal defaultDiscount) { this.defaultDiscount = defaultDiscount; }
+
 	public Product getProduct() {
 		return product;
 	}

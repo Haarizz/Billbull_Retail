@@ -316,6 +316,11 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         + "HAVING COALESCE(SUM(i.recognizedRevenue), 0) > s.subTotal")
         List<SalesInvoice> findOverRecognizedInvoices();
 
+        // POS session queries
+        List<SalesInvoice> findByPosSessionId(Long posSessionId);
+
+        List<SalesInvoice> findByBranchIdAndPosSessionIdIn(Long branchId, java.util.Collection<Long> sessionIds);
+
         /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         java.math.BigDecimal sumGlobalOutstandingBalance();
@@ -342,4 +347,38 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "AND s.customerCode IS NOT NULL " +
                "GROUP BY s.customerCode")
         List<Object[]> sumOutstandingBalanceByCustomerCode();
+
+        /**
+         * POS batch check: find invoices that contain a given item code (used to
+         * backtrack from a batch number → product code → invoices containing that item).
+         * pinnedBatchNumber is @Transient and cannot be queried via JPQL.
+         */
+        @Query("SELECT DISTINCT s FROM SalesInvoice s JOIN FETCH s.items i " +
+               "WHERE LOWER(i.itemCode) = LOWER(:itemCode) " +
+               "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) " +
+               "ORDER BY s.invoiceDate DESC")
+        List<SalesInvoice> findByItemCodeWithItems(@Param("itemCode") String itemCode);
+
+        /**
+         * POS batch check by invoice number prefix.
+         */
+        @Query("SELECT DISTINCT s FROM SalesInvoice s JOIN FETCH s.items i " +
+               "WHERE LOWER(s.invoiceNumber) LIKE LOWER(CONCAT(:invoiceNumber, '%')) " +
+               "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) " +
+               "ORDER BY s.invoiceDate DESC")
+        List<SalesInvoice> findByInvoiceNumberPrefixWithItems(@Param("invoiceNumber") String invoiceNumber);
+
+        /**
+         * POS Reprint: fetch POS_SALE invoices for a branch within a date range, latest first.
+         * Items are not fetched here — caller uses the summary projection only.
+         */
+        @Query("SELECT s FROM SalesInvoice s " +
+               "WHERE s.salesType = com.billbull.backend.sales.invoice.SalesType.POS_SALE " +
+               "AND s.invoiceDate BETWEEN :dateFrom AND :dateTo " +
+               "AND (:branchId IS NULL OR s.branchId = :branchId) " +
+               "ORDER BY s.createdAt DESC")
+        List<SalesInvoice> findPosInvoicesByDateRange(
+                @Param("dateFrom") LocalDate dateFrom,
+                @Param("dateTo") LocalDate dateTo,
+                @Param("branchId") Long branchId);
 }

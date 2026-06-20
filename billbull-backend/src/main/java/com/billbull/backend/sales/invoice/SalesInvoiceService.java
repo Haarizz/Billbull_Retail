@@ -266,6 +266,12 @@ public class SalesInvoiceService {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 item.setSalesInvoice(invoice);
 
+                // Voided POS lines are retained for the receipt/audit/reports only —
+                // they add nothing to totals and reserve no batch/stock.
+                if (item.isVoided()) {
+                    continue;
+                }
+
                 DeliveryNoteItem linkedDeliveryItem = findMatchingDeliveryItem(item, linkedDeliveryItems);
                 if (linkedDeliveryItem != null) {
                     linkedDeliveryItems.remove(linkedDeliveryItem);
@@ -875,6 +881,9 @@ public class SalesInvoiceService {
 
                 // 2. CREDIT LIMIT CHECK
                 enforceCreditLimit(invoice, settings);
+                // POS unified-scan: pin scanned batch units before FEFO auto-reserve,
+                // so those lines are already satisfied and FEFO skips them.
+                reservePinnedBatches(invoice);
                 ensureDirectInvoiceBatchSelections(invoice, settings);
                 // -------------------------------------------------------
 
@@ -1053,6 +1062,8 @@ public class SalesInvoiceService {
         List<String> insufficientItems = new ArrayList<>();
 
         for (SalesInvoiceItem item : invoice.getItems()) {
+            if (item.isVoided())
+                continue;
             if (item.getItemCode() == null || item.getItemCode().isBlank())
                 continue;
 
@@ -1210,6 +1221,25 @@ public class SalesInvoiceService {
                         "Sales Invoice item not found: " + itemId));
     }
 
+    /**
+     * POS unified-scan: for each line carrying a scanned {@code pinnedBatchNumber},
+     * reserve that exact batch unit against the Sales Invoice line so the
+     * subsequent FEFO auto-reserve leaves it alone and the scanned unit is the
+     * one consumed. Pinned lines are quantity 1 (one scanned physical unit).
+     */
+    private void reservePinnedBatches(SalesInvoice invoice) {
+        if (invoice == null || invoice.getItems() == null) {
+            return;
+        }
+        for (SalesInvoiceItem item : invoice.getItems()) {
+            String pinned = item.getPinnedBatchNumber();
+            if (pinned == null || pinned.isBlank()) {
+                continue;
+            }
+            batchSelectionService.reserveScannedBatchForSalesInvoiceLine(invoice, item, pinned);
+        }
+    }
+
     private void ensureDirectInvoiceBatchSelections(SalesInvoice invoice, SalesSettings settings) {
         // Invoice-level batch selection is only required when the invoice itself
         // deducts stock at post time — i.e. Fast Sale mode. In Workflow Driven mode
@@ -1220,6 +1250,9 @@ public class SalesInvoiceService {
         Map<Long, List<DeliveryBatchSelectionResponse>> selectionsByLine =
                 batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_INVOICE, invoice.getId());
         for (SalesInvoiceItem item : invoice.getItems()) {
+            if (item.isVoided()) {
+                continue;
+            }
             if (item.getItemCode() == null || item.getItemCode().isBlank()) {
                 continue;
             }
@@ -1474,6 +1507,10 @@ public class SalesInvoiceService {
         req.items = new ArrayList<>();
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
+                // Voided POS lines never deliver — no stock movement, no DN line.
+                if (item.isVoided()) {
+                    continue;
+                }
                 // QA-001: service lines never deliver — no stock movement, no DN line.
                 Product itemProduct = item.getItemCode() != null
                         ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
@@ -1709,6 +1746,9 @@ public class SalesInvoiceService {
         }
 
         for (SalesInvoiceItem item : invoice.getItems()) {
+            if (item.isVoided()) {
+                continue;
+            }
             if (item.getWarehouseId() == null) {
                 continue;
             }
