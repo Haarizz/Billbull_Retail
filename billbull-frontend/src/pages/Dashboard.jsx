@@ -4,7 +4,10 @@ import { billbullDashboardService } from "../api/billbull-dashboard-service";
 
 // Kick off the summary fetch as soon as this module is evaluated —
 // before the component even mounts — so the cache is warm on first render.
-billbullDashboardService.prefetch();
+// Only runs when a session token exists to avoid unauthenticated 403s.
+if (sessionStorage.getItem("token")) {
+  billbullDashboardService.prefetch();
+}
 
 const Dashboard = () => {
     const navigate = useNavigate();

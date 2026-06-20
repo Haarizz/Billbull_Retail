@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingException;
 import com.billbull.backend.logging.RequestLoggingFilter;
@@ -32,6 +33,18 @@ public class GlobalExceptionHandler {
                         "code", ex.getCode().name(),
                         "message", ex.getMessage() != null ? ex.getMessage() : ex.getCode().name(),
                         "requestId", requestId()));
+    }
+
+    /**
+     * Explicit HTTP status rejections (e.g. 401 from AuthController) — return the
+     * declared status and log at WARN without a stack trace.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatus(ResponseStatusException ex) {
+        log.warn("ResponseStatusException requestId={} status={}: {}", requestId(), ex.getStatusCode(), ex.getReason());
+        return ResponseEntity
+                .status(ex.getStatusCode())
+                .body(errorBody(ex.getReason() != null ? ex.getReason() : ex.getMessage()));
     }
 
     @ExceptionHandler(RuntimeException.class)

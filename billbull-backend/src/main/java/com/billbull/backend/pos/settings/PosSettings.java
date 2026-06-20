@@ -32,6 +32,22 @@ public class PosSettings extends BaseEntity {
     @Column(name = "cart_view_mode", length = 20)
     private String cartViewMode = "MINIMAL"; // MINIMAL or DETAILED
 
+    // Detailed cart view — per-field toggles (only honored when cartViewMode = DETAILED)
+    @Column(name = "cart_show_barcode")
+    private Boolean cartShowBarcode = true;
+
+    @Column(name = "cart_show_product_code")
+    private Boolean cartShowProductCode = true;
+
+    @Column(name = "cart_show_batch_number")
+    private Boolean cartShowBatchNumber = true;
+
+    @Column(name = "cart_show_serial_number")
+    private Boolean cartShowSerialNumber = false;
+
+    @Column(name = "cart_show_expiry_date")
+    private Boolean cartShowExpiryDate = false;
+
     // Price check
     @Column(name = "price_check_show_stock")
     private Boolean priceCheckShowStock = true;
@@ -40,9 +56,18 @@ public class PosSettings extends BaseEntity {
     @Column(name = "z_report_access", length = 30)
     private String zReportAccess = "SUPERVISOR"; // ANY, SUPERVISOR, MAIN_POS
 
-    // Cash drawer triggers (comma-separated list)
+    // Cash drawer triggers — comma-separated subset of the supported keys below.
+    // The drawer opens only for events whose key is present in this list.
+    // Supported keys:
+    //   CASH_PAYMENT     — successful cash payment completion
+    //   RECEIPT_PRINT    — receipt printing
+    //   CHANGE_RETURN    — change return transaction
+    //   CASH_SETTLEMENT  — cash settlement selection
+    //   CASH_DROP        — cash drop
+    //   CASH_OUT         — cash out
+    //   MANUAL_OPEN      — manual supervisor open
     @Column(name = "cash_drawer_triggers", length = 500)
-    private String cashDrawerTriggers = "CASH_PAYMENT,RECEIPT_PRINT";
+    private String cashDrawerTriggers = "CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN";
 
     // Receipt sharing
     @Column(name = "receipt_share_enabled")
@@ -99,6 +124,21 @@ public class PosSettings extends BaseEntity {
 
     public String getCartViewMode() { return cartViewMode; }
     public void setCartViewMode(String cartViewMode) { this.cartViewMode = cartViewMode; }
+
+    public Boolean getCartShowBarcode() { return cartShowBarcode; }
+    public void setCartShowBarcode(Boolean cartShowBarcode) { this.cartShowBarcode = cartShowBarcode; }
+
+    public Boolean getCartShowProductCode() { return cartShowProductCode; }
+    public void setCartShowProductCode(Boolean cartShowProductCode) { this.cartShowProductCode = cartShowProductCode; }
+
+    public Boolean getCartShowBatchNumber() { return cartShowBatchNumber; }
+    public void setCartShowBatchNumber(Boolean cartShowBatchNumber) { this.cartShowBatchNumber = cartShowBatchNumber; }
+
+    public Boolean getCartShowSerialNumber() { return cartShowSerialNumber; }
+    public void setCartShowSerialNumber(Boolean cartShowSerialNumber) { this.cartShowSerialNumber = cartShowSerialNumber; }
+
+    public Boolean getCartShowExpiryDate() { return cartShowExpiryDate; }
+    public void setCartShowExpiryDate(Boolean cartShowExpiryDate) { this.cartShowExpiryDate = cartShowExpiryDate; }
 
     public Boolean getPriceCheckShowStock() { return priceCheckShowStock; }
     public void setPriceCheckShowStock(Boolean priceCheckShowStock) { this.priceCheckShowStock = priceCheckShowStock; }

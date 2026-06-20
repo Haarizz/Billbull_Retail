@@ -8,5 +8,7 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
     Optional<PosTerminal> findByDeviceFingerprint(String deviceFingerprint);
     Optional<PosTerminal> findByTerminalId(String terminalId);
     List<PosTerminal> findByBranchIdAndStatus(Long branchId, PosTerminalStatus status);
+    List<PosTerminal> findByBranchIdOrderByTerminalIdAsc(Long branchId);
+    List<PosTerminal> findByBranchId(Long branchId);
     int countByBranchIdAndStatus(Long branchId, PosTerminalStatus status);
 }

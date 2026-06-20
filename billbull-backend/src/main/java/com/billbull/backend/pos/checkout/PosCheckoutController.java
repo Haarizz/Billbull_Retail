@@ -2,6 +2,7 @@ package com.billbull.backend.pos.checkout;
 
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesType;
 import org.springframework.http.ResponseEntity;
@@ -9,6 +10,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,10 +24,12 @@ public class PosCheckoutController {
 
     private final SalesInvoiceService invoiceService;
     private final PosSessionService sessionService;
+    private final SalesInvoiceRepository invoiceRepository;
 
-    public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService) {
+    public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService, SalesInvoiceRepository invoiceRepository) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
+        this.invoiceRepository = invoiceRepository;
     }
 
     @PostMapping
@@ -49,6 +53,21 @@ public class PosCheckoutController {
         }
 
         return ResponseEntity.ok(invoiceService.getById(saved.getId()));
+    }
+
+    /**
+     * List POS invoices for the reprint screen.
+     * Returns lightweight invoice summaries (no items) ordered latest-first.
+     */
+    @GetMapping("/invoices")
+    @PreAuthorize("isAuthenticated()")
+    public List<SalesInvoice> getPosInvoices(
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) Long branchId) {
+        LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now();
+        LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : LocalDate.now();
+        return invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
     }
 
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
@@ -77,6 +96,10 @@ public class PosCheckoutController {
                 si.setPrice(item.getPrice());
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
                 si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
+                si.setVoided(Boolean.TRUE.equals(item.getVoided()));
+                if (!si.isVoided() && item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
+                    si.setPinnedBatchNumber(item.getBatchNumber().trim());
+                }
                 si.setSalesInvoice(inv);
                 return si;
             }).toList());

@@ -156,6 +156,33 @@ public class RolePermissionService {
         return Boolean.TRUE.equals(permissions.get("edit"));
     }
 
+    @Transactional(readOnly = true)
+    public boolean currentUserCanDelete(String module) {
+        if (module == null || module.isBlank()) {
+            return false;
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+
+        boolean hasAdminRole = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority())
+                        || "ROLE_BRANCH_ADMIN".equals(authority.getAuthority()));
+        if (hasAdminRole) {
+            return true;
+        }
+
+        Object permission = getMergedPermissionsForUser(authentication.getName())
+                .get(module.toLowerCase());
+        if (!(permission instanceof Map<?, ?> permissions)) {
+            return false;
+        }
+
+        return Boolean.TRUE.equals(permissions.get("delete"));
+    }
+
     private Map<String, Object> createPermissionMap() {
         Map<String, Object> map = new HashMap<>();
         map.put("view", false);

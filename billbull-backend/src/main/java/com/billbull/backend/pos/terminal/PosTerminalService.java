@@ -91,4 +91,26 @@ public class PosTerminalService {
     public List<PosTerminal> getForBranch(Long branchId) {
         return repo.findByBranchIdAndStatus(branchId, PosTerminalStatus.ACTIVE);
     }
+
+    @Transactional(readOnly = true)
+    public List<PosTerminal> getAllForBranch(Long branchId) {
+        return repo.findByBranchIdOrderByTerminalIdAsc(branchId);
+    }
+
+    @Transactional
+    public PosTerminal rename(String terminalId, String terminalName, String counterName) {
+        PosTerminal terminal = repo.findByTerminalId(terminalId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
+        if (terminalName != null && !terminalName.isBlank()) terminal.setTerminalName(terminalName.trim());
+        if (counterName != null && !counterName.isBlank()) terminal.setCounterName(counterName.trim());
+        return repo.save(terminal);
+    }
+
+    @Transactional
+    public PosTerminal setStatus(String terminalId, PosTerminalStatus status) {
+        PosTerminal terminal = repo.findByTerminalId(terminalId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
+        terminal.setStatus(status);
+        return repo.save(terminal);
+    }
 }

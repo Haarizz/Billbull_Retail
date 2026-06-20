@@ -51,10 +51,10 @@ public class AuthController {
         User user = userRepository
                 .findByUsernameAndIsActiveTrue(request.getUsername())
                 .or(() -> userRepository.findByEmailAndIsActiveTrue(request.getUsername()))
-                .orElseThrow(() -> new RuntimeException("Invalid username or password"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid username or password");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
         }
 
         loginRateLimiter.recordSuccess(clientIp);
