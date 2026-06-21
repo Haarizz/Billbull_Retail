@@ -46,8 +46,8 @@ public class InventoryBalance {
     private String warehouseName;
 
     /** Sum of all stock_movements.quantity for this (product, warehouse). */
-    @Column(name = "on_hand_qty", nullable = false)
-    private Integer onHandQty = 0;
+    @Column(name = "on_hand_qty", nullable = false, precision = 18, scale = 3)
+    private BigDecimal onHandQty = BigDecimal.ZERO;
 
     /** Weighted-average cost per unit (AED). */
     @Column(name = "avg_cost", precision = 15, scale = 4)
@@ -79,8 +79,8 @@ public class InventoryBalance {
     public String getWarehouseName() { return warehouseName; }
     public void setWarehouseName(String warehouseName) { this.warehouseName = warehouseName; }
 
-    public Integer getOnHandQty() { return onHandQty; }
-    public void setOnHandQty(Integer onHandQty) { this.onHandQty = onHandQty; }
+    public BigDecimal getOnHandQty() { return onHandQty; }
+    public void setOnHandQty(BigDecimal onHandQty) { this.onHandQty = onHandQty; }
 
     public BigDecimal getAvgCost() { return avgCost; }
     public void setAvgCost(BigDecimal avgCost) { this.avgCost = avgCost; }

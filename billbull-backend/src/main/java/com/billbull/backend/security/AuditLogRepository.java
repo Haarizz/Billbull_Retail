@@ -1,5 +1,6 @@
 package com.billbull.backend.security;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -28,9 +29,9 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long>, JpaSp
 
     List<AuditLog> findByEndpointContaining(String endpoint);
 
-    List<AuditLog> findByRequestIdOrderByAccessTimeDesc(String requestId);
+    List<AuditLog> findByRequestIdOrderByAccessTimeDesc(String requestId, Pageable pageable);
 
-    List<AuditLog> findByEntityTypeAndEntityIdOrderByAccessTimeDesc(String entityType, String entityId);
+    List<AuditLog> findByEntityTypeAndEntityIdOrderByAccessTimeDesc(String entityType, String entityId, Pageable pageable);
 
     List<AuditLog> findByEventTypeOrderByAccessTimeDesc(String eventType);
 }

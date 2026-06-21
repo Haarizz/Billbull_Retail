@@ -13,7 +13,8 @@ import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 public class SalesInvoiceItem {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "sales_inv_item_seq_gen")
+    @SequenceGenerator(name = "sales_inv_item_seq_gen", sequenceName = "seq_sales_invoice_items", allocationSize = 50)
     private Long id;
 
     private String itemCode;
