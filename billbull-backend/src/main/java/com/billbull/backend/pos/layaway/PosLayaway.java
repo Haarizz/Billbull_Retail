@@ -110,8 +110,11 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "cancelled_by")
     private String cancelledBy;
 
-    @OneToMany(mappedBy = "posLayaway", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER). Read paths init items in-session before the entity is
+    // serialized (open-in-view=false). @BatchSize batches the per-layaway item loads for lists.
+    @OneToMany(mappedBy = "posLayaway", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<PosLayawayItem> items = new ArrayList<>();
 
     /**

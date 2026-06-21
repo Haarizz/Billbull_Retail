@@ -151,13 +151,18 @@ public class PosLayawayService {
         // also keeps the bound param a typed (non-null-typed) string.
         String cust = customer != null && !customer.isBlank() ? customer.trim().toLowerCase() : null;
         String num = number != null && !number.isBlank() ? number.trim().toLowerCase() : null;
-        return repo.search(branchId, status != null ? status.name() : null, cust, num);
+        List<PosLayaway> results = repo.search(branchId, status != null ? status.name() : null, cust, num);
+        // ARCHFIX §1.6: items is LAZY — init (batched) in-session so the response serializes.
+        results.forEach(l -> org.hibernate.Hibernate.initialize(l.getItems()));
+        return results;
     }
 
     @Transactional(readOnly = true)
     public PosLayaway getById(Long id) {
-        return repo.findById(id).orElseThrow(() ->
+        PosLayaway layaway = repo.findById(id).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Layaway not found: " + id));
+        org.hibernate.Hibernate.initialize(layaway.getItems()); // ARCHFIX §1.6
+        return layaway;
     }
 
     public PosLayaway cancel(Long id) {
