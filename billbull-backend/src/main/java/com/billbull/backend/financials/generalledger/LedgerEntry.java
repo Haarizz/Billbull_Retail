@@ -7,7 +7,11 @@ import java.time.LocalDate;
 
 @Entity
 @Table(name = "ledger_entries", indexes = {
-    @Index(name = "idx_ledger_entry_branch", columnList = "branch_id")
+    @Index(name = "idx_ledger_entry_branch", columnList = "branch_id"),
+    // ARCHFIX §3 — names match V3__missing_indexes.sql so fresh (Hibernate) and existing (Flyway) DBs converge.
+    @Index(name = "idx_ledger_acct_date", columnList = "account_code, transaction_date"),
+    @Index(name = "idx_ledger_date",      columnList = "transaction_date"),
+    @Index(name = "idx_ledger_journal",   columnList = "journal_id")
 })
 public class LedgerEntry {
     @Id
