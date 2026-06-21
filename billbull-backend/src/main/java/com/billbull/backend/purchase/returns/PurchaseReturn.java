@@ -23,7 +23,8 @@ public class PurchaseReturn {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER). Read/serialize paths JOIN FETCH branch+items in-session.
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
     private Branch branch;
 
@@ -50,8 +51,10 @@ public class PurchaseReturn {
     @Enumerated(EnumType.STRING)
     private PurchaseReturnStatus status;
 
-    @OneToMany(mappedBy = "purchaseReturn", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER) + @BatchSize for efficient list loads. JOIN FETCH on read paths.
+    @OneToMany(mappedBy = "purchaseReturn", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<PurchaseReturnItem> items = new ArrayList<>();
 
     // Getters & Setters

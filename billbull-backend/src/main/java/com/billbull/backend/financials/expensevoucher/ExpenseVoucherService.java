@@ -43,7 +43,9 @@ public class ExpenseVoucherService {
         this.accountRepository = accountRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<ExpenseVoucher> getAll() {
+        // ARCHFIX §1.6: the active queries now JOIN FETCH lines + branch (LAZY) for serialization.
         Long branchId = branchAccessService.getCurrentUserBranchId();
         if (branchId != null) {
             return repo.findAllActiveByBranch(branchId);
@@ -51,8 +53,11 @@ public class ExpenseVoucherService {
         return repo.findAllActive();
     }
 
+    @Transactional(readOnly = true)
     public ExpenseVoucher getById(Long id) {
-        return repo.findById(id).orElseThrow(() -> new RuntimeException("Expense voucher not found: " + id));
+        // ARCHFIX §1.6: JOIN FETCH lines + branch so both the serialized response and the
+        // in-transaction update/approve callers see a fully-loaded graph.
+        return repo.findByIdWithLines(id).orElseThrow(() -> new RuntimeException("Expense voucher not found: " + id));
     }
 
     @Transactional
