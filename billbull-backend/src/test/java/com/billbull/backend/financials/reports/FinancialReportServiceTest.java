@@ -72,6 +72,12 @@ class FinancialReportServiceTest {
         return a;
     }
 
+    private static Account account(String code, String group, String name) {
+        Account a = account(code, group);
+        a.setName(name);
+        return a;
+    }
+
     @Test
     void trialBalanceUsesSqlAggregateAndNetsDebitCreditPerAccount() {
         LocalDate start = LocalDate.of(2026, 1, 1);
@@ -121,5 +127,27 @@ class FinancialReportServiceTest {
         assertTrue(dto.isBalanced(), "equal net debits and credits -> balanced");
         assertEquals(0, new BigDecimal("100.00").compareTo(dto.getTotalDebit()));
         assertEquals(0, new BigDecimal("100.00").compareTo(dto.getTotalCredit()));
+    }
+
+    // ARCHFIX §4.1 — balance sheet builds cumulative balances from the SQL before-date aggregate.
+    @Test
+    void balanceSheetUsesBeforeDateAggregateForAssetBalance() {
+        LocalDate asOf = LocalDate.of(2026, 6, 30);
+
+        // Asset account 1001 with net debit 500 (1000 debit - 500 credit) up to the as-of date.
+        when(ledgerEntryRepository.aggregateByAccountCodeBefore(isNull(), eq(asOf.plusDays(1))))
+                .thenReturn(List.of(agg("1001", "Cash", "1000.00", "500.00")));
+        // Nested P&L call (retained earnings) — no revenue/expense activity.
+        when(ledgerEntryRepository.aggregateByAccountCode(isNull(), any(), any()))
+                .thenReturn(List.of());
+        when(accountRepository.findAll()).thenReturn(List.of(account("1001", "Assets", "Cash")));
+
+        BalanceSheetDTO dto = service.generateBalanceSheet(asOf, null);
+
+        // pulled from the before-date aggregate, not a per-entry fetch
+        verify(ledgerEntryRepository).aggregateByAccountCodeBefore(isNull(), eq(asOf.plusDays(1)));
+        assertEquals(1, dto.getAssetItems().size());
+        // Assets are debit-normal: display balance = raw net debit = 500.
+        assertEquals(0, new BigDecimal("500.00").compareTo(dto.getTotalAssets()));
     }
 }

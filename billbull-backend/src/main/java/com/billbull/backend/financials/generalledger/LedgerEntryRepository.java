@@ -82,6 +82,23 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
             @org.springframework.data.repository.query.Param("end") java.time.LocalDate end,
             @org.springframework.data.repository.query.Param("costCenter") String costCenter);
 
+    /** One row per account: summed debits/credits for all entries STRICTLY BEFORE {@code before}
+     *  (used by the balance sheet as-of-date cumulative balance). Optional branch filter. */
+    @Query("""
+            SELECT le.accountCode                  AS accountCode,
+                   MAX(le.accountName)             AS accountName,
+                   COALESCE(SUM(le.debitAmount), 0)  AS sumDebit,
+                   COALESCE(SUM(le.creditAmount), 0) AS sumCredit
+            FROM LedgerEntry le
+            WHERE le.accountCode IS NOT NULL
+              AND le.transactionDate < :before
+              AND (:branchId IS NULL OR le.branch.id = :branchId)
+            GROUP BY le.accountCode
+            """)
+    List<AccountAggregate> aggregateByAccountCodeBefore(
+            @org.springframework.data.repository.query.Param("branchId") Long branchId,
+            @org.springframework.data.repository.query.Param("before") java.time.LocalDate before);
+
     /** Spring Data projection: a per-account debit/credit aggregate row. */
     interface AccountAggregate {
         String getAccountCode();

@@ -299,15 +299,16 @@ public class FinancialReportService {
         BalanceSheetDTO dto = new BalanceSheetDTO();
         dto.setAsOfDate(asOfDate.toString());
 
-        List<LedgerEntry> entries = fetchEntriesBefore(branchId, asOfDate.plusDays(1));
+        // ARCHFIX §4.1: SQL-side per-account cumulative balance (debit - credit) for all entries up to
+        // and including asOfDate, instead of loading every prior ledger entry and folding in Java.
+        // fetchEntriesBefore used transactionDate < asOfDate.plusDays(1) (i.e. <= asOfDate); preserved.
+        List<LedgerEntryRepository.AccountAggregate> aggregates =
+                ledgerEntryRepository.aggregateByAccountCodeBefore(branchId, asOfDate.plusDays(1));
         Map<String, BigDecimal> computedBalances = new HashMap<>();
-
-        for (LedgerEntry entry : entries) {
-            BigDecimal debit = entry.getDebitAmount() != null ? entry.getDebitAmount() : BigDecimal.ZERO;
-            BigDecimal credit = entry.getCreditAmount() != null ? entry.getCreditAmount() : BigDecimal.ZERO;
-            BigDecimal net = debit.subtract(credit);
-            computedBalances.put(entry.getAccountCode(),
-                    computedBalances.getOrDefault(entry.getAccountCode(), BigDecimal.ZERO).add(net));
+        for (LedgerEntryRepository.AccountAggregate agg : aggregates) {
+            computedBalances.merge(agg.getAccountCode(),
+                    safe(agg.getSumDebit()).subtract(safe(agg.getSumCredit())),
+                    BigDecimal::add);
         }
 
         List<Account> allAccounts = accountRepository.findAll();
