@@ -65,14 +65,14 @@ public class InventoryBalanceService {
                 });
 
         // Derive on-hand qty from ledger
-        BigDecimal rawQty = movementRepository.getAvailableStock(warehouseId, productId);
-        int onHand = rawQty != null ? rawQty.intValue() : 0;
+        BigDecimal onHand = movementRepository.getAvailableStock(warehouseId, productId);
+        if (onHand == null) onHand = BigDecimal.ZERO;
 
         // Derive WAC from positive (inbound) movements with unit cost
         BigDecimal wac = movementRepository.getWeightedAverageCost(productId, warehouseId);
         if (wac == null) wac = BigDecimal.ZERO;
 
-        BigDecimal totalValue = wac.multiply(BigDecimal.valueOf(Math.max(onHand, 0)))
+        BigDecimal totalValue = wac.multiply(onHand.max(BigDecimal.ZERO))
                 .setScale(2, java.math.RoundingMode.HALF_UP);
 
         balance.setOnHandQty(onHand);

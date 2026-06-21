@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -151,7 +154,10 @@ public class PosLayawayService {
         // also keeps the bound param a typed (non-null-typed) string.
         String cust = customer != null && !customer.isBlank() ? customer.trim().toLowerCase() : null;
         String num = number != null && !number.isBlank() ? number.trim().toLowerCase() : null;
-        List<PosLayaway> results = repo.search(branchId, status != null ? status.name() : null, cust, num);
+        // Cap at 200 most-recent — the query is already branch-scoped and filtered;
+        // a hard limit prevents memory spikes on stores with many historical layaways.
+        PageRequest page = PageRequest.of(0, 200, Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<PosLayaway> results = repo.search(branchId, status != null ? status.name() : null, cust, num, page);
         // ARCHFIX §1.6: items is LAZY — init (batched) in-session so the response serializes.
         results.forEach(l -> org.hibernate.Hibernate.initialize(l.getItems()));
         return results;
