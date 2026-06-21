@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.settings;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -17,6 +18,7 @@ public class SalesSettingsController {
      * GET /api/sales/settings
      * Returns the current Sales module settings.
      */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<SalesSettings> getSettings() {
         return ResponseEntity.ok(service.getSettings());
@@ -26,6 +28,7 @@ public class SalesSettingsController {
      * PUT /api/sales/settings
      * Saves and returns the updated Sales module settings.
      */
+    @PreAuthorize("hasRole('ADMIN')")
     @PutMapping
     public ResponseEntity<SalesSettings> saveSettings(@RequestBody SalesSettings settings) {
         return ResponseEntity.ok(service.saveSettings(settings));
