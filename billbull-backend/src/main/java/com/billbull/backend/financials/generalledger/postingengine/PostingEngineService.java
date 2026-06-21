@@ -819,10 +819,10 @@ public class PostingEngineService {
                                 "Expense - " + expense.getCategory(), TX_EXPENSE, expense.getBranch());
                 addLine(entry, expenseAccountName, expenseAccountCode,
                                 expense.getNotes() != null ? expense.getNotes() : "",
-                                BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
-                if (expense.getTaxAmount() > 0) {
+                                expense.getAmount(), BigDecimal.ZERO);
+                if (expense.getTaxAmount() != null && expense.getTaxAmount().signum() > 0) {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
-                                        BigDecimal.valueOf(expense.getTaxAmount()), BigDecimal.ZERO);
+                                        expense.getTaxAmount(), BigDecimal.ZERO);
                 }
 
                 // QA-054: credit the pay-ledger the user selected on the expense entry.
@@ -844,7 +844,7 @@ public class PostingEngineService {
                         payName = sel.name;
                 }
                 addLine(entry, payName, payCode, "Payment for expense",
-                                BigDecimal.ZERO, BigDecimal.valueOf(expense.getTotal()));
+                                BigDecimal.ZERO, expense.getTotal());
                 return post(entry);
         }
 

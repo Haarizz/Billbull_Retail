@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.tax;
 
+import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -14,7 +15,7 @@ public class TaxFilingDTO {
     private String period;
     private String dueDate;
     private String filedDate;
-    private Double amount;
+    private BigDecimal amount;
     private String status;
     private Integer documents;
     private String notes;

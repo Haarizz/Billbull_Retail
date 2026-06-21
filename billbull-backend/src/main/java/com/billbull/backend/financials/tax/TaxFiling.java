@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -33,7 +34,8 @@ public class TaxFiling {
     private String period;
     private String dueDate;
     private String filedDate;
-    private Double amount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal amount;
     private String status;
     private Integer documents;
 

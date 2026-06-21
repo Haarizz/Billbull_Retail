@@ -1,5 +1,7 @@
 package com.billbull.backend.financials.expense;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Optional;
 
@@ -56,9 +58,13 @@ public class ExpenseService {
         }
         // Recalculate derived fields to ensure consistency
         if (expense.getAmount() != null && expense.getTaxRate() != null) {
-            double taxAmount = (expense.getAmount() * expense.getTaxRate()) / 100;
+            // taxRate is a percentage (not money); amount/taxAmount/total are money.
+            BigDecimal taxAmount = expense.getAmount()
+                    .multiply(BigDecimal.valueOf(expense.getTaxRate()))
+                    .divide(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
             expense.setTaxAmount(taxAmount);
-            expense.setTotal(expense.getAmount() + taxAmount);
+            expense.setTotal(expense.getAmount().add(taxAmount));
         }
 
         Expense saved = expenseRepository.save(expense);
@@ -99,9 +105,12 @@ public class ExpenseService {
 
             // Recalculate
             if (existingExpense.getAmount() != null && existingExpense.getTaxRate() != null) {
-                double taxAmount = (existingExpense.getAmount() * existingExpense.getTaxRate()) / 100;
+                BigDecimal taxAmount = existingExpense.getAmount()
+                        .multiply(BigDecimal.valueOf(existingExpense.getTaxRate()))
+                        .divide(BigDecimal.valueOf(100))
+                        .setScale(2, RoundingMode.HALF_UP);
                 existingExpense.setTaxAmount(taxAmount);
-                existingExpense.setTotal(existingExpense.getAmount() + taxAmount);
+                existingExpense.setTotal(existingExpense.getAmount().add(taxAmount));
             }
 
             Expense saved = expenseRepository.save(existingExpense);

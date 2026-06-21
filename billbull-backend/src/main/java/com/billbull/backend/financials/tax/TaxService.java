@@ -166,7 +166,7 @@ public class TaxService {
         if (updatedFiling == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax filing update is required");
         }
-        if (updatedFiling.getAmount() != null && updatedFiling.getAmount() < 0) {
+        if (updatedFiling.getAmount() != null && updatedFiling.getAmount().signum() < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax filing amount cannot be negative");
         }
         if (updatedFiling.getStatus() != null && !ALLOWED_FILING_STATUSES.contains(updatedFiling.getStatus())) {
@@ -256,7 +256,7 @@ public class TaxService {
 
         filing.setPeriod(period);
         filing.setDueDate(dueDate);
-        filing.setAmount(0.0);
+        filing.setAmount(java.math.BigDecimal.ZERO);
         filing.setStatus("Pending");
         filing.setDocuments(0);
         taxFilingRepository.save(filing);
