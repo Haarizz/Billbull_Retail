@@ -23,10 +23,10 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")
     List<String> findReturnNumbersByPrefix(@Param("prefix") String prefix);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate = :date")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate = :date")
     Double getTotalReturnsForDate(@Param("date") LocalDate date);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
     Double getTotalReturnsBetweenDates(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
     @Query("SELECT r.returnDate, COALESCE(SUM(r.totalAmount), 0) FROM SalesReturn r " +
@@ -34,7 +34,7 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
            "GROUP BY r.returnDate ORDER BY r.returnDate")
     List<Object[]> findDailyReturnsTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.status = 'APPROVED'")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.status = 'APPROVED'")
     Double getTotalApprovedReturns();
 
     /** Sales-report loader: date-bounded returns with line items fetched in one query. */

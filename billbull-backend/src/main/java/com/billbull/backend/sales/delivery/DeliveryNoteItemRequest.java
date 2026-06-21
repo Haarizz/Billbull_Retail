@@ -1,5 +1,7 @@
 package com.billbull.backend.sales.delivery;
 
+import java.math.BigDecimal;
+
 public class DeliveryNoteItemRequest {
     public String itemCode;
     public String barcode;
@@ -17,8 +19,8 @@ public class DeliveryNoteItemRequest {
     public Long binId;
     public Long salesOrderItemId;
     public Long sourceLineId;
-    public Double price;
-    public Double disc;
-    public Double tax;
-    public Double cost;
+    public BigDecimal price;
+    public Double disc;   // PERCENTAGE rate
+    public Double tax;    // PERCENTAGE rate
+    public BigDecimal cost;
 }

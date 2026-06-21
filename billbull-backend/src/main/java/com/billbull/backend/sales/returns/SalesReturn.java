@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -33,9 +34,12 @@ public class SalesReturn {
     private String customerName;
     private String linkedInvoice;
 
-    private Double subTotal;
-    private Double taxAmount;
-    private Double totalAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal subTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal totalAmount;
 
     private String reason;
     private String returnAction; // Credit Note, Refund, Replacement
@@ -103,27 +107,27 @@ public class SalesReturn {
         this.linkedInvoice = linkedInvoice;
     }
 
-    public Double getSubTotal() {
+    public BigDecimal getSubTotal() {
         return subTotal;
     }
 
-    public void setSubTotal(Double subTotal) {
+    public void setSubTotal(BigDecimal subTotal) {
         this.subTotal = subTotal;
     }
 
-    public Double getTaxAmount() {
+    public BigDecimal getTaxAmount() {
         return taxAmount;
     }
 
-    public void setTaxAmount(Double taxAmount) {
+    public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
     }
 
-    public Double getTotalAmount() {
+    public BigDecimal getTotalAmount() {
         return totalAmount;
     }
 
-    public void setTotalAmount(Double totalAmount) {
+    public void setTotalAmount(BigDecimal totalAmount) {
         this.totalAmount = totalAmount;
     }
 

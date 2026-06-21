@@ -204,7 +204,7 @@ public class DashboardService {
                     inv.getId().toString(),
                     inv.getInvoiceNumber(),
                     inv.getCustomerName(),
-                    inv.getInvoiceTotal() != null ? inv.getInvoiceTotal() : 0d,
+                    inv.getInvoiceTotal() != null ? inv.getInvoiceTotal().doubleValue() : 0d,
                     inv.getStatus() != null ? inv.getStatus().toString() : "DRAFT",
                     inv.getInvoiceDate() != null ? inv.getInvoiceDate().format(fmt) : null,
                     createdAtStr

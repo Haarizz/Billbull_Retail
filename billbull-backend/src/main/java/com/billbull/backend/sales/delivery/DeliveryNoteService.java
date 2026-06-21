@@ -191,10 +191,10 @@ public class DeliveryNoteService {
             ir.binId = item.getBinId();
             ir.salesOrderItemId = item.getSalesOrderItemId();
             ir.sourceLineId = item.getSourceLineId();
-            ir.price = item.getPrice();
+            ir.price = item.getPrice() != null ? item.getPrice().doubleValue() : null;
             ir.disc = item.getDisc();
             ir.tax = item.getTax();
-            ir.cost = item.getCost();
+            ir.cost = item.getCost() != null ? item.getCost().doubleValue() : null;
 
             Product product = item.getProduct();
             if (product != null && product.getBrand() != null) {
@@ -808,14 +808,14 @@ public class DeliveryNoteService {
     private void persistConsumptions(DeliveryNote dn) {
         if (dn == null || dn.getItems() == null) return;
         for (DeliveryNoteItem item : dn.getItems()) {
-            if (item.getCost() == null || item.getCost() <= 0) continue;
+            if (item.getCost() == null || item.getCost().signum() <= 0) continue;
             Long dnItemId = item.getId();
             if (dnItemId != null && !consumptionRepo.findByDeliveryNoteItemId(dnItemId).isEmpty()) continue;
 
             int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
             if (qty <= 0) continue;
 
-            BigDecimal unitCost  = BigDecimal.valueOf(item.getCost());
+            BigDecimal unitCost  = item.getCost();
             BigDecimal totalCost = unitCost.multiply(BigDecimal.valueOf(qty));
 
             DeliveryNoteBatchConsumption c = new DeliveryNoteBatchConsumption();
@@ -872,7 +872,7 @@ public class DeliveryNoteService {
             totalCogs = totalCogs.add(itemCogs);
 
             // Stamp WAC cost back onto DN item so invoice items can copy it for profit reporting
-            dnItem.setCost(effectiveCost.doubleValue());
+            dnItem.setCost(effectiveCost);
 
             // Match DN item to invoice item by itemCode for proportional revenue
             SalesInvoiceItem matchedInvoiceItem = invoice.getItems().stream()
@@ -887,7 +887,7 @@ public class DeliveryNoteService {
                         + (matchedInvoiceItem.getFoc() != null ? matchedInvoiceItem.getFoc() : 0);
 
                 BigDecimal netAmount = matchedInvoiceItem.getNetAmount() != null
-                        ? BigDecimal.valueOf(matchedInvoiceItem.getNetAmount()) : BigDecimal.ZERO;
+                        ? matchedInvoiceItem.getNetAmount() : BigDecimal.ZERO;
 
                 BigDecimal proportionalRevenue = totalInvoiceQty > 0
                         ? netAmount.multiply(BigDecimal.valueOf(deliveredQty))
@@ -910,8 +910,8 @@ public class DeliveryNoteService {
                 }
 
                 // Stamp WAC unit cost onto invoice item for dashboard profit calculation
-                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost() == 0.0) {
-                    matchedInvoiceItem.setCost(effectiveCost.doubleValue());
+                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost().signum() == 0) {
+                    matchedInvoiceItem.setCost(effectiveCost);
                 }
             }
         }
@@ -920,7 +920,7 @@ public class DeliveryNoteService {
         boolean isFinalDelivery = invoice.getItems().stream()
                 .allMatch(si -> {
                     BigDecimal net = si.getNetAmount() != null
-                            ? BigDecimal.valueOf(si.getNetAmount()) : BigDecimal.ZERO;
+                            ? si.getNetAmount() : BigDecimal.ZERO;
                     return si.getRecognizedRevenue().compareTo(net) >= 0;
                 });
         if (isFinalDelivery) {
@@ -929,7 +929,7 @@ public class DeliveryNoteService {
             // and exclude tax, causing a large spurious snap on discounted/taxed invoices.
             BigDecimal totalItemNet = invoice.getItems().stream()
                     .map(si -> si.getNetAmount() != null
-                            ? BigDecimal.valueOf(si.getNetAmount()) : BigDecimal.ZERO)
+                            ? si.getNetAmount() : BigDecimal.ZERO)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal totalAlreadyRecognized = invoice.getItems().stream()
                     .map(SalesInvoiceItem::getRecognizedRevenue)
@@ -1098,7 +1098,7 @@ public class DeliveryNoteService {
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingPrice(product.getId(), item.getUnit());
             if (packingPrice != null) {
-                item.setPrice(packingPrice.doubleValue());
+                item.setPrice(packingPrice);
             } else if (product.getPricing() != null) {
                 com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
                 com.billbull.backend.sales.settings.SalesItemPricePolicy policy =
@@ -1108,7 +1108,7 @@ public class DeliveryNoteService {
                 java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
                         .resolve(product.getPricing(), policy);
                 if (resolved != null) {
-                    item.setPrice(resolved.doubleValue());
+                    item.setPrice(resolved);
                 }
             }
         }
@@ -1117,9 +1117,9 @@ public class DeliveryNoteService {
         if (item.getCost() == null) {
             java.math.BigDecimal packingCost = lookupPackingCost(product.getId(), item.getUnit());
             if (packingCost != null) {
-                item.setCost(packingCost.doubleValue());
+                item.setCost(packingCost);
             } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
-                item.setCost(product.getPricing().getCost().doubleValue());
+                item.setCost(product.getPricing().getCost());
             }
         }
     }

@@ -79,7 +79,7 @@ class PaymentServiceTest {
         payment.setCustomerCode("CUST-001");
         payment.setCustomerName("Acme Trading");
         payment.setLinkedInvoice("12");
-        payment.setAmount(75.0);
+        payment.setAmount(new java.math.BigDecimal("75.0"));
         payment.setPaymentMode("Cash");
         payment.setStatus(PaymentStatus.COMPLETED);
 
@@ -107,5 +107,101 @@ class PaymentServiceTest {
         assertNull(receipt.getSalesInvoiceId());
         assertEquals(9L, receipt.getOpeningInvoiceId());
         assertEquals(77L, saved.getReceiptVoucherRecordId());
+    }
+
+    // ---------------------------------------------------------------------
+    // recomputeInvoiceBalances() — running remaining-balance fold.
+    // Characterization: pins the per-payment invoiceBalance math so the
+    // Double -> BigDecimal flip is provably behaviour-preserving. Reached
+    // through the public getPaymentsByInvoice() entry point. All figures are
+    // exactly representable, so assertions hold identically before/after.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void recomputeAssignsRunningBalanceNewestEqualsTerminal() {
+        // Two payments on invoice "100"; current DB invoice balance (terminal) = 30.
+        // Newest payment's invoiceBalance = terminal (30); older = terminal + newest.amount.
+        Payment newest = paymentOnInvoice("PAY-0002", LocalDate.of(2026, 5, 20), "100", "40.0");
+        Payment older  = paymentOnInvoice("PAY-0001", LocalDate.of(2026, 5, 10), "100", "30.0");
+
+        when(paymentRepository.findByLinkedInvoice("100")).thenReturn(List.of(newest, older));
+        com.billbull.backend.sales.invoice.SalesInvoice inv =
+                new com.billbull.backend.sales.invoice.SalesInvoice();
+        inv.setBalance(bd("30.0"));
+        when(salesInvoiceRepository.findByInvoiceNumber("100")).thenReturn(Optional.of(inv));
+
+        List<Payment> result = paymentService.getPaymentsByInvoice("100");
+
+        // newest first after desc sort
+        assertMoney(30.0, byNumber(result, "PAY-0002").getInvoiceBalance()); // = terminal
+        assertMoney(70.0, byNumber(result, "PAY-0001").getInvoiceBalance()); // terminal + 40
+    }
+
+    @Test
+    void recomputeClampsNegativeBalanceToZero() {
+        // Terminal balance 0; the fold must never produce a negative invoiceBalance.
+        Payment only = paymentOnInvoice("PAY-0001", LocalDate.of(2026, 5, 10), "200", "50.0");
+        when(paymentRepository.findByLinkedInvoice("200")).thenReturn(List.of(only));
+        com.billbull.backend.sales.invoice.SalesInvoice inv =
+                new com.billbull.backend.sales.invoice.SalesInvoice();
+        inv.setBalance(bd("0.0"));
+        when(salesInvoiceRepository.findByInvoiceNumber("200")).thenReturn(Optional.of(inv));
+
+        List<Payment> result = paymentService.getPaymentsByInvoice("200");
+
+        assertMoney(0.0, byNumber(result, "PAY-0001").getInvoiceBalance());
+    }
+
+    @Test
+    void recomputeTreatsNullInvoiceBalanceAndNullAmountAsZero() {
+        Payment newest = paymentOnInvoice("PAY-0002", LocalDate.of(2026, 5, 20), "300", null); // null amount
+        Payment older  = paymentOnInvoice("PAY-0001", LocalDate.of(2026, 5, 10), "300", "25.0");
+        when(paymentRepository.findByLinkedInvoice("300")).thenReturn(List.of(newest, older));
+        com.billbull.backend.sales.invoice.SalesInvoice inv =
+                new com.billbull.backend.sales.invoice.SalesInvoice();
+        inv.setBalance(null); // terminal coalesces to 0
+        when(salesInvoiceRepository.findByInvoiceNumber("300")).thenReturn(Optional.of(inv));
+
+        List<Payment> result = paymentService.getPaymentsByInvoice("300");
+
+        assertMoney(0.0, byNumber(result, "PAY-0002").getInvoiceBalance());  // terminal 0
+        assertMoney(0.0, byNumber(result, "PAY-0001").getInvoiceBalance());  // terminal 0 + null-amount(0)
+    }
+
+    @Test
+    void recomputeWhenInvoiceMissingUsesZeroTerminal() {
+        Payment newest = paymentOnInvoice("PAY-0002", LocalDate.of(2026, 5, 20), "404", "10.0");
+        Payment older  = paymentOnInvoice("PAY-0001", LocalDate.of(2026, 5, 10), "404", "15.0");
+        when(paymentRepository.findByLinkedInvoice("404")).thenReturn(List.of(newest, older));
+        when(salesInvoiceRepository.findByInvoiceNumber("404")).thenReturn(Optional.empty());
+
+        List<Payment> result = paymentService.getPaymentsByInvoice("404");
+
+        assertMoney(0.0,  byNumber(result, "PAY-0002").getInvoiceBalance()); // terminal 0
+        assertMoney(10.0, byNumber(result, "PAY-0001").getInvoiceBalance()); // 0 + newest amount 10
+    }
+
+    // ----- helpers -----
+
+    private static java.math.BigDecimal bd(String v) { return new java.math.BigDecimal(v); }
+
+    /** Asserts a money value by numeric value (scale-independent): 30 == 30.00. */
+    private static void assertMoney(double expected, java.math.BigDecimal actual) {
+        assertEquals(0, java.math.BigDecimal.valueOf(expected).compareTo(actual),
+                () -> "expected " + expected + " but was " + actual);
+    }
+
+    private static Payment byNumber(List<Payment> payments, String number) {
+        return payments.stream().filter(p -> number.equals(p.getPaymentNumber())).findFirst().orElseThrow();
+    }
+
+    /** {@code amount} may be null to exercise the null-coalescing path. */
+    private static Payment paymentOnInvoice(String number, LocalDate date, String invoice, String amount) {
+        Payment p = new Payment();
+        p.setPaymentNumber(number);
+        p.setPaymentDate(date);
+        p.setLinkedInvoice(invoice);
+        p.setAmount(amount != null ? bd(amount) : null);
+        return p;
     }
 }

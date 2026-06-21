@@ -258,8 +258,8 @@ public class SalesInvoiceService {
         }
 
         // Calculate totals from items
-        double subTotal = 0;
-        double taxTotal = 0;
+        BigDecimal subTotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
         List<DeliveryNoteItem> linkedDeliveryItems = loadLinkedDeliveryItems(invoice);
 
         if (invoice.getItems() != null) {
@@ -289,20 +289,20 @@ public class SalesInvoiceService {
                     assignBatchBinIfNeeded(item, product, requiredQty);
                 }
 
-                double netAmount = item.getNetAmount() != null ? item.getNetAmount() : 0;
-                double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
-                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
+                BigDecimal netAmount = nz(item.getNetAmount());
+                BigDecimal taxAmount = nz(item.getTaxAmount());
+                BigDecimal footerDisc = nz(item.getFooterDiscount());
 
-                subTotal += (netAmount - taxAmount + footerDisc);
-                taxTotal += taxAmount;
+                subTotal = subTotal.add(netAmount).subtract(taxAmount).add(footerDisc);
+                taxTotal = taxTotal.add(taxAmount);
             }
         }
 
         // Finalize header money (subtotal/tax/discount/total/balance) + paid guard.
         // Pure arithmetic, extracted for characterization testing.
         finalizeInvoiceTotals(invoice, subTotal, taxTotal);
-        double total = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : 0;
-        double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
+        BigDecimal total = nz(invoice.getInvoiceTotal());
+        BigDecimal paid = nz(invoice.getAmountPaid());
 
         // Fetch settings ONCE for this entire request — passed through the call chain
         // to avoid redundant DB hits.
@@ -316,9 +316,9 @@ public class SalesInvoiceService {
         SalesInvoiceStatus intendedStatus = invoice.getStatus();
 
         // Update status based on payment
-        if (paid >= total && total > 0) {
+        if (paid.compareTo(total) >= 0 && total.signum() > 0) {
             intendedStatus = SalesInvoiceStatus.PAID;
-        } else if (paid > 0 && paid < total) {
+        } else if (paid.signum() > 0 && paid.compareTo(total) < 0) {
             intendedStatus = SalesInvoiceStatus.PARTIALLY_PAID;
         }
 
@@ -404,7 +404,7 @@ public class SalesInvoiceService {
             );
         }
 
-        if (isNewlyFinalized && paid > 0) {
+        if (isNewlyFinalized && paid.signum() > 0) {
             SalesInvoice refreshed = getById(saved.getId());
 
             // QA-032: when this invoice originates from a Sales Order that
@@ -414,7 +414,7 @@ public class SalesInvoiceService {
             // receipt) so the cash isn't double-counted. The "new payment"
             // RV is only created for whatever the user collected on top of
             // the carried advance.
-            double remainingPaidToReceipt = paid;
+            BigDecimal remainingPaidToReceipt = paid;
             if (refreshed.getLinkedSalesOrder() != null && !refreshed.getLinkedSalesOrder().isBlank()) {
                 com.billbull.backend.sales.salesorder.SalesOrder linkedSo =
                         salesOrderRepository.findBySoNumber(refreshed.getLinkedSalesOrder()).orElse(null);
@@ -424,12 +424,14 @@ public class SalesInvoiceService {
                     for (com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv : advanceRvs) {
                         if (rv.getSalesInvoiceId() != null) continue; // already linked elsewhere
                         if (rv.getAmount() == null) continue;
-                        double rvAmt = rv.getAmount().doubleValue();
-                        if (rvAmt <= 0 || rvAmt > remainingPaidToReceipt + 0.01) continue;
+                        BigDecimal rvAmt = rv.getAmount();
+                        // Skip non-positive RVs and any RV larger than what's left to apply (1-cent tolerance).
+                        if (rvAmt.signum() <= 0
+                                || rvAmt.compareTo(remainingPaidToReceipt.add(new BigDecimal("0.01"))) > 0) continue;
                         rv.setSalesInvoiceId(refreshed.getId());
                         rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.AGAINST_INVOICE);
                         receiptVoucherRepo.save(rv);
-                        remainingPaidToReceipt -= rvAmt;
+                        remainingPaidToReceipt = remainingPaidToReceipt.subtract(rvAmt);
                         // Post the advance-application clearing entry:
                         //   Dr Customer Advance (2060)   [rvAmt]
                         //   Cr Accounts Receivable (1100) [rvAmt]
@@ -446,7 +448,7 @@ public class SalesInvoiceService {
                 }
             }
 
-            if (remainingPaidToReceipt > 0.01) {
+            if (remainingPaidToReceipt.compareTo(new BigDecimal("0.01")) > 0) {
                 createSalesPaymentForInvoice(
                         refreshed,
                         remainingPaidToReceipt,
@@ -582,37 +584,43 @@ public class SalesInvoiceService {
      * @param subTotal raw (un-rounded) sum of line (net − tax + footerDisc)
      * @param taxTotal raw (un-rounded) sum of line tax amounts
      */
-    void finalizeInvoiceTotals(SalesInvoice invoice, double subTotal, double taxTotal) {
+    void finalizeInvoiceTotals(SalesInvoice invoice, BigDecimal subTotal, BigDecimal taxTotal) {
         // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
-        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        subTotal = nz(subTotal).setScale(2, RoundingMode.HALF_UP);
+        taxTotal = nz(taxTotal).setScale(2, RoundingMode.HALF_UP);
 
-        double billDiscAmt = invoice.getBillDiscountAmount() != null ? invoice.getBillDiscountAmount() : 0;
-        if (billDiscAmt == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
-            billDiscAmt = BigDecimal.valueOf(subTotal * (invoice.getBillDiscount() / 100))
-                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        BigDecimal billDiscAmt = nz(invoice.getBillDiscountAmount());
+        // billDiscount is a PERCENTAGE rate; apply it only when no absolute amount was given.
+        if (billDiscAmt.signum() == 0 && invoice.getBillDiscount() != null && invoice.getBillDiscount() > 0) {
+            billDiscAmt = subTotal.multiply(BigDecimal.valueOf(invoice.getBillDiscount()))
+                    .divide(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
             invoice.setBillDiscountAmount(billDiscAmt);
         }
 
         // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
-        double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
-        double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal + deliveryCharge + roundOff)
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
+        BigDecimal deliveryCharge = nz(invoice.getDeliveryCharge());
+        BigDecimal roundOff = nz(invoice.getRoundOff());
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal).add(deliveryCharge).add(roundOff)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal paid = nz(invoice.getAmountPaid());
 
-        if (paid < 0) {
+        if (paid.signum() < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot be negative.");
         }
-        if (paid > total + 0.0001d) {
+        // Exact compare: BigDecimal has no float noise, so the old +0.0001d epsilon is unnecessary.
+        if (paid.compareTo(total) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot exceed invoice total.");
         }
 
         invoice.setSubTotal(subTotal);
         invoice.setTaxTotal(taxTotal);
         invoice.setInvoiceTotal(total);
-        invoice.setBalance(total - paid);
+        invoice.setBalance(total.subtract(paid));
     }
+
+    /** Null-safe money view: treats {@code null} as zero. */
+    private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
 
     private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {
         if (item == null) {
@@ -626,29 +634,30 @@ public class SalesInvoiceService {
             return;
         }
 
-        double qty = item.getQuantity() != null ? item.getQuantity() : 0;
-        double price = item.getPrice() != null ? item.getPrice() : 0;
-        double discountPercent = item.getDiscount() != null ? item.getDiscount() : 0;
-        double taxPercent = item.getTaxRate() != null ? item.getTaxRate() : 0;
+        // qty is a count; discount/tax are PERCENTAGE rates — kept as scalars.
+        BigDecimal qty = BigDecimal.valueOf(item.getQuantity() != null ? item.getQuantity() : 0);
+        BigDecimal price = nz(item.getPrice());
+        BigDecimal discountPercent = BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0);
+        BigDecimal taxPercent = BigDecimal.valueOf(item.getTaxRate() != null ? item.getTaxRate() : 0);
 
-        double gross = qty * price;
-        double discountAmount = gross * (discountPercent / 100);
-        double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
-        double taxableAmount = Math.max(0, gross - discountAmount - footerDisc);
-        double taxAmount = taxableAmount * (taxPercent / 100);
-        double netAmount = taxableAmount + taxAmount;
+        BigDecimal gross = qty.multiply(price);
+        BigDecimal discountAmount = gross.multiply(discountPercent).divide(BigDecimal.valueOf(100));
+        BigDecimal footerDisc = nz(item.getFooterDiscount());
+        BigDecimal taxableAmount = gross.subtract(discountAmount).subtract(footerDisc).max(BigDecimal.ZERO);
+        BigDecimal taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+        BigDecimal netAmount = taxableAmount.add(taxAmount);
 
         item.setGrossAmount(roundCurrency(gross));
         item.setTaxAmount(roundCurrency(taxAmount));
         item.setNetAmount(roundCurrency(netAmount));
     }
 
-    private boolean isMissingOrZero(Double value) {
-        return value == null || Math.abs(value) < 0.0001d;
+    private boolean isMissingOrZero(BigDecimal value) {
+        return value == null || value.abs().compareTo(new BigDecimal("0.0001")) < 0;
     }
 
-    private double roundCurrency(double value) {
-        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    private BigDecimal roundCurrency(BigDecimal value) {
+        return nz(value).setScale(2, RoundingMode.HALF_UP);
     }
 
     private String normalizeCode(String value) {
@@ -1006,7 +1015,7 @@ public class SalesInvoiceService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
+        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
 
         // syncLinkedInvoice (called inside ReceiptVoucherService.createReceipt) already
         // updated amountPaid/balance/status from the full ReceiptVoucher sum — which
@@ -1028,12 +1037,12 @@ public class SalesInvoiceService {
         return getById(id);
     }
 
-    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, BigDecimal paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
     }
 
-    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, BigDecimal paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
         Payment p = new Payment();
         p.setPaymentType(PaymentType.RECEIVED);
@@ -1051,7 +1060,8 @@ public class SalesInvoiceService {
         p.setSplitGroupId(splitGroupId);
 
         // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
-        if (paymentAmount >= (invoice.getBalance() != null ? invoice.getBalance() : invoice.getInvoiceTotal())) {
+        BigDecimal compareBalance = invoice.getBalance() != null ? invoice.getBalance() : nz(invoice.getInvoiceTotal());
+        if (nz(paymentAmount).compareTo(compareBalance) >= 0) {
             p.setStatus(PaymentStatus.COMPLETED);
         } else {
             p.setStatus(PaymentStatus.PARTIAL);

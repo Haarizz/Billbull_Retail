@@ -297,16 +297,16 @@ class PosSessionServiceTest {
 
     private SalesInvoice invoice(double total, String mode) {
         SalesInvoice inv = new SalesInvoice();
-        inv.setInvoiceTotal(total);
+        inv.setInvoiceTotal(BigDecimal.valueOf(total));
         inv.setPaymentMode(mode);
         return inv;
     }
 
     private SalesInvoice invoiceWithTax(double total, double tax) {
         SalesInvoice inv = new SalesInvoice();
-        inv.setInvoiceTotal(total);
-        inv.setTaxTotal(tax);
-        inv.setBillDiscountAmount(0.0);
+        inv.setInvoiceTotal(BigDecimal.valueOf(total));
+        inv.setTaxTotal(BigDecimal.valueOf(tax));
+        inv.setBillDiscountAmount(BigDecimal.ZERO);
         inv.setPaymentMode("Cash");
         return inv;
     }
