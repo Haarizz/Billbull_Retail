@@ -121,6 +121,7 @@ public class StockTakeService {
         if (saved.getType() == StockTakeSession.StockTakeType.INVENTORY_COUNTING) {
             ensureExpectedSnapshot(saved);
         }
+        hydrateForSerialization(saved); // ARCHFIX §1.6/§1.9 (new session starts empty; safe no-op)
         return saved;
     }
 
@@ -232,7 +233,31 @@ public class StockTakeService {
     }
 
     public List<StockTakeSession> getAllSessions() {
-        return sessionRepo.findAllByIsActiveTrueOrderByCreatedAtDesc();
+        // ARCHFIX §1.6/§1.9: items + batches are LAZY. JOIN FETCH items, then init each item's
+        // batches (batched) in-session so the response — including the @Transient getLotGroups()
+        // which iterates batches — serializes without a LazyInitializationException.
+        List<StockTakeSession> sessions = sessionRepo.findAllActiveWithItems();
+        sessions.forEach(this::hydrateForSerialization);
+        return sessions;
+    }
+
+    /** Initialise the LAZY items + their batches within the open transaction so a StockTakeSession
+     *  (and each item's @Transient getLotGroups(), which reads batches) can be serialized after the
+     *  transaction closes (open-in-view=false). ARCHFIX §1.6/§1.9. */
+    private void hydrateForSerialization(StockTakeSession session) {
+        if (session == null || session.getItems() == null) {
+            return;
+        }
+        session.getItems().forEach(this::hydrateItemForSerialization);
+    }
+
+    /** Init a single item's LAZY batches in-session before it (and its @Transient getLotGroups())
+     *  is serialized. ARCHFIX §1.6/§1.9. */
+    private StockTakeItem hydrateItemForSerialization(StockTakeItem item) {
+        if (item != null) {
+            org.hibernate.Hibernate.initialize(item.getBatches());
+        }
+        return item;
     }
 
     public StockTakeSession getSession(String sessionId) {
@@ -260,6 +285,7 @@ public class StockTakeService {
             }
             if (hasExpectedSnapshot(session)) {
                 syncSnapshotItemCounts(session);
+                hydrateForSerialization(session); // ARCHFIX §1.6/§1.9
                 return session;
             }
         }
@@ -299,6 +325,7 @@ public class StockTakeService {
             }
         }
 
+        hydrateForSerialization(session); // ARCHFIX §1.6/§1.9
         return session;
     }
 
@@ -459,7 +486,7 @@ public class StockTakeService {
             item.setStatus(StockTakeItem.ItemStatus.PENDING);
         }
 
-        return itemRepo.save(item);
+        return hydrateItemForSerialization(itemRepo.save(item)); // ARCHFIX §1.6/§1.9
     }
 
     public StockTakeItem updateItemBin(Long itemId, Long binId) {
@@ -493,7 +520,7 @@ public class StockTakeService {
             recomputeFromBatches(item);
         }
 
-        return itemRepo.save(item);
+        return hydrateItemForSerialization(itemRepo.save(item)); // ARCHFIX §1.6/§1.9
     }
 
     public StockTakeSession submitForApproval(String sessionId) {
@@ -699,7 +726,7 @@ public class StockTakeService {
             seedExistingBatchCounts(saved);
             itemRepo.save(saved);
         }
-        return saved;
+        return hydrateItemForSerialization(saved); // ARCHFIX §1.6/§1.9
     }
 
     private boolean isInventoryCounting(StockTakeSession session) {
@@ -1845,7 +1872,9 @@ public class StockTakeService {
                 });
         }
 
-        return itemRepo.saveAll(items);
+        List<StockTakeItem> saved = itemRepo.saveAll(items);
+        saved.forEach(this::hydrateItemForSerialization); // ARCHFIX §1.6/§1.9
+        return saved;
     }
 
     public StockTakeSession rejectSession(String sessionId) {

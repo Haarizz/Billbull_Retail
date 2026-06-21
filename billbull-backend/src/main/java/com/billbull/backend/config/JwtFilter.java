@@ -55,10 +55,11 @@ public class JwtFilter extends OncePerRequestFilter {
 
                 String username = jwtUtil.extractUsername(token);
 
-                // Reject tokens belonging to frozen/deleted users
-                boolean isActive = userRepository.findByUsername(username)
-                        .map(u -> u.isActive())
-                        .orElse(false);
+                // Reject tokens belonging to frozen/deleted users. ARCHFIX §1.6: a boolean exists-
+                // query touches only the users row — the old findByUsername(...).map(isActive)
+                // dragged the EAGER roles + additionalBranches join-tables on every request, which
+                // the filter never reads (roles/branches come from the JWT claims below).
+                boolean isActive = userRepository.existsByUsernameAndIsActiveTrue(username);
                 if (!isActive) {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     return;

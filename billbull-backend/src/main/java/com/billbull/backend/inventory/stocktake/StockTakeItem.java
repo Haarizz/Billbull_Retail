@@ -54,7 +54,12 @@ public class StockTakeItem extends BaseEntity {
     private boolean batchEnabled;
     private boolean expiryEnabled;
 
-    @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6/§1.9: LAZY (was EAGER) + @BatchSize. The per-unit model means a counted lot is
+    // N rows here, so an EAGER session.items × item.batches chain could hydrate tens of thousands of
+    // rows at once. Read paths that serialize the session init batches in-session (note getLotGroups()
+    // below is @Transient and serialized — it iterates batches, so batches MUST be initialised first).
+    @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @org.hibernate.annotations.BatchSize(size = 100)
     private List<StockTakeItemBatch> batches = new ArrayList<>();
 
     public enum ItemStatus {
