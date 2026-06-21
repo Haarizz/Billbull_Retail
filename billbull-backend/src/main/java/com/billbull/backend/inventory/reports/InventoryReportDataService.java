@@ -1208,7 +1208,7 @@ public class InventoryReportDataService {
     }
 
     private boolean isWastageMovement(StockMovement movement) {
-        if (movement.getQuantity() == null || movement.getQuantity() >= 0) return false;
+        if (movement.getQuantity() == null || movement.getQuantity().signum() >= 0) return false;
         String ref = movement.getReferenceNo() == null ? "" : movement.getReferenceNo().toUpperCase();
         String type = movement.getSourceType() == null ? "" : movement.getSourceType().name();
         return ref.contains("WST") || ref.contains("WASTE") || ref.contains("IC-")
