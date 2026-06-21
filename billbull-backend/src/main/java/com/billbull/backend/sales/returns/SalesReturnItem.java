@@ -37,8 +37,11 @@ public class SalesReturnItem {
     @JsonBackReference
     private SalesReturn salesReturn;
 
-    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER) with @BatchSize so a list of items loads their batches in a
+    // few batched selects (not N) rather than an EAGER cartesian product across items × batches.
+    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<SalesReturnItemBatch> batches = new ArrayList<>();
 
     /* ===== GETTERS & SETTERS ===== */
