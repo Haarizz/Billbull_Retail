@@ -11,6 +11,8 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.UUID;
 
+import com.billbull.backend.common.UuidV7;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -112,7 +114,7 @@ public class LedgerService {
 
         // 2. Prepare Entry Data
         if (entry.getId() == null)
-            entry.setId(UUID.randomUUID().toString());
+            entry.setId(UuidV7.generate());
 
         // Determine Transaction Amount and Side
         BigDecimal txnAmount;
