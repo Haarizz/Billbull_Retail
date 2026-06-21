@@ -46,7 +46,9 @@ public class JournalEntry {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER). Read/serialize paths fetch branch+lines via JOIN FETCH and
+    // init them in-session; in-transaction service logic loads it lazily on demand.
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
     private Branch branch;
 
@@ -90,7 +92,10 @@ public class JournalEntry {
     private String referenceType;
     private Long referenceId;
 
-    @OneToMany(mappedBy = "journalEntry", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER) + @BatchSize so listing N entries loads their lines in a few
+    // batched selects instead of N EAGER round trips. Read/serialize paths init lines in-session.
+    @OneToMany(mappedBy = "journalEntry", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<JournalLine> lines = new ArrayList<>();
 
     public EntryType getEntryType() {
