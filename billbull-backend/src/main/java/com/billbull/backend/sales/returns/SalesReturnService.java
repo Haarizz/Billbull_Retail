@@ -89,8 +89,11 @@ public class SalesReturnService {
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
+        // ARCHFIX §1.6: items/batches are LAZY — fetch items via JOIN FETCH, then init the nested
+        // batches (batched) inside this transaction so the response serializes fully.
         List<SalesReturn> returns = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAll(), SalesReturn::getBranch));
+                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAllWithItems(), SalesReturn::getBranch));
+        returns.forEach(this::initReturnGraph);
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 returns,
                 SalesReturn::getReturnDate,
@@ -103,6 +106,7 @@ public class SalesReturnService {
     public List<SalesReturn> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<SalesReturn> returns = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findByReturnDateBetween(from, to), SalesReturn::getBranch));
+        returns.forEach(this::initReturnGraph);
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 returns,
                 SalesReturn::getReturnDate,
@@ -111,9 +115,20 @@ public class SalesReturnService {
         return returns;
     }
 
+    @Transactional(readOnly = true)
     public SalesReturn getReturnById(Long id) {
-        return salesReturnRepository.findById(id)
+        SalesReturn ret = salesReturnRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new RuntimeException("Sales Return not found with ID: " + id));
+        initReturnGraph(ret);
+        return ret;
+    }
+
+    /** Force-initialise the LAZY item batches (and items) within an open session so the entity can
+     *  be serialized after the transaction closes (open-in-view=false). ARCHFIX §1.6. */
+    private void initReturnGraph(SalesReturn ret) {
+        if (ret.getItems() != null) {
+            ret.getItems().forEach(item -> org.hibernate.Hibernate.initialize(item.getBatches()));
+        }
     }
 
     @Transactional

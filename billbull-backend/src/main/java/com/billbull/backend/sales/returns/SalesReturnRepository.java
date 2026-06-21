@@ -18,6 +18,15 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);
 
+    // ARCHFIX §1.6: items is now LAZY — these JOIN FETCH it for the read paths that serialize the
+    // full return (list + by-id). The nested SalesReturnItem.batches load via @BatchSize. DISTINCT
+    // collapses the row duplication from the one-to-many join.
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items")
+    List<SalesReturn> findAllWithItems();
+
+    @Query("SELECT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.id = :id")
+    Optional<SalesReturn> findByIdWithItems(@Param("id") Long id);
+
     boolean existsByReturnNumber(String returnNumber);
 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")

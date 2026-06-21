@@ -50,8 +50,11 @@ public class SalesReturn {
     @Enumerated(EnumType.STRING)
     private SalesReturnStatus status;
 
-    @OneToMany(mappedBy = "salesReturn", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER). Read paths that serialize items use a JOIN FETCH finder
+    // (findAllWithItems / findByIdWithItems); the nested batches load via @BatchSize on the item.
+    @OneToMany(mappedBy = "salesReturn", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<SalesReturnItem> items;
 
     /* ===== GETTERS & SETTERS ===== */
