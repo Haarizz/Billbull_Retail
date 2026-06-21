@@ -51,7 +51,11 @@ public class UserService {
     /**
      * Get all users as safe DTOs.
      */
+    @Transactional(readOnly = true)
     public List<UserSafeDto> getAllUsers() {
+        // ARCHFIX §1.6: keep the session open while UserSafeDto reads the LAZY user.branch (and the
+        // roles/additionalBranches collections) — building the DTO outside a txn threw
+        // LazyInitializationException on branch (a pre-existing bug, surfaced while auditing fetch).
         return userRepository.findAll().stream()
                 .map(UserSafeDto::new)
                 .collect(Collectors.toList());
@@ -60,6 +64,7 @@ public class UserService {
     /**
      * Get user by ID as safe DTO.
      */
+    @Transactional(readOnly = true)
     public UserSafeDto getUserById(Long id) {
         User user = findUserById(id);
         return new UserSafeDto(user);
