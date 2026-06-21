@@ -102,21 +102,21 @@ public class FinancialReportService {
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
+        // ARCHFIX §4.1: aggregate SUM(debit)/SUM(credit) GROUP BY account_code in SQL instead of
+        // loading every ledger entry and folding in Java. One row per account, not per entry.
+        List<LedgerEntryRepository.AccountAggregate> aggregates =
+                ledgerEntryRepository.aggregateByAccountCode(branchId, startDate, endDate);
 
         Map<String, BigDecimal> debitMap = new LinkedHashMap<>();
         Map<String, BigDecimal> creditMap = new LinkedHashMap<>();
         Map<String, String> accountNameMap = new LinkedHashMap<>();
         Map<String, String> accountGroupMap = new LinkedHashMap<>();
 
-        for (LedgerEntry entry : entries) {
-            String key = entry.getAccountCode();
-            accountNameMap.putIfAbsent(key, entry.getAccountName());
-
-            debitMap.merge(key, entry.getDebitAmount() != null ? entry.getDebitAmount() : BigDecimal.ZERO,
-                    BigDecimal::add);
-            creditMap.merge(key, entry.getCreditAmount() != null ? entry.getCreditAmount() : BigDecimal.ZERO,
-                    BigDecimal::add);
+        for (LedgerEntryRepository.AccountAggregate agg : aggregates) {
+            String key = agg.getAccountCode();
+            accountNameMap.putIfAbsent(key, agg.getAccountName());
+            debitMap.merge(key, safe(agg.getSumDebit()), BigDecimal::add);
+            creditMap.merge(key, safe(agg.getSumCredit()), BigDecimal::add);
         }
 
         List<Account> allAccounts = accountRepository.findAll();
@@ -183,10 +183,12 @@ public class FinancialReportService {
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> allEntries = fetchEntries(branchId, startDate, endDate);
-        List<LedgerEntry> entries = (costCenter != null && !costCenter.isBlank())
-                ? allEntries.stream().filter(e -> costCenter.equals(e.getCostCenter())).collect(Collectors.toList())
-                : allEntries;
+        // ARCHFIX §4.1: SQL-side per-account aggregation (with optional cost-center filter) instead
+        // of loading every ledger entry and folding in Java.
+        boolean byCostCenter = costCenter != null && !costCenter.isBlank();
+        List<LedgerEntryRepository.AccountAggregate> aggregates = byCostCenter
+                ? ledgerEntryRepository.aggregateByAccountCodeAndCostCenter(branchId, startDate, endDate, costCenter)
+                : ledgerEntryRepository.aggregateByAccountCode(branchId, startDate, endDate);
 
         Map<String, BigDecimal> accountBalances = new LinkedHashMap<>();
         Map<String, String> accountNames = new HashMap<>();
@@ -200,11 +202,12 @@ public class FinancialReportService {
             accountGroupMap.put(acc.getCode(), acc.getAccountGroup());
         }
 
-        for (LedgerEntry entry : entries) {
-            accountBalances.merge(entry.getAccountCode(),
-                    safe(entry.getCreditAmount()).subtract(safe(entry.getDebitAmount())),
+        for (LedgerEntryRepository.AccountAggregate agg : aggregates) {
+            // netBal = SUM(credit) - SUM(debit), preserving the previous per-entry fold semantics.
+            accountBalances.merge(agg.getAccountCode(),
+                    safe(agg.getSumCredit()).subtract(safe(agg.getSumDebit())),
                     BigDecimal::add);
-            accountNames.put(entry.getAccountCode(), entry.getAccountName());
+            accountNames.put(agg.getAccountCode(), agg.getAccountName());
         }
 
         List<ReportLineDTO> revenueItems = new ArrayList<>();

@@ -18,7 +18,7 @@ import { getDepartments } from '../../api/departmentsApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
 import {
-  registerPosTerminal, getPosSettings, savePosSettings, openPosSession, getActivePosSession,
+  registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, openPosSession, getActivePosSession,
   closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -1424,9 +1424,16 @@ export default function POSSales() {
   // Supervisor approval mode: PIN (numeric keypad) or PASSWORD (manager login).
   const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';
 
-  const handleSupervisorPinSubmit = () => {
-    const expected = posSettings?.supervisorPin || (supervisorApprovalMode === 'PIN' ? '1234' : '');
-    if (supervisorPinValue && supervisorPinValue === expected) {
+  const handleSupervisorPinSubmit = async () => {
+    // ARCHFIX S5: the PIN is verified server-side (BCrypt) — it is no longer shipped to the client.
+    let valid = false;
+    try {
+      valid = supervisorPinValue ? await verifyPosSupervisorPin(supervisorPinValue) : false;
+    } catch {
+      setSupervisorPinError('Could not verify approval. Please try again.');
+      return;
+    }
+    if (valid) {
       setShowSupervisorPin(false);
       if (pendingVoidItemId) {
         applyVoid(pendingVoidItemId);
