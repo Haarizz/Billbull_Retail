@@ -65,14 +65,12 @@ public class CustomerService {
 
     @Transactional(readOnly = true)
     public List<Customer> getAllCustomers(String branchName) {
-        List<Customer> customers = repository.findAll();
         boolean filterByBranch = branchName != null && !branchName.isBlank();
-        for (Customer customer : customers) {
-            customer.getSavedAddresses().size();
-            if (filterByBranch) {
-                customer.getBranchAllocations().size();
-            }
-        }
+        // ARCHFIX §4.2: bulk-fetch the needed collection(s) in a single query each instead of
+        // force-initialising per customer (the old 1+N / 1+2N lazy-load loop). savedAddresses is
+        // always needed for the response; branchAllocations only when filtering. They are fetched
+        // in SEPARATE queries on purpose — joining both bags at once Cartesian-explodes the rows.
+        List<Customer> customers = repository.findAllWithSavedAddresses();
 
         // Bulk-fetch accurate outstanding balances without N+1 queries.
         // Use per-invoice balance field (maintained on each payment) + opening invoice outstanding.
@@ -108,12 +106,21 @@ public class CustomerService {
             return customers;
         }
         final String branch = branchName.trim();
+        // Resolve branch visibility from a dedicated single-query fetch of branchAllocations (+ branch)
+        // rather than lazy-initialising per customer. A customer is visible when it has NO allocations
+        // (legacy/unallocated = visible everywhere) or one allocation matches the branch — identical
+        // semantics to the previous per-customer check.
+        java.util.Set<Long> visibleIds = new java.util.HashSet<>();
+        for (Customer c : repository.findAllWithBranchAllocations()) {
+            boolean visible = c.getBranchAllocations().isEmpty()
+                    || c.getBranchAllocations().stream()
+                        .anyMatch(a -> a.getBranch() != null && branch.equalsIgnoreCase(a.getBranch().getName()));
+            if (visible) {
+                visibleIds.add(c.getId());
+            }
+        }
         return customers.stream()
-                .filter(c -> {
-                    if (c.getBranchAllocations().isEmpty()) return true;
-                    return c.getBranchAllocations().stream()
-                            .anyMatch(a -> branch.equalsIgnoreCase(a.getBranch().getName()));
-                })
+                .filter(c -> visibleIds.contains(c.getId()))
                 .collect(Collectors.toList());
     }
 

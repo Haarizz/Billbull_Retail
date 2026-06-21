@@ -25,4 +25,23 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 
     boolean existsByMobile(String mobile);
     boolean existsByMobileAndIdNot(String mobile, Long id);
+
+    /**
+     * Bulk-load every customer with its {@code savedAddresses} eagerly fetched in a single
+     * query, eliminating the per-customer lazy-init N+1 in {@link CustomerService#getAllCustomers}
+     * (ARCHFIX §4.2). DISTINCT collapses the join's row duplication. Only ONE collection is
+     * fetched here on purpose — fetching savedAddresses and branchAllocations together would
+     * produce a Cartesian product; the branch path uses {@link #findAllWithBranchAllocations()}.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT DISTINCT c FROM Customer c LEFT JOIN FETCH c.savedAddresses")
+    List<Customer> findAllWithSavedAddresses();
+
+    /**
+     * Bulk-load every customer with its {@code branchAllocations} (and each allocation's branch)
+     * eagerly fetched in a single query — used only when filtering by branch (ARCHFIX §4.2).
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT DISTINCT c FROM Customer c LEFT JOIN FETCH c.branchAllocations a LEFT JOIN FETCH a.branch")
+    List<Customer> findAllWithBranchAllocations();
 }
