@@ -3,6 +3,7 @@ package com.billbull.backend.customer.inquiries;
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.inventory.product.Product;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "inquiry_items")
@@ -21,7 +22,8 @@ public class InquiryItem extends BaseEntity {
     private Product product;
 
     private Double quantity;
-    private Double price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
 
     // Getters & Setters
     public Long getId() {
@@ -56,11 +58,11 @@ public class InquiryItem extends BaseEntity {
         this.quantity = quantity;
     }
 
-    public Double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(Double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 }

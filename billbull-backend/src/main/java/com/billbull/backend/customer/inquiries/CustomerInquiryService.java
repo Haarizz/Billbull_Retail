@@ -104,7 +104,7 @@ public class CustomerInquiryService {
                 item.setProduct(p);
                 item.setQuantity(itemReq.getQuantity());
                 Double price = itemReq.getPrice();
-                item.setPrice(price != null ? price : 0.0);
+                item.setPrice(price != null ? java.math.BigDecimal.valueOf(price) : java.math.BigDecimal.ZERO);
                 item.setInquiry(inquiry);
                 return itemRepo.save(item);
             }).collect(Collectors.toList());
@@ -346,7 +346,7 @@ public class CustomerInquiryService {
         ir.setItemCode(product.getCode());
         ir.setProductName(product.getName());
         ir.setQuantity(item.getQuantity());
-        ir.setPrice(item.getPrice());
+        ir.setPrice(item.getPrice() != null ? item.getPrice().doubleValue() : null);
 
         barcodeRepo.findByProductId(productId).stream()
                 .map(ProductBarcode::getBarcode)

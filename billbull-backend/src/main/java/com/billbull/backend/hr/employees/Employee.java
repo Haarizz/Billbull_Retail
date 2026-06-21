@@ -2,6 +2,7 @@ package com.billbull.backend.hr.employees;
 
 import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -82,7 +83,8 @@ public class Employee {
     // PAYROLL
     // =========================
     private String salaryType;
-    private Double basicSalary;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal basicSalary;
 
     // =========================
     // DOCUMENTS
@@ -231,8 +233,8 @@ public class Employee {
     public String getSalaryType() { return salaryType; }
     public void setSalaryType(String salaryType) { this.salaryType = salaryType; }
 
-    public Double getBasicSalary() { return basicSalary; }
-    public void setBasicSalary(Double basicSalary) { this.basicSalary = basicSalary; }
+    public BigDecimal getBasicSalary() { return basicSalary; }
+    public void setBasicSalary(BigDecimal basicSalary) { this.basicSalary = basicSalary; }
 
     public String getEmiratesId() { return emiratesId; }
     public void setEmiratesId(String emiratesId) { this.emiratesId = emiratesId; }

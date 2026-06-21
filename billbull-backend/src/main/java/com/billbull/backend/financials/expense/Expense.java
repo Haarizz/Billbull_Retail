@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.expense;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import com.billbull.backend.settings.branch.Branch;
@@ -40,10 +41,13 @@ public class Expense {
     private String costCenter;
     private String location;
     private String glAccountId;
-    private Double amount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal amount;
     private Double taxRate;
-    private Double taxAmount;
-    private Double total;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal total;
     private String status;
 
     /**
