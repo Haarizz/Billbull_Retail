@@ -670,7 +670,7 @@ public class DeliveryNoteService {
                     deduction.getLocatorId(),
                     deduction.getBatchNumber(),
                     deduction.getExpiryDate(),
-                    Math.abs(deduction.getQuantity()),
+                    deduction.getQuantity().abs().intValue(), // ARCHFIX §1.11: quantity is BigDecimal; reverseOutboundStock takes Integer
                     dn.getDnNumber() + "-REV");
         }
     }
