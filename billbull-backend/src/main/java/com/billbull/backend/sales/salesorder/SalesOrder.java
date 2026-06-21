@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -42,16 +43,22 @@ public class SalesOrder {
     private Integer linkedQuotationRevision;
     private String linkedProforma;
 
-    private Double subTotal;
-    private Double taxTotal;
-    private Double orderTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal subTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal orderTotal;
 
-    private Double advanceAmount;
-    private Double balanceDue;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal advanceAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal balanceDue;
+    /** Bill-level discount PERCENTAGE rate (not money). */
     private Double billDiscount;
-    
-    @Column(name = "bill_discount_amount")
-    private Double billDiscountAmount;
+
+    @Column(name = "bill_discount_amount", precision = 15, scale = 2)
+    private BigDecimal billDiscountAmount;
 
     @Column(name = "bill_discount_type", length = 20)
     private String billDiscountType;
@@ -165,43 +172,43 @@ public class SalesOrder {
         this.linkedProforma = linkedProforma;
     }
 
-    public Double getSubTotal() {
+    public BigDecimal getSubTotal() {
         return subTotal;
     }
 
-    public void setSubTotal(Double subTotal) {
+    public void setSubTotal(BigDecimal subTotal) {
         this.subTotal = subTotal;
     }
 
-    public Double getTaxTotal() {
+    public BigDecimal getTaxTotal() {
         return taxTotal;
     }
 
-    public void setTaxTotal(Double taxTotal) {
+    public void setTaxTotal(BigDecimal taxTotal) {
         this.taxTotal = taxTotal;
     }
 
-    public Double getOrderTotal() {
+    public BigDecimal getOrderTotal() {
         return orderTotal;
     }
 
-    public void setOrderTotal(Double orderTotal) {
+    public void setOrderTotal(BigDecimal orderTotal) {
         this.orderTotal = orderTotal;
     }
 
-    public Double getAdvanceAmount() {
+    public BigDecimal getAdvanceAmount() {
         return advanceAmount;
     }
 
-    public void setAdvanceAmount(Double advanceAmount) {
+    public void setAdvanceAmount(BigDecimal advanceAmount) {
         this.advanceAmount = advanceAmount;
     }
 
-    public Double getBalanceDue() {
+    public BigDecimal getBalanceDue() {
         return balanceDue;
     }
 
-    public void setBalanceDue(Double balanceDue) {
+    public void setBalanceDue(BigDecimal balanceDue) {
         this.balanceDue = balanceDue;
     }
 
@@ -213,11 +220,11 @@ public class SalesOrder {
         this.billDiscount = billDiscount;
     }
 
-    public Double getBillDiscountAmount() {
+    public BigDecimal getBillDiscountAmount() {
         return billDiscountAmount;
     }
 
-    public void setBillDiscountAmount(Double billDiscountAmount) {
+    public void setBillDiscountAmount(BigDecimal billDiscountAmount) {
         this.billDiscountAmount = billDiscountAmount;
     }
 

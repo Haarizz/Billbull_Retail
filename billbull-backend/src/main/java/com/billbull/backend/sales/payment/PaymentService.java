@@ -146,20 +146,20 @@ public class PaymentService {
             // Use the actual current invoice balance from DB as the terminal balance
             // after the most recent payment. This accounts for SO advance RVs that are
             // not Payment rows but are already reflected in invoice.balance.
-            double terminalBalance = salesInvoiceRepository.findByInvoiceNumber(entry.getKey())
-                    .map(inv -> inv.getBalance() != null ? inv.getBalance() : 0.0)
-                    .orElse(0.0);
+            BigDecimal terminalBalance = salesInvoiceRepository.findByInvoiceNumber(entry.getKey())
+                    .map(inv -> inv.getBalance() != null ? inv.getBalance() : BigDecimal.ZERO)
+                    .orElse(BigDecimal.ZERO);
 
             // Assign invoiceBalance to each payment (= balance AFTER that payment).
             // P[0] is newest: its balance = terminalBalance.
             // P[1] is second-newest: its balance = terminalBalance + P[0].amount (what
             // P[0] reduced the balance from).
             // P[k]: balance = terminalBalance + sum(P[0..k-1].amount).
-            double cumulativeFromNewest = 0;
+            BigDecimal cumulativeFromNewest = BigDecimal.ZERO;
             for (int i = 0; i < group.size(); i++) {
                 Payment p = group.get(i);
-                p.setInvoiceBalance(Math.max(terminalBalance + cumulativeFromNewest, 0));
-                cumulativeFromNewest += p.getAmount() != null ? p.getAmount() : 0;
+                p.setInvoiceBalance(terminalBalance.add(cumulativeFromNewest).max(BigDecimal.ZERO));
+                cumulativeFromNewest = cumulativeFromNewest.add(p.getAmount() != null ? p.getAmount() : BigDecimal.ZERO);
             }
         }
         return payments;
@@ -218,7 +218,7 @@ public class PaymentService {
                 notifPublisher.paymentReceived(
                         savedPayment.getPaymentNumber(),
                         savedPayment.getCustomerName() != null ? savedPayment.getCustomerName() : "Customer",
-                        String.format("AED %,.2f", savedPayment.getAmount() != null ? savedPayment.getAmount() : 0.0),
+                        String.format("AED %,.2f", savedPayment.getAmount() != null ? savedPayment.getAmount() : BigDecimal.ZERO),
                         savedPayment.getPaymentMode() != null ? savedPayment.getPaymentMode() : "CASH"
                 );
             }
@@ -299,7 +299,7 @@ public class PaymentService {
 
         ReceiptVoucher receiptVoucher = new ReceiptVoucher();
         receiptVoucher.setDate(payment.getPaymentDate() != null ? payment.getPaymentDate() : LocalDate.now());
-        receiptVoucher.setAmount(BigDecimal.valueOf(payment.getAmount() != null ? payment.getAmount() : 0.0));
+        receiptVoucher.setAmount(payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO);
         receiptVoucher.setPaymentMode(payment.getPaymentMode());
         receiptVoucher.setReference(payment.getReferenceNumber());
         receiptVoucher.setNotes(payment.getNotes());

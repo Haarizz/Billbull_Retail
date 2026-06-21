@@ -645,13 +645,13 @@ public class FinancialReportService {
             if ("CANCELLED".equalsIgnoreCase(status) || "DRAFT".equalsIgnoreCase(status))
                 continue;
 
-            Double bal = inv.getBalance();
-            if (bal == null || bal <= 0)
+            BigDecimal bal = inv.getBalance();
+            if (bal == null || bal.signum() <= 0)
                 continue;
 
             String customer = inv.getCustomerName() != null ? inv.getCustomerName() : "Unknown Customer";
             LocalDate date = inv.getInvoiceDate() != null ? inv.getInvoiceDate() : asOfDate;
-            addAgingAmount(agingByCustomer, customer, date, BigDecimal.valueOf(bal), asOfDate);
+            addAgingAmount(agingByCustomer, customer, date, bal, asOfDate);
         }
 
         Set<String> customersWithOpeningInvoices = new LinkedHashSet<>();

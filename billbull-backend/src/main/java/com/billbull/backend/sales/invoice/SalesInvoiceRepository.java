@@ -66,7 +66,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         @org.springframework.data.repository.query.Param("itemCode") String itemCode);
 
         // --- STATEMENT QUERIES ---
-        @Query("SELECT SUM(s.invoiceTotal) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")
+        @Query("SELECT CAST(SUM(s.invoiceTotal) AS double) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")
         Double calculateOpeningBalance(String customerCode, java.time.LocalDate startDate);
 
         // --- CREDIT LIMIT QUERIES ---
@@ -74,13 +74,13 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * Returns total outstanding (unpaid) balance for a customer across all
          * non-cancelled invoices. Used by the credit-limit enforcement logic.
          */
-        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
+        @Query("SELECT CAST(COALESCE(SUM(s.balance), 0) AS double) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
                         + "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, "
                         + "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         Double findOutstandingBalanceByCustomerCode(
                         @org.springframework.data.repository.query.Param("customerCode") String customerCode);
 
-        @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', s.invoiceTotal, CAST(0 AS double), CAST(s.status AS string)) "
+        @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', s.invoiceTotal, CAST(0 AS big_decimal), CAST(s.status AS string)) "
                         +
                         "FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String customerCode,
@@ -141,7 +141,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return findPaymentBreakdown(startDate, endDate, null);
         }
 
-        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.invoiceTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status NOT IN (" +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
@@ -165,7 +165,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return countBetween(from, to, null);
         }
 
-        @Query("SELECT COALESCE(SUM(si.balance), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.balance), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status NOT IN (" +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID" +
@@ -194,7 +194,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(Pageable pageable);
 
-        @Query("SELECT COALESCE(SUM(si.taxTotal), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.taxTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :from AND :to " +
                "AND (:branchId IS NULL OR si.branchId = :branchId)")
@@ -279,7 +279,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         }
 
         // Total profit for a date range
-        @Query(value = "SELECT COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
+        @Query(value = "SELECT CAST(COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) AS double precision) " +
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
                        "WHERE si.status <> 'CANCELLED' " +

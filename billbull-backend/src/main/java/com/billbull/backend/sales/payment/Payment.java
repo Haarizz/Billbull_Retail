@@ -4,6 +4,7 @@ import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
@@ -35,11 +36,14 @@ public class Payment {
 
     // Linked Invoice
     private String linkedInvoice;
-    private Double invoiceAmount;
-    private Double invoiceBalance;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal invoiceAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal invoiceBalance;
 
     // Payment Details
-    private Double amount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal amount;
     private String paymentMode; // Cash, Card, Bank Transfer, Cheque, Online
     private String referenceNumber;
     private String bankName;
@@ -119,27 +123,27 @@ public class Payment {
         this.linkedInvoice = linkedInvoice;
     }
 
-    public Double getInvoiceAmount() {
+    public BigDecimal getInvoiceAmount() {
         return invoiceAmount;
     }
 
-    public void setInvoiceAmount(Double invoiceAmount) {
+    public void setInvoiceAmount(BigDecimal invoiceAmount) {
         this.invoiceAmount = invoiceAmount;
     }
 
-    public Double getInvoiceBalance() {
+    public BigDecimal getInvoiceBalance() {
         return invoiceBalance;
     }
 
-    public void setInvoiceBalance(Double invoiceBalance) {
+    public void setInvoiceBalance(BigDecimal invoiceBalance) {
         this.invoiceBalance = invoiceBalance;
     }
 
-    public Double getAmount() {
+    public BigDecimal getAmount() {
         return amount;
     }
 
-    public void setAmount(Double amount) {
+    public void setAmount(BigDecimal amount) {
         this.amount = amount;
     }
 

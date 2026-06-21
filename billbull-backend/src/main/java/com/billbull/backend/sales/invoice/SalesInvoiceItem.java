@@ -24,15 +24,22 @@ public class SalesInvoiceItem {
     private String unit;
     private Integer quantity;
 
-    private Double price;
-    private Double cost;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal cost;
+    /** Line discount as a PERCENTAGE rate (not money). */
     private Double discount;
-    @Column(name = "footer_discount")
-    private Double footerDiscount;
+    @Column(name = "footer_discount", precision = 15, scale = 2)
+    private BigDecimal footerDiscount;
+    /** Tax rate as a PERCENTAGE (not money). */
     private Double taxRate;
-    private Double taxAmount;
-    private Double grossAmount;
-    private Double netAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal grossAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal netAmount;
     private Integer foc;
     private String image;
     private Long warehouseId;
@@ -171,19 +178,19 @@ public class SalesInvoiceItem {
         this.quantity = quantity;
     }
 
-    public Double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(Double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 
-    public Double getCost() {
+    public BigDecimal getCost() {
         return cost;
     }
 
-    public void setCost(Double cost) {
+    public void setCost(BigDecimal cost) {
         this.cost = cost;
     }
 
@@ -195,11 +202,11 @@ public class SalesInvoiceItem {
         this.discount = discount;
     }
 
-    public Double getFooterDiscount() {
+    public BigDecimal getFooterDiscount() {
         return footerDiscount;
     }
 
-    public void setFooterDiscount(Double footerDiscount) {
+    public void setFooterDiscount(BigDecimal footerDiscount) {
         this.footerDiscount = footerDiscount;
     }
 
@@ -211,27 +218,27 @@ public class SalesInvoiceItem {
         this.taxRate = taxRate;
     }
 
-    public Double getTaxAmount() {
+    public BigDecimal getTaxAmount() {
         return taxAmount;
     }
 
-    public void setTaxAmount(Double taxAmount) {
+    public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
     }
 
-    public Double getGrossAmount() {
+    public BigDecimal getGrossAmount() {
         return grossAmount;
     }
 
-    public void setGrossAmount(Double grossAmount) {
+    public void setGrossAmount(BigDecimal grossAmount) {
         this.grossAmount = grossAmount;
     }
 
-    public Double getNetAmount() {
+    public BigDecimal getNetAmount() {
         return netAmount;
     }
 
-    public void setNetAmount(Double netAmount) {
+    public void setNetAmount(BigDecimal netAmount) {
         this.netAmount = netAmount;
     }
 

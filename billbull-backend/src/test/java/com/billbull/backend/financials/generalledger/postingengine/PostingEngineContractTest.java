@@ -652,9 +652,9 @@ class PostingEngineContractTest {
         inv.setInvoiceNumber(number);
         inv.setCustomerCode(customerCode);
         inv.setInvoiceDate(LocalDate.of(2026, 6, 1));
-        inv.setSubTotal(subTotal);
-        inv.setTaxTotal(taxTotal);
-        inv.setInvoiceTotal(invoiceTotal);
+        inv.setSubTotal(BigDecimal.valueOf(subTotal));
+        inv.setTaxTotal(BigDecimal.valueOf(taxTotal));
+        inv.setInvoiceTotal(BigDecimal.valueOf(invoiceTotal));
         return inv;
     }
 
@@ -696,9 +696,9 @@ class PostingEngineContractTest {
         SalesReturn ret = new SalesReturn();
         ret.setReturnNumber(returnNumber);
         ret.setReturnDate(LocalDate.of(2026, 6, 1));
-        ret.setSubTotal(subTotal);
-        ret.setTaxAmount(taxAmount);
-        ret.setTotalAmount(totalAmount);
+        ret.setSubTotal(BigDecimal.valueOf(subTotal));
+        ret.setTaxAmount(BigDecimal.valueOf(taxAmount));
+        ret.setTotalAmount(BigDecimal.valueOf(totalAmount));
         return ret;
     }
 
