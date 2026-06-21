@@ -13,7 +13,9 @@ import java.util.List;
 @Table(name = "pos_sessions", indexes = {
     @Index(name = "idx_pos_session_branch", columnList = "branch_id"),
     @Index(name = "idx_pos_session_date",   columnList = "session_date"),
-    @Index(name = "idx_pos_session_status", columnList = "status")
+    @Index(name = "idx_pos_session_status", columnList = "status"),
+    // ARCHFIX §3 — hot session lookup; name matches V3__missing_indexes.sql.
+    @Index(name = "idx_pos_sess_lookup",    columnList = "branch_id, terminal_id, status")
 })
 public class PosSession extends BaseEntity {
 
