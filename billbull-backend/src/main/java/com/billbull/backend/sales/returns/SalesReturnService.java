@@ -8,6 +8,9 @@ import com.billbull.backend.inventory.batch.BatchMaster;
 import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.batch.BatchStatus;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -86,6 +89,9 @@ public class SalesReturnService {
 
     @Autowired
     private com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumptionRepository consumptionRepo;
+
+    @Autowired
+    private SerialMasterRepository serialMasterRepository;
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
@@ -230,6 +236,7 @@ public class SalesReturnService {
             applyBatchReturns(saved);
             applyNonBatchStockReturns(saved);
             postJournalForApprovedReturn(saved);
+            applySerialReturns(saved);
         }
         return saved;
     }
@@ -408,6 +415,46 @@ public class SalesReturnService {
             out.add(r);
         }
         return out;
+    }
+
+    // ---------------------------------------------------------------
+    // §5.5 applySerialReturns — validate returned serial matches sold serial on the
+    // original invoice, then flip SerialStatus → RETURNED.
+    // ---------------------------------------------------------------
+    private void applySerialReturns(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+
+        // Build a map of itemCode → serialNumber from the original linked invoice.
+        Map<String, String> soldSerialByCode = new java.util.HashMap<>();
+        if (salesReturn.getLinkedInvoice() != null && !salesReturn.getLinkedInvoice().isBlank()) {
+            salesInvoiceRepository
+                    .findByInvoiceNumber(salesReturn.getLinkedInvoice())
+                    .ifPresent(inv -> {
+                        if (inv.getItems() != null) {
+                            for (com.billbull.backend.sales.invoice.SalesInvoiceItem si : inv.getItems()) {
+                                if (si.getSerialNumber() != null && !si.getSerialNumber().isBlank()
+                                        && si.getItemCode() != null) {
+                                    soldSerialByCode.put(si.getItemCode(), si.getSerialNumber());
+                                }
+                            }
+                        }
+                    });
+        }
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getItemCode() == null) continue;
+            String soldSerial = soldSerialByCode.get(item.getItemCode());
+            if (soldSerial == null) continue;
+
+            serialMasterRepository.findBySerialNumberForUpdate(soldSerial).ifPresent(serial -> {
+                if (serial.getStatus() == SerialStatus.SOLD) {
+                    serial.setStatus(SerialStatus.RETURNED);
+                    serialMasterRepository.save(serial);
+                    log.info("[SalesReturn] {} — serial {} marked RETURNED for item '{}'.",
+                            salesReturn.getReturnNumber(), soldSerial, item.getItemCode());
+                }
+            });
+        }
     }
 
     // ---------------------------------------------------------------

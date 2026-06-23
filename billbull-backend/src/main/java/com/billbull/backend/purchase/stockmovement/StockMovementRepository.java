@@ -469,4 +469,40 @@ public interface StockMovementRepository
         List<StockMovement> findOutboundByBatchNumber(
                 @Param("batchNumber") String batchNumber,
                 @Param("sourceTypes") List<StockSourceType> sourceTypes);
+
+        // §1.4 Net-available stock: on-hand minus RESERVED batch allocations.
+        // For non-batch products the subtraction is 0 (no allocations exist).
+        // Used by POS and multi-counter deployment to prevent oversell from layaways and
+        // in-flight checkouts that have reserved but not yet consumed stock.
+        @Query(value = """
+                    SELECT COALESCE(
+                        (SELECT SUM(sm.quantity)
+                         FROM stock_movements sm
+                         WHERE sm.warehouse_id = :warehouseId
+                           AND sm.product_id   = :productId), 0)
+                    - COALESCE(
+                        (SELECT SUM(ba.quantity)
+                         FROM batch_allocations ba
+                         WHERE ba.product_id = :productId
+                           AND ba.status = 'RESERVED'), 0)
+                """, nativeQuery = true)
+        BigDecimal getNetAvailableStock(
+                @Param("warehouseId") Long warehouseId,
+                @Param("productId")   Long productId);
+
+        @Query(value = """
+                    SELECT sm.product_id,
+                           COALESCE(SUM(sm.quantity), 0)
+                           - COALESCE((SELECT SUM(ba.quantity)
+                                        FROM batch_allocations ba
+                                        WHERE ba.product_id = sm.product_id
+                                          AND ba.status = 'RESERVED'), 0)
+                    FROM stock_movements sm
+                    WHERE sm.warehouse_id = :warehouseId
+                      AND sm.product_id IN :productIds
+                    GROUP BY sm.product_id
+                """, nativeQuery = true)
+        List<Object[]> getNetAvailableStockForProductsInWarehouse(
+                @Param("warehouseId") Long warehouseId,
+                @Param("productIds")  List<Long> productIds);
 }

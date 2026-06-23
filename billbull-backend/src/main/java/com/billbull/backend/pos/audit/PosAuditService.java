@@ -96,6 +96,15 @@ public class PosAuditService {
                 "Return initiated for invoice: " + originalInvoiceNumber, null, null);
     }
 
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logReceiptReprinted(Long sessionId, String terminalId, Long branchId,
+                                     Long invoiceId, String invoiceNumber) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.RECEIPT_REPRINTED, "INVOICE", String.valueOf(invoiceId),
+                "Receipt reprinted for invoice: " + invoiceNumber, null, null);
+    }
+
     // ── core save ────────────────────────────────────────────────────────────
 
     private void save(Long sessionId, String terminalId, Long branchId,

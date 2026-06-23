@@ -1,5 +1,8 @@
 package com.billbull.backend.pos.checkout;
 
+import com.billbull.backend.inventory.product.ProductPricing;
+import com.billbull.backend.inventory.product.ProductPricingRepository;
+import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.serial.SerialMaster;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
@@ -14,12 +17,15 @@ import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -28,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * POS-specific checkout endpoint. Accepts the cart + payment details in one call,
@@ -45,11 +52,17 @@ public class PosCheckoutController {
     private final PosAuditService auditService;
     private final BranchRepository branchRepository;
     private final SerialMasterRepository serialMasterRepository;
+    private final ProductRepository productRepository;
+    private final ProductPricingRepository pricingRepository;
+    private final RolePermissionService permissionService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
                                   PosAuditService auditService, BranchRepository branchRepository,
-                                  SerialMasterRepository serialMasterRepository) {
+                                  SerialMasterRepository serialMasterRepository,
+                                  ProductRepository productRepository,
+                                  ProductPricingRepository pricingRepository,
+                                  RolePermissionService permissionService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -57,6 +70,9 @@ public class PosCheckoutController {
         this.auditService = auditService;
         this.branchRepository = branchRepository;
         this.serialMasterRepository = serialMasterRepository;
+        this.productRepository = productRepository;
+        this.pricingRepository = pricingRepository;
+        this.permissionService = permissionService;
     }
 
     @PostMapping
@@ -145,6 +161,28 @@ public class PosCheckoutController {
                             });
                 }
             }
+        }
+
+        // §4.1 Receipt archival: generate ZATCA QR at checkout time and store on the invoice.
+        try {
+            String sellerName = saved.getBranchName();
+            String trn = null;
+            if (saved.getBranchId() != null) {
+                var branch = branchRepository.findById(saved.getBranchId()).orElse(null);
+                if (branch != null) {
+                    if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                    trn = branch.getTrnNumber();
+                }
+            }
+            BigDecimal totalWithVat = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : BigDecimal.ZERO;
+            BigDecimal vatTotal = saved.getTaxTotal() != null ? saved.getTaxTotal() : BigDecimal.ZERO;
+            LocalDateTime invoiceAt = saved.getInvoiceDate() != null
+                    ? saved.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+            String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+            saved.setPosReceiptQr(qr);
+            invoiceRepository.save(saved);
+        } catch (Exception e) {
+            // Non-blocking — QR archival failure must not roll back the checkout.
         }
 
         // Audit: completed checkout + any voided lines
@@ -265,6 +303,54 @@ public class PosCheckoutController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * §4.2 Receipt reprint: same data as /receipt but also logs a RECEIPT_REPRINTED
+     * audit entry for fraud detection (duplicate printout tracking).
+     *
+     * GET /api/pos/checkout/invoices/{id}/reprint
+     */
+    @GetMapping("/invoices/{id}/reprint")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> reprintReceipt(@PathVariable Long id,
+            @RequestParam(required = false) Long sessionId,
+            @RequestParam(required = false) String terminalId,
+            @RequestParam(required = false) Long branchId) {
+        SalesInvoice invoice = invoiceService.getById(id);
+        if (invoice.getItems() != null) invoice.getItems().size();
+
+        String sellerName = invoice.getBranchName();
+        String trn = null;
+        if (invoice.getBranchId() != null) {
+            var branch = branchRepository.findById(invoice.getBranchId()).orElse(null);
+            if (branch != null) {
+                if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                trn = branch.getTrnNumber();
+            }
+        }
+
+        // Use stored QR if available, otherwise regenerate.
+        String qrCode = invoice.getPosReceiptQr();
+        if (qrCode == null || qrCode.isBlank()) {
+            BigDecimal totalWithVat = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+            BigDecimal vatTotal = invoice.getTaxTotal() != null ? invoice.getTaxTotal() : BigDecimal.ZERO;
+            LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
+                    ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+            qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+        }
+
+        // §4.2 Audit log: RECEIPT_REPRINTED for fraud detection
+        auditService.logReceiptReprinted(
+                sessionId, terminalId, branchId != null ? branchId : invoice.getBranchId(),
+                id, invoice.getInvoiceNumber());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("invoice", invoice);
+        result.put("zatcaQr", qrCode);
+        result.put("sellerName", sellerName);
+        result.put("trn", trn);
+        return ResponseEntity.ok(result);
+    }
+
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
@@ -293,6 +379,36 @@ public class PosCheckoutController {
         }
         if (req.getDeliveryNotes() != null && !req.getDeliveryNotes().isBlank()) {
             inv.setPosDeliveryNotes(req.getDeliveryNotes());
+        }
+
+        // §2.4 Price override gate: batch-load product pricings and verify that any
+        // below-list-price sale is made by a user with the pos_price_override permission.
+        if (req.getItems() != null && !req.getItems().isEmpty()) {
+            List<String> codes = req.getItems().stream()
+                    .filter(i -> !Boolean.TRUE.equals(i.getVoided()) && i.getItemCode() != null)
+                    .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
+                    .distinct().collect(Collectors.toList());
+            if (!codes.isEmpty()) {
+                Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
+                productRepository.findByCodeIn(codes).forEach(p -> {
+                    pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
+                });
+                for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
+                    if (Boolean.TRUE.equals(item.getVoided()) || item.getPrice() == null) continue;
+                    ProductPricing pr = pricingByCode.get(item.getItemCode());
+                    if (pr == null) continue;
+                    BigDecimal itemPrice = BigDecimal.valueOf(item.getPrice());
+                    BigDecimal minPrice = pr.getMinPrice() != null ? pr.getMinPrice()
+                                       : (pr.getRetailPrice() != null ? pr.getRetailPrice() : null);
+                    if (minPrice != null && itemPrice.compareTo(minPrice) < 0) {
+                        if (!permissionService.currentUserCanEdit("pos_price_override")) {
+                            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                                    "Price below minimum for " + item.getItemCode()
+                                    + ". Supervisor override required (pos_price_override).");
+                        }
+                    }
+                }
+            }
         }
 
         if (req.getItems() != null) {

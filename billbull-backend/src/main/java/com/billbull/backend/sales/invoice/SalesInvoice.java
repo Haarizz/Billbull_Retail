@@ -147,6 +147,10 @@ public class SalesInvoice {
     @Column(name = "pos_delivery_notes", length = 1000)
     private String posDeliveryNotes;
 
+    /** ZATCA Phase-1 TLV base64 QR stored at checkout time for receipt archival and reprint. */
+    @Column(name = "pos_receipt_qr", length = 500)
+    private String posReceiptQr;
+
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
 
@@ -484,6 +488,9 @@ public class SalesInvoice {
 
     public String getPosDeliveryNotes() { return posDeliveryNotes; }
     public void setPosDeliveryNotes(String posDeliveryNotes) { this.posDeliveryNotes = posDeliveryNotes; }
+
+    public String getPosReceiptQr() { return posReceiptQr; }
+    public void setPosReceiptQr(String posReceiptQr) { this.posReceiptQr = posReceiptQr; }
 
     public DeliveryStatus getDeliveryStatus() {
         return deliveryStatus;

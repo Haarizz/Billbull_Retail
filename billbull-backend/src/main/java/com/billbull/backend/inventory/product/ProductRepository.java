@@ -198,6 +198,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         List<Object[]> getProductReportDetails(
                         @org.springframework.data.repository.query.Param("productIds") List<Long> productIds);
 
+        /** Batch lookup by code list — used by POS price override check. */
+        List<Product> findByCodeIn(List<String> codes);
+
         /**
          * Fetches only basic fields for active products to avoid loading full entities
          */

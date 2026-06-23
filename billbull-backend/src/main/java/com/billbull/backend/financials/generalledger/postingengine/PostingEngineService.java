@@ -2636,6 +2636,42 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        private static final String TX_SESSION_CLOSE = "SCL";
+
+        /**
+         * §3.7 POS session-close GL: daily cash pickup.
+         *   Dr  Bank Account (1010)    closingCash   [cash moved to bank/safe at end-of-day]
+         *     Cr  Cash in Hand (1001)   closingCash
+         *
+         * Only posts when closingCash > 0 and the session has cash sales.
+         * Reference: "SCL-{sessionId}" — idempotent per session.
+         */
+        @Transactional
+        public JournalEntry createJournalFromSessionClose(
+                        Long sessionId,
+                        BigDecimal closingCash,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (sessionId == null || closingCash == null || closingCash.signum() <= 0) {
+                        return null;
+                }
+                String ref = TX_SESSION_CLOSE + "-" + sessionId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "POS Session Close - Cash Pickup - Session " + sessionId,
+                        TX_SESSION_CLOSE,
+                        branch);
+
+                addLine(entry, "Bank Account",  ACC_BANK,  "Daily cash pickup", closingCash,         BigDecimal.ZERO);
+                addLine(entry, "Cash in Hand",  ACC_CASH,  "Daily cash pickup", BigDecimal.ZERO, closingCash);
+
+                return post(entry);
+        }
+
         /**
          * Reverse the layaway deposit journal when the layaway is cancelled.
          *   Dr  Customer Advances (2060)   amount

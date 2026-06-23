@@ -35,6 +35,7 @@ import com.billbull.backend.settings.branch.BranchRepository;
 class PosLayawayServiceTest {
 
     @Mock private PosLayawayRepository repo;
+    @Mock private PosLayawayPaymentRepository paymentRepo;
     @Mock private ProductRepository productRepository;
     @Mock private BatchSelectionService batchSelectionService;
     @Mock private RolePermissionService permissionService;
@@ -46,7 +47,7 @@ class PosLayawayServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PosLayawayService(repo, productRepository, batchSelectionService, permissionService,
+        service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService, permissionService,
                 postingEngine, branchRepository, auditService);
         // save() returns the same entity with ids assigned, so the reserve loop can run.
         lenient().when(repo.save(any(PosLayaway.class))).thenAnswer(inv -> {

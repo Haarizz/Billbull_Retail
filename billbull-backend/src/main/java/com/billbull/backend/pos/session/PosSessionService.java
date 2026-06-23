@@ -165,6 +165,16 @@ public class PosSessionService {
 
         PosSession closed = repo.save(session);
 
+        // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
+        try {
+            Branch branch = closed.getBranchId() != null
+                    ? branchRepository.findById(closed.getBranchId()).orElse(null) : null;
+            postingEngine.createJournalFromSessionClose(
+                    closed.getId(), actualClosing, java.time.LocalDate.now(), branch);
+        } catch (Exception e) {
+            // Non-blocking — GL failure must not prevent the session from closing.
+        }
+
         // Async audit: session closed with variance info
         auditService.logSessionClosed(
                 closed.getId(), closed.getTerminalId(), closed.getBranchId(), varianceStr);

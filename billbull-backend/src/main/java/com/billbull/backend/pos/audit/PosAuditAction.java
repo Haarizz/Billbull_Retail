@@ -32,5 +32,8 @@ public enum PosAuditAction {
     RETURN_CANCELLED,
 
     // Supervisor
-    SUPERVISOR_OVERRIDE
+    SUPERVISOR_OVERRIDE,
+
+    // Receipt
+    RECEIPT_REPRINTED
 }
