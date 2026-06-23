@@ -449,6 +449,26 @@ public class SalesReturnService {
                                 org.springframework.http.HttpStatus.BAD_REQUEST,
                                 "Allocation not found: " + parentId));
 
+                // Validate batch number matches the original sold allocation.
+                // Prevents a client from referencing a real allocation but returning a different batch.
+                if (sel.getBatchNumber() != null && parent.getBatchNumber() != null
+                        && !sel.getBatchNumber().equals(parent.getBatchNumber())) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Return batch '" + sel.getBatchNumber() + "' does not match the original"
+                                    + " sold batch '" + parent.getBatchNumber() + "' on allocation "
+                                    + parentId + " for item " + item.getItemCode());
+                }
+                // Validate the product is the same — guards against mis-referencing allocations
+                // from a different product on the same invoice.
+                if (item.getItemCode() != null && parent.getProductCode() != null
+                        && !item.getItemCode().equals(parent.getProductCode())) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Return item '" + item.getItemCode() + "' references an allocation"
+                                    + " belonging to product '" + parent.getProductCode() + "'");
+                }
+
                 int parentQty = parent.getQuantity() != null ? parent.getQuantity() : 0;
                 int alreadyReturned = batchSelectionService.sumAlreadyReturned(parent.getId());
                 int returnable = parentQty - alreadyReturned;

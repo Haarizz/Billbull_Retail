@@ -5,6 +5,7 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -38,19 +39,22 @@ public class PosLayawayService {
     private final RolePermissionService permissionService;
     private final PostingEngineService postingEngine;
     private final BranchRepository branchRepository;
+    private final PosAuditService auditService;
 
     public PosLayawayService(PosLayawayRepository repo,
                              ProductRepository productRepository,
                              BatchSelectionService batchSelectionService,
                              RolePermissionService permissionService,
                              PostingEngineService postingEngine,
-                             BranchRepository branchRepository) {
+                             BranchRepository branchRepository,
+                             PosAuditService auditService) {
         this.repo = repo;
         this.productRepository = productRepository;
         this.batchSelectionService = batchSelectionService;
         this.permissionService = permissionService;
         this.postingEngine = postingEngine;
         this.branchRepository = branchRepository;
+        this.auditService = auditService;
     }
 
     public PosLayaway create(PosLayawayCreateRequest req) {
@@ -170,6 +174,10 @@ public class PosLayawayService {
             }
         }
 
+        auditService.logLayawayCreated(
+                saved.getPosSessionId(), saved.getTerminalId(), saved.getBranchId(),
+                saved.getId(), saved.getLayawayNumber());
+
         return saved;
     }
 
@@ -224,7 +232,11 @@ public class PosLayawayService {
         layaway.setStatus(PosLayawayStatus.CANCELLED);
         layaway.setCancelledAt(LocalDateTime.now());
         layaway.setCancelledBy(currentUsername());
-        return repo.save(layaway);
+        PosLayaway cancelled = repo.save(layaway);
+        auditService.logLayawayCancelled(
+                cancelled.getPosSessionId(), cancelled.getTerminalId(), cancelled.getBranchId(),
+                cancelled.getId(), cancelled.getLayawayNumber());
+        return cancelled;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.checkout;
 
+import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
@@ -10,9 +11,12 @@ import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,13 +33,16 @@ public class PosCheckoutController {
     private final PosSessionService sessionService;
     private final SalesInvoiceRepository invoiceRepository;
     private final CustomerRepository customerRepository;
+    private final PosAuditService auditService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
-                                  SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository) {
+                                  SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
+                                  PosAuditService auditService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
         this.customerRepository = customerRepository;
+        this.auditService = auditService;
     }
 
     @PostMapping
@@ -81,6 +88,19 @@ public class PosCheckoutController {
         // Update session totals
         if (request.getSessionId() != null) {
             sessionService.recordInvoiceOnSession(request.getSessionId(), saved);
+        }
+
+        // Audit: completed checkout + any voided lines
+        final SalesInvoice finalSaved = saved;
+        auditService.logCheckoutCompleted(
+                request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                finalSaved.getId(), finalSaved.getInvoiceNumber());
+        if (request.getItems() != null) {
+            request.getItems().stream()
+                    .filter(it -> Boolean.TRUE.equals(it.getVoided()))
+                    .forEach(it -> auditService.logItemVoided(
+                            request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                            it.getItemCode(), it.getItemName(), it.getVoidReason()));
         }
 
         return ResponseEntity.ok(invoiceService.getById(saved.getId()));
@@ -188,7 +208,11 @@ public class PosCheckoutController {
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
                 si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
                 si.setVoided(Boolean.TRUE.equals(item.getVoided()));
-                if (!si.isVoided() && item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
+                if (si.isVoided()) {
+                    si.setVoidReason(item.getVoidReason());
+                    si.setVoidedBy(currentUser());
+                    si.setVoidedAt(LocalDateTime.now());
+                } else if (item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
                     si.setPinnedBatchNumber(item.getBatchNumber().trim());
                 }
                 si.setSalesInvoice(inv);
@@ -197,6 +221,11 @@ public class PosCheckoutController {
         }
 
         return inv;
+    }
+
+    private String currentUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null ? auth.getName() : "system";
     }
 
     private String resolvePaymentMode(PosCheckoutRequest req) {

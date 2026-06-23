@@ -116,6 +116,11 @@ public class PosSettings extends BaseEntity {
     @Column(name = "default_tax_rate")
     private Double defaultTaxRate = 5.0;
 
+    /** Maximum allowed absolute cash variance on session close before supervisor approval is required.
+     *  0 (default) = disabled (no gate). Uses branch currency. */
+    @Column(name = "cash_variance_threshold", precision = 15, scale = 2)
+    private java.math.BigDecimal cashVarianceThreshold = java.math.BigDecimal.ZERO;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -211,4 +216,9 @@ public class PosSettings extends BaseEntity {
 
     public Double getDefaultTaxRate() { return defaultTaxRate; }
     public void setDefaultTaxRate(Double defaultTaxRate) { this.defaultTaxRate = defaultTaxRate; }
+
+    public java.math.BigDecimal getCashVarianceThreshold() { return cashVarianceThreshold; }
+    public void setCashVarianceThreshold(java.math.BigDecimal cashVarianceThreshold) {
+        this.cashVarianceThreshold = cashVarianceThreshold;
+    }
 }

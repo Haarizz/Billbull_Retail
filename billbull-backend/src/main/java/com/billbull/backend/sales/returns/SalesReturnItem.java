@@ -32,6 +32,14 @@ public class SalesReturnItem {
     private BigDecimal total;
     private String itemStatus; // Good (Restock), Damaged (Scrap)
 
+    /** Standardised return reason code (e.g. DEFECTIVE, WRONG_ITEM, CUSTOMER_CHANGED_MIND). */
+    @Column(name = "return_reason", length = 100)
+    private String returnReason;
+
+    /** Free-text notes from the cashier / customer service agent explaining the return. */
+    @Column(name = "return_reason_notes", columnDefinition = "TEXT")
+    private String returnReasonNotes;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sales_return_id")
     @JsonBackReference
@@ -133,6 +141,12 @@ public class SalesReturnItem {
     public void setItemStatus(String itemStatus) {
         this.itemStatus = itemStatus;
     }
+
+    public String getReturnReason() { return returnReason; }
+    public void setReturnReason(String returnReason) { this.returnReason = returnReason; }
+
+    public String getReturnReasonNotes() { return returnReasonNotes; }
+    public void setReturnReasonNotes(String returnReasonNotes) { this.returnReasonNotes = returnReasonNotes; }
 
     public SalesReturn getSalesReturn() {
         return salesReturn;

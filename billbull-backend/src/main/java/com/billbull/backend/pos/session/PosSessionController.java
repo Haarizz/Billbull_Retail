@@ -51,7 +51,8 @@ public class PosSessionController {
         BigDecimal closingCash = body != null && body.get("closingCash") != null
                 ? new BigDecimal(body.get("closingCash").toString()) : null;
         String notes = body != null ? (String) body.get("notes") : null;
-        return ResponseEntity.ok(service.closeSession(id, closingCash, notes));
+        boolean supervisorApproved = body != null && Boolean.TRUE.equals(body.get("supervisorApproved"));
+        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved));
     }
 
     @PostMapping("/{id}/cash-movement")

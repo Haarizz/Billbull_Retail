@@ -39,6 +39,8 @@ public class PosCheckoutRequest {
         private String batchNumber;
         /** Cashier voided this line — retained for receipt/audit/reports, excluded from totals & stock. */
         private Boolean voided;
+        /** Optional reason the cashier entered for voiding this line (displayed on receipt + audit log). */
+        private String voidReason;
 
         public String getItemCode() { return itemCode; }
         public void setItemCode(String itemCode) { this.itemCode = itemCode; }
@@ -58,6 +60,8 @@ public class PosCheckoutRequest {
         public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
         public Boolean getVoided() { return voided; }
         public void setVoided(Boolean voided) { this.voided = voided; }
+        public String getVoidReason() { return voidReason; }
+        public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
     }
 
     // Getters & Setters

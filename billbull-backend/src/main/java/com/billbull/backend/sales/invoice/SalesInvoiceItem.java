@@ -55,6 +55,18 @@ public class SalesInvoiceItem {
     @Column(name = "voided")
     private Boolean voided = Boolean.FALSE;
 
+    /** Free-text reason the cashier entered when voiding this line at POS. */
+    @Column(name = "void_reason", length = 500)
+    private String voidReason;
+
+    /** Username who performed the void (set server-side from JWT, not from client). */
+    @Column(name = "voided_by", length = 100)
+    private String voidedBy;
+
+    /** Wall-clock timestamp of the void action. */
+    @Column(name = "voided_at")
+    private java.time.LocalDateTime voidedAt;
+
     @Transient
     private String barcode;
 
@@ -294,6 +306,15 @@ public class SalesInvoiceItem {
     public void setVoided(Boolean voided) {
         this.voided = voided != null ? voided : Boolean.FALSE;
     }
+
+    public String getVoidReason() { return voidReason; }
+    public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
+
+    public String getVoidedBy() { return voidedBy; }
+    public void setVoidedBy(String voidedBy) { this.voidedBy = voidedBy; }
+
+    public java.time.LocalDateTime getVoidedAt() { return voidedAt; }
+    public void setVoidedAt(java.time.LocalDateTime voidedAt) { this.voidedAt = voidedAt; }
 
     public String getBarcode() {
         return barcode;
