@@ -1,6 +1,9 @@
 package com.billbull.backend.purchase.grn;
 
 import java.math.BigDecimal;
+import java.util.List;
+
+import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
 
 public record GrnItemRequest(
                 Long productId,
@@ -21,5 +24,6 @@ public record GrnItemRequest(
                 boolean batch,
                 Integer focQty,
                 String focUnit,
-                String remarks) {
+                String remarks,
+                List<PurchaseSerialDraft> serials) {
 }

@@ -3,6 +3,8 @@ package com.billbull.backend.purchase.invoice;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
+
 public class InvoiceItemDraft {
 
     private Long id;
@@ -28,6 +30,8 @@ public class InvoiceItemDraft {
     private String brandName;
     private String shortDesc;
     private String localName;
+    private Boolean serialEnabled;
+    private List<PurchaseSerialDraft> serials;
     private Boolean batchEnabled;
     private List<InvoiceItemBatchDraft> batches;
 
@@ -227,5 +231,21 @@ public class InvoiceItemDraft {
 
     public void setLocalName(String localName) {
         this.localName = localName;
+    }
+
+    public Boolean getSerialEnabled() {
+        return serialEnabled;
+    }
+
+    public void setSerialEnabled(Boolean serialEnabled) {
+        this.serialEnabled = serialEnabled;
+    }
+
+    public List<PurchaseSerialDraft> getSerials() {
+        return serials;
+    }
+
+    public void setSerials(List<PurchaseSerialDraft> serials) {
+        this.serials = serials;
     }
 }

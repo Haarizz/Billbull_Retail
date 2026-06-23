@@ -2,6 +2,9 @@ package com.billbull.backend.purchase.invoice;
 
 import lombok.Data;
 import java.math.BigDecimal;
+import java.util.List;
+
+import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
 
 @Data
 public class PurchaseInvoiceItemRequest {
@@ -27,6 +30,7 @@ public class PurchaseInvoiceItemRequest {
 
     private String warehouseName;
     private String remarks;
+    private List<PurchaseSerialDraft> serials;
 
 	public String getItemCode() {
 		return itemCode;
@@ -147,6 +151,12 @@ public class PurchaseInvoiceItemRequest {
 	public void setRemarks(String remarks) {
 		this.remarks = remarks;
 	}
-    
-    
+
+    public List<PurchaseSerialDraft> getSerials() {
+        return serials;
+    }
+
+    public void setSerials(List<PurchaseSerialDraft> serials) {
+        this.serials = serials;
+    }
 }

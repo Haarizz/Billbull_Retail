@@ -1,6 +1,8 @@
 package com.billbull.backend.purchase.grn;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.inventory.product.Product;
@@ -36,6 +38,9 @@ public class GrnItemEntity extends BaseEntity {
 	private String remarks;
 
 	private boolean batchManaged;
+
+	@OneToMany(mappedBy = "grnItem", cascade = CascadeType.ALL, orphanRemoval = true)
+	private List<GrnItemSerial> serials = new ArrayList<>();
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
@@ -199,5 +204,13 @@ public class GrnItemEntity extends BaseEntity {
 
 	public void setRemarks(String remarks) {
 		this.remarks = remarks;
+	}
+
+	public List<GrnItemSerial> getSerials() {
+		return serials;
+	}
+
+	public void setSerials(List<GrnItemSerial> serials) {
+		this.serials = serials;
 	}
 }

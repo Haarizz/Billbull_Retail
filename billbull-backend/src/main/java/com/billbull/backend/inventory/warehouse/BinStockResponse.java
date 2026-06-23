@@ -9,6 +9,7 @@ public class BinStockResponse {
     private String productCode;
     private String productName;
     private String batchNumber;
+    private String serialNumber;
     private Integer quantity;
     private Integer reservedQuantity;
     private LocalDate expiryDate;
@@ -23,6 +24,7 @@ public class BinStockResponse {
         this.productCode = stock.getProductCode();
         this.productName = stock.getProductName();
         this.batchNumber = stock.getBatchNumber();
+        this.serialNumber = null;
         this.quantity = stock.getQuantity() != null ? stock.getQuantity().intValue() : 0;
         this.reservedQuantity = stock.getReservedQuantity() != null ? stock.getReservedQuantity().intValue() : 0;
         this.expiryDate = stock.getExpiryDate();
@@ -67,6 +69,14 @@ public class BinStockResponse {
 
     public void setBatchNumber(String batchNumber) {
         this.batchNumber = batchNumber;
+    }
+
+    public String getSerialNumber() {
+        return serialNumber;
+    }
+
+    public void setSerialNumber(String serialNumber) {
+        this.serialNumber = serialNumber;
     }
 
     public Integer getQuantity() {

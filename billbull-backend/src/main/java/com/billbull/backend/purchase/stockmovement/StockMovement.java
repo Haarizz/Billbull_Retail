@@ -44,6 +44,9 @@ public class StockMovement extends BaseEntity {
 
 	private String batchNumber; // Batch/Lot number for traceability
 
+	@jakarta.persistence.Column(name = "serial_number", length = 120)
+	private String serialNumber; // Serial number for serialized traceability
+
 	private LocalDate expiryDate; // Product expiry date
 
 	// Unit cost at the time of inbound receipt (from GRN/Purchase).
@@ -86,6 +89,14 @@ public class StockMovement extends BaseEntity {
 
 	public void setBatchNumber(String batchNumber) {
 		this.batchNumber = batchNumber;
+	}
+
+	public String getSerialNumber() {
+		return serialNumber;
+	}
+
+	public void setSerialNumber(String serialNumber) {
+		this.serialNumber = serialNumber;
 	}
 
 	public LocalDate getExpiryDate() {

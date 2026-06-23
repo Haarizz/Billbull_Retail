@@ -59,7 +59,7 @@ import {
   getZoneLocators,
   getLocatorBins
 } from '../../../api/warehouseApi';
-import { searchProductByBarcode } from '../../../api/productsApi';
+import { getProductById, searchProductByBarcode } from '../../../api/productsApi';
 import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import LocationSelector from '../../../components/common/LocationSelector';
@@ -74,6 +74,7 @@ import InlineProductSearchCell from '../../../components/InlineProductSearchCell
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import SerialEntryModal from '../../../components/purchase/SerialEntryModal';
 import { useCompany } from '../../../context/CompanyContext';
 
 // SHORTCUTS HOOK
@@ -521,6 +522,22 @@ const BatchModal = ({ isOpen, onClose, item, disabled }) => {
   );
 };
 
+const normalizeSerialRows = (serials) => (
+  Array.isArray(serials)
+    ? serials.map((serial, index) => ({
+      id: serial?.id || `serial-${index + 1}`,
+      serialNumber: serial?.serialNumber || '',
+      manufacturingDate: serial?.manufacturingDate || '',
+      expiryDate: serial?.expiryDate || ''
+    }))
+    : []
+);
+
+const getGrnExpectedSerialCount = (item) => {
+  if (!item) return 0;
+  return Math.max(0, Number(item.accepted) || 0) + Math.max(0, Number(item.foc) || 0);
+};
+
 const CompareLPOModal = ({ isOpen, onClose, items }) => {
   if (!isOpen) return null;
 
@@ -783,6 +800,26 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const lpo = await getLpoByNumber(lpoNumber);
       setSelectedLpoDetails(lpo);
 
+      const productIds = Array.isArray(lpo.items)
+        ? [...new Set(
+          lpo.items
+            .map(item => item.productId || item.product?.id)
+            .filter(Boolean)
+        )]
+        : [];
+
+      const productDetailsMap = new Map(
+        await Promise.all(productIds.map(async (productId) => {
+          try {
+            const product = await getProductById(productId);
+            return [productId, product];
+          } catch (error) {
+            console.error(`Failed to enrich LPO product ${productId} for GRN tracking`, error);
+            return [productId, null];
+          }
+        }))
+      );
+
       // Find vendor from vendors list (LpoDetailResponse has no vendorId — match by code then name)
       const vendor = vendors.find(v =>
         (lpo.vendorCode && v.code === lpo.vendorCode) ||
@@ -840,6 +877,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         const grnItems = lpo.items
           .map(lpoItem => {
             const pid = lpoItem.productId || lpoItem.product?.id;
+            const productDetail = pid ? productDetailsMap.get(pid) : null;
             const unitPrice = Number(lpoItem.unitPrice || lpoItem.price || 0);
             const discount = Number(lpoItem.discountPercent || 0);
             const netCost = unitPrice * (1 - discount / 100);
@@ -885,7 +923,23 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               total: pending * netCost,
               variance: 0, // No variance initially as we match pending
 
-              batch: Boolean(lpoItem.isBatchTracked || lpoItem.batchTracked)
+              batch: Boolean(
+                lpoItem.isBatchTracked ||
+                lpoItem.batchTracked ||
+                lpoItem.product?.isBatch ||
+                productDetail?.isBatch
+              ),
+              serialEnabled: Boolean(
+                lpoItem.isSerial ||
+                lpoItem.serialEnabled ||
+                lpoItem.product?.isSerial ||
+                productDetail?.isSerial
+              ),
+              serials: normalizeSerialRows(lpoItem.serials),
+              availableUnits: productDetail?.availableUnits || [lpoItem.uom || lpoItem.unit || "Unit"],
+              unitConversions: productDetail?.unitConversions || {},
+              unitPrices: productDetail?.unitPrices || {},
+              unitCosts: productDetail?.unitCosts || {}
             };
           })
           .filter(item => item.lpoQty > 0)
@@ -975,7 +1029,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
           foc: Number(i.foc || i.focQty || 0),
           focUnit: i.focUnit || i.uom || 'PCS',
           remarks: i.remarks || '',
-          variance: i.received - i.lpoQty
+          variance: i.received - i.lpoQty,
+          batch: Boolean(i.batch ?? i.batchManaged ?? i.batchEnabled),
+          serialEnabled: Boolean(i.serialEnabled ?? i.isSerial),
+          serials: normalizeSerialRows(i.serials)
         });
       })
     );
@@ -997,8 +1054,18 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
 
   const handleOpenBatchModal = (item) => {
+    if (!item?.serialEnabled && !item?.batch) return;
     setSelectedBatchItem(item);
     setBatchModalOpen(true);
+  };
+
+  const handleSaveSerials = (serials) => {
+    if (!selectedBatchItem) return;
+    setItems(prev => prev.map(item => (
+      item.id === selectedBatchItem.id
+        ? { ...item, serials: normalizeSerialRows(serials) }
+        : item
+    )));
   };
 
   // Handle LPO selection change
@@ -1114,7 +1181,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
-      batch: false, // Default to false
+      batch: Boolean(product.isBatch ?? product.batch),
+      serialEnabled: Boolean(product.isSerial ?? product.serial),
+      serials: [],
       foc: 0,
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
@@ -1174,6 +1243,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       unitConversions: raw.unitConversions,
       unitPrices: raw.unitPrices,
       unitCosts: raw.unitCosts,
+      isSerial: Boolean(p.isSerial ?? p.serial),
+      isBatch: Boolean(p.isBatch ?? p.batch),
     };
   };
 
@@ -1257,7 +1328,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
       total: netCost * qty,
       variance: qty,
-      batch: false,
+      batch: Boolean(product.isBatch ?? product.batch),
+      serialEnabled: Boolean(product.isSerial ?? product.serial),
+      serials: [],
       foc: 0,
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
@@ -1286,7 +1359,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       netCost: 0,
       total: 0,
       variance: 0,
-      batch: true,
+      batch: false,
+      serialEnabled: false,
+      serials: [],
       tax: 5,
       taxAmt: 0,
       remarks: '',
@@ -1480,9 +1555,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   return (
     <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 relative flex-1">
 
+      <SerialEntryModal
+        isOpen={isBatchModalOpen && Boolean(selectedBatchItem?.serialEnabled)}
+        onClose={() => setBatchModalOpen(false)}
+        onSave={handleSaveSerials}
+        item={selectedBatchItem}
+        expectedQty={getGrnExpectedSerialCount(selectedBatchItem)}
+        disabled={isLocked}
+        title="Serial Tracking"
+      />
+
       {/* Batch Modal */}
       <BatchModal
-        isOpen={isBatchModalOpen}
+        isOpen={isBatchModalOpen && Boolean(selectedBatchItem?.batch) && !selectedBatchItem?.serialEnabled}
         onClose={() => setBatchModalOpen(false)}
         item={selectedBatchItem}
         disabled={isLocked}
@@ -1969,7 +2054,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                                     code: '', barcode: '', name: '',
                                     uom: 'PCS', lpoQty: 0, received: 0, accepted: 0, rejected: 0,
                                     unitCost: 0, lpoPrice: 0, disc: 0, netCost: 0, total: 0,
-                                    variance: 0, batch: false, tax: 5, taxAmt: 0,
+                                    variance: 0, batch: false, serialEnabled: false, serials: [], tax: 5, taxAmt: 0,
                                     foc: 0, focUnit: 'PCS', availableUnits: ['PCS'],
                                     unitConversions: {}, unitPrices: {}, unitCosts: {}
                                   };
@@ -2003,14 +2088,27 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
                         <td className="p-3 text-right font-bold text-[#F5C742]">{item.total.toFixed(2)}</td>
                         <td className="p-3 text-center">
-                          {!isLocked && (
-                            <button
-                              onClick={() => handleRemoveItem(item.id)}
-                              className="text-red-400 hover:text-red-600"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          <div className="flex items-center justify-center gap-2">
+                            {(item.serialEnabled || item.batch) && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenBatchModal(item)}
+                                className="px-2 py-1 text-[10px] font-semibold rounded border border-slate-200 text-slate-600 hover:bg-slate-50"
+                              >
+                                {item.serialEnabled
+                                  ? `Serials ${(item.serials || []).filter(serial => serial?.serialNumber).length}/${getGrnExpectedSerialCount(item)}`
+                                  : 'Batches'}
+                              </button>
+                            )}
+                            {!isLocked && (
+                              <button
+                                onClick={() => handleRemoveItem(item.id)}
+                                className="text-red-400 hover:text-red-600"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
 
@@ -2476,6 +2574,16 @@ const GRN = () => {
         taxAmt: Number(i.taxAmt) || 0,
         total: i.total,
         batch: i.batch,
+        serials: Array.isArray(i.serials)
+          ? i.serials.map(serial => ({
+            id: serial.id !== null && serial.id !== undefined && serial.id !== '' && Number.isFinite(Number(serial.id))
+              ? Number(serial.id)
+              : null,
+            serialNumber: serial.serialNumber || '',
+            manufacturingDate: serial.manufacturingDate || null,
+            expiryDate: serial.expiryDate || null
+          }))
+          : [],
         focQty: Number(i.foc) || 0,
         focUnit: i.focUnit || i.uom || 'PCS',
         remarks: i.remarks || ''
@@ -2491,17 +2599,18 @@ const GRN = () => {
 
   // Workflow Handlers
   const handleSaveDraft = async (formData, items) => {
-
-    // ✅ PRODUCT SAFETY CHECK (ADD HERE)
     if (items.some(i => !i.productId)) {
       alert("One or more items are missing Product mapping");
       return;
     }
-
-    const saved = await persistGrn(formData, items, GRN_STATUS.DRAFT);
-    setCurrentGrnData(saved);
-    await fetchGrns();
-    setActiveNavTab("list");
+    try {
+      const saved = await persistGrn(formData, items, GRN_STATUS.DRAFT);
+      setCurrentGrnData(saved);
+      await fetchGrns();
+      setActiveNavTab("list");
+    } catch (error) {
+      alert(`Failed to save draft: ${error.response?.data?.message || error.message || "Unknown error"}`);
+    }
   };
 
 
@@ -2566,7 +2675,7 @@ const GRN = () => {
       setActiveNavTab("qc"); // Switch to QC tab
     } catch (error) {
       console.error("Submit QC Failed:", error);
-      alert(`Failed to submit for QC: ${error.message || "Unknown error"}`);
+      alert(`Failed to submit for QC: ${error.response?.data?.message || error.message || "Unknown error"}`);
     }
   };
 

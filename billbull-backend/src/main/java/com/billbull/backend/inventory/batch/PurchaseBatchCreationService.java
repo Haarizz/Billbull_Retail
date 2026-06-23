@@ -78,7 +78,8 @@ public class PurchaseBatchCreationService {
             if (!product.isBatch()) {
                 continue;
             }
-            int expectedQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty());
+            int expectedQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
+                    + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
             int actualQty = batchRepository
                     .findBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdOrderByUnitIndexAsc(
                             DOC_TYPE_PURCHASE_INVOICE, invoice.getId(), item.getId())
@@ -161,7 +162,8 @@ public class PurchaseBatchCreationService {
                 continue;
             }
 
-            int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty());
+            int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
+                    + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
             if (baseQty <= 0) {
                 continue;
             }
@@ -362,7 +364,9 @@ public class PurchaseBatchCreationService {
         }
         for (PurchaseInvoiceItem item : invoice.getItems()) {
             Product product = requireProductByCode(item.getItemCode(), invoice.getInvoiceNumber());
-            if (product.isBatch() && resolveBaseQty(product.getId(), item.getUom(), item.getQty()) > 0) {
+            int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
+                    + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
+            if (product.isBatch() && baseQty > 0) {
                 return true;
             }
         }

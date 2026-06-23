@@ -4,7 +4,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,10 +19,14 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.purchase.lpo.Lpo;
 import com.billbull.backend.purchase.lpo.LpoRepository;
+import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
+import com.billbull.backend.purchase.serial.PurchaseSerialService;
 
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
@@ -53,6 +59,8 @@ public class GrnService {
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
+    private final PurchaseSerialService purchaseSerialService;
+    private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
@@ -72,6 +80,8 @@ public class GrnService {
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
+            PurchaseSerialService purchaseSerialService,
+            SerialMasterRepository serialMasterRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
         this.stockMovementService = stockMovementService;
@@ -90,6 +100,8 @@ public class GrnService {
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
+        this.purchaseSerialService = purchaseSerialService;
+        this.serialMasterRepository = serialMasterRepository;
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
     }
@@ -106,6 +118,17 @@ public class GrnService {
                                 .setScale(0, RoundingMode.HALF_UP).intValue()
                         : qty)
                 .orElse(qty);
+    }
+
+    private BigDecimal resolveBaseUnitCost(Long productId, String unitName, BigDecimal uomCost) {
+        if (uomCost == null || unitName == null || unitName.isBlank()) return uomCost;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> (p.getConversion() != null && p.getConversion().compareTo(BigDecimal.ZERO) > 0)
+                        ? uomCost.divide(p.getConversion(), 4, RoundingMode.HALF_UP)
+                        : uomCost)
+                .orElse(uomCost);
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -227,6 +250,7 @@ public class GrnService {
         grn.getItems().clear();
 
         BigDecimal subtotal = BigDecimal.ZERO;
+        Set<String> documentSerials = new HashSet<>();
 
         for (GrnItemRequest i : req.items()) {
 
@@ -261,10 +285,11 @@ public class GrnService {
             item.setDiscountPercent(i.discountPercent() != null ? i.discountPercent() : BigDecimal.ZERO);
             item.setTaxAmount(i.taxAmt());
             item.setPurchaseTax(i.purchaseTax());
-            item.setBatchManaged(i.batch());
+            item.setBatchManaged(product.isBatch() && i.batch());
             item.setFocQty(i.focQty());
             item.setFocUnit(i.focUnit());
             item.setRemarks(i.remarks());
+            syncItemSerials(item, i.serials(), documentSerials, grn.getGrnNo());
 
             subtotal = subtotal.add(i.total());
             grn.getItems().add(item);
@@ -464,7 +489,60 @@ public class GrnService {
             // Use per-item bin override if provided, otherwise fall back to GRN header bin
             Long effectiveBinId = productBinMap.getOrDefault(productId, grnBinId);
 
-            if (item.getProduct().isBatch()) {
+            if (item.getProduct().isSerial()) {
+                int baseQty = baseAccepted + baseFoc;
+                List<GrnItemSerial> serials = item.getSerials() != null ? item.getSerials() : List.of();
+                if (serials.size() != baseQty) {
+                    throw new IllegalStateException(
+                            "Expected " + baseQty + " serial numbers for GRN " + grn.getGrnNo()
+                                    + " line #" + item.getId() + " but found " + serials.size());
+                }
+
+                List<String> serialNumbers = serials.stream()
+                        .map(GrnItemSerial::getSerialNumber)
+                        .toList();
+                purchaseSerialService.assertNoDuplicateSerials(serialNumbers,
+                        "GRN " + grn.getGrnNo() + " line " + item.getProductCode());
+                purchaseSerialService.assertSerialsNotAlreadyPosted(serialNumbers,
+                        "GRN " + grn.getGrnNo() + " line " + item.getProductCode());
+
+                BigDecimal baseUnitCost = resolveBaseUnitCost(
+                        productId,
+                        item.getUom(),
+                        item.getNetCost() != null ? item.getNetCost() : item.getUnitCost());
+                List<SerialMaster> serialMasters = new ArrayList<>(serials.size());
+                for (GrnItemSerial serial : serials) {
+                    stockMovementService.postInboundSerializedStock(
+                            StockSourceType.GRN,
+                            grn.getId(),
+                            productId,
+                            grn.getWarehouse().getId(),
+                            grnZoneId,
+                            grnLocatorId,
+                            effectiveBinId,
+                            serial.getSerialNumber(),
+                            serial.getExpiryDate(),
+                            baseUnitCost,
+                            grn.getGrnNo());
+                    serialMasters.add(purchaseSerialService.newSerialMaster(
+                            serial.getSerialNumber(),
+                            productId,
+                            item.getProductCode(),
+                            item.getProductName(),
+                            "GRN",
+                            grn.getId(),
+                            item.getId(),
+                            grn.getGrnNo(),
+                            grn.getWarehouse().getId(),
+                            grnZoneId,
+                            grnLocatorId,
+                            effectiveBinId,
+                            baseUnitCost,
+                            serial.getManufacturingDate(),
+                            serial.getExpiryDate()));
+                }
+                serialMasterRepository.saveAll(serialMasters);
+            } else if (item.getProduct().isBatch()) {
                 int baseQty = baseAccepted + baseFoc;
                 List<BatchMaster> batches = purchaseBatchCreationService.findForGrnLine(grn.getId(), item.getId());
                 if (batches.size() != baseQty) {
@@ -583,6 +661,8 @@ public class GrnService {
                         i.getLineTotal(),
                         i.getDiscountPercent(),
                         i.getTaxAmount(),
+                        i.getProduct().isSerial(),
+                        toSerialDrafts(i.getSerials()),
                         i.isBatchManaged(),
                         i.getFocQty(),
                         i.getFocUnit(),
@@ -601,6 +681,51 @@ public class GrnService {
     private String generateGrnNo() {
         return documentNumberingService.resolveNumberForCreate(
                 com.billbull.backend.purchase.settings.PurchaseDocumentType.GRN, null);
+    }
+
+    private void syncItemSerials(
+            GrnItemEntity item,
+            List<PurchaseSerialDraft> requestSerials,
+            Set<String> documentSerials,
+            String grnNo) {
+        item.getSerials().clear();
+
+        List<PurchaseSerialDraft> normalized = purchaseSerialService.normalizeDrafts(requestSerials);
+        purchaseSerialService.assertNoDuplicateSerials(
+                normalized.stream().map(PurchaseSerialDraft::getSerialNumber).toList(),
+                "GRN item " + item.getProductCode());
+
+        for (PurchaseSerialDraft serial : normalized) {
+            if (!documentSerials.add(serial.getSerialNumber())) {
+                throw new IllegalArgumentException(
+                        "Duplicate serial number '" + serial.getSerialNumber() + "' in GRN " + grnNo);
+            }
+            GrnItemSerial entity = new GrnItemSerial();
+            entity.setGrnItem(item);
+            entity.setSerialNumber(serial.getSerialNumber());
+            entity.setManufacturingDate(serial.getManufacturingDate());
+            entity.setExpiryDate(serial.getExpiryDate());
+            item.getSerials().add(entity);
+        }
+    }
+
+    private List<PurchaseSerialDraft> toSerialDrafts(List<GrnItemSerial> serials) {
+        if (serials == null || serials.isEmpty()) {
+            return List.of();
+        }
+        return serials.stream()
+                .sorted(java.util.Comparator.comparing(
+                        GrnItemSerial::getId,
+                        java.util.Comparator.nullsLast(Long::compareTo)))
+                .map(serial -> {
+                    PurchaseSerialDraft dto = new PurchaseSerialDraft();
+                    dto.setId(serial.getId());
+                    dto.setSerialNumber(serial.getSerialNumber());
+                    dto.setManufacturingDate(serial.getManufacturingDate());
+                    dto.setExpiryDate(serial.getExpiryDate());
+                    return dto;
+                })
+                .toList();
     }
 
     private GrnEntity getScopedGrn(Long id) {

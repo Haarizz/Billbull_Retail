@@ -1,6 +1,8 @@
 package com.billbull.backend.purchase.invoice;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -10,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.OneToMany;
 
 @Entity
 @Table(name = "purchase_invoice_items")
@@ -44,6 +47,9 @@ public class PurchaseInvoiceItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "invoice_id", nullable = false)
     private PurchaseInvoice invoice;
+
+    @OneToMany(mappedBy = "invoiceItem", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
+    private List<PurchaseInvoiceItemSerial> serials = new ArrayList<>();
 
 	public Long getId() {
 		return id;
@@ -180,5 +186,13 @@ public class PurchaseInvoiceItem {
 	public void setInvoice(PurchaseInvoice invoice) {
 		this.invoice = invoice;
 	}
+
+    public List<PurchaseInvoiceItemSerial> getSerials() {
+        return serials;
+    }
+
+    public void setSerials(List<PurchaseInvoiceItemSerial> serials) {
+        this.serials = serials;
+    }
     
 }

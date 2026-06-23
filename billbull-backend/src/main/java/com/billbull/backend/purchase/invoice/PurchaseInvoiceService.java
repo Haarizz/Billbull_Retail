@@ -5,7 +5,9 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
@@ -20,6 +22,8 @@ import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.BinStockRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
@@ -33,6 +37,8 @@ import com.billbull.backend.purchase.lpo.LpoStatus;
 import com.billbull.backend.purchase.payment.PaymentMode;
 import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherService;
+import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
+import com.billbull.backend.purchase.serial.PurchaseSerialService;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.settings.branch.Branch;
@@ -63,6 +69,8 @@ public class PurchaseInvoiceService {
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
+    private final PurchaseSerialService purchaseSerialService;
+    private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
@@ -76,6 +84,8 @@ public class PurchaseInvoiceService {
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
+            PurchaseSerialService purchaseSerialService,
+            SerialMasterRepository serialMasterRepository,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
         super();
         this.repository = repository;
@@ -96,6 +106,8 @@ public class PurchaseInvoiceService {
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
+        this.purchaseSerialService = purchaseSerialService;
+        this.serialMasterRepository = serialMasterRepository;
         this.documentNumberingService = documentNumberingService;
     }
 
@@ -273,12 +285,14 @@ public class PurchaseInvoiceService {
                 d.setShortDesc(i.getProduct().getShortDesc());
                 d.setLocalName(i.getProduct().getLocalName());
                 d.setDetailedDesc(i.getProduct().getDetailedDesc());
+                d.setSerialEnabled(i.getProduct().isSerial());
                 d.setBarcode(productBarcodeRepository.findByProductId(i.getProduct().getId()).stream()
                         .map(b -> b.getBarcode())
                         .filter(b -> b != null && !b.isBlank())
                         .findFirst()
                         .orElse(null));
             }
+            d.setSerials(List.of());
 
             return d;
         }).toList();
@@ -387,12 +401,14 @@ public class PurchaseInvoiceService {
                 d.setShortDesc(i.getProduct().getShortDesc());
                 d.setLocalName(i.getProduct().getLocalName());
                 d.setDetailedDesc(i.getProduct().getDetailedDesc());
+                d.setSerialEnabled(i.getProduct().isSerial());
                 d.setBarcode(productBarcodeRepository.findByProductId(i.getProduct().getId()).stream()
                         .map(b -> b.getBarcode())
                         .filter(b -> b != null && !b.isBlank())
                         .findFirst()
                         .orElse(null));
             }
+            d.setSerials(i.getSerials() != null ? i.getSerials().stream().map(this::toSerialDraft).toList() : List.of());
 
             return d;
         }).toList();
@@ -535,13 +551,15 @@ public class PurchaseInvoiceService {
             }
 
             int qty = item.getQty() != null ? item.getQty() : 0;
-            if (qty <= 0) {
+            int focQty = item.getFocQty() != null ? item.getFocQty() : 0;
+            if (qty <= 0 && focQty <= 0) {
                 continue;
             }
 
             Product product = productOpt.get();
             Long productId = product.getId();
-            int baseQty = resolveBaseQty(productId, item.getUom(), qty);
+            int baseQty = resolveBaseQty(productId, item.getUom(), qty)
+                    + resolveBaseQty(productId, item.getFocUnit(), focQty);
             if (baseQty <= 0) {
                 continue;
             }
@@ -551,7 +569,56 @@ public class PurchaseInvoiceService {
                     .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity().intValue() : 0)
                     .sum();
 
-            if (!isAgainstGrn && product.isBatch()) {
+            if (!isAgainstGrn && product.isSerial()) {
+                List<PurchaseInvoiceItemSerial> serials = item.getSerials() != null ? item.getSerials() : List.of();
+                if (serials.size() != baseQty) {
+                    throw new IllegalStateException(
+                            "Expected " + baseQty + " serial numbers for invoice " + invoice.getInvoiceNumber()
+                                    + " line #" + item.getId() + " but found " + serials.size());
+                }
+
+                List<String> serialNumbers = serials.stream()
+                        .map(PurchaseInvoiceItemSerial::getSerialNumber)
+                        .toList();
+                purchaseSerialService.assertNoDuplicateSerials(serialNumbers,
+                        "purchase invoice " + invoice.getInvoiceNumber() + " line " + item.getItemCode());
+                purchaseSerialService.assertSerialsNotAlreadyPosted(serialNumbers,
+                        "purchase invoice " + invoice.getInvoiceNumber() + " line " + item.getItemCode());
+
+                BigDecimal baseUnitCost = resolveBaseUnitCost(productId, item.getUom(), item.getUnitCost());
+                List<SerialMaster> serialMasters = new ArrayList<>(serials.size());
+                for (PurchaseInvoiceItemSerial serial : serials) {
+                    stockService.postInboundSerializedStock(
+                            StockSourceType.DIRECT_PURCHASE,
+                            invoice.getId(),
+                            productId,
+                            warehouseId,
+                            zoneId,
+                            locatorId,
+                            binId,
+                            serial.getSerialNumber(),
+                            serial.getExpiryDate(),
+                            baseUnitCost,
+                            invoice.getInvoiceNumber());
+                    serialMasters.add(purchaseSerialService.newSerialMaster(
+                            serial.getSerialNumber(),
+                            productId,
+                            item.getItemCode(),
+                            item.getItemName(),
+                            "PURCHASE_INVOICE",
+                            invoice.getId(),
+                            item.getId(),
+                            invoice.getInvoiceNumber(),
+                            warehouseId,
+                            zoneId,
+                            locatorId,
+                            binId,
+                            baseUnitCost,
+                            serial.getManufacturingDate(),
+                            serial.getExpiryDate()));
+                }
+                serialMasterRepository.saveAll(serialMasters);
+            } else if (!isAgainstGrn && product.isBatch()) {
                 List<BatchMaster> batches = purchaseBatchCreationService
                         .findForPurchaseInvoiceLine(invoice.getId(), item.getId());
                 if (batches.size() != baseQty) {
@@ -865,6 +932,7 @@ public class PurchaseInvoiceService {
     }
 
     private void syncItems(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
+        Set<String> documentSerials = new HashSet<>();
         req.getItems().forEach(i -> {
             PurchaseInvoiceItem item = new PurchaseInvoiceItem();
             item.setItemCode(i.getItemCode());
@@ -883,6 +951,7 @@ public class PurchaseInvoiceService {
             item.setWarehouseName(i.getWarehouseName());
             item.setRemarks(i.getRemarks());
             item.setInvoice(invoice);
+            syncItemSerials(item, i.getSerials(), documentSerials, invoice.getInvoiceNumber());
             invoice.getItems().add(item);
         });
     }
@@ -1006,12 +1075,15 @@ public class PurchaseInvoiceService {
                         if (d.getDetailedDesc() == null && product.getDetailedDesc() != null) {
                             d.setDetailedDesc(product.getDetailedDesc());
                         }
+                        d.setSerialEnabled(product.isSerial());
                         d.setSku(product.getSku());
                         d.setBrandName(product.getBrand() != null ? product.getBrand().getName() : null);
                         d.setShortDesc(product.getShortDesc());
                         d.setLocalName(product.getLocalName());
                     });
                 }
+                List<PurchaseSerialDraft> serials = findSerialsForResponse(invoice, i);
+                d.setSerials(serials);
                 List<BatchMaster> batches = findBatchesForResponse(invoice, i);
                 d.setBatches(batches.stream().map(this::toBatchDraft).toList());
                 d.setBatchEnabled(!batches.isEmpty());
@@ -1046,6 +1118,25 @@ public class PurchaseInvoiceService {
                 .orElse(List.of());
     }
 
+    private List<PurchaseSerialDraft> findSerialsForResponse(PurchaseInvoice invoice, PurchaseInvoiceItem item) {
+        if (item == null) {
+            return List.of();
+        }
+        if (item.getSerials() != null && !item.getSerials().isEmpty()) {
+            return item.getSerials().stream().map(this::toSerialDraft).toList();
+        }
+        if (invoice == null || invoice.getGrnId() == null) {
+            return List.of();
+        }
+        return grnRepo.findById(invoice.getGrnId())
+                .map(grn -> grn.getItems().stream()
+                        .filter(grnItem -> java.util.Objects.equals(grnItem.getProductCode(), item.getItemCode()))
+                        .findFirst()
+                        .map(grnItem -> grnItem.getSerials().stream().map(this::toSerialDraft).toList())
+                        .orElse(List.of()))
+                .orElse(List.of());
+    }
+
     private InvoiceItemBatchDraft toBatchDraft(BatchMaster batch) {
         InvoiceItemBatchDraft dto = new InvoiceItemBatchDraft();
         dto.setId(batch.getId());
@@ -1056,6 +1147,50 @@ public class PurchaseInvoiceService {
         dto.setQuantity(batch.getQuantity());
         dto.setUnitCost(batch.getUnitCost());
         return dto;
+    }
+
+    private PurchaseSerialDraft toSerialDraft(PurchaseInvoiceItemSerial serial) {
+        PurchaseSerialDraft dto = new PurchaseSerialDraft();
+        dto.setId(serial.getId());
+        dto.setSerialNumber(serial.getSerialNumber());
+        dto.setManufacturingDate(serial.getManufacturingDate());
+        dto.setExpiryDate(serial.getExpiryDate());
+        return dto;
+    }
+
+    private PurchaseSerialDraft toSerialDraft(com.billbull.backend.purchase.grn.GrnItemSerial serial) {
+        PurchaseSerialDraft dto = new PurchaseSerialDraft();
+        dto.setId(serial.getId());
+        dto.setSerialNumber(serial.getSerialNumber());
+        dto.setManufacturingDate(serial.getManufacturingDate());
+        dto.setExpiryDate(serial.getExpiryDate());
+        return dto;
+    }
+
+    private void syncItemSerials(
+            PurchaseInvoiceItem item,
+            List<PurchaseSerialDraft> requestSerials,
+            Set<String> documentSerials,
+            String invoiceNumber) {
+        item.getSerials().clear();
+
+        List<PurchaseSerialDraft> normalized = purchaseSerialService.normalizeDrafts(requestSerials);
+        purchaseSerialService.assertNoDuplicateSerials(
+                normalized.stream().map(PurchaseSerialDraft::getSerialNumber).toList(),
+                "purchase invoice item " + item.getItemCode());
+
+        for (PurchaseSerialDraft serial : normalized) {
+            if (!documentSerials.add(serial.getSerialNumber())) {
+                throw new IllegalArgumentException(
+                        "Duplicate serial number '" + serial.getSerialNumber() + "' in purchase invoice " + invoiceNumber);
+            }
+            PurchaseInvoiceItemSerial entity = new PurchaseInvoiceItemSerial();
+            entity.setInvoiceItem(item);
+            entity.setSerialNumber(serial.getSerialNumber());
+            entity.setManufacturingDate(serial.getManufacturingDate());
+            entity.setExpiryDate(serial.getExpiryDate());
+            item.getSerials().add(entity);
+        }
     }
 
     private java.util.Map<String, String> buildPrimaryImageMap(List<String> itemCodes) {
