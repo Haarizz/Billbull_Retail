@@ -64,25 +64,51 @@ public class PosCheckoutController {
         SalesInvoice saved = invoiceService.save(invoice);
 
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
-        double tenderedNum  = request.getAmountTendered() != null ? request.getAmountTendered() : 0.0;
-        double paymentAmount = Math.min(tenderedNum, invoiceTotal);
+        double cashAmt = request.getCashAmount() != null ? request.getCashAmount() : 0.0;
+        double cardAmt = request.getCardAmount() != null ? request.getCardAmount() : 0.0;
+        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001;
+        double paymentAmount = hasSplitAmounts
+                ? Math.min(cashAmt + cardAmt, invoiceTotal)
+                : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
 
         // Step 2: transition status while the invoice is still DRAFT so that
         // doUpdateStatus() fires: FEFO/batch reservation, auto-DN generation,
         // stock deduction, and the GL invoice-posting journal all happen here.
         SalesInvoiceStatus intendedStatus =
-                (paymentAmount >= invoiceTotal && invoiceTotal > 0) ? SalesInvoiceStatus.PAID
-              : (paymentAmount > 0)                                  ? SalesInvoiceStatus.PARTIALLY_PAID
-              :                                                         SalesInvoiceStatus.CONFIRMED;
+                (paymentAmount >= invoiceTotal - 0.001 && invoiceTotal > 0) ? SalesInvoiceStatus.PAID
+              : (paymentAmount > 0)                                           ? SalesInvoiceStatus.PARTIALLY_PAID
+              :                                                                  SalesInvoiceStatus.CONFIRMED;
         invoiceService.updateStatus(saved.getId(), intendedStatus);
 
-        // Step 3: record payment — creates Payment row + Receipt Voucher + GL
-        // (Dr Cash/Card → Cr AR), and syncs amountPaid/balance on the invoice.
+        // Step 3: record payment — creates Payment row(s) + Receipt Voucher(s) + GL.
+        // Split into per-leg rows when both cash and card amounts are provided: each leg
+        // gets the correct settlement account (Cash 1001 vs Merchant Clearing 1013).
         if (paymentAmount > 0) {
-            String paymentMode = resolvePaymentMode(request);
-            invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode,
-                    request.getCardReference(), LocalDate.now(),
-                    null, null, null, request.getCombinedPaymentMode());
+            if (hasSplitAmounts && cashAmt > 0.001 && cardAmt > 0.001) {
+                // Card leg first (exact); cash fills the remainder up to invoiceTotal.
+                double cardPayment = Math.min(cardAmt, invoiceTotal);
+                double cashPayment = Math.max(0, Math.min(invoiceTotal - cardPayment, cashAmt));
+                String cardMode = resolveCardMode(request);
+                if (cardPayment > 0) {
+                    invoiceService.recordPayment(saved.getId(), cardPayment, cardMode,
+                            request.getCardReference(), LocalDate.now(),
+                            null, null, null, null);
+                }
+                if (cashPayment > 0) {
+                    invoiceService.recordPayment(saved.getId(), cashPayment, "Cash",
+                            null, LocalDate.now(), null, null, null, null);
+                }
+            } else {
+                // Single-leg payment (pure Cash, pure Card, Credit, Bank Transfer, etc.)
+                String paymentMode = hasSplitAmounts && cardAmt > 0.001
+                        ? resolveCardMode(request)      // card-only with explicit cardAmt
+                        : hasSplitAmounts               // cash-only with explicit cashAmt
+                        ? "Cash"
+                        : resolvePaymentMode(request);  // legacy: use paymentMode string
+                invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode,
+                        request.getCardReference(), LocalDate.now(),
+                        null, null, null, request.getCombinedPaymentMode());
+            }
         }
 
         // Update session totals
@@ -226,6 +252,12 @@ public class PosCheckoutController {
     private String currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null ? auth.getName() : "system";
+    }
+
+    /** Returns the card network name to use as payment mode (e.g. "Visa", "Card"). */
+    private String resolveCardMode(PosCheckoutRequest req) {
+        if (req.getCardType() != null && !req.getCardType().isBlank()) return req.getCardType();
+        return "Card";
     }
 
     private String resolvePaymentMode(PosCheckoutRequest req) {

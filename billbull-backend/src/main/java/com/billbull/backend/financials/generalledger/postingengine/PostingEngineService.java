@@ -2108,9 +2108,18 @@ public class PostingEngineService {
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {
                 String mode = normalizePaymentMode(paymentMode);
                 return switch (mode) {
-                        case "CASH"                    -> new AccountSelection("Cash",              ACC_CASH);
-                        case "CARD", "CREDIT_CARD"     -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
-                        default                        -> new AccountSelection("Bank",              ACC_BANK);
+                        case "CASH" -> new AccountSelection("Cash", ACC_CASH);
+                        case "CARD", "CREDIT_CARD" -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                        default -> {
+                                // POS sends card network names (Visa, Mastercard, Amex, etc.).
+                                // Any mode containing a card-related keyword routes to Merchant Clearing.
+                                if (mode.contains("CARD") || mode.contains("VISA")
+                                        || mode.contains("MASTER") || mode.contains("AMEX")
+                                        || mode.contains("AMERICAN_EXPRESS") || mode.contains("DISCOVER")) {
+                                        yield new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                                }
+                                yield new AccountSelection("Bank", ACC_BANK);
+                        }
                 };
         }
 

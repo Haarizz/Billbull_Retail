@@ -363,6 +363,7 @@ public class PaymentService {
         return switch (paymentStatus) {
             case PENDING -> "Pending";
             case CANCELLED -> "Cancelled";
+            case FAILED -> "Failed";
             case COMPLETED, PARTIAL -> "Completed";
         };
     }

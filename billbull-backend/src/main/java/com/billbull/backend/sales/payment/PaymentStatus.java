@@ -4,5 +4,7 @@ public enum PaymentStatus {
     PENDING,
     COMPLETED,
     PARTIAL,
-    CANCELLED
+    CANCELLED,
+    /** Card terminal declined or network error — payment not collected. Invoice remains unpaid. */
+    FAILED
 }
