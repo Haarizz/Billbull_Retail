@@ -108,6 +108,8 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
   @Query("SELECT COALESCE(SUM(o.orderTotal - o.advanceAmount), 0) FROM SalesOrder o WHERE o.status IN (com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED, com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID, com.billbull.backend.sales.salesorder.SalesOrderStatus.FULLY_PAID)")
   Double sumOutstandingBalance();
 
+  long countByStatusIn(java.util.Collection<SalesOrderStatus> statuses);
+
   /** Sales-report loader: date-bounded orders with line items fetched in one query. */
   @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items WHERE o.orderDate >= :dateFrom AND o.orderDate <= :dateTo")
   List<SalesOrder> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);

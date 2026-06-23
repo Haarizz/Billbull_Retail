@@ -21,6 +21,9 @@ public class PosCheckoutRequest {
     private String counterName;
     private Double billDiscountAmount;
     private String notes;
+    private String shippingAddress;
+    private String driverName;
+    private String deliveryNotes;
     private List<PosCheckoutItem> items;
 
     public static class PosCheckoutItem {
@@ -92,6 +95,12 @@ public class PosCheckoutRequest {
     public void setBillDiscountAmount(Double billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getShippingAddress() { return shippingAddress; }
+    public void setShippingAddress(String shippingAddress) { this.shippingAddress = shippingAddress; }
+    public String getDriverName() { return driverName; }
+    public void setDriverName(String driverName) { this.driverName = driverName; }
+    public String getDeliveryNotes() { return deliveryNotes; }
+    public void setDeliveryNotes(String deliveryNotes) { this.deliveryNotes = deliveryNotes; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
 }

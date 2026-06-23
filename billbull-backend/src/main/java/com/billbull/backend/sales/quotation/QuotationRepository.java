@@ -12,6 +12,8 @@ import java.util.List;
 public interface QuotationRepository extends JpaRepository<Quotation, Long> {
   List<Quotation> findByStatus(QuotationStatus status);
 
+  long countByStatus(QuotationStatus status);
+
   List<Quotation> findByDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 
   Quotation findTopByOrderByQtnNoDesc();

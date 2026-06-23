@@ -18,9 +18,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 /**
  * Characterization tests for {@link PosSessionService} cash-reconciliation and
@@ -45,12 +47,14 @@ class PosSessionServiceTest {
     @Mock private PosSessionRepository repo;
     @Mock private SalesInvoiceRepository invoiceRepo;
     @Mock private BranchAccessService branchAccessService;
+    @Mock private BranchRepository branchRepository;
+    @Mock private PostingEngineService postingEngine;
 
     private PosSessionService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosSessionService(repo, invoiceRepo, branchAccessService);
+        service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository, postingEngine);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 

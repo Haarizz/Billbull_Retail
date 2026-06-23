@@ -1,19 +1,25 @@
 package com.billbull.backend.pos.search;
 
 import com.billbull.backend.inventory.batch.BatchMasterRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovement;
+import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.sales.advance.AdvanceApplicationService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class PosLookupService {
@@ -22,15 +28,18 @@ public class PosLookupService {
     private final SalesInvoiceRepository invoiceRepository;
     private final AdvanceApplicationService advanceApplicationService;
     private final BatchMasterRepository batchMasterRepository;
+    private final StockMovementRepository stockMovementRepository;
 
     public PosLookupService(CustomerRepository customerRepository,
                             SalesInvoiceRepository invoiceRepository,
                             AdvanceApplicationService advanceApplicationService,
-                            BatchMasterRepository batchMasterRepository) {
+                            BatchMasterRepository batchMasterRepository,
+                            StockMovementRepository stockMovementRepository) {
         this.customerRepository = customerRepository;
         this.invoiceRepository = invoiceRepository;
         this.advanceApplicationService = advanceApplicationService;
         this.batchMasterRepository = batchMasterRepository;
+        this.stockMovementRepository = stockMovementRepository;
     }
 
     @Transactional(readOnly = true)
@@ -84,24 +93,39 @@ public class PosLookupService {
         return res;
     }
 
+    private static final List<StockSourceType> SALE_MOVEMENT_TYPES =
+            List.of(StockSourceType.SALES_INVOICE, StockSourceType.DELIVERY_NOTE);
+
     @Transactional(readOnly = true)
     public PosBatchCheckResponse batchCheck(String batchNumber, String invoiceNumber,
                                             String itemCode, String customerMobile) {
         List<SalesInvoice> invoices = new ArrayList<>();
-        // batchNumber used to pin the display value; pinnedBatchNumber is @Transient so
-        // we resolve via batch_master → productCode → invoices containing that item code.
         String resolvedBatchNumber = null;
         String resolvedItemCode = itemCode != null && !itemCode.isBlank() ? itemCode.trim() : null;
 
         if (batchNumber != null && !batchNumber.isBlank()) {
             String bn = batchNumber.trim();
             resolvedBatchNumber = bn;
-            // Resolve batch → product code via batch_master, then find invoices by item code
-            java.util.Optional<com.billbull.backend.inventory.batch.BatchMaster> bm =
-                    batchMasterRepository.findFirstByBatchNumberIgnoreCase(bn);
-            if (bm.isPresent()) {
-                String productCode = bm.get().getProductCode();
-                invoices = invoiceRepository.findByItemCodeWithItems(productCode);
+
+            // Use StockMovement as source of truth: only invoices that have an actual outbound
+            // deduction for this exact batch are genuine "Sold" records.
+            List<StockMovement> saleMovements =
+                    stockMovementRepository.findOutboundByBatchNumber(bn, SALE_MOVEMENT_TYPES);
+
+            List<String> invoiceNumbers = saleMovements.stream()
+                    .map(StockMovement::getReferenceNo)
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            if (!invoiceNumbers.isEmpty()) {
+                invoices = invoiceRepository.findByInvoiceNumberIn(invoiceNumbers);
+                // Resolve product code for item-level matching within the invoice
+                if (resolvedItemCode == null) {
+                    resolvedItemCode = batchMasterRepository.findFirstByBatchNumberIgnoreCase(bn)
+                            .map(bm -> bm.getProductCode())
+                            .orElse(null);
+                }
             }
         } else if (invoiceNumber != null && !invoiceNumber.isBlank()) {
             invoices = invoiceRepository.findByInvoiceNumberPrefixWithItems(invoiceNumber.trim());
@@ -111,20 +135,28 @@ public class PosLookupService {
 
         List<PosBatchCheckResponse.BatchSoldItem> results = new ArrayList<>();
         final String finalBatchNumber = resolvedBatchNumber;
+        final String finalItemCode = resolvedItemCode;
+
+        // Resolve expiry once from batch_master
+        final java.time.LocalDate batchExpiry = finalBatchNumber != null
+                ? batchMasterRepository.findFirstByBatchNumberIgnoreCase(finalBatchNumber)
+                        .map(bm -> bm.getExpiryDate())
+                        .orElse(null)
+                : null;
 
         for (SalesInvoice inv : invoices) {
             for (SalesInvoiceItem item : inv.getItems()) {
                 if (Boolean.TRUE.equals(item.getVoided())) continue;
 
-                // Filter by itemCode if provided
-                if (resolvedItemCode != null) {
-                    if (item.getItemCode() == null || !item.getItemCode().equalsIgnoreCase(resolvedItemCode)) continue;
+                // When searching by batch, only include the matching product's line items
+                if (finalItemCode != null) {
+                    if (item.getItemCode() == null || !item.getItemCode().equalsIgnoreCase(finalItemCode)) continue;
                 }
 
                 PosBatchCheckResponse.BatchSoldItem sold = new PosBatchCheckResponse.BatchSoldItem();
                 sold.setItemCode(item.getItemCode());
                 sold.setItemName(item.getItemName());
-                sold.setBatchNumber(finalBatchNumber); // the scanned batch number
+                sold.setBatchNumber(finalBatchNumber);
                 sold.setSoldQty(item.getQuantity());
                 sold.setStatus("Sold");
                 sold.setInvoiceNumber(inv.getInvoiceNumber());
@@ -139,12 +171,7 @@ public class PosLookupService {
                 sold.setItemPrice(item.getPrice() != null ? item.getPrice().doubleValue() : null);
                 sold.setItemTaxAmount(item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : null);
                 sold.setItemNetAmount(item.getNetAmount() != null ? item.getNetAmount().doubleValue() : null);
-
-                // Enrich with batch expiry from batch_master
-                if (finalBatchNumber != null) {
-                    batchMasterRepository.findFirstByBatchNumberIgnoreCase(finalBatchNumber)
-                            .ifPresent(bm -> sold.setExpiryDate(bm.getExpiryDate()));
-                }
+                sold.setExpiryDate(batchExpiry);
 
                 results.add(sold);
             }
@@ -154,6 +181,30 @@ public class PosLookupService {
         response.setResults(results);
         response.setTotal(results.size());
         return response;
+    }
+
+    /**
+     * Returns up to 20 recent invoices for a customer, shaped as lightweight summary maps
+     * for the POS History tab.  Only non-draft, non-cancelled invoices are included.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> customerHistory(String customerCode) {
+        if (customerCode == null || customerCode.isBlank()) return List.of();
+        List<SalesInvoice> invoices = invoiceRepository.findRecentByCustomerCode(
+                customerCode.trim(), PageRequest.of(0, 20));
+        return invoices.stream().map(inv -> {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", inv.getId());
+            m.put("invoiceNumber", inv.getInvoiceNumber());
+            m.put("invoiceDate", inv.getInvoiceDate() != null ? inv.getInvoiceDate().toString() : null);
+            m.put("invoiceTotal", inv.getInvoiceTotal());
+            m.put("amountPaid", inv.getAmountPaid());
+            m.put("balance", inv.getBalance());
+            m.put("paymentMode", inv.getPaymentMode());
+            m.put("status", inv.getStatus() != null ? inv.getStatus().name() : null);
+            m.put("itemCount", inv.getItems() != null ? inv.getItems().size() : 0);
+            return m;
+        }).collect(Collectors.toList());
     }
 
     private PosCreditBalanceResponse notFoundCredit() {

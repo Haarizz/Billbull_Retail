@@ -1,9 +1,11 @@
 package com.billbull.backend.pos.session;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,6 +26,8 @@ public class PosSessionService {
     private final PosSessionRepository repo;
     private final SalesInvoiceRepository invoiceRepo;
     private final BranchAccessService branchAccessService;
+    private final BranchRepository branchRepository;
+    private final PostingEngineService postingEngine;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -35,10 +39,14 @@ public class PosSessionService {
 
     public PosSessionService(PosSessionRepository repo,
                              SalesInvoiceRepository invoiceRepo,
-                             BranchAccessService branchAccessService) {
+                             BranchAccessService branchAccessService,
+                             BranchRepository branchRepository,
+                             PostingEngineService postingEngine) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
+        this.branchRepository = branchRepository;
+        this.postingEngine = postingEngine;
     }
 
     private String currentUser() {
@@ -141,6 +149,19 @@ public class PosSessionService {
         movement.setPerformedAt(LocalDateTime.now());
         session.getCashMovements().add(movement);
         repo.save(session);
+
+        // Post GL journal: DROP_IN → Dr Cash / Cr Petty Cash; DROP_OUT → Dr Expense / Cr Cash
+        Branch branch = session.getBranchId() != null
+                ? branchRepository.findById(session.getBranchId()).orElse(null)
+                : null;
+        postingEngine.createJournalFromCashMovement(
+                movement.getId(),
+                movementType,
+                amount,
+                description,
+                session.getSessionDate(),
+                branch);
+
         return movement;
     }
 
