@@ -75,6 +75,12 @@ export const getPosInvoices = async ({ dateFrom, dateTo, branchId } = {}) => {
   return res.data;
 };
 
+/** Returns { invoice, zatcaQr, sellerName, trn } for receipt rendering. */
+export const getPosReceiptData = async (invoiceId) => {
+  const res = await api.get(`${BASE}/checkout/invoices/${invoiceId}/receipt`);
+  return res.data;
+};
+
 // ── X-Report / Z-Report ────────────────────────────────────────────────────
 
 export const getPosXReport = async (sessionId) => {

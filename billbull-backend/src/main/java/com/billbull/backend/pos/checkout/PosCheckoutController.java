@@ -1,6 +1,7 @@
 package com.billbull.backend.pos.checkout;
 
 import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.receipt.ZatcaQrGenerator;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
@@ -9,15 +10,19 @@ import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -34,15 +39,17 @@ public class PosCheckoutController {
     private final SalesInvoiceRepository invoiceRepository;
     private final CustomerRepository customerRepository;
     private final PosAuditService auditService;
+    private final BranchRepository branchRepository;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
-                                  PosAuditService auditService) {
+                                  PosAuditService auditService, BranchRepository branchRepository) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
         this.customerRepository = customerRepository;
         this.auditService = auditService;
+        this.branchRepository = branchRepository;
     }
 
     @PostMapping
@@ -191,6 +198,47 @@ public class PosCheckoutController {
         LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now();
         LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : LocalDate.now();
         return invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
+    }
+
+    /**
+     * Receipt data endpoint: returns the invoice plus a ZATCA-compliant QR code payload.
+     * The QR payload is a base64 TLV string the frontend passes to qrcode.js for rendering.
+     *
+     * GET /api/pos/checkout/invoices/{id}/receipt
+     */
+    @GetMapping("/invoices/{id}/receipt")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getReceiptData(@PathVariable Long id) {
+        SalesInvoice invoice = invoiceService.getById(id);
+        if (invoice.getItems() != null) invoice.getItems().size(); // init LAZY
+
+        // Resolve seller name + TRN from branch
+        String sellerName = invoice.getBranchName();
+        String trn = null;
+        if (invoice.getBranchId() != null) {
+            var branch = branchRepository.findById(invoice.getBranchId()).orElse(null);
+            if (branch != null) {
+                if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                trn = branch.getTrnNumber();
+            }
+        }
+
+        BigDecimal totalWithVat = invoice.getInvoiceTotal() != null
+                ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+        BigDecimal vatTotal = invoice.getTaxTotal() != null
+                ? invoice.getTaxTotal() : BigDecimal.ZERO;
+
+        LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
+                ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+
+        String qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("invoice", invoice);
+        result.put("zatcaQr", qrCode);
+        result.put("sellerName", sellerName);
+        result.put("trn", trn);
+        return ResponseEntity.ok(result);
     }
 
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {

@@ -34,6 +34,7 @@ import { getImageUrl } from '../../utils/urlUtils';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { printHtml, generateReportA4Html, downloadPdfViaServer } from '../../utils/printGenerator';
+import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import {
   Calculator,
@@ -984,7 +985,24 @@ ${footer?`<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</di
 </body></html>`;
 };
 
-const buildThermalReceiptHtml = (paperSize, invoice, { companyName, trn, header, footer, showTrn, isReprint = false }) => {
+// Encodes UAE FTA ZATCA Phase-1 QR data as base64 TLV (mirrors ZatcaQrGenerator.java).
+const buildZatcaTlvBase64 = (sellerName, trn, isoTimestamp, totalWithVat, vatTotal) => {
+  const enc = new TextEncoder();
+  const tlvField = (tag, value) => {
+    const bytes = enc.encode(String(value || ''));
+    return [tag, bytes.length, ...bytes];
+  };
+  const bytes = new Uint8Array([
+    ...tlvField(0x01, sellerName || ''),
+    ...tlvField(0x02, trn && trn.trim() ? trn.trim() : 'N/A'),
+    ...tlvField(0x03, isoTimestamp || new Date().toISOString()),
+    ...tlvField(0x04, parseFloat(totalWithVat || 0).toFixed(2)),
+    ...tlvField(0x05, parseFloat(vatTotal || 0).toFixed(2)),
+  ]);
+  return btoa(String.fromCharCode(...bytes));
+};
+
+const buildThermalReceiptHtml = (paperSize, invoice, { companyName, trn, header, footer, showTrn, isReprint = false, zatcaQrDataUrl = null }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1020,13 +1038,15 @@ ${items.map(it => {
   const qty = it.quantity || 0;
   const price = it.unitPrice || it.price || 0;
   const total = it.netAmount || it.lineTotal || (qty * price);
-  return `<div class="row"><span>${esc(it.itemName || it.productName || '')} x${qty}</span><span>AED ${fmt(total)}</span></div>`;
+  const batch = it.batchNumber || it.pinnedBatchNumber || '';
+  return `<div class="row"><span>${esc(it.itemName || it.productName || '')} x${qty}</span><span>AED ${fmt(total)}</span></div>${batch ? `<div style="font-size:9px;color:#555;padding-left:2px">Batch: ${esc(batch)}</div>` : ''}`;
 }).join('')}
 <div class="d"></div>
 <div class="row"><span>Subtotal</span><span>AED ${fmt(subTotal)}</span></div>
 <div class="row"><span>VAT</span><span>AED ${fmt(taxTotal)}</span></div>
 <div class="row b" style="font-size:13px"><span>TOTAL</span><span>AED ${fmt(grandTotal)}</span></div>
 <div class="d"></div>
+${zatcaQrDataUrl ? `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>` : ''}
 ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>` : ''}
 </body></html>`;
 };
@@ -1318,6 +1338,20 @@ export default function POSSales() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [deliveryDriver, setDeliveryDriver] = useState('');
+  const [deliveryCharge, setDeliveryCharge] = useState('');
+  // Delivery modal
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [deliveryModalTab, setDeliveryModalTab] = useState('existing');
+  const [deliveryCustomerId, setDeliveryCustomerId] = useState('');
+  const [deliveryNewName, setDeliveryNewName] = useState('');
+  const [deliveryNewMobile, setDeliveryNewMobile] = useState('');
+  const [deliveryNewEmail, setDeliveryNewEmail] = useState('');
+  // Delivery settle modal
+  const [showDeliverySettleModal, setShowDeliverySettleModal] = useState(false);
+  const [deliverySettleSearch, setDeliverySettleSearch] = useState('');
+  const [deliverySettlePersonFilter, setDeliverySettlePersonFilter] = useState('All Persons');
+  const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
+  const [deliverySettlePayMode, setDeliverySettlePayMode] = useState('Cash');
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
 
@@ -2799,7 +2833,9 @@ export default function POSSales() {
           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
           printHtml(generateDocumentPrintHtml(template, data, options));
         } else {
-          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, isReprint: true }));
+          const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
+          const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
+          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, isReprint: true, zatcaQrDataUrl: qrDataUrlR }));
         }
       }
     } catch (err) {
@@ -5367,7 +5403,7 @@ export default function POSSales() {
 
             {/* Tab bar */}
             <div className="flex flex-shrink-0 border-b-2 border-[#327F74]/20 bg-white">
-              {([['functions', 'Functions'], ['delivery', 'Delivery'], ['history', 'History']]).map(([id, label]) => (
+              {([['functions', 'Functions'], ['history', 'History']]).map(([id, label]) => (
                 <button key={id} type="button" onClick={() => setRightPanelTab(id)}
                   className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wide transition-all border-b-2 -mb-[2px] ${
                     rightPanelTab === id
@@ -5404,7 +5440,8 @@ export default function POSSales() {
                     { id: 'reprint',    label: 'Reprint',      icon: <Printer className="h-5 w-5" />,     color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',     action: () => setShowReprintModal(true) },
                     { id: 'lock-pos',   label: 'Lock POS',     icon: <Lock className="h-5 w-5" />,        color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
                     { id: 'close-session', label: 'Close Session', icon: <XCircle className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',         action: () => setShowCloseSessionDialog(true) },
-                    { id: 'delivery',     label: 'Delivery',      icon: <TrendingUp className="h-5 w-5" />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => setRightPanelTab('delivery') },
+                    { id: 'delivery',       label: 'Delivery',       icon: <Truck className="h-5 w-5" />,        color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliveryModalTab('existing'); setDeliveryCustomerId(''); setShowDeliveryModal(true); } },
+                    { id: 'delivery-settle',label: 'Delivery Settle', icon: <PackageCheck className="h-5 w-5" />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
                   ];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                   return (
@@ -5434,109 +5471,6 @@ export default function POSSales() {
                     </>
                   );
                 })()}
-              </div>
-            )}
-
-            {/* ── Delivery tab ── */}
-            {rightPanelTab === 'delivery' && (
-              <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                <div className="rounded-xl bg-[#327F74]/5 border border-[#327F74]/20 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#327F74] mb-1">Current Order</p>
-                  <p className="text-sm font-semibold text-[#1E293B]">{currentInvoice.items.length} items · {formatCurrency(currentInvoice.total)}</p>
-                  <p className="text-[10px] text-gray-400">{selectedCustomerData?.name || 'Walk-in'}</p>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address</label>
-                  <textarea
-                    rows={3}
-                    value={deliveryAddress}
-                    onChange={e => setDeliveryAddress(e.target.value)}
-                    placeholder="Enter delivery address…"
-                    className="w-full text-sm rounded-xl border border-[#327F74]/30 focus:border-[#327F74] focus:outline-none px-3 py-2 resize-none bg-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Driver</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {['Ahmed K.', 'Ravi S.', 'Omar F.', 'Unassigned'].map(d => (
-                      <button key={d} type="button" onClick={() => setDeliveryDriver(d)}
-                        className={`py-2 rounded-xl text-xs font-semibold border transition-all ${
-                          deliveryDriver === d
-                            ? 'bg-[#327F74] text-white border-[#327F74]'
-                            : 'bg-white text-gray-600 border-gray-200 hover:border-[#327F74]/40'
-                        }`}>
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Notes</label>
-                  <textarea
-                    rows={2}
-                    value={deliveryNotes}
-                    onChange={e => setDeliveryNotes(e.target.value)}
-                    placeholder="Special instructions…"
-                    className="w-full text-sm rounded-xl border border-[#327F74]/30 focus:border-[#327F74] focus:outline-none px-3 py-2 resize-none bg-white"
-                  />
-                </div>
-
-                <div className="grid grid-cols-3 gap-1.5">
-                  {['Pending', 'En Route', 'Delivered'].map(s => (
-                    <div key={s} className={`rounded-xl border py-2 text-center text-[10px] font-bold ${
-                      s === 'Pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' :
-                      s === 'En Route' ? 'bg-blue-50 border-blue-200 text-blue-700' :
-                      'bg-green-50 border-green-200 text-green-700'
-                    }`}>{s}</div>
-                  ))}
-                </div>
-
-                <button type="button"
-                  disabled={!deliveryAddress || currentInvoice.items.length === 0}
-                  onClick={() => {
-                    const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-                      ? Math.max(0, currentInvoice.total - activeLayawayDeposit)
-                      : currentInvoice.total;
-                    setCheckoutPhase('payment');
-                    setShowPaymentDialog(true);
-                    setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
-                    setCheckoutKeypadVisible(false);
-                    setCheckoutKeypadMode('numeric');
-                    setCheckoutKeypadTarget('tender');
-                  }}
-                  className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
-                  <Truck className="h-4 w-4" />
-                  Confirm Delivery Order
-                </button>
-
-                {/* ── Delivery Settlement ── */}
-                <div className="pt-2">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="h-px flex-1 bg-[#327F74]/20"></div>
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-[#327F74]">Delivery Settlement</span>
-                    <div className="h-px flex-1 bg-[#327F74]/20"></div>
-                  </div>
-
-                  <div className="rounded-xl border border-[#327F74]/30 bg-[#327F74]/5 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#327F74] mb-2">Payment Breakdown</p>
-                    {[
-                      { label: 'Sub-total', icon: <Receipt className="h-3.5 w-3.5" />, value: currentInvoice.subtotal },
-                      { label: 'Tax', icon: <Percent className="h-3.5 w-3.5" />, value: currentInvoice.tax },
-                    ].map(row => (
-                      <div key={row.label} className="flex items-center justify-between py-1.5 border-b border-[#327F74]/10 last:border-0">
-                        <div className="flex items-center gap-2 text-gray-500">{row.icon}<span className="text-xs">{row.label}</span></div>
-                        <span className="text-sm font-bold text-[#1E293B]">{formatCurrency(row.value)}</span>
-                      </div>
-                    ))}
-                    <div className="flex items-center justify-between pt-2 mt-1">
-                      <span className="text-xs font-bold text-[#1E293B]">Order Total</span>
-                      <span className="text-sm font-black text-[#327F74]">{formatCurrency(currentInvoice.total)}</span>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -6010,7 +5944,7 @@ export default function POSSales() {
 
           {/* Tab bar */}
           <div className="flex border-b border-gray-100 shrink-0">
-            {(['functions','delivery','history']).map(tab => (
+            {(['functions','history']).map(tab => (
               <button key={tab} type="button" onClick={() => setRightPanelTab(tab)}
                 className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wide transition-colors ${rightPanelTab === tab ? 'border-b-2 border-[#327F74] text-[#327F74]' : 'border-b-2 border-transparent text-gray-400 hover:text-gray-600'}`}>
                 {tab === 'functions' ? 'Actions' : tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -6139,7 +6073,9 @@ export default function POSSales() {
                     { id:'service',      label:'Service &amp; Repair', icon:<Wrench className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/30 text-[#327F74]', action:()=>{ setShowServiceRepair(true); setServiceView('list'); } },
                     { id:'z-report',     label:'Z-Report',      icon:<FileBarChart className="h-4 w-4"/>,color:'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',          action:()=>setCurrentView('z-report') },
                     { id:'lock-pos',     label:'Lock POS',      icon:<Lock className="h-4 w-4"/>,       color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',  action:()=>setShowLockPOS(true) },
-                    { id:'close-session',label:'Close Session',  icon:<XCircle className="h-4 w-4"/>,   color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',           action:()=>setShowCloseSessionDialog(true) },
+                    { id:'close-session',  label:'Close Session',   icon:<XCircle className="h-4 w-4"/>,      color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',           action:()=>setShowCloseSessionDialog(true) },
+                    { id:'delivery',       label:'Delivery',        icon:<Truck className="h-4 w-4"/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliveryModalTab('existing'); setDeliveryCustomerId(''); setShowDeliveryModal(true); } },
+                    { id:'delivery-settle',label:'Delivery Settle', icon:<PackageCheck className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
                   ];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                   return (
@@ -6155,45 +6091,6 @@ export default function POSSales() {
                   );
                 })()}
               </div>
-            </div>
-          )}
-
-          {/* Delivery tab — reuse focus layout delivery */}
-          {rightPanelTab === 'delivery' && (
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
-              <div className="rounded-xl bg-[#327F74]/5 border border-[#327F74]/20 p-2.5">
-                <p className="text-[9px] font-bold uppercase tracking-wide text-[#327F74] mb-0.5">Order</p>
-                <p className="text-xs font-semibold text-[#1E293B]">{currentInvoice.items.length} items · {formatCurrency(currentInvoice.total)}</p>
-              </div>
-              <div>
-                <label className="text-[9px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Address</label>
-                <textarea rows={3} value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)}
-                  placeholder="Delivery address…"
-                  className="w-full text-xs rounded-xl border border-[#327F74]/30 focus:border-[#327F74] focus:outline-none px-2.5 py-2 resize-none bg-white" />
-              </div>
-              <div>
-                <label className="text-[9px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Driver</label>
-                <div className="grid grid-cols-2 gap-1">
-                  {['Ahmed K.', 'Ravi S.', 'Omar F.', 'Unassigned'].map(d => (
-                    <button key={d} type="button" onClick={() => setDeliveryDriver(d)}
-                      className={`py-1.5 rounded-lg text-[9px] font-semibold border transition-all ${
-                        deliveryDriver === d
-                          ? 'bg-[#327F74] text-white border-[#327F74]'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-[#327F74]/40'
-                      }`}>{d}</button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-[9px] font-bold uppercase tracking-wide text-gray-500 mb-1 block">Notes</label>
-                <textarea rows={2} value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)}
-                  placeholder="Delivery notes…"
-                  className="w-full text-xs rounded-xl border border-[#327F74]/30 focus:border-[#327F74] focus:outline-none px-2.5 py-2 resize-none bg-white" />
-              </div>
-              <button type="button" onClick={() => { setCheckoutPhase('payment'); setShowPaymentDialog(true); setTenderedAmount(currentInvoice.total > 0 ? currentInvoice.total.toFixed(2) : ''); setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender'); }} disabled={!deliveryAddress || currentInvoice.items.length === 0}
-                className="w-full bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl py-2.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors">
-                <Truck className="h-3.5 w-3.5" />Confirm Delivery
-              </button>
             </div>
           )}
 
@@ -8168,7 +8065,9 @@ export default function POSSales() {
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
-                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true }));
+                          const tlv = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
+                          const qrDataUrl = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 }) : null;
+                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, zatcaQrDataUrl: qrDataUrl }));
                         }
                       } catch (err) { console.warn('POS print error', err); }
                     }}
@@ -11325,6 +11224,269 @@ export default function POSSales() {
           </div>
         </div>
       )}
+
+      {/* ══ NEW DELIVERY ORDER modal ══════════════════════════════════════ */}
+      {showDeliveryModal && (
+        <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            {/* Header */}
+            <div className="bg-[#F5C742] px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-white/30 flex items-center justify-center">
+                  <Truck className="h-4 w-4 text-[#1E293B]" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#1E293B]/70">NEW DELIVERY ORDER</p>
+                  <p className="text-sm font-black text-[#1E293B]">{currentInvoice.items.length} items • {formatCurrency(currentInvoice.total)}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowDeliveryModal(false)} className="text-[#1E293B]/60 hover:text-[#1E293B]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Customer tab switcher */}
+            <div className="flex border-b border-gray-200">
+              <button type="button" onClick={() => setDeliveryModalTab('existing')}
+                className={`flex-1 py-3 text-sm font-semibold transition-colors ${deliveryModalTab === 'existing' ? 'border-b-2 border-[#327F74] text-[#327F74]' : 'text-gray-400 hover:text-gray-600'}`}>
+                Select Existing Customer
+              </button>
+              <button type="button" onClick={() => setDeliveryModalTab('new')}
+                className={`flex-1 py-3 text-sm font-semibold transition-colors ${deliveryModalTab === 'new' ? 'border-b-2 border-[#327F74] text-[#327F74]' : 'text-gray-400 hover:text-gray-600'}`}>
+                + Create New Customer
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[55vh] overflow-y-auto">
+              {deliveryModalTab === 'existing' ? (
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Select Customer</label>
+                  <select value={deliveryCustomerId} onChange={e => setDeliveryCustomerId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]">
+                    <option value="">— Choose customer —</option>
+                    {realCustomers.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}{c.mobile ? ` · ${c.mobile}` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Full Name <span className="text-red-500">*</span></label>
+                    <input type="text" value={deliveryNewName} onChange={e => setDeliveryNewName(e.target.value)}
+                      placeholder="Customer full name"
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Mobile <span className="text-red-500">*</span></label>
+                      <input type="tel" value={deliveryNewMobile} onChange={e => setDeliveryNewMobile(e.target.value)}
+                        placeholder="+971 50 000 0000"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Email</label>
+                      <input type="email" value={deliveryNewEmail} onChange={e => setDeliveryNewEmail(e.target.value)}
+                        placeholder="email@example.com"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
+                <textarea rows={3} value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)}
+                  placeholder="Building, street, area, city..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Charge (AED)</label>
+                  <input type="number" min="0" step="0.01" value={deliveryCharge} onChange={e => setDeliveryCharge(e.target.value)}
+                    placeholder="AED 0.00"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                  <p className="text-[10px] text-gray-400 mt-0.5">Optional — leave blank if free delivery</p>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Delivery Person</label>
+                  <select value={deliveryDriver} onChange={e => setDeliveryDriver(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]">
+                    <option value="">— Select person —</option>
+                    {['Ahmed K.', 'Ravi S.', 'Omar F.'].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Order Notes / Delivery Remarks</label>
+                <textarea rows={2} value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)}
+                  placeholder="Special instructions, landmarks, contact note..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none" />
+              </div>
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
+              <button type="button" onClick={() => setShowDeliveryModal(false)}
+                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors">
+                Cancel
+              </button>
+              <button type="button"
+                disabled={!deliveryAddress || currentInvoice.items.length === 0 || (deliveryModalTab === 'new' && (!deliveryNewName || !deliveryNewMobile))}
+                onClick={() => {
+                  setShowDeliveryModal(false);
+                  const balanceDue = activeLayawayId && activeLayawayDeposit > 0
+                    ? Math.max(0, currentInvoice.total - activeLayawayDeposit)
+                    : currentInvoice.total;
+                  setCheckoutPhase('payment');
+                  setShowPaymentDialog(true);
+                  setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
+                  setCheckoutKeypadVisible(false);
+                  setCheckoutKeypadMode('numeric');
+                  setCheckoutKeypadTarget('tender');
+                }}
+                className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
+                <Truck className="h-4 w-4" />
+                Out for Delivery
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ DELIVERY SETTLEMENT modal ═════════════════════════════════════ */}
+      {showDeliverySettleModal && (() => {
+        const mockOrders = [
+          { id: 1, customer: 'Sarah Johnson',   invoice: 'SI-POS-000421', mobile: '+971 50 123 4567', person: 'Ahmed', invoiceAmt: 285.00, deliveryCharge: 15.00, paidAmt: 0.00 },
+          { id: 2, customer: 'Alex Martinez',   invoice: 'SI-POS-000418', mobile: '+971 55 987 6543', person: 'Ravi',  invoiceAmt: 420.00, deliveryCharge: 20.00, paidAmt: 0.00 },
+          { id: 3, customer: 'Emma Wilson',     invoice: 'SI-POS-000410', mobile: '+971 52 456 7890', person: 'Omar',  invoiceAmt: 180.00, deliveryCharge:  0.00, paidAmt: 180.00 },
+          { id: 4, customer: 'Mohammed Rashid', invoice: 'SI-POS-000408', mobile: '+971 54 321 0987', person: 'Ahmed', invoiceAmt: 640.00, deliveryCharge: 25.00, paidAmt: 0.00 },
+        ];
+        const persons = ['All Persons', ...new Set(mockOrders.map(o => o.person))];
+        const filtered = mockOrders.filter(o => {
+          const q = deliverySettleSearch.toLowerCase();
+          const matchSearch = !q || o.customer.toLowerCase().includes(q) || o.invoice.toLowerCase().includes(q) || o.mobile.includes(q);
+          const matchPerson = deliverySettlePersonFilter === 'All Persons' || o.person === deliverySettlePersonFilter;
+          return matchSearch && matchPerson;
+        });
+        const sel = deliverySettleSelected;
+        const selTotal = sel ? sel.invoiceAmt + sel.deliveryCharge : 0;
+        const selBalance = sel ? Math.max(0, selTotal - sel.paidAmt) : 0;
+        return (
+          <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
+              {/* Header */}
+              <div className="bg-[#F5C742] px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-white/30 flex items-center justify-center">
+                    <PackageCheck className="h-4 w-4 text-[#1E293B]" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#1E293B]/70">DELIVERY SETTLEMENT</p>
+                    <p className="text-sm font-black text-[#1E293B]">{mockOrders.length} orders out for delivery</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setShowDeliverySettleModal(false)} className="text-[#1E293B]/60 hover:text-[#1E293B]">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Search + filter */}
+              <div className="px-4 py-3 border-b border-gray-100 flex gap-3">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input type="text" value={deliverySettleSearch} onChange={e => setDeliverySettleSearch(e.target.value)}
+                    placeholder="Search by invoice, customer, or mobile..."
+                    className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+                <select value={deliverySettlePersonFilter} onChange={e => setDeliverySettlePersonFilter(e.target.value)}
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74]">
+                  {persons.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+
+              {/* Order list */}
+              <div className="overflow-y-auto max-h-[60vh]">
+                <div className="grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                  <div>Customer / Invoice</div>
+                  <div>Person</div>
+                  <div className="text-right">Invoice</div>
+                  <div className="text-right">Delivery</div>
+                  <div className="text-right">Balance</div>
+                </div>
+                {filtered.map(o => {
+                  const balance = Math.max(0, o.invoiceAmt + o.deliveryCharge - o.paidAmt);
+                  const isPaid = balance === 0;
+                  const isSelected = sel?.id === o.id;
+                  return (
+                    <div key={o.id}>
+                      <button type="button" onClick={() => setDeliverySettleSelected(isSelected ? null : o)}
+                        className={`w-full grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-3 border-b border-gray-100 text-left transition-colors ${isSelected ? 'bg-[#FFF8E7] border-[#FDE6A9]' : 'hover:bg-gray-50'}`}>
+                        <div>
+                          <p className="text-sm font-semibold text-[#1E293B]">{o.customer}</p>
+                          <p className="text-[10px] text-gray-400">{o.invoice}</p>
+                          <p className="text-[10px] text-gray-400">{o.mobile}</p>
+                        </div>
+                        <div className="flex items-center text-sm text-gray-600">{o.person}</div>
+                        <div className="flex items-center justify-end text-sm text-gray-700">AED {o.invoiceAmt.toFixed(2)}</div>
+                        <div className="flex items-center justify-end text-sm text-gray-500">{o.deliveryCharge > 0 ? `AED ${o.deliveryCharge.toFixed(2)}` : '–'}</div>
+                        <div className={`flex items-center justify-end text-sm font-bold ${isPaid ? 'text-[#327F74]' : 'text-red-600'}`}>
+                          AED {balance.toFixed(2)}
+                        </div>
+                      </button>
+
+                      {/* Expanded payment panel */}
+                      {isSelected && (
+                        <div className="bg-[#FFFBF0] border-b-2 border-[#FDE6A9] px-4 py-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <p className="text-sm font-bold text-[#1E293B]">{o.customer} — {o.invoice}</p>
+                              <p className="text-xs text-gray-500">{o.person} · {o.mobile}</p>
+                            </div>
+                            <p className="text-base font-black text-[#1E293B]">Total Due <span className="text-[#327F74]">AED {selBalance.toFixed(2)}</span></p>
+                          </div>
+                          <div className="grid grid-cols-4 gap-2 mb-4">
+                            {[
+                              { label: 'Invoice Amt',     val: o.invoiceAmt,     highlight: false, red: false },
+                              { label: 'Delivery Charge', val: o.deliveryCharge, highlight: false, red: false },
+                              { label: 'Paid Amt',        val: o.paidAmt,        highlight: true,  red: false },
+                              { label: 'Balance Due',     val: selBalance,       highlight: false, red: selBalance > 0 },
+                            ].map(r => (
+                              <div key={r.label} className={`rounded-xl p-2.5 border text-center ${r.highlight ? 'bg-[#327F74]/10 border-[#327F74]/30' : r.red ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
+                                <p className="text-[9px] font-bold uppercase tracking-wide text-gray-500 mb-1">{r.label}</p>
+                                <p className={`text-sm font-bold ${r.red ? 'text-red-600' : 'text-[#1E293B]'}`}>AED {r.val.toFixed(2)}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-2">Payment Mode</p>
+                            <div className="flex gap-2">
+                              {['Cash', 'Card', 'Credit', 'Mix'].map(m => (
+                                <button key={m} type="button" onClick={() => setDeliverySettlePayMode(m)}
+                                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${deliverySettlePayMode === m ? 'border-[#F5C742] bg-[#F5C742]/20 text-[#1E293B]' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <button type="button"
+                            disabled={selBalance === 0}
+                            onClick={() => setShowDeliverySettleModal(false)}
+                            className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
+                            <CheckCircle className="h-4 w-4" />
+                            Finalize Order — AED {selBalance.toFixed(2)}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
