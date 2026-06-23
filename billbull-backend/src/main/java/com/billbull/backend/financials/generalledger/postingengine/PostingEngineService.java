@@ -2584,4 +2584,85 @@ public class PostingEngineService {
 
                 return post(entry);
         }
+
+        private static final String TX_LAYAWAY_DEPOSIT = "LAY-DEP";
+
+        /**
+         * Layaway deposit receipt (IFRS 15 §B66 / IAS 32):
+         *   Dr  Cash in Hand (1001)        amount
+         *     Cr  Customer Advances (2060)   amount
+         *
+         * Reference: "LAY-DEP-{layawayId}" — idempotent per layaway.
+         * Card deposits debit Merchant Clearing (1013) instead of Cash (1001).
+         */
+        @Transactional
+        public JournalEntry createJournalFromLayawayDeposit(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String debitAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String debitName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit - " + ref,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, debitName,            debitAccount,        "Layaway deposit received", amount,          BigDecimal.ZERO);
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway deposit received", BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        /**
+         * Reverse the layaway deposit journal when the layaway is cancelled.
+         *   Dr  Customer Advances (2060)   amount
+         *     Cr  Cash in Hand (1001)        amount
+         *
+         * Reference: "LAY-DEP-REV-{layawayId}" — idempotent per layaway.
+         */
+        @Transactional
+        public JournalEntry reverseLayawayDepositJournal(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-REV-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String creditAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String creditName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit Reversal - LAY-DEP-" + layawayId,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway cancelled - deposit reversed", amount,          BigDecimal.ZERO);
+                addLine(entry, creditName,            creditAccount,        "Layaway cancelled - deposit reversed", BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
 }

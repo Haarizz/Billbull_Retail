@@ -15,6 +15,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         Optional<SalesInvoice> findByInvoiceNumber(String invoiceNumber);
 
+        Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
+
         boolean existsByCustomerCode(String customerCode);
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();

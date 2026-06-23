@@ -41,6 +41,15 @@ public class PosCheckoutController {
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalesInvoice> checkout(@RequestBody PosCheckoutRequest request) {
+        // Idempotency guard: if the frontend sends the same checkoutKey twice (network retry),
+        // return the already-completed invoice instead of creating a duplicate.
+        if (request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank()) {
+            var existing = invoiceRepository.findByPosCheckoutKey(request.getCheckoutKey().trim());
+            if (existing.isPresent()) {
+                return ResponseEntity.ok(invoiceService.getById(existing.get().getId()));
+            }
+        }
+
         SalesInvoice invoice = buildInvoice(request);
 
         // Step 1: save builds the invoice (number, totals, items) as DRAFT.
@@ -83,7 +92,7 @@ public class PosCheckoutController {
      * returning the best match (latest first).
      */
     @GetMapping("/invoices/lookup")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasPermission(null, 'sales', 'view')")
     public ResponseEntity<?> lookupInvoiceForReturn(
             @RequestParam(required = false) String invoiceNumber,
             @RequestParam(required = false) String customerMobile,
@@ -152,6 +161,9 @@ public class PosCheckoutController {
         inv.setPosSessionId(req.getSessionId());
         inv.setPosTerminalId(req.getTerminalId());
         inv.setPosCounterName(req.getCounterName());
+        if (req.getCheckoutKey() != null && !req.getCheckoutKey().isBlank()) {
+            inv.setPosCheckoutKey(req.getCheckoutKey().trim());
+        }
         inv.setBillDiscountAmount(req.getBillDiscountAmount() != null
                 ? java.math.BigDecimal.valueOf(req.getBillDiscountAmount()) : null);
         inv.setInternalNotes(req.getNotes());

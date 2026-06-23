@@ -4,6 +4,7 @@ import java.util.List;
 
 public class PosCheckoutRequest {
 
+    private String checkoutKey;
     private String customerCode;
     private String customerName;
     private String paymentMode;
@@ -61,6 +62,8 @@ public class PosCheckoutRequest {
 
     // Getters & Setters
 
+    public String getCheckoutKey() { return checkoutKey; }
+    public void setCheckoutKey(String checkoutKey) { this.checkoutKey = checkoutKey; }
     public String getCustomerCode() { return customerCode; }
     public void setCustomerCode(String customerCode) { this.customerCode = customerCode; }
     public String getCustomerName() { return customerName; }

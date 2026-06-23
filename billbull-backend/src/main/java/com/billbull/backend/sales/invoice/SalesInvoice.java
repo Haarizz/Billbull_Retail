@@ -135,6 +135,9 @@ public class SalesInvoice {
     @Column(name = "pos_terminal_id", length = 100)
     private String posTerminalId;
 
+    @Column(name = "pos_checkout_key", length = 100, unique = true)
+    private String posCheckoutKey;
+
     @Column(name = "pos_counter_name", length = 100)
     private String posCounterName;
 
@@ -470,6 +473,8 @@ public class SalesInvoice {
 
     public String getPosTerminalId() { return posTerminalId; }
     public void setPosTerminalId(String posTerminalId) { this.posTerminalId = posTerminalId; }
+    public String getPosCheckoutKey() { return posCheckoutKey; }
+    public void setPosCheckoutKey(String posCheckoutKey) { this.posCheckoutKey = posCheckoutKey; }
 
     public String getPosCounterName() { return posCounterName; }
     public void setPosCounterName(String posCounterName) { this.posCounterName = posCounterName; }

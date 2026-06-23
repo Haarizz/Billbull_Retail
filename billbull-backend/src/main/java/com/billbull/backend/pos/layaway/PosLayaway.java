@@ -79,6 +79,11 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "deposit_payment_mode")
     private String depositPaymentMode;
 
+    /** Journal entry ID for the deposit GL posting (Dr Cash → Cr Customer Advance).
+     *  Null when no deposit was collected or GL posting is disabled. Used to reverse on cancel. */
+    @Column(name = "deposit_journal_id")
+    private Long depositJournalId;
+
     @Column(name = "deposit_required")
     private Boolean depositRequired = Boolean.FALSE;
 
@@ -188,6 +193,8 @@ public class PosLayaway extends BaseEntity {
 
     public String getDepositPaymentMode() { return depositPaymentMode; }
     public void setDepositPaymentMode(String depositPaymentMode) { this.depositPaymentMode = depositPaymentMode; }
+    public Long getDepositJournalId() { return depositJournalId; }
+    public void setDepositJournalId(Long depositJournalId) { this.depositJournalId = depositJournalId; }
 
     public Boolean getDepositRequired() { return depositRequired; }
     public void setDepositRequired(Boolean depositRequired) { this.depositRequired = depositRequired; }
