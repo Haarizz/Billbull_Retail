@@ -49,6 +49,7 @@ import InlineProductSearchCell from '../../../components/InlineProductSearchCell
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import SerialEntryModal from '../../../components/purchase/SerialEntryModal';
 import { useCompany } from '../../../context/CompanyContext';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { compareDocumentValues } from '../../../utils/documentOrdering';
@@ -276,6 +277,22 @@ const mapInvoiceFromApi = (inv) => {
     submittedBy: inv.submittedBy || "System",
     flag: inv.flag || "None"
   };
+};
+
+const normalizeSerialRows = (serials) => (
+  Array.isArray(serials)
+    ? serials.map((serial, index) => ({
+      id: serial?.id || `serial-${index + 1}`,
+      serialNumber: serial?.serialNumber || '',
+      manufacturingDate: serial?.manufacturingDate || '',
+      expiryDate: serial?.expiryDate || ''
+    }))
+    : []
+);
+
+const getInvoiceExpectedSerialCount = (item) => {
+  if (!item) return 0;
+  return Math.max(0, Number(item.qty) || 0) + Math.max(0, Number(item.foc) || 0);
 };
 
 // Navigation Tabs Configuration
@@ -812,6 +829,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
   const [selectedStockItem, setSelectedStockItem] = useState(null);
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
+  const [isSerialModalOpen, setIsSerialModalOpen] = useState(false);
+  const [selectedSerialItem, setSelectedSerialItem] = useState(null);
   const isViewMode = mode === "view";
 
   // Expanded rows state
@@ -1037,7 +1056,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           foc: Number(item.focQty || 0),
           focUnit: item.focUnit || item.uom || 'PCS',
           lineTotal: Number(item.lineTotal),
-          remarks: item.remarks || ""
+          remarks: item.remarks || "",
+          serialEnabled: Boolean(item.serialEnabled ?? item.isSerial),
+          serials: normalizeSerialRows(item.serials),
+          batchEnabled: Boolean(item.batchEnabled ?? item.batch)
         };
       });
 
@@ -1250,7 +1272,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             discount: item.discountPercent || 0,
             foc: item.focQty || 0,
             focUnit: item.focUnit || item.uom || 'PCS',
-            remarks: item.remarks || ""
+            remarks: item.remarks || "",
+            serialEnabled: Boolean(item.serialEnabled || item.isSerial || item.serial || item.product?.isSerial),
+            serials: normalizeSerialRows(item.serials),
+            batchEnabled: Boolean(item.batchEnabled || item.isBatch || item.isBatchTracked || item.product?.isBatch)
           }))
         }));
 
@@ -1385,7 +1410,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           discountAmount: inferredDiscount,
           foc: Number(item.focQty || 0),
           focUnit: item.focUnit || item.uom || 'PCS',
-          remarks: item.remarks || ""
+          remarks: item.remarks || "",
+          serialEnabled: Boolean(item.serialEnabled ?? item.isSerial),
+          serials: normalizeSerialRows(item.serials),
+          batchEnabled: Boolean(item.batchEnabled ?? item.batch)
         };
       });
 
@@ -1467,6 +1495,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       discount: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
+      serialEnabled: Boolean(product.isSerial ?? product.serial),
+      serials: [],
+      batchEnabled: Boolean(product.isBatch ?? product.batch),
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -1518,6 +1549,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       discount: disc,
       foc: 0,
       focUnit: defaultUnit,
+      serialEnabled: Boolean(product.isSerial ?? product.serial),
+      serials: [],
+      batchEnabled: Boolean(product.isBatch ?? product.batch),
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -1697,6 +1731,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     setFormData({ ...formData, items: formData.items.filter(i => i.id !== id) });
   };
 
+  const handleOpenSerialModal = (item) => {
+    if (!item?.serialEnabled) return;
+    setSelectedSerialItem(item);
+    setIsSerialModalOpen(true);
+  };
+
+  const handleSaveSerials = (serials) => {
+    if (!selectedSerialItem) return;
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map(item => (
+        item.id === selectedSerialItem.id
+          ? { ...item, serials: normalizeSerialRows(serials) }
+          : item
+      ))
+    }));
+  };
+
   const handleInputChange = (id, field, value) => {
     setFormData({
       ...formData,
@@ -1784,6 +1836,16 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
       lineTotal: invoiceType === SOURCE.GRN ? calculateRow(i).total : calculateRow(i).total,
       warehouseName: formData.warehouse,
+      serials: Array.isArray(i.serials)
+        ? i.serials.map(serial => ({
+          id: serial.id !== null && serial.id !== undefined && serial.id !== '' && Number.isFinite(Number(serial.id))
+            ? Number(serial.id)
+            : null,
+          serialNumber: serial.serialNumber || '',
+          manufacturingDate: serial.manufacturingDate || null,
+          expiryDate: serial.expiryDate || null
+        }))
+        : [],
       remarks: i.remarks || ''
     })),
 
@@ -2262,6 +2324,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                                     code: '', barcode: '', name: '', shortDesc: '', detailedDesc: '',
                                     uom: 'PCS', qty: 0, cost: 0, tax: 5, taxAmt: 0, taxAmount: 0,
                                     disc: 0, discount: 0, foc: 0, focUnit: 'PCS',
+                                    serialEnabled: false, serials: [], batchEnabled: false,
                                     availableUnits: ['PCS'], unitConversions: {}, unitPrices: {}, unitCosts: {}
                                   };
                                   focusNextInlineSearchRef.current = blankRow.id;
@@ -2276,12 +2339,23 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                           </td>
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
-                            <button
-                              disabled={isFormLocked}
-                              onClick={() => handleRemoveItem(item.id)}
-                              className={`text-red-400 hover:text-red-600 ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                              <X className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center justify-center gap-2">
+                              {item.serialEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenSerialModal(item)}
+                                  className="px-2 py-1 text-[10px] font-semibold rounded border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                >
+                                  Serials {(item.serials || []).filter(serial => serial?.serialNumber).length}/{getInvoiceExpectedSerialCount(item)}
+                                </button>
+                              )}
+                              <button
+                                disabled={isFormLocked}
+                                onClick={() => handleRemoveItem(item.id)}
+                                className={`text-red-400 hover:text-red-600 ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
 
@@ -2617,6 +2691,16 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         initialSearch={pendingFastEntrySearch}
         actionLabel="Add to Invoice"
         mode="purchase"
+      />
+
+      <SerialEntryModal
+        isOpen={isSerialModalOpen}
+        onClose={() => setIsSerialModalOpen(false)}
+        onSave={handleSaveSerials}
+        item={selectedSerialItem}
+        expectedQty={getInvoiceExpectedSerialCount(selectedSerialItem)}
+        disabled={isFormLocked}
+        title="Serial Tracking"
       />
 
       {/* BB-026: Item Add-Ons Modal */}
