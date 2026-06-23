@@ -41,6 +41,8 @@ public class PosCheckoutRequest {
         private Boolean voided;
         /** Optional reason the cashier entered for voiding this line (displayed on receipt + audit log). */
         private String voidReason;
+        /** Serial number scanned for a serialized product (Product.isSerial). */
+        private String serialNumber;
 
         public String getItemCode() { return itemCode; }
         public void setItemCode(String itemCode) { this.itemCode = itemCode; }
@@ -62,6 +64,8 @@ public class PosCheckoutRequest {
         public void setVoided(Boolean voided) { this.voided = voided; }
         public String getVoidReason() { return voidReason; }
         public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
+        public String getSerialNumber() { return serialNumber; }
+        public void setSerialNumber(String serialNumber) { this.serialNumber = serialNumber; }
     }
 
     // Getters & Setters

@@ -67,6 +67,10 @@ public class SalesInvoiceItem {
     @Column(name = "voided_at")
     private java.time.LocalDateTime voidedAt;
 
+    /** Serial number of the specific unit sold (for Product.isSerial items). */
+    @Column(name = "serial_number", length = 120)
+    private String serialNumber;
+
     @Transient
     private String barcode;
 
@@ -315,6 +319,9 @@ public class SalesInvoiceItem {
 
     public java.time.LocalDateTime getVoidedAt() { return voidedAt; }
     public void setVoidedAt(java.time.LocalDateTime voidedAt) { this.voidedAt = voidedAt; }
+
+    public String getSerialNumber() { return serialNumber; }
+    public void setSerialNumber(String serialNumber) { this.serialNumber = serialNumber; }
 
     public String getBarcode() {
         return barcode;

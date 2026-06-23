@@ -1,11 +1,15 @@
 package com.billbull.backend.pos.checkout;
 
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.receipt.ZatcaQrGenerator;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
@@ -40,16 +44,19 @@ public class PosCheckoutController {
     private final CustomerRepository customerRepository;
     private final PosAuditService auditService;
     private final BranchRepository branchRepository;
+    private final SerialMasterRepository serialMasterRepository;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
-                                  PosAuditService auditService, BranchRepository branchRepository) {
+                                  PosAuditService auditService, BranchRepository branchRepository,
+                                  SerialMasterRepository serialMasterRepository) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
         this.customerRepository = customerRepository;
         this.auditService = auditService;
         this.branchRepository = branchRepository;
+        this.serialMasterRepository = serialMasterRepository;
     }
 
     @PostMapping
@@ -121,6 +128,23 @@ public class PosCheckoutController {
         // Update session totals
         if (request.getSessionId() != null) {
             sessionService.recordInvoiceOnSession(request.getSessionId(), saved);
+        }
+
+        // Mark serial numbers as SOLD for serialized-product line items
+        if (saved.getItems() != null) {
+            for (SalesInvoiceItem soldItem : saved.getItems()) {
+                if (soldItem.getSerialNumber() != null && !soldItem.getSerialNumber().isBlank()
+                        && !Boolean.TRUE.equals(soldItem.getVoided())) {
+                    serialMasterRepository.findBySerialNumberForUpdate(soldItem.getSerialNumber())
+                            .ifPresent(sm -> {
+                                sm.setStatus(SerialStatus.SOLD);
+                                sm.setSoldInvoiceId(saved.getId());
+                                sm.setSoldInvoiceNumber(saved.getInvoiceNumber());
+                                sm.setSoldAt(LocalDateTime.now());
+                                serialMasterRepository.save(sm);
+                            });
+                }
+            }
         }
 
         // Audit: completed checkout + any voided lines
@@ -286,8 +310,13 @@ public class PosCheckoutController {
                     si.setVoidReason(item.getVoidReason());
                     si.setVoidedBy(currentUser());
                     si.setVoidedAt(LocalDateTime.now());
-                } else if (item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
-                    si.setPinnedBatchNumber(item.getBatchNumber().trim());
+                } else {
+                    if (item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
+                        si.setPinnedBatchNumber(item.getBatchNumber().trim());
+                    }
+                    if (item.getSerialNumber() != null && !item.getSerialNumber().isBlank()) {
+                        si.setSerialNumber(item.getSerialNumber().trim());
+                    }
                 }
                 si.setSalesInvoice(inv);
                 return si;
