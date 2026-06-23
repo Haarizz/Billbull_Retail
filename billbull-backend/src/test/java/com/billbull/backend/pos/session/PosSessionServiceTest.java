@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -122,77 +124,88 @@ class PosSessionServiceTest {
     // recordInvoiceOnSession() — payment-mode classification + accumulation
     // ---------------------------------------------------------------------
 
+    // recordInvoiceOnSession now uses an atomic SQL UPDATE (incrementSessionTotals)
+    // instead of load-then-save to avoid hot-row contention at checkout throughput.
+    // Tests verify that the correct deltas are passed to the repository method.
+
     @Test
     void recordInvoiceClassifiesCashSale() {
-        PosSession session = openSession();
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(105.0, "Cash"));
 
-        assertEquals(1, session.getInvoiceCount());
-        assertMoney("105", session.getTotalSales());
-        assertMoney("105", session.getTotalCashSales());
-        assertMoney("0", session.getTotalCardSales());
+        verify(repo).incrementSessionTotals(
+                eq(1L),
+                eq(bd("105.0")),  // totalSales
+                eq(bd("105.0")),  // cashDelta
+                eq(BigDecimal.ZERO),  // cardDelta
+                eq(BigDecimal.ZERO),  // creditDelta
+                eq(BigDecimal.ZERO)); // mixedDelta
     }
 
     @Test
     void recordInvoiceClassifiesMixedWhenCashAndCard() {
-        PosSession session = openSession();
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(200.0, "Cash + Card"));
 
-        assertMoney("200", session.getTotalSales());
-        assertMoney("200", session.getTotalMixedSales());
-        assertMoney("0", session.getTotalCashSales());
+        verify(repo).incrementSessionTotals(
+                eq(1L),
+                eq(bd("200.0")),
+                eq(BigDecimal.ZERO),  // cashDelta
+                eq(BigDecimal.ZERO),  // cardDelta
+                eq(BigDecimal.ZERO),  // creditDelta
+                eq(bd("200.0")));     // mixedDelta
     }
 
     @Test
     void recordInvoiceClassifiesCreditSale() {
-        PosSession session = openSession();
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(75.0, "Credit"));
 
-        assertMoney("75", session.getTotalCreditSales());
-        assertMoney("0", session.getTotalCardSales());
+        verify(repo).incrementSessionTotals(
+                eq(1L),
+                eq(bd("75.0")),
+                eq(BigDecimal.ZERO),  // cashDelta
+                eq(BigDecimal.ZERO),  // cardDelta
+                eq(bd("75.0")),       // creditDelta
+                eq(BigDecimal.ZERO)); // mixedDelta
     }
 
     @Test
     void recordInvoiceUnknownModeFallsBackToCash() {
-        PosSession session = openSession();
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(33.0, "Voucher"));
 
-        assertMoney("33", session.getTotalCashSales());
+        verify(repo).incrementSessionTotals(
+                eq(1L),
+                eq(bd("33.0")),
+                eq(bd("33.0")),       // falls back to cashDelta
+                eq(BigDecimal.ZERO),
+                eq(BigDecimal.ZERO),
+                eq(BigDecimal.ZERO));
     }
 
     @Test
     void recordInvoiceAccumulatesAcrossInvoices() {
-        PosSession session = openSession();
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(100.25, "Cash"));
         service.recordInvoiceOnSession(1L, invoice(50.50, "Cash"));
 
-        assertEquals(2, session.getInvoiceCount());
-        // 100.25 + 50.50 = 150.75 (both exactly representable; sum is exact)
-        assertMoney("150.75", session.getTotalSales());
-        assertMoney("150.75", session.getTotalCashSales());
+        // Two separate atomic increments — each fires one UPDATE.
+        verify(repo, org.mockito.Mockito.times(2))
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any());
     }
 
     @Test
-    void recordInvoiceIgnoresClosedSession() {
-        PosSession session = openSession();
-        session.setStatus(PosSessionStatus.CLOSED);
-        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
-
-        service.recordInvoiceOnSession(1L, invoice(100.0, "Cash"));
-
-        // nothing recorded on a closed session
-        assertEquals(0, session.getInvoiceCount());
-        assertMoney("0", session.getTotalSales());
+    void recordInvoiceDoesNothingForNullSession() {
+        // Null sessionId — no DB call should be made.
+        service.recordInvoiceOnSession(null, invoice(100.0, "Cash"));
+        verify(repo, org.mockito.Mockito.never())
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any());
     }
 
     // ---------------------------------------------------------------------

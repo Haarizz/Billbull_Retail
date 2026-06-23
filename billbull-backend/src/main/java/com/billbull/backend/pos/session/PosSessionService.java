@@ -232,27 +232,30 @@ public class PosSessionService {
     @Transactional
     public void recordInvoiceOnSession(Long sessionId, SalesInvoice invoice) {
         if (sessionId == null) return;
-        PosSession session = repo.findById(sessionId).orElse(null);
-        if (session == null || session.getStatus() != PosSessionStatus.OPEN) return;
 
         BigDecimal total = nz(invoice.getInvoiceTotal());
         String mode = invoice.getPaymentMode() != null ? invoice.getPaymentMode().toLowerCase() : "";
 
-        session.setInvoiceCount((session.getInvoiceCount() != null ? session.getInvoiceCount() : 0) + 1);
-        session.setTotalSales(nz(session.getTotalSales()).add(total));
+        // Classify into buckets — only one bucket receives the total.
+        BigDecimal cashDelta   = BigDecimal.ZERO;
+        BigDecimal cardDelta   = BigDecimal.ZERO;
+        BigDecimal creditDelta = BigDecimal.ZERO;
+        BigDecimal mixedDelta  = BigDecimal.ZERO;
 
         if (mode.contains("cash") && mode.contains("card")) {
-            session.setTotalMixedSales(nz(session.getTotalMixedSales()).add(total));
+            mixedDelta = total;
         } else if (mode.contains("cash")) {
-            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
+            cashDelta = total;
         } else if (mode.contains("card") || mode.contains("credit card")) {
-            session.setTotalCardSales(nz(session.getTotalCardSales()).add(total));
+            cardDelta = total;
         } else if (mode.contains("credit")) {
-            session.setTotalCreditSales(nz(session.getTotalCreditSales()).add(total));
+            creditDelta = total;
         } else {
-            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
+            cashDelta = total; // default fallback (Voucher, etc.) treated as cash
         }
-        repo.save(session);
+
+        // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
+        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta);
     }
 
     @Transactional(readOnly = true)
