@@ -138,6 +138,12 @@ public class SalesInvoice {
     @Column(name = "pos_counter_name", length = 100)
     private String posCounterName;
 
+    @Column(name = "pos_driver_name", length = 200)
+    private String posDriverName;
+
+    @Column(name = "pos_delivery_notes", length = 1000)
+    private String posDeliveryNotes;
+
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
 
@@ -467,6 +473,12 @@ public class SalesInvoice {
 
     public String getPosCounterName() { return posCounterName; }
     public void setPosCounterName(String posCounterName) { this.posCounterName = posCounterName; }
+
+    public String getPosDriverName() { return posDriverName; }
+    public void setPosDriverName(String posDriverName) { this.posDriverName = posDriverName; }
+
+    public String getPosDeliveryNotes() { return posDeliveryNotes; }
+    public void setPosDeliveryNotes(String posDeliveryNotes) { this.posDeliveryNotes = posDeliveryNotes; }
 
     public DeliveryStatus getDeliveryStatus() {
         return deliveryStatus;

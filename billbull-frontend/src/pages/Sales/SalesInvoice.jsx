@@ -3620,7 +3620,16 @@ const SalesInvoice = () => {
                                                     <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
                                                     {renderListStatus(inv.status, inv)}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.salesChannel || 'Retail'}</td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    {(() => {
+                                                        const ch = inv.salesChannel || 'Retail';
+                                                        const color = ch === 'POS'       ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                                    : ch === 'Wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                                    : ch === 'Online'    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                                                                    :                      'bg-amber-50 text-amber-700 border-amber-200';
+                                                        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${color}`}>{ch}</span>;
+                                                    })()}
+                                                </td>
                                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                                     <div className="flex justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>

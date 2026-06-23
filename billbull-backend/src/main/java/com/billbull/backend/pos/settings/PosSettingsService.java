@@ -81,6 +81,10 @@ public class PosSettingsService {
                     existing.setReceiptShareSms(settings.getReceiptShareSms());
                     existing.setReceiptShareEmail(settings.getReceiptShareEmail());
                     existing.setDefaultLayout(settings.getDefaultLayout());
+                    existing.setLayoutHideCategoryPanel(settings.getLayoutHideCategoryPanel());
+                    existing.setLayoutHideItemsPanel(settings.getLayoutHideItemsPanel());
+                    existing.setLayoutHiddenPanelButtons(settings.getLayoutHiddenPanelButtons());
+                    existing.setPrintTemplateConfig(settings.getPrintTemplateConfig());
                     existing.setWalkInCustomerCode(settings.getWalkInCustomerCode());
                     existing.setAutoPrintReceipt(settings.getAutoPrintReceipt());
                     existing.setTaxInclusive(settings.getTaxInclusive());

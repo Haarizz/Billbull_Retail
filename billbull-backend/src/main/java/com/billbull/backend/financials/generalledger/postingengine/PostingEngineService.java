@@ -295,30 +295,11 @@ public class PostingEngineService {
                 BigDecimal subTotalBD = nvl(invoice.getSubTotal());
                 BigDecimal deferredRevenue = subTotalBD.subtract(billDiscAmt);
 
-                // For POS cash sales, debit Cash directly instead of AR (PDF §05 / GAP-002).
-                // Card POS goes through Merchant Clearing (ACC_MERCHANT_CLEARING).
-                // All other flows (credit sales, workflow-driven) use AR.
-                String debitAccount;
-                String debitAccountName;
-                String payMode = invoice.getPaymentMode() != null
-                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
-                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
-                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
-                boolean isPosCash = "CASH".equals(payMode)
-                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
-
-                if (isPosCash) {
-                        debitAccount = ACC_CASH;
-                        debitAccountName = "Cash";
-                } else if (isPosCard) {
-                        debitAccount = ACC_MERCHANT_CLEARING;
-                        debitAccountName = "Merchant Clearing";
-                } else {
-                        debitAccount = ACC_ACCOUNTS_RECEIVABLE;
-                        debitAccountName = "Accounts Receivable";
-                }
-
-                addLine(entry, debitAccountName, debitAccount,
+                // All invoice postings debit AR; the accompanying Receipt Voucher (created by
+                // PaymentService → ReceiptVoucherService) posts Dr Cash/Card / Cr AR to clear it.
+                // This avoids double-posting Cash for POS sales and keeps a clean AR trail for
+                // every sale regardless of payment mode.
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Sales - " + ref,
                                 nvl(invoice.getInvoiceTotal()), BigDecimal.ZERO);
                 addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
@@ -383,21 +364,8 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(date, ref,
                                 "Fast Sale - " + invoice.getInvoiceNumber(), TX_SALES_INVOICE, branch);
 
-                // Resolve debit account from payment mode (same logic as createJournalFromInvoicePosting)
-                String payMode = invoice.getPaymentMode() != null
-                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
-                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
-                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
-                boolean isPosCash = "CASH".equals(payMode)
-                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
-
-                String debitAccount     = isPosCard ? ACC_MERCHANT_CLEARING
-                                        : isPosCash ? ACC_CASH
-                                        : ACC_ACCOUNTS_RECEIVABLE;
-                String debitAccountName = isPosCard ? "Merchant Clearing"
-                                        : isPosCash ? "Cash"
-                                        : "Accounts Receivable";
-
+                // Debit AR — the Receipt Voucher posted by PaymentService clears AR with
+                // Dr Cash/Card / Cr AR. This avoids double-posting the settlement account.
                 BigDecimal invoiceTotal = nvl(invoice.getInvoiceTotal());
                 BigDecimal taxTotal     = nvl(invoice.getTaxTotal());
                 BigDecimal delivery     = nvl(invoice.getDeliveryCharge());
@@ -405,8 +373,7 @@ public class PostingEngineService {
                 BigDecimal subTotal     = nvl(invoice.getSubTotal());
                 BigDecimal netRevenue   = subTotal.subtract(billDisc);
 
-                // Debit: cash / card / AR
-                addLine(entry, debitAccountName, debitAccount,
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Fast Sale - " + ref, invoiceTotal, BigDecimal.ZERO);
 
                 // Credits: revenue, VAT, delivery, rounding
@@ -2554,6 +2521,66 @@ public class PostingEngineService {
                 AccountSelection cashAcc = resolveIncomingPaymentAccount(paymentMode);
                 addLine(entry, cashAcc.name, cashAcc.code, narration, amount, BigDecimal.ZERO, null);
                 addLine(entry, "Share Capital", ACC_SHARE_CAPITAL, narration, BigDecimal.ZERO, amount, null);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // POS CASH MOVEMENT — cash drop in / cash out from till
+        // =========================================================
+
+        private static final String TX_CASH_MOVEMENT = "CMD";
+
+        /**
+         * Posts a GL journal for a POS cash movement (cash drop in or cash out).
+         *
+         * DROP_IN  — cash brought into the drawer from the safe/float:
+         *   Dr 1001 Cash in Hand  [amount]
+         *   Cr 1012 Petty Cash    [amount]
+         *
+         * DROP_OUT — petty cash paid out of the drawer for expenses:
+         *   Dr 6099 General Expense  [amount]
+         *   Cr 1001 Cash in Hand     [amount]
+         *
+         * Reference key: "CMD-{movementId}" — idempotent per movement row.
+         *
+         * @param movementId   PK of the PosCashMovement row
+         * @param movementType "DROP_IN" or "DROP_OUT"
+         * @param amount       positive amount
+         * @param description  free-text narration from the cashier
+         * @param date         effective date (session date or today)
+         * @param branch       branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromCashMovement(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = TX_CASH_MOVEMENT + "-" + movementId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String narration = description != null && !description.isBlank()
+                        ? description
+                        : ("DROP_IN".equals(movementType) ? "Cash Drop In" : "Cash Out");
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(),
+                        ref, narration, TX_CASH_MOVEMENT, branch);
+
+                if ("DROP_IN".equals(movementType)) {
+                        // Cash transferred from safe/petty cash float into the POS till
+                        addLine(entry, "Cash in Hand", ACC_CASH,       narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Petty Cash",   ACC_PETTY_CASH, narration, BigDecimal.ZERO, amount);
+                } else {
+                        // Petty expense paid out of the POS till
+                        addLine(entry, "General Expense", ACC_EXPENSE_GENERAL, narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash in Hand",    ACC_CASH,            narration, BigDecimal.ZERO, amount);
+                }
 
                 return post(entry);
         }

@@ -316,6 +316,46 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         + "HAVING COALESCE(SUM(i.recognizedRevenue), 0) > s.subTotal")
         List<SalesInvoice> findOverRecognizedInvoices();
 
+        // --- ANALYTICS QUERIES ---
+
+        /** Count unpaid invoices whose invoice date is more than 30 days before today. */
+        @Query("SELECT COUNT(s) FROM SalesInvoice s " +
+               "WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID) " +
+               "AND s.balance > 0 " +
+               "AND s.invoiceDate < :cutoff")
+        long countOverdueInvoices(@Param("cutoff") java.time.LocalDate cutoff);
+
+        /**
+         * Returns aging buckets for outstanding balances: [rangeLabel, totalAmount, invoiceCount].
+         * Buckets: 0-30, 31-60, 61-90, 90+ days past invoice date.
+         */
+        @Query(value =
+               "SELECT CASE " +
+               "  WHEN (:today - invoice_date) <= 30 THEN '0-30 days' " +
+               "  WHEN (:today - invoice_date) <= 60 THEN '31-60 days' " +
+               "  WHEN (:today - invoice_date) <= 90 THEN '61-90 days' " +
+               "  ELSE '90+ days' END AS age_range, " +
+               "COALESCE(SUM(balance), 0) AS total_balance, COUNT(*) AS cnt " +
+               "FROM sales_invoices " +
+               "WHERE status NOT IN ('CANCELLED','PAID') AND balance > 0 " +
+               "GROUP BY age_range " +
+               "ORDER BY MIN((:today - invoice_date))",
+               nativeQuery = true)
+        java.util.List<Object[]> findAgingBucketsRaw(@Param("today") java.time.LocalDate today);
+
+        /**
+         * POS History tab: recent invoices for a named customer, latest first, capped at 20.
+         * Excludes DRAFT and CANCELLED; includes all sales types so the cashier sees
+         * both POS and workflow invoices for the same customer.
+         */
+        @Query("SELECT s FROM SalesInvoice s WHERE s.customerCode = :customerCode " +
+               "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) " +
+               "ORDER BY s.id DESC")
+        List<SalesInvoice> findRecentByCustomerCode(@Param("customerCode") String customerCode,
+                                                    Pageable pageable);
+
         // POS session queries
         List<SalesInvoice> findByPosSessionId(Long posSessionId);
 
@@ -372,7 +412,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * POS Reprint: fetch POS_SALE invoices for a branch within a date range, latest first.
          * Items are not fetched here — caller uses the summary projection only.
          */
-        @Query("SELECT s FROM SalesInvoice s " +
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items " +
                "WHERE s.salesType = com.billbull.backend.sales.invoice.SalesType.POS_SALE " +
                "AND s.invoiceDate BETWEEN :dateFrom AND :dateTo " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +

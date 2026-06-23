@@ -458,4 +458,15 @@ public interface StockMovementRepository
                     WHERE sm.productId IS NOT NULL AND sm.warehouseId IS NOT NULL
                 """)
         List<Object[]> findAllDistinctProductWarehousePairs();
+
+        // Outbound movements for a specific batch — used by POS batch check to find which
+        // invoices actually consumed this exact batch unit (SALES_INVOICE or DELIVERY_NOTE deductions).
+        @Query("SELECT sm FROM StockMovement sm " +
+               "WHERE LOWER(sm.batchNumber) = LOWER(:batchNumber) " +
+               "AND sm.sourceType IN :sourceTypes " +
+               "AND sm.quantity < 0 " +
+               "ORDER BY sm.movementDate DESC")
+        List<StockMovement> findOutboundByBatchNumber(
+                @Param("batchNumber") String batchNumber,
+                @Param("sourceTypes") List<StockSourceType> sourceTypes);
 }

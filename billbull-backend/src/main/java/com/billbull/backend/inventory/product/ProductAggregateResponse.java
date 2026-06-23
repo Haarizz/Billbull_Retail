@@ -11,7 +11,8 @@ public class ProductAggregateResponse {
     private ProductInventoryPolicy inventory;
     private List<ProductBranchPricing> branchPrices;
     private ProductBranchPricing activeBranchPrice;
-    private String primaryImage; // Added field
+    private String primaryImage;
+    private Integer stock;
 
     public Product getProduct() {
         return product;
@@ -75,5 +76,13 @@ public class ProductAggregateResponse {
 
     public void setPrimaryImage(String primaryImage) {
         this.primaryImage = primaryImage;
+    }
+
+    public Integer getStock() {
+        return stock;
+    }
+
+    public void setStock(Integer stock) {
+        this.stock = stock;
     }
 }

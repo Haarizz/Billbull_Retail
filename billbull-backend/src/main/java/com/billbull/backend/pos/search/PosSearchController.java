@@ -4,6 +4,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * Unified POS search/scan resolver endpoint plus credit balance and batch check lookups.
  */
@@ -48,5 +51,15 @@ public class PosSearchController {
             @RequestParam(name = "itemCode", defaultValue = "") String itemCode,
             @RequestParam(name = "customerMobile", defaultValue = "") String customerMobile) {
         return ResponseEntity.ok(lookupService.batchCheck(batchNumber, invoiceNumber, itemCode, customerMobile));
+    }
+
+    /**
+     * POS History tab: recent invoices for a given customer code (last 20).
+     */
+    @GetMapping("/customer-history")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Map<String, Object>>> customerHistory(
+            @RequestParam(name = "customerCode") String customerCode) {
+        return ResponseEntity.ok(lookupService.customerHistory(customerCode));
     }
 }
