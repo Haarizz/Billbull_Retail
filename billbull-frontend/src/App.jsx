@@ -40,6 +40,7 @@ import Products from "./pages/Inventory/Product/Products";
 import Warehouse from "./pages/Inventory/Warehouse/Warehouse";
 import Vendor from "./pages/Purchase/Vendor/Vendor";
 import Customer from "./pages/Customer/Customer";
+import SalePriceInquiry from "./pages/Customer/SalePriceInquiry";
 import LPOList from "./pages/Purchase/LPO/lpo";
 import PurchaseInvoices from "./pages/Purchase/Invoice/PurchaseInvoices";
 import GRN from "./pages/Purchase/GRN/GRN";
@@ -298,6 +299,15 @@ function App() {
                         </ResourceGuard>
                       }
                     />
+                    <Route
+                      path="/customer/sale-price-inquiry"
+                      element={
+                        <ResourceGuard module="customer.inquiry">
+                          <SalePriceInquiry />
+                        </ResourceGuard>
+                      }
+                    />
+
                     <Route
                       path="/customer/inquiries"
                       element={

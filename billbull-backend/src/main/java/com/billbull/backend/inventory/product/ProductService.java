@@ -158,6 +158,15 @@ public class ProductService {
         }
     }
 
+    private void validateTrackingMode(Product product) {
+        if (product == null) {
+            return;
+        }
+        if (product.isSerial() && product.isBatch()) {
+            throw new IllegalArgumentException("Serial-controlled and batch-controlled cannot both be enabled for the same product.");
+        }
+    }
+
     private Long activeBranchId() {
         BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
         return ctx != null ? ctx.activeBranchId() : null;
@@ -267,6 +276,7 @@ public class ProductService {
     @CacheEvict(value = "productList", allEntries = true)
     public ProductAggregateResponse create(ProductAggregateRequest req, MultipartFile file) {
         Product product = req.getProduct();
+        validateTrackingMode(product);
 
         if (productRepo.existsByCodeAndIsActiveTrue(product.getCode())) {
             throw new IllegalArgumentException("Product code already exists");
@@ -309,6 +319,7 @@ public class ProductService {
                 .orElseThrow(() -> new RuntimeException("Product not found"));
 
         Product updated = req.getProduct();
+        validateTrackingMode(updated);
 
         if (updated.getSku() != null && !updated.getSku().isBlank()
                 && productRepo.existsBySkuAndIdNotAndIsActiveTrue(updated.getSku(), productId)) {
@@ -849,6 +860,7 @@ public class ProductService {
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
+            item.put("isSerial", p.isSerial());
             item.put("isBatch", p.isBatch());
             item.put("expiryEnabled", p.isExpiryEnabled());
             item.put("fefoEnabled", p.isFefoEnabled());

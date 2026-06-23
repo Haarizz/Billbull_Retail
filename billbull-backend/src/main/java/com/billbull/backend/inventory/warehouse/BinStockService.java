@@ -173,15 +173,18 @@ public class BinStockService {
         // negative-override outbound movement in this bin — used to flag rows in the snapshot.
         java.util.Set<String> overrideIdentities = stockMovementRepository.findByBinId(binId).stream()
                 .filter(StockMovement::isNegativeOverride)
-                .map(m -> m.getProductId() + "|" + (m.getBatchNumber() != null ? m.getBatchNumber() : "-"))
+                .map(m -> m.getProductId()
+                        + "|" + (m.getBatchNumber() != null ? m.getBatchNumber() : "-")
+                        + "|" + (m.getSerialNumber() != null ? m.getSerialNumber() : "-"))
                 .collect(Collectors.toSet());
 
         List<BinStockResponse> resultList = new ArrayList<>();
         for (Object[] row : stockRows) {
             Long productId = ((Number) row[0]).longValue();
             String batchNumber = row[1] != null ? row[1].toString() : "-";
-            java.time.LocalDate expiryDate = (java.time.LocalDate) row[2];
-            int binOnHand = row[3] != null ? ((Number) row[3]).intValue() : 0;
+            String serialNumber = row[2] != null ? row[2].toString() : null;
+            java.time.LocalDate expiryDate = (java.time.LocalDate) row[3];
+            int binOnHand = row[4] != null ? ((Number) row[4]).intValue() : 0;
 
             // Include negative-stock rows (override allowed) — skip only truly zero rows
             if (binOnHand == 0) continue;
@@ -189,11 +192,16 @@ public class BinStockService {
             Product product = productDetails.get(productId);
             BinStockResponse response = new BinStockResponse();
             response.setId(productId);
-            response.setStockIdentityKey(productId + "|" + batchNumber + "|" + (expiryDate != null ? expiryDate : ""));
+            response.setStockIdentityKey(productId + "|"
+                    + batchNumber + "|"
+                    + (serialNumber != null ? serialNumber : "-") + "|"
+                    + (expiryDate != null ? expiryDate : ""));
             response.setQuantity(binOnHand);
             response.setBatchNumber(batchNumber);
+            response.setSerialNumber(serialNumber);
             response.setExpiryDate(expiryDate);
-            response.setNegativeOverride(overrideIdentities.contains(productId + "|" + batchNumber));
+            response.setNegativeOverride(overrideIdentities.contains(
+                    productId + "|" + batchNumber + "|" + (serialNumber != null ? serialNumber : "-")));
             if (product != null) {
                 response.setProductCode(product.getCode());
                 response.setProductName(product.getName());

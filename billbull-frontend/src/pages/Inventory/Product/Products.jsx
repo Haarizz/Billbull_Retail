@@ -481,11 +481,17 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       }
       if (field === "batchControlled") {
         if (value) {
+          newData.isSerial = false;
           newData.fefoEnabled = prev.fefoEnabled !== false;
         } else {
           newData.fefoEnabled = false;
           newData.minExpiryDaysForSale = 0;
         }
+      }
+      if (field === "isSerial" && value) {
+        newData.batchControlled = false;
+        newData.fefoEnabled = false;
+        newData.minExpiryDaysForSale = 0;
       }
       if (field === "defaultUnit") {
         // Sync the first packing level's unit to match the selected default unit
@@ -831,8 +837,22 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     if (currentStep < STEPS.length && isStepValid()) setCurrentStep(curr => curr + 1);
   };
 
-  const handleSaveActive = () => onSave({ ...formData, status: 'Active' });
-  const handleSaveDraft = () => onSave({ ...formData, status: 'Draft' });
+  const validateTrackingMode = () => {
+    if (formData.isSerial && formData.batchControlled) {
+      alert('Serial-controlled and batch-controlled cannot both be enabled for the same product.');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSaveActive = () => {
+    if (!validateTrackingMode()) return;
+    onSave({ ...formData, status: 'Active' });
+  };
+  const handleSaveDraft = () => {
+    if (!validateTrackingMode()) return;
+    onSave({ ...formData, status: 'Draft' });
+  };
 
   const selectedBrandForBarcode = brands.find(b => b.id == formData.brand);
   const isAutoBarcode = selectedBrandForBarcode?.auto;
@@ -941,12 +961,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
-                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isSerial} onChange={(e) => handleInputChange('isSerial', e.target.checked)} />
+                  <label className={`flex items-center gap-2 text-sm transition-colors ${formData.batchControlled ? 'cursor-not-allowed text-slate-400' : 'cursor-pointer text-slate-600 hover:text-slate-900'}`}>
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isSerial} disabled={formData.batchControlled} onChange={(e) => handleInputChange('isSerial', e.target.checked)} />
                     Serial Number Controlled
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
-                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchControlled} onChange={(e) => handleInputChange('batchControlled', e.target.checked)} />
+                  <label className={`flex items-center gap-2 text-sm transition-colors ${formData.isSerial ? 'cursor-not-allowed text-slate-400' : 'cursor-pointer text-slate-600 hover:text-slate-900'}`}>
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchControlled} disabled={formData.isSerial} onChange={(e) => handleInputChange('batchControlled', e.target.checked)} />
                     Batch Controlled
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">

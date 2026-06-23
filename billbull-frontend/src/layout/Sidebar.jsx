@@ -15,7 +15,7 @@ import {
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
   PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
-  UserCircle, TrendingUp, Hash
+  UserCircle, TrendingUp, Hash, Search
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
@@ -112,6 +112,7 @@ const Sidebar = ({ children }) => {
       module: "customer",
       roles: ["ADMIN", "SALES"],
       subItems: [
+        { path: "/customer/sale-price-inquiry", label: "Sale Price Inquiry", module: "customer.inquiry", icon: <Search size={14} /> },
         { path: "/customer/inquiries", label: "Inquiries",  module: "customer.inquiry", icon: <HelpCircle size={14} /> },
         { path: "/customer/followups", label: "Follow-ups", module: "customer.followup", icon: <Phone size={14} /> },
         { path: "/customer/messaging", label: "Messaging",  module: "customer.message", icon: <MessageSquare size={14} /> },

@@ -99,6 +99,56 @@ public class StockMovementService {
         refreshBalance(productId, warehouseId);
     }
 
+    public void postInboundSerializedStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long zoneId,
+            Long locatorId,
+            Long binId,
+            String serialNumber,
+            LocalDate expiryDate,
+            java.math.BigDecimal unitCost,
+            String ref) {
+
+        if (productId == null)
+            throw new IllegalArgumentException("Product ID is required for serialized stock posting");
+
+        if (warehouseId == null)
+            throw new IllegalArgumentException("Warehouse ID is required for serialized stock posting");
+
+        String normalizedSerialNumber = normalizeSerialNumber(serialNumber);
+        if (normalizedSerialNumber == null)
+            throw new IllegalArgumentException("Serial number is required for serialized inbound stock posting");
+
+        boolean alreadyPosted = repository.existsInboundSerialIdentity(
+                sourceType.name(), sourceId, productId, warehouseId, normalizedSerialNumber);
+
+        if (alreadyPosted)
+            throw new IllegalStateException(
+                    "Inbound serialized stock already posted for " + sourceType + " #" + sourceId
+                            + " product #" + productId + " serial '" + normalizedSerialNumber + "'.");
+
+        StockMovement sm = new StockMovement();
+        sm.setSourceType(sourceType);
+        sm.setSourceId(sourceId);
+        sm.setProductId(productId);
+        sm.setWarehouseId(warehouseId);
+        sm.setZoneId(zoneId);
+        sm.setLocatorId(locatorId);
+        sm.setBinId(binId);
+        sm.setQuantity(1);
+        sm.setReferenceNo(ref);
+        sm.setMovementDate(LocalDate.now());
+        sm.setSerialNumber(normalizedSerialNumber);
+        sm.setExpiryDate(expiryDate);
+        sm.setUnitCost(unitCost);
+
+        repository.save(sm);
+        refreshBalance(productId, warehouseId);
+    }
+
     /** Full hierarchy inbound post with exact batch/expiry identity. */
     public void postInboundStock(
             StockSourceType sourceType,
@@ -387,5 +437,13 @@ public class StockMovementService {
         }
         String trimmed = batchNumber.trim();
         return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
+    }
+
+    private String normalizeSerialNumber(String serialNumber) {
+        if (serialNumber == null) {
+            return null;
+        }
+        String trimmed = serialNumber.trim();
+        return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed.toUpperCase(java.util.Locale.ROOT);
     }
 }

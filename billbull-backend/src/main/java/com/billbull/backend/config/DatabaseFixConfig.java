@@ -19,6 +19,7 @@ public class DatabaseFixConfig {
 
                 ensureProductSchemaColumns(jdbcTemplate);
                 ensureBatchMasterSchemaColumns(jdbcTemplate);
+                ensureStockMovementSchemaColumns(jdbcTemplate);
 
                 // 1. Fix delivery_notes_status_check
                 updateStatusConstraint(jdbcTemplate, "delivery_notes", "delivery_notes_status_check",
@@ -97,6 +98,23 @@ public class DatabaseFixConfig {
             jdbcTemplate.execute("UPDATE batch_master SET qty_unit_no = unit_index WHERE qty_unit_no IS NULL");
         } catch (Exception e) {
             System.err.println("Error ensuring batch_master phase-3 columns: " + e.getMessage());
+        }
+    }
+
+    private void ensureStockMovementSchemaColumns(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS serial_number VARCHAR(120)");
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS negative_override BOOLEAN DEFAULT FALSE");
+            jdbcTemplate.execute(
+                    "UPDATE stock_movements SET negative_override = FALSE WHERE negative_override IS NULL");
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_movements ALTER COLUMN negative_override SET DEFAULT FALSE");
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_movements ALTER COLUMN negative_override SET NOT NULL");
+        } catch (Exception e) {
+            System.err.println("Error ensuring stock_movements schema columns: " + e.getMessage());
         }
     }
 

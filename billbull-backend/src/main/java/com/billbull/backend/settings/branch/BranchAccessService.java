@@ -187,7 +187,11 @@ public class BranchAccessService {
             return;
         }
 
-        if (warehouse.getBranch() == null || !Objects.equals(warehouse.getBranch().getId(), branchId)) {
+        // Global (branch-unassigned) warehouses are accessible to any branch
+        if (warehouse.getBranch() == null) {
+            return;
+        }
+        if (!Objects.equals(warehouse.getBranch().getId(), branchId)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     fieldLabel + " warehouse does not belong to the selected branch.");
