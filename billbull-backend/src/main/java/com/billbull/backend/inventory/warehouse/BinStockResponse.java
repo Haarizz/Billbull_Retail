@@ -25,8 +25,8 @@ public class BinStockResponse {
         this.productName = stock.getProductName();
         this.batchNumber = stock.getBatchNumber();
         this.serialNumber = null;
-        this.quantity = stock.getQuantity();
-        this.reservedQuantity = stock.getReservedQuantity();
+        this.quantity = stock.getQuantity() != null ? stock.getQuantity().intValue() : 0;
+        this.reservedQuantity = stock.getReservedQuantity() != null ? stock.getReservedQuantity().intValue() : 0;
         this.expiryDate = stock.getExpiryDate();
     }
 

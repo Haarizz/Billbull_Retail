@@ -144,7 +144,7 @@ class StockTakeServiceTest {
         verify(stockMovementRepo).save(captor.capture());
         StockMovement movement = captor.getValue();
         assertEquals(StockSourceType.STOCK_TAKE_ADJUSTMENT, movement.getSourceType());
-        assertEquals(20, movement.getQuantity());
+        assertQty(20, movement.getQuantity());
         assertEquals("OS-1", movement.getBatchNumber());
         assertEquals(LocalDate.parse("2026-06-01"), movement.getExpiryDate());
         assertEquals(7L, movement.getBinId());
@@ -172,12 +172,12 @@ class StockTakeServiceTest {
         List<StockMovement> movements = captor.getAllValues();
 
         StockMovement oldExpiryRemoval = movements.get(0);
-        assertEquals(-50, oldExpiryRemoval.getQuantity());
+        assertQty(-50, oldExpiryRemoval.getQuantity());
         assertEquals("OS-1", oldExpiryRemoval.getBatchNumber());
         assertEquals(LocalDate.parse("2026-06-01"), oldExpiryRemoval.getExpiryDate());
 
         StockMovement newExpiryCount = movements.get(1);
-        assertEquals(70, newExpiryCount.getQuantity());
+        assertQty(70, newExpiryCount.getQuantity());
         assertEquals("ST-1", newExpiryCount.getBatchNumber());
         assertEquals(LocalDate.parse("2026-06-06"), newExpiryCount.getExpiryDate());
     }
@@ -365,7 +365,7 @@ class StockTakeServiceTest {
         ArgumentCaptor<StockMovement> captor = ArgumentCaptor.forClass(StockMovement.class);
         verify(stockMovementRepo, times(3)).save(captor.capture());
         for (StockMovement m : captor.getAllValues()) {
-            assertEquals(1, m.getQuantity());
+            assertQty(1, m.getQuantity());
             assertEquals(StockSourceType.STOCK_TAKE_ADJUSTMENT, m.getSourceType());
         }
     }
@@ -461,5 +461,11 @@ class StockTakeServiceTest {
         media.setProduct(product);
         media.setImageUrl(imageUrl);
         return media;
+    }
+
+    /** Scale-independent quantity assert — StockMovement.quantity is BigDecimal (ARCHFIX §1.11). */
+    private static void assertQty(long expected, BigDecimal actual) {
+        assertEquals(0, BigDecimal.valueOf(expected).compareTo(actual),
+                () -> "expected quantity " + expected + " but was " + actual);
     }
 }

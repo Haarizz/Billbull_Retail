@@ -23,6 +23,13 @@ export const savePosSettings = async (settings) => {
   return res.data;
 };
 
+// Verify a supervisor PIN server-side. The PIN is no longer shipped to the client
+// (ARCHFIX S5); the backend compares it against the stored BCrypt hash.
+export const verifyPosSupervisorPin = async (pin) => {
+  const res = await api.post(`${BASE}/settings/verify-pin`, { pin });
+  return res.data?.valid === true;
+};
+
 // ── Session management ─────────────────────────────────────────────────────
 
 export const openPosSession = async ({ terminalId, counterName, openingCash = 0 }) => {

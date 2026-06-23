@@ -138,8 +138,8 @@ public class SalesOrderService {
             order.setSoNumber(existingOrder.getSoNumber());
         }
 
-        double subTotal = 0;
-        double tax = 0;
+        BigDecimal subTotal = BigDecimal.ZERO;
+        BigDecimal tax = BigDecimal.ZERO;
         SalesOrderStatus requestedStatus = order.getStatus();
         boolean confirmingOrder = requestedStatus != SalesOrderStatus.DRAFT;
         boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
@@ -191,32 +191,34 @@ public class SalesOrderService {
                     }
                 }
 
-                double lineTotal = item.getLineTotal() != null ? item.getLineTotal() : 0;
-                double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
-                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount() : 0;
+                BigDecimal lineTotal = nz(item.getLineTotal());
+                BigDecimal taxAmount = nz(item.getTaxAmount());
+                BigDecimal footerDisc = nz(item.getFooterDiscount());
 
-                subTotal += (lineTotal - taxAmount + footerDisc);
-                tax += taxAmount;
+                subTotal = subTotal.add(lineTotal).subtract(taxAmount).add(footerDisc);
+                tax = tax.add(taxAmount);
             }
         }
 
-        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        
+        subTotal = subTotal.setScale(2, RoundingMode.HALF_UP);
+
+        // billDiscount is a PERCENTAGE rate; billDiscountAmount is money.
         double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
-        double billDiscAmt = order.getBillDiscountAmount() != null ? order.getBillDiscountAmount() : 0;
-        if (billDiscAmt == 0 && billDiscPct > 0) {
-            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        BigDecimal billDiscAmt = nz(order.getBillDiscountAmount());
+        if (billDiscAmt.signum() == 0 && billDiscPct > 0) {
+            billDiscAmt = subTotal.multiply(BigDecimal.valueOf(billDiscPct))
+                    .divide(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
         }
 
-        double tax2 = BigDecimal.valueOf(tax).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + tax2).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : 0;
+        BigDecimal tax2 = tax.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(tax2).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal advance = nz(order.getAdvanceAmount());
 
         order.setSubTotal(subTotal);
         order.setTaxTotal(tax2);
         order.setOrderTotal(total);
-        order.setBalanceDue(total - advance);
+        order.setBalanceDue(total.subtract(advance));
 
         // ✅ STATUS LOGIC: Maintain reservation until delivery
         // Load current DB status to avoid overwriting finalized states on update
@@ -232,11 +234,11 @@ public class SalesOrderService {
             order.setStatus(currentStatus); // Never downgrade finalized statuses
         } else if (requestedStatus == SalesOrderStatus.DRAFT) {
             order.setStatus(SalesOrderStatus.DRAFT);
-        } else if (requestedStatus == SalesOrderStatus.CONFIRMED && advance <= 0) {
+        } else if (requestedStatus == SalesOrderStatus.CONFIRMED && advance.signum() <= 0) {
             order.setStatus(SalesOrderStatus.CONFIRMED);
-        } else if (advance > 0 && advance < total) {
+        } else if (advance.signum() > 0 && advance.compareTo(total) < 0) {
             order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
-        } else if (advance >= total && total > 0) {
+        } else if (advance.compareTo(total) >= 0 && total.signum() > 0) {
             order.setStatus(SalesOrderStatus.FULLY_PAID);
         } else {
             order.setStatus(SalesOrderStatus.CONFIRMED);
@@ -265,28 +267,28 @@ public class SalesOrderService {
         // Wrapped in try/catch so posting-engine failures don't roll back the SO save.
         if (saved.getStatus() != SalesOrderStatus.DRAFT
                 && saved.getAdvanceAmount() != null
-                && saved.getAdvanceAmount() > 0) {
+                && saved.getAdvanceAmount().signum() > 0) {
             try {
                 List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> existing =
                         receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(saved.getId());
-                double alreadyReceipted = existing.stream()
-                        .mapToDouble(rv -> rv.getAmount() != null ? rv.getAmount().doubleValue() : 0.0)
-                        .sum();
-                double delta = BigDecimal.valueOf(saved.getAdvanceAmount() - alreadyReceipted)
-                        .setScale(2, RoundingMode.HALF_UP).doubleValue();
-                if (delta > 0.001) {
+                BigDecimal alreadyReceipted = existing.stream()
+                        .map(rv -> rv.getAmount() != null ? rv.getAmount() : BigDecimal.ZERO)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+                BigDecimal delta = saved.getAdvanceAmount().subtract(alreadyReceipted)
+                        .setScale(2, RoundingMode.HALF_UP);
+                if (delta.compareTo(new BigDecimal("0.001")) > 0) {
                     createAdvanceReceiptForOrder(saved, delta);
                     // Re-read the true receipted total (includes the RV just created in its own txn)
                     // and write it back so advanceAmount always equals the sum of posted RVs.
-                    double trueReceipted = receiptVoucherRepository
+                    BigDecimal trueReceipted = receiptVoucherRepository
                             .findBySalesOrderIdOrderByDateDesc(saved.getId()).stream()
-                            .mapToDouble(rv -> rv.getAmount() != null ? rv.getAmount().doubleValue() : 0.0)
-                            .sum();
-                    double capped = BigDecimal.valueOf(Math.min(trueReceipted, saved.getOrderTotal()))
-                            .setScale(2, RoundingMode.HALF_UP).doubleValue();
+                            .map(rv -> rv.getAmount() != null ? rv.getAmount() : BigDecimal.ZERO)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    BigDecimal capped = trueReceipted.min(nz(saved.getOrderTotal()))
+                            .setScale(2, RoundingMode.HALF_UP);
                     saved.setAdvanceAmount(capped);
-                    saved.setBalanceDue(BigDecimal.valueOf(saved.getOrderTotal() - capped)
-                            .setScale(2, RoundingMode.HALF_UP).doubleValue());
+                    saved.setBalanceDue(nz(saved.getOrderTotal()).subtract(capped)
+                            .setScale(2, RoundingMode.HALF_UP));
                     orderRepo.save(saved);
                 }
             } catch (Exception ex) {
@@ -630,12 +632,12 @@ public class SalesOrderService {
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);
             if (packingPrice != null) {
-                item.setPrice(packingPrice.doubleValue());
+                item.setPrice(packingPrice);
             } else if (product.getPricing() != null) {
                 java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
                         .resolve(product.getPricing(), activePricePolicy());
                 if (resolved != null) {
-                    item.setPrice(resolved.doubleValue());
+                    item.setPrice(resolved);
                 }
             }
         }
@@ -644,9 +646,9 @@ public class SalesOrderService {
         if (item.getCost() == null) {
             java.math.BigDecimal packingCost = lookupPackingValue(product.getId(), item.getUnit(), false);
             if (packingCost != null) {
-                item.setCost(packingCost.doubleValue());
+                item.setCost(packingCost);
             } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
-                item.setCost(product.getPricing().getCost().doubleValue());
+                item.setCost(product.getPricing().getCost());
             }
         }
     }
@@ -806,7 +808,10 @@ public class SalesOrderService {
         return vouchers;
     }
 
-    private void createAdvanceReceiptForOrder(SalesOrder order, double amount) {
+    /** Null-safe money view: treats {@code null} as zero. */
+    private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
+
+    private void createAdvanceReceiptForOrder(SalesOrder order, BigDecimal amount) {
         com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv =
                 new com.billbull.backend.financials.receiptvoucher.ReceiptVoucher();
         rv.setDate(order.getOrderDate() != null
@@ -819,7 +824,7 @@ public class SalesOrderService {
         rv.setReference(order.getPaymentReference() != null && !order.getPaymentReference().isBlank()
                 ? order.getPaymentReference()
                 : "Advance against SO: " + order.getSoNumber());
-        rv.setAmount(java.math.BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP));
+        rv.setAmount(nz(amount).setScale(2, RoundingMode.HALF_UP));
         rv.setMemberName(order.getCustomerName() != null
                 ? order.getCustomerName()
                 : "Walk-in Customer");

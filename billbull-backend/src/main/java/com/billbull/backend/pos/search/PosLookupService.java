@@ -135,10 +135,10 @@ public class PosLookupService {
                 sold.setCashierName(inv.getSalesperson());
                 sold.setBranchName(inv.getBranchName());
                 sold.setPaymentMode(inv.getPaymentMode());
-                sold.setInvoiceTotal(inv.getInvoiceTotal());
-                sold.setItemPrice(item.getPrice());
-                sold.setItemTaxAmount(item.getTaxAmount());
-                sold.setItemNetAmount(item.getNetAmount());
+                sold.setInvoiceTotal(inv.getInvoiceTotal() != null ? inv.getInvoiceTotal().doubleValue() : null);
+                sold.setItemPrice(item.getPrice() != null ? item.getPrice().doubleValue() : null);
+                sold.setItemTaxAmount(item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : null);
+                sold.setItemNetAmount(item.getNetAmount() != null ? item.getNetAmount().doubleValue() : null);
 
                 // Enrich with batch expiry from batch_master
                 if (finalBatchNumber != null) {

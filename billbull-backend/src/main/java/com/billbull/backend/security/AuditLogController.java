@@ -73,12 +73,14 @@ public class AuditLogController {
 
     @GetMapping("/request/{requestId}")
     public java.util.List<AuditLog> byRequestId(@PathVariable String requestId) {
-        return auditLogRepository.findByRequestIdOrderByAccessTimeDesc(requestId);
+        return auditLogRepository.findByRequestIdOrderByAccessTimeDesc(
+                requestId, PageRequest.of(0, 500, Sort.by(Sort.Direction.DESC, "accessTime")));
     }
 
     @GetMapping("/entity/{entityType}/{entityId}")
     public java.util.List<AuditLog> byEntity(@PathVariable String entityType, @PathVariable String entityId) {
-        return auditLogRepository.findByEntityTypeAndEntityIdOrderByAccessTimeDesc(entityType, entityId);
+        return auditLogRepository.findByEntityTypeAndEntityIdOrderByAccessTimeDesc(
+                entityType, entityId, PageRequest.of(0, 500, Sort.by(Sort.Direction.DESC, "accessTime")));
     }
 
     private Specification<AuditLog> andEqual(Specification<AuditLog> spec, String field, Object value) {

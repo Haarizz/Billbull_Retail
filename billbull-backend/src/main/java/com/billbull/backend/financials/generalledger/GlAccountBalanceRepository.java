@@ -1,6 +1,8 @@
 package com.billbull.backend.financials.generalledger;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -11,6 +13,28 @@ public interface GlAccountBalanceRepository extends JpaRepository<GlAccountBalan
 
     Optional<GlAccountBalance> findByAccountCodeAndFiscalPeriodIdAndBranchId(
             String accountCode, Long fiscalPeriodId, Long branchId);
+
+    /**
+     * Pessimistically-locked finder used by the posting engine when applying a balance delta.
+     * Serializes concurrent postings to the same (account, period, branch) triple so the
+     * read-modify-write in PostingEngineService.upsertGlBalances() cannot lose an increment
+     * (ARCHFIX P0 §1.3). Mirrors the locking convention already used by VoucherSequenceRepository,
+     * InventoryBalanceRepository, BatchMasterRepository and StockMovementRepository.
+     *
+     * NULL-safe: fiscal_period_id / branch_id may be null for rolling-window balances, so the
+     * query uses IS NULL comparisons rather than equality (which never matches NULL in SQL).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT b FROM GlAccountBalance b
+         WHERE b.accountCode = :accountCode
+           AND ((:fiscalPeriodId IS NULL AND b.fiscalPeriodId IS NULL) OR b.fiscalPeriodId = :fiscalPeriodId)
+           AND ((:branchId IS NULL AND b.branchId IS NULL) OR b.branchId = :branchId)
+        """)
+    Optional<GlAccountBalance> findForUpdate(
+            @Param("accountCode") String accountCode,
+            @Param("fiscalPeriodId") Long fiscalPeriodId,
+            @Param("branchId") Long branchId);
 
     List<GlAccountBalance> findByAccountCode(String accountCode);
 

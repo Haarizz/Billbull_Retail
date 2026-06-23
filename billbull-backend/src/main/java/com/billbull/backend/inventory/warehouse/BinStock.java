@@ -2,6 +2,7 @@ package com.billbull.backend.inventory.warehouse;
 
 import com.billbull.backend.common.BaseEntity;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
@@ -28,11 +29,11 @@ public class BinStock extends BaseEntity {
     @Column(name = "batch_number", length = 50)
     private String batchNumber;
 
-    @Column(nullable = false)
-    private Integer quantity = 0;
+    @Column(nullable = false, precision = 18, scale = 3)
+    private BigDecimal quantity = BigDecimal.ZERO;
 
-    @Column(name = "reserved_quantity")
-    private Integer reservedQuantity = 0;
+    @Column(name = "reserved_quantity", precision = 18, scale = 3)
+    private BigDecimal reservedQuantity = BigDecimal.ZERO;
 
     @Column(name = "expiry_date")
     private LocalDate expiryDate;
@@ -87,19 +88,19 @@ public class BinStock extends BaseEntity {
         this.batchNumber = batchNumber;
     }
 
-    public Integer getQuantity() {
+    public BigDecimal getQuantity() {
         return quantity;
     }
 
-    public void setQuantity(Integer quantity) {
+    public void setQuantity(BigDecimal quantity) {
         this.quantity = quantity;
     }
 
-    public Integer getReservedQuantity() {
+    public BigDecimal getReservedQuantity() {
         return reservedQuantity;
     }
 
-    public void setReservedQuantity(Integer reservedQuantity) {
+    public void setReservedQuantity(BigDecimal reservedQuantity) {
         this.reservedQuantity = reservedQuantity;
     }
 

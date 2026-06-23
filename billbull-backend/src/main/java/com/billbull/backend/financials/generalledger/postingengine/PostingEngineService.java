@@ -281,9 +281,7 @@ public class PostingEngineService {
                 if (creditPolicy == com.billbull.backend.sales.settings.CreditLimitPolicy.BLOCK) {
                         customerCreditService.assertWithinLimit(
                                         invoice.getCustomerCode(),
-                                        invoice.getInvoiceTotal() != null
-                                                ? java.math.BigDecimal.valueOf(invoice.getInvoiceTotal())
-                                                : java.math.BigDecimal.ZERO);
+                                        nvl(invoice.getInvoiceTotal()));
                 }
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
@@ -293,8 +291,8 @@ public class PostingEngineService {
                 // item netAmounts that DeliveryNoteService will recognise into Sales Revenue.
                 // Trade discounts reduce the transaction price (IFRS 15 §47) — no separate
                 // Discount Allowed account is needed; the revenue is simply measured net.
-                BigDecimal billDiscAmt = nz(invoice.getBillDiscountAmount());
-                BigDecimal subTotalBD = BigDecimal.valueOf(invoice.getSubTotal());
+                BigDecimal billDiscAmt = nvl(invoice.getBillDiscountAmount());
+                BigDecimal subTotalBD = nvl(invoice.getSubTotal());
                 BigDecimal deferredRevenue = subTotalBD.subtract(billDiscAmt);
 
                 // For POS cash sales, debit Cash directly instead of AR (PDF §05 / GAP-002).
@@ -322,13 +320,13 @@ public class PostingEngineService {
 
                 addLine(entry, debitAccountName, debitAccount,
                                 "Sales - " + ref,
-                                BigDecimal.valueOf(invoice.getInvoiceTotal()), BigDecimal.ZERO);
+                                nvl(invoice.getInvoiceTotal()), BigDecimal.ZERO);
                 addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
                                 "Deferred - " + ref,
                                 BigDecimal.ZERO, deferredRevenue);
-                if (invoice.getTaxTotal() != null && invoice.getTaxTotal() > 0) {
+                if (invoice.getTaxTotal() != null && invoice.getTaxTotal().signum() > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + ref,
-                                        BigDecimal.ZERO, BigDecimal.valueOf(invoice.getTaxTotal()));
+                                        BigDecimal.ZERO, nvl(invoice.getTaxTotal()));
                 }
 
                 // Delivery charge is recognized as income immediately (not deferred like
@@ -400,14 +398,11 @@ public class PostingEngineService {
                                         : isPosCash ? "Cash"
                                         : "Accounts Receivable";
 
-                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null
-                                ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
-                BigDecimal taxTotal     = invoice.getTaxTotal() != null
-                                ? BigDecimal.valueOf(invoice.getTaxTotal()) : BigDecimal.ZERO;
-                BigDecimal delivery     = nz(invoice.getDeliveryCharge());
-                BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
-                BigDecimal subTotal     = invoice.getSubTotal() != null
-                                ? BigDecimal.valueOf(invoice.getSubTotal()) : BigDecimal.ZERO;
+                BigDecimal invoiceTotal = nvl(invoice.getInvoiceTotal());
+                BigDecimal taxTotal     = nvl(invoice.getTaxTotal());
+                BigDecimal delivery     = nvl(invoice.getDeliveryCharge());
+                BigDecimal billDisc     = nvl(invoice.getBillDiscountAmount());
+                BigDecimal subTotal     = nvl(invoice.getSubTotal());
                 BigDecimal netRevenue   = subTotal.subtract(billDisc);
 
                 // Debit: cash / card / AR
@@ -529,9 +524,9 @@ public class PostingEngineService {
                 String refKey = "CANCEL-" + invoice.getInvoiceNumber();
                 if (findDuplicate(refKey) != null) return;
 
-                BigDecimal subTotal     = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
-                BigDecimal taxTotal     = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
-                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
+                BigDecimal subTotal     = nz(invoice.getSubTotal());
+                BigDecimal taxTotal     = nz(invoice.getTaxTotal());
+                BigDecimal invoiceTotal = nz(invoice.getInvoiceTotal());
                 BigDecimal delivery     = nz(invoice.getDeliveryCharge());
                 BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
                 BigDecimal netRevenue   = subTotal.subtract(billDisc);
@@ -819,10 +814,10 @@ public class PostingEngineService {
                                 "Expense - " + expense.getCategory(), TX_EXPENSE, expense.getBranch());
                 addLine(entry, expenseAccountName, expenseAccountCode,
                                 expense.getNotes() != null ? expense.getNotes() : "",
-                                BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
-                if (expense.getTaxAmount() > 0) {
+                                expense.getAmount(), BigDecimal.ZERO);
+                if (expense.getTaxAmount() != null && expense.getTaxAmount().signum() > 0) {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
-                                        BigDecimal.valueOf(expense.getTaxAmount()), BigDecimal.ZERO);
+                                        expense.getTaxAmount(), BigDecimal.ZERO);
                 }
 
                 // QA-054: credit the pay-ledger the user selected on the expense entry.
@@ -844,7 +839,7 @@ public class PostingEngineService {
                         payName = sel.name;
                 }
                 addLine(entry, payName, payCode, "Payment for expense",
-                                BigDecimal.ZERO, BigDecimal.valueOf(expense.getTotal()));
+                                BigDecimal.ZERO, expense.getTotal());
                 return post(entry);
         }
 
@@ -1108,9 +1103,9 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
                                 "Sales Return " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
 
-                BigDecimal subTotal   = salesReturn.getSubTotal()   != null ? BigDecimal.valueOf(salesReturn.getSubTotal())   : BigDecimal.ZERO;
-                BigDecimal taxAmount  = salesReturn.getTaxAmount()  != null ? BigDecimal.valueOf(salesReturn.getTaxAmount())  : BigDecimal.ZERO;
-                BigDecimal totalAmount = salesReturn.getTotalAmount() != null ? BigDecimal.valueOf(salesReturn.getTotalAmount()) : BigDecimal.ZERO;
+                BigDecimal subTotal   = nz(salesReturn.getSubTotal());
+                BigDecimal taxAmount  = nz(salesReturn.getTaxAmount());
+                BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
 
                 // Debit the correct revenue account
                 String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE     : ACC_DEFERRED_REVENUE;
@@ -1908,6 +1903,11 @@ public class PostingEngineService {
                 return value != null ? BigDecimal.valueOf(value) : BigDecimal.ZERO;
         }
 
+        /** Null-safe BigDecimal from a possibly-null BigDecimal amount (treats null as zero). */
+        private BigDecimal nz(BigDecimal value) {
+                return value != null ? value : BigDecimal.ZERO;
+        }
+
         /**
          * Posts a round-off adjustment to {@link #ACC_ROUNDING}. A positive roundOff
          * (total rounded up) is a rounding gain → credit; negative (rounded down) is a
@@ -2040,17 +2040,48 @@ public class PostingEngineService {
                         BigDecimal dr = nvl(line.getDebit());
                         BigDecimal cr = nvl(line.getCredit());
 
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
-                                glBalanceRepository.findByAccountCodeAndFiscalPeriodIdAndBranchId(code, periodId, branchId)
-                                        .orElseGet(() -> {
-                                                com.billbull.backend.financials.generalledger.GlAccountBalance b
-                                                        = new com.billbull.backend.financials.generalledger.GlAccountBalance();
-                                                b.setAccountCode(code);
-                                                b.setFiscalPeriodId(periodId);
-                                                b.setBranchId(branchId);
-                                                return b;
-                                        });
+                        applyGlBalanceDelta(code, periodId, branchId, dr, cr);
+                }
+        }
 
+        /**
+         * Atomically applies a (debit, credit) delta to the GlAccountBalance row for a
+         * (accountCode, periodId, branchId) triple, creating it if absent.
+         *
+         * Concurrency (ARCHFIX P0 §1.3): the row is read through a PESSIMISTIC_WRITE lock so
+         * two concurrent postings to the same triple are serialized and no increment is lost.
+         * The first-ever insert for a triple is guarded with a flush + retry: if a concurrent
+         * thread wins the insert, we fall back to the now-existing locked row and re-apply.
+         */
+        private void applyGlBalanceDelta(String code, Long periodId, Long branchId,
+                        BigDecimal dr, BigDecimal cr) {
+                java.util.Optional<com.billbull.backend.financials.generalledger.GlAccountBalance> existing =
+                                glBalanceRepository.findForUpdate(code, periodId, branchId);
+
+                if (existing.isPresent()) {
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal = existing.get();
+                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
+                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
+                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
+                        glBalanceRepository.save(bal);
+                        return;
+                }
+
+                com.billbull.backend.financials.generalledger.GlAccountBalance b
+                                = new com.billbull.backend.financials.generalledger.GlAccountBalance();
+                b.setAccountCode(code);
+                b.setFiscalPeriodId(periodId);
+                b.setBranchId(branchId);
+                b.setDebitTotal(dr);
+                b.setCreditTotal(cr);
+                b.setClosingBalance(dr.subtract(cr));
+                try {
+                        glBalanceRepository.saveAndFlush(b);
+                } catch (org.springframework.dao.DataIntegrityViolationException raceLost) {
+                        // A concurrent posting inserted the row first. Re-read under lock and re-apply.
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
+                                        glBalanceRepository.findForUpdate(code, periodId, branchId)
+                                                .orElseThrow(() -> raceLost);
                         bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
                         bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
                         bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));

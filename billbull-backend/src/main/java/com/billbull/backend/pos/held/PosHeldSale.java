@@ -2,6 +2,7 @@ package com.billbull.backend.pos.held;
 
 import com.billbull.backend.common.BaseEntity;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 /**
  * A parked POS cart ("Hold"). Session-scoped: a held sale belongs to the POS session
@@ -41,8 +42,8 @@ public class PosHeldSale extends BaseEntity {
     @Column(name = "cart_json", columnDefinition = "text")
     private String cartJson;
 
-    @Column(name = "total")
-    private Double total = 0.0;
+    @Column(name = "total", precision = 15, scale = 2)
+    private BigDecimal total = BigDecimal.ZERO;
 
     @Column(name = "item_count")
     private Integer itemCount = 0;
@@ -73,8 +74,8 @@ public class PosHeldSale extends BaseEntity {
     public String getCartJson() { return cartJson; }
     public void setCartJson(String cartJson) { this.cartJson = cartJson; }
 
-    public Double getTotal() { return total; }
-    public void setTotal(Double total) { this.total = total; }
+    public BigDecimal getTotal() { return total; }
+    public void setTotal(BigDecimal total) { this.total = total; }
 
     public Integer getItemCount() { return itemCount; }
     public void setItemCount(Integer itemCount) { this.itemCount = itemCount; }

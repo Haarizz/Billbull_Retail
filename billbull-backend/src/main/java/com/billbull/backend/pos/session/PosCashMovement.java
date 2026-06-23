@@ -3,6 +3,7 @@ package com.billbull.backend.pos.session;
 import com.billbull.backend.common.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -17,8 +18,8 @@ public class PosCashMovement extends BaseEntity {
     @Column(name = "movement_type", length = 20)
     private String movementType; // DROP_IN, DROP_OUT
 
-    @Column(name = "amount")
-    private Double amount;
+    @Column(name = "amount", precision = 15, scale = 2)
+    private BigDecimal amount;
 
     @Column(name = "description", length = 500)
     private String description;
@@ -40,8 +41,8 @@ public class PosCashMovement extends BaseEntity {
     public String getMovementType() { return movementType; }
     public void setMovementType(String movementType) { this.movementType = movementType; }
 
-    public Double getAmount() { return amount; }
-    public void setAmount(Double amount) { this.amount = amount; }
+    public BigDecimal getAmount() { return amount; }
+    public void setAmount(BigDecimal amount) { this.amount = amount; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

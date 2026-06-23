@@ -116,8 +116,18 @@ public class PosSettings extends BaseEntity {
     public String getSupervisorApprovalMode() { return supervisorApprovalMode; }
     public void setSupervisorApprovalMode(String supervisorApprovalMode) { this.supervisorApprovalMode = supervisorApprovalMode; }
 
+    // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter
+    // stays public so the save request body can still carry a new raw PIN (Jackson deserializes via
+    // the setter; @JsonIgnore on the getter only blocks the OUTBOUND value).
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getSupervisorPin() { return supervisorPin; }
     public void setSupervisorPin(String supervisorPin) { this.supervisorPin = supervisorPin; }
+
+    /** Whether a supervisor PIN is configured — lets the UI show "set/not set" without leaking it. */
+    @com.fasterxml.jackson.annotation.JsonProperty(value = "supervisorPinSet", access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public boolean isSupervisorPinSet() {
+        return supervisorPin != null && !supervisorPin.isBlank();
+    }
 
     public String getVoidMode() { return voidMode; }
     public void setVoidMode(String voidMode) { this.voidMode = voidMode; }

@@ -18,15 +18,24 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);
 
+    // ARCHFIX §1.6: items is now LAZY — these JOIN FETCH it for the read paths that serialize the
+    // full return (list + by-id). The nested SalesReturnItem.batches load via @BatchSize. DISTINCT
+    // collapses the row duplication from the one-to-many join.
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items")
+    List<SalesReturn> findAllWithItems();
+
+    @Query("SELECT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.id = :id")
+    Optional<SalesReturn> findByIdWithItems(@Param("id") Long id);
+
     boolean existsByReturnNumber(String returnNumber);
 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")
     List<String> findReturnNumbersByPrefix(@Param("prefix") String prefix);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate = :date")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate = :date")
     Double getTotalReturnsForDate(@Param("date") LocalDate date);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
     Double getTotalReturnsBetweenDates(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
     @Query("SELECT r.returnDate, COALESCE(SUM(r.totalAmount), 0) FROM SalesReturn r " +
@@ -34,7 +43,7 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
            "GROUP BY r.returnDate ORDER BY r.returnDate")
     List<Object[]> findDailyReturnsTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
-    @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.status = 'APPROVED'")
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.status = 'APPROVED'")
     Double getTotalApprovedReturns();
 
     /** Sales-report loader: date-bounded returns with line items fetched in one query. */

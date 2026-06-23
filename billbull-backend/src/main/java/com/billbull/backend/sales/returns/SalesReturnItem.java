@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.returns;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,10 +22,14 @@ public class SalesReturnItem {
     private Integer soldQty;
     private Integer returnQty;
 
-    private Double price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
+    /** Tax PERCENTAGE rate (not money). */
     private Double taxRate;
-    private Double taxAmount;
-    private Double total;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal total;
     private String itemStatus; // Good (Restock), Damaged (Scrap)
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -32,8 +37,11 @@ public class SalesReturnItem {
     @JsonBackReference
     private SalesReturn salesReturn;
 
-    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER) with @BatchSize so a list of items loads their batches in a
+    // few batched selects (not N) rather than an EAGER cartesian product across items × batches.
+    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<SalesReturnItemBatch> batches = new ArrayList<>();
 
     /* ===== GETTERS & SETTERS ===== */
@@ -86,11 +94,11 @@ public class SalesReturnItem {
         this.returnQty = returnQty;
     }
 
-    public Double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(Double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 
@@ -102,19 +110,19 @@ public class SalesReturnItem {
         this.taxRate = taxRate;
     }
 
-    public Double getTaxAmount() {
+    public BigDecimal getTaxAmount() {
         return taxAmount;
     }
 
-    public void setTaxAmount(Double taxAmount) {
+    public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
     }
 
-    public Double getTotal() {
+    public BigDecimal getTotal() {
         return total;
     }
 
-    public void setTotal(Double total) {
+    public void setTotal(BigDecimal total) {
         this.total = total;
     }
 

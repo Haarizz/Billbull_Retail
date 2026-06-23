@@ -45,7 +45,8 @@ public class ExpenseVoucher extends BaseEntity {
     @Column(name = "payment_account_id")
     private String paymentAccountId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER). Read/serialize paths JOIN FETCH branch+lines in-session.
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
     private Branch branch;
 
@@ -65,7 +66,9 @@ public class ExpenseVoucher extends BaseEntity {
     @Column(name = "grand_total", precision = 15, scale = 2)
     private BigDecimal grandTotal = BigDecimal.ZERO;
 
-    @OneToMany(mappedBy = "voucher", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    // ARCHFIX §1.6: LAZY (was EAGER) + @BatchSize for efficient list loads. JOIN FETCH on read paths.
+    @OneToMany(mappedBy = "voucher", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @org.hibernate.annotations.BatchSize(size = 50)
     private List<ExpenseVoucherLine> lines = new ArrayList<>();
 
     public void addLine(ExpenseVoucherLine line) {

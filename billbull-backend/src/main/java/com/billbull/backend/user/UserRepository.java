@@ -15,6 +15,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByUsername(String username);
 
+    /**
+     * ARCHFIX §1.6: per-request liveness check for JwtFilter. The previous
+     * findByUsername(...).map(isActive) loaded the whole User entity AND its EAGER roles +
+     * additionalBranches join-tables on EVERY authenticated request — even though the filter only
+     * needs the isActive flag (roles/branches come from the JWT claims, not the entity). This
+     * boolean exists-query touches just the users row, eliminating that per-request fan-out.
+     */
+    boolean existsByUsernameAndIsActiveTrue(String username);
+
     Optional<User> findByEmailAndIsActiveTrue(String email);
 
     Optional<User> findByEmail(String email);

@@ -40,7 +40,8 @@ public class PosCheckoutController {
 
         // Record payment via existing payment service
         if (request.getAmountTendered() != null && request.getAmountTendered() > 0) {
-            double paymentAmount = Math.min(request.getAmountTendered(), saved.getInvoiceTotal());
+            double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
+            double paymentAmount = Math.min(request.getAmountTendered(), invoiceTotal);
             String paymentMode = resolvePaymentMode(request);
             String cardRef = request.getCardReference();
             invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode, cardRef, LocalDate.now(),
@@ -83,7 +84,8 @@ public class PosCheckoutController {
         inv.setPosSessionId(req.getSessionId());
         inv.setPosTerminalId(req.getTerminalId());
         inv.setPosCounterName(req.getCounterName());
-        inv.setBillDiscountAmount(req.getBillDiscountAmount());
+        inv.setBillDiscountAmount(req.getBillDiscountAmount() != null
+                ? java.math.BigDecimal.valueOf(req.getBillDiscountAmount()) : null);
         inv.setInternalNotes(req.getNotes());
 
         if (req.getItems() != null) {
@@ -93,7 +95,7 @@ public class PosCheckoutController {
                 si.setItemName(item.getItemName());
                 si.setQuantity(item.getQuantity());
                 si.setUnit(item.getUnit() != null ? item.getUnit() : "Each");
-                si.setPrice(item.getPrice());
+                si.setPrice(item.getPrice() != null ? java.math.BigDecimal.valueOf(item.getPrice()) : null);
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
                 si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
                 si.setVoided(Boolean.TRUE.equals(item.getVoided()));

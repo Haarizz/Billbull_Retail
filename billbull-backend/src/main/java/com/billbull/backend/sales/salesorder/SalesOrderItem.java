@@ -2,6 +2,7 @@ package com.billbull.backend.sales.salesorder;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,14 +22,20 @@ public class SalesOrderItem {
     private String unit;
     private Integer quantity;
 
-    private Double price;
-    private Double cost;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal cost;
+    /** Line discount PERCENTAGE rate (not money). */
     private Double discount;
-    @Column(name = "footer_discount")
-    private Double footerDiscount;
+    @Column(name = "footer_discount", precision = 15, scale = 2)
+    private BigDecimal footerDiscount;
+    /** Tax PERCENTAGE rate (not money). */
     private Double taxRate;
-    private Double taxAmount;
-    private Double lineTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal lineTotal;
     private Integer deliveredQuantity = 0;
     private Integer foc;
     private String focUnit;
@@ -155,19 +162,19 @@ public class SalesOrderItem {
         return Math.max(0, qty - del);
     }
 
-    public Double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(Double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 
-    public Double getCost() {
+    public BigDecimal getCost() {
         return cost;
     }
 
-    public void setCost(Double cost) {
+    public void setCost(BigDecimal cost) {
         this.cost = cost;
     }
 
@@ -179,11 +186,11 @@ public class SalesOrderItem {
         this.discount = discount;
     }
 
-    public Double getFooterDiscount() {
+    public BigDecimal getFooterDiscount() {
         return footerDiscount;
     }
 
-    public void setFooterDiscount(Double footerDiscount) {
+    public void setFooterDiscount(BigDecimal footerDiscount) {
         this.footerDiscount = footerDiscount;
     }
 
@@ -195,19 +202,19 @@ public class SalesOrderItem {
         this.taxRate = taxRate;
     }
 
-    public Double getTaxAmount() {
+    public BigDecimal getTaxAmount() {
         return taxAmount;
     }
 
-    public void setTaxAmount(Double taxAmount) {
+    public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
     }
 
-    public Double getLineTotal() {
+    public BigDecimal getLineTotal() {
         return lineTotal;
     }
 
-    public void setLineTotal(Double lineTotal) {
+    public void setLineTotal(BigDecimal lineTotal) {
         this.lineTotal = lineTotal;
     }
 

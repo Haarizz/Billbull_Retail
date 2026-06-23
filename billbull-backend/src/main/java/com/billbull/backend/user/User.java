@@ -28,6 +28,7 @@ public class User extends BaseEntity {
     private String username;
 
     @Column(nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore // never serialize the BCrypt hash to JSON (ARCHFIX P0 §1.4 / S2)
     private String password;
 
     private String fullName;
