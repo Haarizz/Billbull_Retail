@@ -3,7 +3,7 @@
 
 import api from "./axiosConfig";
 import { getBranches as fetchBranches } from "./branchApi";
-import { getDashboardData } from "./dashboardApi";
+import { getDashboardData, clearDashboardApiCache } from "./dashboardApi";
 
 // ==================== RE-EXPORT TYPES ====================
 
@@ -236,6 +236,7 @@ class BillBullDashboardService {
   invalidateCaches(): void {
     this.summaryCache.clear();
     this.inFlight.clear();
+    clearDashboardApiCache();
   }
 
   // Returns stale localStorage data synchronously — used for instant paint before fetch

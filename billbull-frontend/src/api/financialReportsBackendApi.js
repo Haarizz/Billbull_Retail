@@ -81,10 +81,11 @@ export const getAPAgingReport = async (asOfDate) => {
     return res.data;
 };
 
-export const getLedgerStatement = async (accountCode, startDate, endDate) => {
+export const getLedgerStatement = async (accountCode, startDate, endDate, branchId) => {
     const params = { accountCode };
-    if (startDate) params.startDate = startDate;
-    if (endDate) params.endDate = endDate;
+    if (startDate) params.from = startDate;
+    if (endDate) params.to = endDate;
+    if (branchId && branchId !== "All") params.branchId = branchId;
     const res = await api.get("/api/financials/reports/ledger-statement", { params });
     return res.data;
 };

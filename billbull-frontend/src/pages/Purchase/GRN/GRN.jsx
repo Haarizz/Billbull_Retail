@@ -2483,6 +2483,23 @@ const GRN = () => {
   const LIST_PAGE_SIZE = 30;
   const [qcQueue, setQcQueue] = useState([]);
   const [activeFilter, setActiveFilter] = useState("All GRNs");
+  const grnSummaryCards = useMemo(() => {
+    const total = grns.length;
+    const qcPending = grns.filter((item) => item.status === GRN_STATUS.QC_PENDING).length;
+    const pendingInvoice = grns.filter(
+      (item) => item.status === GRN_STATUS.POSTED && item.invStatus !== 'Fully Invoiced'
+    ).length;
+    const completed = grns.filter(
+      (item) => item.status === GRN_STATUS.QC_COMPLETED || item.status === GRN_STATUS.POSTED
+    ).length;
+
+    return [
+      { label: 'Total GRNs', value: total, tone: 'text-slate-900 bg-slate-50 border-slate-200' },
+      { label: 'QC Pending', value: qcPending, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
+      { label: 'Pending Invoice', value: pendingInvoice, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
+      { label: 'Completed', value: completed, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+    ];
+  }, [grns]);
 
   // State for Editing
   const [currentGrnData, setCurrentGrnData] = useState(null);
@@ -2957,6 +2974,22 @@ const GRN = () => {
               </button>
             );
           })}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-4">
+          {grnSummaryCards.map((card) => (
+            <div
+              key={card.label}
+              className={`rounded-xl border px-3 py-2 shadow-sm ${card.tone}`}
+            >
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">
+                {card.label}
+              </div>
+              <div className="mt-1 text-2xl font-bold leading-none">
+                {card.value}
+              </div>
+            </div>
+          ))}
         </div>
 
         {activeNavTab === 'list' && (

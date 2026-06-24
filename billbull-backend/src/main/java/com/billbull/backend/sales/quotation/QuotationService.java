@@ -157,17 +157,42 @@ public class QuotationService {
         java.time.YearMonth month = java.time.YearMonth.now();
         LocalDate monthStart = month.atDay(1);
         LocalDate monthEnd = month.atEndOfMonth();
-
-        long totalThisMonth = quotationRepo.countBetween(monthStart, monthEnd);
-        long convertedThisMonth = quotationRepo.countConvertedBetween(monthStart, monthEnd);
+        List<Quotation> scopedQuotations = branchAccessService.filterExactBranchScoped(
+                quotationRepo.findAll(),
+                Quotation::getBranchId);
+        long totalThisMonth = scopedQuotations.stream()
+                .filter(quotation -> quotation.getDate() != null
+                        && !quotation.getDate().isBefore(monthStart)
+                        && !quotation.getDate().isAfter(monthEnd))
+                .count();
+        long convertedThisMonth = scopedQuotations.stream()
+                .filter(quotation -> quotation.getDate() != null
+                        && !quotation.getDate().isBefore(monthStart)
+                        && !quotation.getDate().isAfter(monthEnd))
+                .filter(quotation -> quotation.getStatus() == QuotationStatus.CONVERTED
+                        || quotation.getStatus() == QuotationStatus.INVOICED)
+                .count();
         double conversionRate = totalThisMonth > 0 ? (convertedThisMonth * 100.0 / totalThisMonth) : 0.0;
+        BigDecimal thisMonthValue = scopedQuotations.stream()
+                .filter(quotation -> quotation.getDate() != null
+                        && !quotation.getDate().isBefore(monthStart)
+                        && !quotation.getDate().isAfter(monthEnd))
+                .filter(quotation -> quotation.getStatus() != QuotationStatus.REJECTED)
+                .map(Quotation::getTotalAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        long openQuotations = scopedQuotations.stream()
+                .filter(quotation -> quotation.getStatus() == QuotationStatus.DRAFT
+                        || quotation.getStatus() == QuotationStatus.PENDING_APPROVAL
+                        || quotation.getStatus() == QuotationStatus.APPROVED)
+                .count();
 
         Map<String, Object> stats = new HashMap<>();
         stats.put("thisMonthCount", totalThisMonth);
-        stats.put("thisMonthValue", quotationRepo.sumTotalBetween(monthStart, monthEnd));
+        stats.put("thisMonthValue", thisMonthValue);
         stats.put("convertedCount", convertedThisMonth);
         stats.put("conversionRate", Math.round(conversionRate * 10.0) / 10.0);
-        stats.put("openQuotations", quotationRepo.countOpen());
+        stats.put("openQuotations", openQuotations);
         return stats;
     }
 

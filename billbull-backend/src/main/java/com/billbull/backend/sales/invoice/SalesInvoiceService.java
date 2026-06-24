@@ -689,19 +689,52 @@ public class SalesInvoiceService {
         java.time.YearMonth month = java.time.YearMonth.now();
         LocalDate monthStart = month.atDay(1);
         LocalDate monthEnd = month.atEndOfMonth();
+        List<SalesInvoice> scopedInvoices = branchAccessService.filterExactBranchScoped(
+                invoiceRepo.findAll(),
+                SalesInvoice::getBranchId);
 
-        Double todayRevenue = invoiceRepo.sumRevenueBetween(today, today);
-        Double monthRevenue = invoiceRepo.sumRevenueBetween(monthStart, monthEnd);
-        long monthCount = invoiceRepo.countBetween(monthStart, monthEnd);
-        long todayCount = invoiceRepo.countBetween(today, today);
-        Double outstanding = invoiceRepo.sumOutstandingBalance();
+        double todayRevenue = scopedInvoices.stream()
+                .filter(invoice -> invoice.getInvoiceDate() != null && invoice.getInvoiceDate().isEqual(today))
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
+                        && invoice.getStatus() != SalesInvoiceStatus.DRAFT)
+                .map(SalesInvoice::getInvoiceTotal)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        double monthRevenue = scopedInvoices.stream()
+                .filter(invoice -> invoice.getInvoiceDate() != null
+                        && !invoice.getInvoiceDate().isBefore(monthStart)
+                        && !invoice.getInvoiceDate().isAfter(monthEnd))
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
+                        && invoice.getStatus() != SalesInvoiceStatus.DRAFT)
+                .map(SalesInvoice::getInvoiceTotal)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        long monthCount = scopedInvoices.stream()
+                .filter(invoice -> invoice.getInvoiceDate() != null
+                        && !invoice.getInvoiceDate().isBefore(monthStart)
+                        && !invoice.getInvoiceDate().isAfter(monthEnd))
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED)
+                .count();
+        long todayCount = scopedInvoices.stream()
+                .filter(invoice -> invoice.getInvoiceDate() != null && invoice.getInvoiceDate().isEqual(today))
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED)
+                .count();
+        double outstanding = scopedInvoices.stream()
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
+                        && invoice.getStatus() != SalesInvoiceStatus.PAID)
+                .map(SalesInvoice::getBalance)
+                .filter(balance -> balance != null && balance.compareTo(BigDecimal.ZERO) > 0)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
 
         Map<String, Object> stats = new HashMap<>();
-        stats.put("todayRevenue", todayRevenue != null ? todayRevenue : 0.0);
+        stats.put("todayRevenue", todayRevenue);
         stats.put("todayCount", todayCount);
-        stats.put("thisMonthRevenue", monthRevenue != null ? monthRevenue : 0.0);
+        stats.put("thisMonthRevenue", monthRevenue);
         stats.put("thisMonthCount", monthCount);
-        stats.put("outstandingBalance", outstanding != null ? outstanding : 0.0);
+        stats.put("outstandingBalance", outstanding);
         return stats;
     }
 

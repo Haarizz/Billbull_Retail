@@ -3,6 +3,8 @@ package com.billbull.backend.financials.generalledger;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,9 @@ import com.billbull.backend.financials.chartofaccounts.AccountSelectionRules;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.chartofaccounts.CostCenter;
 import com.billbull.backend.financials.chartofaccounts.CostCenterRepository;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 @Service
 public class LedgerService {
@@ -32,15 +37,78 @@ public class LedgerService {
     private CostCenterRepository costCenterRepo;
     @Autowired
     private LedgerEntryRepository entryRepo;
+    @Autowired
+    private BranchAccessService branchAccessService;
+    @Autowired
+    private BranchRepository branchRepository;
+
+    private String normalizeBranchKey(String value) {
+        return value == null ? null : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private Set<String> resolveScopedBranchKeys() {
+        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
+        if (scope.allBranches()) {
+            return Set.of();
+        }
+
+        Set<String> keys = new HashSet<>();
+        branchRepository.findAllById(scope.branchIds()).stream()
+                .sorted(Comparator.comparing(Branch::getId))
+                .forEach(branch -> {
+                    String nameKey = normalizeBranchKey(branch.getName());
+                    String codeKey = normalizeBranchKey(branch.getCode());
+                    if (nameKey != null && !nameKey.isBlank()) {
+                        keys.add(nameKey);
+                    }
+                    if (codeKey != null && !codeKey.isBlank()) {
+                        keys.add(codeKey);
+                    }
+                });
+        return keys;
+    }
+
+    private boolean matchesScopedLegacyBranch(String branchLabel, Set<String> scopedBranchKeys) {
+        String normalized = normalizeBranchKey(branchLabel);
+        return normalized != null && scopedBranchKeys.contains(normalized);
+    }
+
+    private List<Account> filterAccountsByExactScope(List<Account> accounts) {
+        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
+        if (scope.allBranches()) {
+            return accounts;
+        }
+        Set<String> scopedBranchKeys = resolveScopedBranchKeys();
+        return accounts.stream()
+                .filter(account -> matchesScopedLegacyBranch(account.getBranch(), scopedBranchKeys))
+                .toList();
+    }
+
+    private List<CostCenter> filterCostCentersByExactScope(List<CostCenter> costCenters) {
+        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
+        if (scope.allBranches()) {
+            return costCenters;
+        }
+        Set<String> scopedBranchKeys = resolveScopedBranchKeys();
+        return costCenters.stream()
+                .filter(costCenter -> {
+                    Branch branch = costCenter.getBranchEntity();
+                    if (branch != null && branch.getId() != null) {
+                        return scope.branchIds().contains(branch.getId());
+                    }
+                    return matchesScopedLegacyBranch(costCenter.getBranch(), scopedBranchKeys);
+                })
+                .toList();
+    }
 
     // ================= ACCOUNTS =================
 
     public List<Account> getAllAccounts() {
-        return accountRepo.findAll();
+        return filterAccountsByExactScope(accountRepo.findAll());
     }
 
     public List<Account> getBankAccounts() {
-        return accountRepo.findAll().stream()
+        return getAllAccounts().stream()
                 .filter(AccountSelectionRules::isBankAccount)
                 .sorted((left, right) -> safeCode(left).compareToIgnoreCase(safeCode(right)))
                 .toList();
@@ -74,7 +142,7 @@ public class LedgerService {
     // ================= COST CENTERS =================
 
     public List<CostCenter> getAllCostCenters() {
-        return costCenterRepo.findAll();
+        return filterCostCentersByExactScope(costCenterRepo.findAll());
     }
 
     public CostCenter saveCostCenter(CostCenter cc) {
@@ -167,7 +235,9 @@ public class LedgerService {
     }
 
     public List<LedgerEntry> getTransactionHistory() {
-        return entryRepo.findAllByOrderByTransactionDateDesc();
+        return branchAccessService.filterExactBranchScopedByBranch(
+                entryRepo.findAllByOrderByTransactionDateDesc(),
+                LedgerEntry::getBranch);
     }
 
     // ================= OPENING BALANCES =================
@@ -223,7 +293,7 @@ public class LedgerService {
     // ================= COA TREE =================
 
     public List<Map<String, Object>> getAccountTree() {
-        List<Account> allAccounts = accountRepo.findAll();
+        List<Account> allAccounts = getAllAccounts();
 
         Map<String, List<Account>> childrenMap = new LinkedHashMap<>();
         List<Account> roots = new ArrayList<>();

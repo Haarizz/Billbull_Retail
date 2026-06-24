@@ -167,9 +167,13 @@ const Payment = () => {
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
-        const handler = () => fetchPayments();
+        const handler = () => {
+            fetchStats();
+            fetchPayments();
+        };
         window.addEventListener('billbull:branch-changed', handler);
         return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const fetchPayments = async () => {

@@ -193,8 +193,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return findTopDepartments(startDate, endDate, null);
         }
 
-        @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
-        List<SalesInvoice> findRecentForDashboard(Pageable pageable);
+        @Query("SELECT si FROM SalesInvoice si WHERE (:branchId IS NULL OR si.branchId = :branchId) ORDER BY si.id DESC")
+        List<SalesInvoice> findRecentForDashboard(@Param("branchId") Long branchId, Pageable pageable);
 
         @Query("SELECT CAST(COALESCE(SUM(si.taxTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +

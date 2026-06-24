@@ -38,7 +38,6 @@ import { getSalesReportData, getSalesReportSalespersons } from "../../../api/sal
 import { exportToExcel } from "../../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
-import { getBranches } from "../../../api/branchApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 import { useBranch } from "../../../context/BranchContext";
 import { CurrencySymbol } from "../../../components/CurrencyAmount";
@@ -1548,7 +1547,14 @@ interface SalesReportsProps {
 }
 
 export function SalesReports({ onNavigate }: SalesReportsProps) {
-  const { activeBranchId, isAllBranches } = useBranch();
+  const {
+    activeBranchId,
+    activeBranch,
+    branches: availableBranches,
+    defaultBranch,
+    isAllBranches,
+    isLoading: branchLoading,
+  } = useBranch();
   const [activeReport, setActiveReport] = useState<ReportId>("sales_summary");
   const [query, setQuery] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -1573,13 +1579,9 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const _todayStr = _today.toISOString().split("T")[0];
   const [dateFrom, setDateFrom] = useState(_firstOfMonth);
   const [dateTo, setDateTo] = useState(_todayStr);
-  const [branch, setBranch] = useState<string>(() =>
-    isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)
-  );
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
   const [companyProfile, setCompanyProfile] = useState<any>(null);
-  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [salespersons, setSalespersons] = useState<string[]>([]);
   const [cashierSearch, setCashierSearch] = useState("");
   const [cashierOpen, setCashierOpen] = useState(false);
@@ -1595,22 +1597,24 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     getCompanyProfile()
       .then((res) => setCompanyProfile(res.data))
       .catch((err) => console.warn("Could not load company profile", err));
-    getBranches()
-      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
-      .catch((err) => console.warn("Could not load branches", err));
     getSalesReportSalespersons()
       .then((data: string[]) => setSalespersons(data))
       .catch((err) => console.warn("Could not load salespersons", err));
   }, []);
 
-  // Sync branch filter when the sidebar branch selector changes
-  useEffect(() => {
-    setBranch(
-      isAllBranches || !activeBranchId || activeBranchId === "ALL"
-        ? "All"
-        : String(activeBranchId)
-    );
-  }, [activeBranchId, isAllBranches]);
+  const reportBranchId = useMemo(
+    () => (isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)),
+    [activeBranchId, isAllBranches]
+  );
+
+  const branchLabel = useMemo(() => {
+    if (reportBranchId === "All") return "All Branches";
+    const match =
+      activeBranch ||
+      availableBranches.find((b) => String(b.id) === reportBranchId) ||
+      defaultBranch;
+    return match?.name || "Selected Branch";
+  }, [activeBranch, availableBranches, defaultBranch, reportBranchId]);
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -1658,6 +1662,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   }, [filteredReports]);
 
   async function loadReport(signal?: AbortSignal, clearFirst = false, overrides: { cashier?: string; channel?: string; searchText?: string } = {}) {
+    if (branchLoading) return;
     const effectiveCashier = overrides.cashier !== undefined ? overrides.cashier : cashier;
     const effectiveChannel = overrides.channel !== undefined ? overrides.channel : channel;
     const effectiveSearch = overrides.searchText !== undefined ? overrides.searchText : searchText;
@@ -1666,7 +1671,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     const filterSnapshot = {
       dateFrom,
       dateTo,
-      branchId: branch,
+      branchId: reportBranchId,
       salesChannel: toBackendSalesChannel(effectiveChannel),
       salesperson: effectiveCashier,
       valuationMethod: "average_cost",
@@ -1701,18 +1706,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   }
 
   useEffect(() => {
+    if (branchLoading) return;
     const controller = new AbortController();
     setReportView(activeReport, null);
-    // Clear data when switching reports so stale data from the previous report doesn't appear
     loadReport(controller.signal, true);
     return () => controller.abort();
-  }, [activeReport]);
-
-  const branchLabel = useMemo(() => {
-    if (branch === "All" || branch === "ALL") return "All";
-    const match = branches.find((b) => String(b.id) === String(branch));
-    return match ? match.name : "All";
-  }, [branch, branches]);
+  }, [activeReport, reportBranchId, branchLoading]);
 
   // Filters actually applied to the current data — reads committed state so chips match what was sent
   function appliedFilters() {
@@ -2063,16 +2062,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                     <Store className="h-3.5 w-3.5" />
                     Branch
                   </label>
-                  <select
-                    value={branch}
-                    onChange={(e) => setBranch(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option value="All">All</option>
-                    {branches.map((b) => (
-                      <option key={b.id} value={String(b.id)}>{b.name}</option>
-                    ))}
-                  </select>
+                  <Input
+                    value={branchLabel}
+                    readOnly
+                    disabled
+                    className="h-8 text-[11px] bg-slate-100 border-slate-200 text-slate-500"
+                  />
                 </div>
 
                 <div className="space-y-1.5">

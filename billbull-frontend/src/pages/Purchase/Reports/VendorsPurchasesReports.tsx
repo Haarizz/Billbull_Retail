@@ -51,9 +51,9 @@ import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
 import { exportToExcel } from "../../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
-import { getBranches } from "../../../api/branchApi";
 import { getVendors } from "../../../api/vendorsApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import { useBranch } from "../../../context/BranchContext";
 import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 // ---------------------------------------------------------------------------
@@ -3436,6 +3436,14 @@ function AuditTrailReport() {
 // ---------------------------------------------------------------------------
 
 export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (s: string) => void }) {
+  const {
+    activeBranchId,
+    activeBranch,
+    branches: availableBranches,
+    defaultBranch,
+    isAllBranches,
+    isLoading: branchLoading,
+  } = useBranch();
   const [activeReport, setActiveReport] = useState<ReportId>("vendor-master");
   const [query, setQuery] = useState("");
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
@@ -3456,11 +3464,9 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const [dateFrom, setDateFrom] = useState(_firstOfMonth);
   const [dateTo, setDateTo] = useState(_todayStr);
   const [vendor, setVendor] = useState("All");
-  const [branch, setBranch] = useState("All");
   const [searchText, setSearchText] = useState("");
   const [dataRevision, setDataRevision] = useState(0);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
-  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [vendorList, setVendorList] = useState<{ id: number; name: string }[]>([]);
   const [vendorSearch, setVendorSearch] = useState("");
   const [vendorOpen, setVendorOpen] = useState(false);
@@ -3468,15 +3474,27 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
-    getBranches()
-      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
-      .catch(() => {});
     getVendors()
       .then((data: any[]) => setVendorList(data.filter((v: any) => v.isActive !== false).map((v: any) => ({ id: v.id, name: v.name || v.vendorName || String(v.id) }))))
       .catch(() => {});
   }, []);
 
+  const branchLabel = useMemo(() => {
+    if (isAllBranches || !activeBranchId || activeBranchId === "ALL") return "All Branches";
+    const match =
+      activeBranch ||
+      availableBranches.find((b) => String(b.id) === String(activeBranchId)) ||
+      defaultBranch;
+    return match?.name || "Selected Branch";
+  }, [activeBranch, activeBranchId, availableBranches, defaultBranch, isAllBranches]);
+
+  const branchFilter = useMemo(
+    () => (isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : branchLabel),
+    [activeBranchId, branchLabel, isAllBranches]
+  );
+
   async function loadReport(signal?: AbortSignal) {
+    if (branchLoading) return;
     try {
       applyLiveReportData(activeReport, { rows: [], charts: [] });
       setDataRevision((value) => value + 1);
@@ -3484,7 +3502,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
         dateFrom,
         dateTo,
         vendor,
-        branch,
+        branch: branchFilter,
         searchQuery: searchText,
       }, signal);
       if (!data) return;
@@ -3496,17 +3514,18 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   }
 
   useEffect(() => {
+    if (branchLoading) return;
     const controller = new AbortController();
     loadReport(controller.signal);
     return () => controller.abort();
-  }, [activeReport]);
+  }, [activeReport, branchFilter, branchLoading]);
 
   const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
 
   const exportMeta = () => ({
     dateFrom,
     dateTo,
-    branch,
+    branch: branchLabel,
     companyProfile,
   });
 
@@ -3874,16 +3893,12 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                     <Building2 className="h-3.5 w-3.5" />
                     Branch
                   </label>
-                  <select
-                    value={branch}
-                    onChange={(e) => setBranch(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option value="All">All</option>
-                    {branches.map((b) => (
-                      <option key={b.id} value={b.name}>{b.name}</option>
-                    ))}
-                  </select>
+                  <Input
+                    value={branchLabel}
+                    readOnly
+                    disabled
+                    className="h-8 text-[11px] bg-slate-100 border-slate-200 text-slate-500"
+                  />
                 </div>
 
                 {showAdvanced && (

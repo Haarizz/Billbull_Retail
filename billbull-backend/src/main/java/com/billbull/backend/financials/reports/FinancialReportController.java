@@ -111,9 +111,10 @@ public class FinancialReportController {
     public Object getLedgerStatement(
             @RequestParam String accountCode,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long branchId) {
         modulePermissionService.requireCanView(MODULE);
-        return reportService.generateLedgerStatement(accountCode, from, to);
+        return reportService.generateLedgerStatement(accountCode, from, to, branchId);
     }
 
     /** Sub-ledger ↔ GL reconciliation health check (PDF §17 / Phase 7.1). */

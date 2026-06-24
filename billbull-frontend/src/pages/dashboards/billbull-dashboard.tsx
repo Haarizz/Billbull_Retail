@@ -147,11 +147,14 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   // Global branch context
-  const { activeBranchId, isAllBranches } = useBranch();
+  const { activeBranchId, activeBranch, isAllBranches } = useBranch();
 
-  // Filters
+  // Filters — initialize branchFilter from the already-resolved activeBranchId so the
+  // first data load uses the correct branch (not the "all" default).
   const [dateFilter, setDateFilter] = useState<DateFilter>("year");
-  const [branchFilter, setBranchFilter] = useState<string>("all");
+  const [branchFilter, setBranchFilter] = useState<string>(
+    () => (!activeBranchId || activeBranchId === "ALL") ? "all" : String(activeBranchId)
+  );
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<DashboardAdvancedFilters>(
     EMPTY_ADVANCED_FILTERS
@@ -597,6 +600,9 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
     year: "This Year",
     custom: "Custom Range",
   };
+  const activeBranchLabel = isAllBranches
+    ? "All Branches"
+    : activeBranch?.name || "Current Branch";
 
   return (
     <div className="p-6 space-y-6 bg-[#F7F7FA] min-h-screen">
@@ -610,7 +616,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
             </h1>
           </div>
           <p className="text-sm md:text-base font-light text-muted-foreground">
-            Live overview of your retail sales, inventory and profitability.
+            {`Live overview of your retail sales, inventory and profitability for ${activeBranchLabel}.`}
           </p>
         </div>
 
@@ -634,24 +640,12 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                 : "Disconnected"}
             </span>
           </div>
-
-          {/* Branch filter */}
-          <Select
-            value={branchFilter}
-            onValueChange={(value) => setBranchFilter(value)}
+          <Badge
+            variant="outline"
+            className="border-slate-200 bg-white text-xs text-slate-700 shadow-sm"
           >
-            <SelectTrigger className="w-[160px] bg-white border-slate-200 shadow-sm hover:border-[#F5C742] focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/20 transition-colors duration-150">
-              <SelectValue placeholder="Branch" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-slate-200 bg-white shadow-lg">
-              <SelectItem value="all" className="cursor-pointer rounded-lg focus:bg-[#FFF9DF] focus:text-slate-900">All Branches</SelectItem>
-              {branches.map((b) => (
-                <SelectItem key={b.id} value={b.id} className="cursor-pointer rounded-lg focus:bg-[#FFF9DF] focus:text-slate-900">
-                  {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            {activeBranchLabel}
+          </Badge>
 
           {/* Date filter */}
           <Select
@@ -1195,7 +1189,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                   >
                     {branchFilter === "all"
                       ? "All branches"
-                      : branches.find((b) => b.id === branchFilter)?.name ??
+                      : branches.find((b) => String(b.id) === branchFilter)?.name ??
                         "Branch"}
                   </Badge>
                 </div>

@@ -10,6 +10,7 @@ import java.util.Map;
 
 @Configuration
 public class DatabaseFixConfig {
+    private static final int HIBERNATE_BATCH_SEQUENCE_ALLOCATION = 50;
 
     @Bean
     public CommandLineRunner updateCheckConstraints(JdbcTemplate jdbcTemplate) {
@@ -20,6 +21,10 @@ public class DatabaseFixConfig {
                 ensureProductSchemaColumns(jdbcTemplate);
                 ensureBatchMasterSchemaColumns(jdbcTemplate);
                 ensureStockMovementSchemaColumns(jdbcTemplate);
+                ensureSequenceAlignment(jdbcTemplate, "journal_lines", "seq_journal_lines",
+                        HIBERNATE_BATCH_SEQUENCE_ALLOCATION);
+                ensureSequenceAlignment(jdbcTemplate, "sales_invoice_items", "seq_sales_invoice_items",
+                        HIBERNATE_BATCH_SEQUENCE_ALLOCATION);
 
                 // 1. Fix delivery_notes_status_check
                 updateStatusConstraint(jdbcTemplate, "delivery_notes", "delivery_notes_status_check",
@@ -55,6 +60,50 @@ public class DatabaseFixConfig {
                 // Non-fatal error, let app continue
             }
         };
+    }
+
+    private void ensureSequenceAlignment(JdbcTemplate jdbcTemplate, String tableName, String sequenceName,
+            int allocationSize) {
+        try {
+            Boolean tableExists = jdbcTemplate.queryForObject(
+                    """
+                            SELECT EXISTS (
+                                SELECT 1
+                                FROM information_schema.tables
+                                WHERE table_schema = 'public' AND table_name = ?
+                            )
+                            """,
+                    Boolean.class, tableName);
+
+            if (!Boolean.TRUE.equals(tableExists)) {
+                return;
+            }
+
+            Long maxId = jdbcTemplate.queryForObject(
+                    "SELECT COALESCE(MAX(id), 0) FROM " + tableName, Long.class);
+            long currentMaxId = Math.max(maxId != null ? maxId : 0L, 0L);
+            long safeBlockEnd = ((currentMaxId / allocationSize) + 1L) * allocationSize;
+
+            jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS public." + sequenceName
+                    + " START WITH " + (safeBlockEnd + 1L)
+                    + " INCREMENT BY " + allocationSize);
+
+            Map<String, Object> sequenceState = jdbcTemplate.queryForMap(
+                    "SELECT last_value, is_called FROM public." + sequenceName);
+
+            long lastValue = ((Number) sequenceState.get("last_value")).longValue();
+            boolean isCalled = Boolean.TRUE.equals(sequenceState.get("is_called"));
+            long nextSequenceValue = isCalled ? lastValue + allocationSize : lastValue;
+
+            if (nextSequenceValue < safeBlockEnd) {
+                jdbcTemplate.execute("SELECT setval('public." + sequenceName + "', " + safeBlockEnd + ", false)");
+                System.out.println("Aligned sequence " + sequenceName + " to block ending at " + safeBlockEnd
+                        + " for " + tableName + " (max id " + currentMaxId + ")");
+            }
+        } catch (Exception e) {
+            System.err.println("Error aligning sequence " + sequenceName + " for " + tableName + ": "
+                    + e.getMessage());
+        }
     }
 
     private void ensureProductSchemaColumns(JdbcTemplate jdbcTemplate) {

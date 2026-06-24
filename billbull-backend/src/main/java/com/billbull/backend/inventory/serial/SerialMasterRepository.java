@@ -13,6 +13,8 @@ public interface SerialMasterRepository extends JpaRepository<SerialMaster, Long
     /** Exact serial number lookup (case-insensitive). */
     Optional<SerialMaster> findFirstBySerialNumberIgnoreCase(String serialNumber);
 
+    boolean existsBySerialNumberIn(List<String> serialNumbers);
+
     /** Pessimistic write lock for checkout/status transitions to prevent double-selling. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM SerialMaster s WHERE LOWER(s.serialNumber) = LOWER(:sn)")

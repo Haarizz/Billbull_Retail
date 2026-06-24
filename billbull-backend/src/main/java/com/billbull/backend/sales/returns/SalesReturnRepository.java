@@ -35,13 +35,28 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate = :date")
     Double getTotalReturnsForDate(@Param("date") LocalDate date);
 
-    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate BETWEEN :startDate AND :endDate")
-    Double getTotalReturnsBetweenDates(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r " +
+           "WHERE r.returnDate BETWEEN :startDate AND :endDate " +
+           "AND (:branchId IS NULL OR r.branch.id = :branchId)")
+    Double getTotalReturnsBetweenDates(@Param("startDate") LocalDate startDate,
+                                       @Param("endDate") LocalDate endDate,
+                                       @Param("branchId") Long branchId);
+
+    default Double getTotalReturnsBetweenDates(LocalDate startDate, LocalDate endDate) {
+        return getTotalReturnsBetweenDates(startDate, endDate, null);
+    }
 
     @Query("SELECT r.returnDate, COALESCE(SUM(r.totalAmount), 0) FROM SalesReturn r " +
            "WHERE r.returnDate BETWEEN :from AND :to " +
+           "AND (:branchId IS NULL OR r.branch.id = :branchId) " +
            "GROUP BY r.returnDate ORDER BY r.returnDate")
-    List<Object[]> findDailyReturnsTrend(@Param("from") LocalDate from, @Param("to") LocalDate to);
+    List<Object[]> findDailyReturnsTrend(@Param("from") LocalDate from,
+                                         @Param("to") LocalDate to,
+                                         @Param("branchId") Long branchId);
+
+    default List<Object[]> findDailyReturnsTrend(LocalDate from, LocalDate to) {
+        return findDailyReturnsTrend(from, to, null);
+    }
 
     @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.status = 'APPROVED'")
     Double getTotalApprovedReturns();
