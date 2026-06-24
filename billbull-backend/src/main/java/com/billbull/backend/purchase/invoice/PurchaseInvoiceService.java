@@ -602,20 +602,11 @@ public class PurchaseInvoiceService {
                             invoice.getInvoiceNumber());
                     serialMasters.add(purchaseSerialService.newSerialMaster(
                             serial.getSerialNumber(),
-                            productId,
                             item.getItemCode(),
                             item.getItemName(),
-                            "PURCHASE_INVOICE",
-                            invoice.getId(),
-                            item.getId(),
                             invoice.getInvoiceNumber(),
-                            warehouseId,
-                            zoneId,
-                            locatorId,
-                            binId,
-                            baseUnitCost,
-                            serial.getManufacturingDate(),
-                            serial.getExpiryDate()));
+                            invoice.getWarehouseName(),
+                            invoice.getBranchCode()));
                 }
                 serialMasterRepository.saveAll(serialMasters);
             } else if (!isAgainstGrn && product.isBatch()) {

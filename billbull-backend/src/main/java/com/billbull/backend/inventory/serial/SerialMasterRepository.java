@@ -24,4 +24,6 @@ public interface SerialMasterRepository extends JpaRepository<SerialMaster, Long
 
     @Query("SELECT s FROM SerialMaster s WHERE LOWER(s.serialNumber) LIKE LOWER(CONCAT(:prefix, '%')) ORDER BY s.serialNumber")
     List<SerialMaster> findBySerialNumberStartingWith(@Param("prefix") String prefix);
+
+    boolean existsBySerialNumberIn(List<String> serialNumbers);
 }
