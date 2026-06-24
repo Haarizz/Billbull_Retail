@@ -117,12 +117,18 @@ public class PosLayawayService {
             boolean batchControlled = !itemVoided && isBatchControlled(ir.getItemCode());
             item.setBatchControlled(batchControlled);
             if (batchControlled) {
-                if (ir.getBatchNumber() == null || ir.getBatchNumber().isBlank()) {
+                boolean hasScannedBatch = ir.getBatchNumber() != null && !ir.getBatchNumber().isBlank();
+                if (hasScannedBatch) {
+                    // Cashier scanned a specific physical unit — pin it.
+                    item.setPinnedBatchNumber(ir.getBatchNumber().trim());
+                } else if (!isFefoEnabled(ir.getItemCode())) {
+                    // No scan and the product can't auto-pick (FEFO disabled) — a
+                    // specific batch must be chosen, so the cashier has to scan.
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Batch-controlled item " + ir.getItemCode()
                                     + " needs a scanned batch to reserve for a layaway");
                 }
-                item.setPinnedBatchNumber(ir.getBatchNumber().trim());
+                // else: FEFO-enabled, no scan → batches are auto-reserved below.
             }
 
             // Voided lines are stored for display but excluded from totals/reservations.
@@ -156,9 +162,18 @@ public class PosLayawayService {
         PosLayaway saved = repo.save(layaway);
 
         for (PosLayawayItem item : saved.getItems()) {
-            if (!item.isVoided() && item.isBatchControlled() && item.getPinnedBatchNumber() != null) {
+            if (item.isVoided() || !item.isBatchControlled()) {
+                continue;
+            }
+            if (item.getPinnedBatchNumber() != null) {
+                // Scanned a specific physical unit (quantity 1 per scan).
                 batchSelectionService.reserveBatchForLayawayLine(
                         saved.getId(), item.getId(), item.getItemCode(), item.getPinnedBatchNumber());
+            } else {
+                // No scan, FEFO-enabled — auto-reserve first-expiry batches for
+                // the whole line quantity so the reservation is concrete.
+                batchSelectionService.autoReserveFefoForLayawayLine(
+                        saved.getId(), item.getId(), item.getItemCode(), item.getQuantity());
             }
         }
 
@@ -335,6 +350,17 @@ public class PosLayawayService {
         }
         return productRepository.findByCode(itemCode.trim())
                 .map(Product::isBatch)
+                .orElse(false);
+    }
+
+    /** A FEFO-enabled batch product can have its layaway batches auto-picked
+     *  (first-expiry-first-out) without a physical scan. */
+    private boolean isFefoEnabled(String itemCode) {
+        if (itemCode == null || itemCode.isBlank()) {
+            return false;
+        }
+        return productRepository.findByCode(itemCode.trim())
+                .map(Product::isFefoEnabled)
                 .orElse(false);
     }
 

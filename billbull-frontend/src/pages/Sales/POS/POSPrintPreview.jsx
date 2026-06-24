@@ -299,11 +299,23 @@ export const ThermalMock = ({
 export const useA4BlobUrl = (html) => {
   const [url, setUrl] = React.useState('');
   React.useEffect(() => {
-    if (!html) return;
+    if (!html) {
+      setUrl('');
+      return;
+    }
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     setUrl(blobUrl);
-    return () => URL.revokeObjectURL(blobUrl);
+    // Revoke on a macrotask, NOT synchronously on unmount. Revoking the blob
+    // URL in the same tick that React tears down the consuming <iframe> makes
+    // the browser detach the iframe's document out from under React's
+    // reconciler, which then throws "Failed to execute 'removeChild' on 'Node'"
+    // (seen on POS Settle Payment, where clearInvoice + phase switch unmount the
+    // preview iframe in one commit). Deferring lets React finish removing the
+    // iframe node first, then we free the URL.
+    return () => {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+    };
   }, [html]);
   return url;
 };

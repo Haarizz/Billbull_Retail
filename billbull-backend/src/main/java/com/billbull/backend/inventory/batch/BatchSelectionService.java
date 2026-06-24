@@ -303,6 +303,47 @@ public class BatchSelectionService {
                 false);
     }
 
+    /**
+     * POS layaway reservation (no scan): auto-reserve FEFO batches for a layaway
+     * line against the POS_LAYAWAY source, mirroring
+     * {@link #autoReserveFefoForSalesInvoiceLine} but for a reservation rather
+     * than a posted sale. Used when the cashier laid away a batch-controlled
+     * item from the product grid (no physical scan). Only valid when the product
+     * has FEFO enabled; a non-FEFO batch product still needs a manual/scanned
+     * batch. The bin is auto-resolved from where the product's FEFO-preferred
+     * stock sits. May allocate across several batches to cover the line quantity.
+     *
+     * @param layawayId        the saved layaway id (POS_LAYAWAY source document)
+     * @param lineId           the saved layaway item id (source line)
+     * @param itemCode         the product code (must be batch-controlled)
+     * @param requiredQuantity the layaway line quantity to reserve
+     */
+    public List<BatchAllocation> autoReserveFefoForLayawayLine(
+            Long layawayId,
+            Long lineId,
+            String itemCode,
+            int requiredQuantity) {
+        if (layawayId == null || lineId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved layaway and item are required");
+        }
+        Product product = requireBatchProduct(itemCode);
+        Bin bin = resolveSelectionBin(product, null, null);
+
+        BatchSelectionRequest request = new BatchSelectionRequest();
+        request.mode = BatchAllocationMethod.AUTO_FEFO;
+        request.binId = bin.getId();
+        request.locationCode = bin.getCode();
+        request.requiredQuantity = requiredQuantity;
+        return saveSourceLineSelection(
+                DOC_TYPE_POS_LAYAWAY,
+                layawayId,
+                lineId,
+                product,
+                bin,
+                request,
+                requiredQuantity);
+    }
+
     /** Release every batch reserved for a layaway (cancel / expire / convert). */
     public void releaseLayaway(Long layawayId) {
         releaseSourceDocument(DOC_TYPE_POS_LAYAWAY, layawayId);

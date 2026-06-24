@@ -633,18 +633,26 @@ export default function POSSales() {
           email: customer?.email || '',
           trn: customer?.trn || '',
         },
-        items: (currentInvoice.items || []).filter(it => !it.isVoided).map(it => ({
-          code: it.id || '',
-          name: it.name || '',
-          desc: it.description || '',
-          qty: it.quantity || 0,
-          price: it.price || 0,
-          disc: it.discount || 0,
-          tax: 5,
-          taxAmt: parseFloat(((it.total || 0) * 5 / 105).toFixed(2)),
-          total: it.total || 0,
-          batchNumber: it.batchNumber || '',
-        })),
+        items: (currentInvoice.items || []).filter(it => !it.isVoided).map(it => {
+          // Use the real product code, never the composite cart-line id (pinned
+          // batch/serial lines have ids like "<productId>::<batch>").
+          const lineCode = it.code || it.productId || it.id || '';
+          const lineTax = toNumber(it.taxRate, 5);
+          return {
+            code: lineCode,
+            name: it.name || '',
+            desc: it.description || '',
+            qty: it.quantity || 0,
+            price: it.price || 0,
+            disc: it.discount || 0,
+            tax: lineTax,
+            // VAT on the discounted line net at the line's own rate.
+            taxAmt: parseFloat(((it.total || 0) * lineTax / (100 + lineTax)).toFixed(2)),
+            total: it.total || 0,
+            batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+            serialNumber: it.serialNumber || '',
+          };
+        }),
         totals: {
           subTotal: currentInvoice.subtotal || 0,
           tax: currentInvoice.tax || 0,
@@ -722,6 +730,18 @@ export default function POSSales() {
   );
 
   useEffect(() => { currentInvoiceRef.current = currentInvoice; }, [currentInvoice]);
+
+  // When the checkout opens with a real customer already on the bill, carry that
+  // customer into the Credit-payment section so the cashier never has to
+  // re-select. Only seeds once per open and never overrides a manual pick.
+  useEffect(() => {
+    if (!showPaymentDialog) return;
+    if (checkoutCreditCustomer) return;
+    if (selectedCustomer && selectedCustomer !== WALK_IN_CUSTOMER.id) {
+      setCheckoutCreditCustomer(selectedCustomer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPaymentDialog]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
