@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -125,12 +126,48 @@ class PosLayawayServiceTest {
     }
 
     @Test
-    void createRejectsBatchLineWithoutScannedBatch() {
+    void createRejectsNonFefoBatchLineWithoutScannedBatch() {
+        // Batch-controlled but FEFO disabled → a specific batch must be chosen,
+        // so the cashier still has to scan one.
         when(productRepository.findByCode("BATCH-ITEM")).thenReturn(Optional.of(batchProduct("BATCH-ITEM")));
         PosLayawayCreateRequest req = baseRequest();
         req.setItems(List.of(line("BATCH-ITEM", 1, 10.0, null))); // no batch number
 
         assertThrows(ResponseStatusException.class, () -> service.create(req));
+        verify(batchSelectionService, never())
+                .autoReserveFefoForLayawayLine(anyLong(), anyLong(), any(), anyInt());
+    }
+
+    @Test
+    void createAutoReservesFefoBatchLineWhenNotScanned() {
+        // Batch-controlled AND FEFO enabled → no scan needed; batches are
+        // auto-picked first-expiry-first-out for the whole line quantity.
+        when(productRepository.findByCode("FEFO-ITEM")).thenReturn(Optional.of(fefoProduct("FEFO-ITEM")));
+        PosLayawayCreateRequest req = baseRequest();
+        req.setItems(List.of(line("FEFO-ITEM", 3, 20.0, null))); // qty 3, no batch number
+
+        PosLayaway saved = service.create(req);
+
+        verify(batchSelectionService)
+                .autoReserveFefoForLayawayLine(eq(100L), anyLong(), eq("FEFO-ITEM"), eq(3));
+        verify(batchSelectionService, never())
+                .reserveBatchForLayawayLine(anyLong(), anyLong(), eq("FEFO-ITEM"), any());
+        assertEquals(1, saved.getItems().size());
+    }
+
+    @Test
+    void createPrefersScannedBatchOverFefoEvenWhenFefoEnabled() {
+        // A scanned batch always pins the exact unit, even on a FEFO product.
+        when(productRepository.findByCode("FEFO-ITEM")).thenReturn(Optional.of(fefoProduct("FEFO-ITEM")));
+        PosLayawayCreateRequest req = baseRequest();
+        req.setItems(List.of(line("FEFO-ITEM", 1, 20.0, "FEFO-BATCH-7")));
+
+        service.create(req);
+
+        verify(batchSelectionService)
+                .reserveBatchForLayawayLine(eq(100L), anyLong(), eq("FEFO-ITEM"), eq("FEFO-BATCH-7"));
+        verify(batchSelectionService, never())
+                .autoReserveFefoForLayawayLine(anyLong(), anyLong(), any(), anyInt());
     }
 
     @Test
@@ -194,10 +231,12 @@ class PosLayawayServiceTest {
         return i;
     }
 
+    /** Batch-controlled but FEFO disabled: a specific batch must be chosen. */
     private Product batchProduct(String code) {
         Product p = new Product();
         p.setCode(code);
         p.setBatch(true);
+        p.setFefoEnabled(false);
         return p;
     }
 
@@ -205,6 +244,15 @@ class PosLayawayServiceTest {
         Product p = new Product();
         p.setCode(code);
         p.setBatch(false);
+        return p;
+    }
+
+    /** Batch-controlled AND FEFO-enabled: layaway can auto-pick batches. */
+    private Product fefoProduct(String code) {
+        Product p = new Product();
+        p.setCode(code);
+        p.setBatch(true);
+        p.setFefoEnabled(true);
         return p;
     }
 
