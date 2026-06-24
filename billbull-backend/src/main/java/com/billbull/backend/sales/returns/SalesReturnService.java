@@ -8,6 +8,9 @@ import com.billbull.backend.inventory.batch.BatchMaster;
 import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.batch.BatchStatus;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -86,6 +89,9 @@ public class SalesReturnService {
 
     @Autowired
     private com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumptionRepository consumptionRepo;
+
+    @Autowired
+    private SerialMasterRepository serialMasterRepository;
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
@@ -230,6 +236,7 @@ public class SalesReturnService {
             applyBatchReturns(saved);
             applyNonBatchStockReturns(saved);
             postJournalForApprovedReturn(saved);
+            applySerialReturns(saved);
         }
         return saved;
     }
@@ -411,6 +418,46 @@ public class SalesReturnService {
     }
 
     // ---------------------------------------------------------------
+    // §5.5 applySerialReturns — validate returned serial matches sold serial on the
+    // original invoice, then flip SerialStatus → RETURNED.
+    // ---------------------------------------------------------------
+    private void applySerialReturns(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+
+        // Build a map of itemCode → serialNumber from the original linked invoice.
+        Map<String, String> soldSerialByCode = new java.util.HashMap<>();
+        if (salesReturn.getLinkedInvoice() != null && !salesReturn.getLinkedInvoice().isBlank()) {
+            salesInvoiceRepository
+                    .findByInvoiceNumber(salesReturn.getLinkedInvoice())
+                    .ifPresent(inv -> {
+                        if (inv.getItems() != null) {
+                            for (com.billbull.backend.sales.invoice.SalesInvoiceItem si : inv.getItems()) {
+                                if (si.getSerialNumber() != null && !si.getSerialNumber().isBlank()
+                                        && si.getItemCode() != null) {
+                                    soldSerialByCode.put(si.getItemCode(), si.getSerialNumber());
+                                }
+                            }
+                        }
+                    });
+        }
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getItemCode() == null) continue;
+            String soldSerial = soldSerialByCode.get(item.getItemCode());
+            if (soldSerial == null) continue;
+
+            serialMasterRepository.findBySerialNumberForUpdate(soldSerial).ifPresent(serial -> {
+                if (serial.getStatus() == SerialStatus.SOLD) {
+                    serial.setStatus(SerialStatus.RETURNED);
+                    serialMasterRepository.save(serial);
+                    log.info("[SalesReturn] {} — serial {} marked RETURNED for item '{}'.",
+                            salesReturn.getReturnNumber(), soldSerial, item.getItemCode());
+                }
+            });
+        }
+    }
+
+    // ---------------------------------------------------------------
     // applyBatchReturns — split allocations, flip BatchMaster status,
     // post positive StockMovement on APPROVED.
     // ---------------------------------------------------------------
@@ -448,6 +495,26 @@ public class SalesReturnService {
                         .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
                                 org.springframework.http.HttpStatus.BAD_REQUEST,
                                 "Allocation not found: " + parentId));
+
+                // Validate batch number matches the original sold allocation.
+                // Prevents a client from referencing a real allocation but returning a different batch.
+                if (sel.getBatchNumber() != null && parent.getBatchNumber() != null
+                        && !sel.getBatchNumber().equals(parent.getBatchNumber())) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Return batch '" + sel.getBatchNumber() + "' does not match the original"
+                                    + " sold batch '" + parent.getBatchNumber() + "' on allocation "
+                                    + parentId + " for item " + item.getItemCode());
+                }
+                // Validate the product is the same — guards against mis-referencing allocations
+                // from a different product on the same invoice.
+                if (item.getItemCode() != null && parent.getProductCode() != null
+                        && !item.getItemCode().equals(parent.getProductCode())) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Return item '" + item.getItemCode() + "' references an allocation"
+                                    + " belonging to product '" + parent.getProductCode() + "'");
+                }
 
                 int parentQty = parent.getQuantity() != null ? parent.getQuantity() : 0;
                 int alreadyReturned = batchSelectionService.sumAlreadyReturned(parent.getId());

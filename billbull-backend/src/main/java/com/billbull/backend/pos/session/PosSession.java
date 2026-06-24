@@ -95,6 +95,11 @@ public class PosSession extends BaseEntity {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    /** Immutable JSON snapshot of the Z-Report summary captured when this session was closed.
+     *  Null while the session is open. Written once by closeSession(), never overwritten. */
+    @Column(name = "z_report_json", columnDefinition = "TEXT")
+    private String zReportJson;
+
     @JsonIgnore
     @OneToMany(mappedBy = "posSession", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<PosCashMovement> cashMovements = new ArrayList<>();
@@ -175,6 +180,9 @@ public class PosSession extends BaseEntity {
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+
+    public String getZReportJson() { return zReportJson; }
+    public void setZReportJson(String zReportJson) { this.zReportJson = zReportJson; }
 
     public List<PosCashMovement> getCashMovements() { return cashMovements; }
     public void setCashMovements(List<PosCashMovement> cashMovements) { this.cashMovements = cashMovements; }

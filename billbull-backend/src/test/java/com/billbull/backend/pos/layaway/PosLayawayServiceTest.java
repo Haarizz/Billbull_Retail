@@ -23,24 +23,32 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 @ExtendWith(MockitoExtension.class)
 class PosLayawayServiceTest {
 
     @Mock private PosLayawayRepository repo;
+    @Mock private PosLayawayPaymentRepository paymentRepo;
     @Mock private ProductRepository productRepository;
     @Mock private BatchSelectionService batchSelectionService;
     @Mock private RolePermissionService permissionService;
+    @Mock private PostingEngineService postingEngine;
+    @Mock private BranchRepository branchRepository;
+    @Mock private PosAuditService auditService;
 
     private PosLayawayService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosLayawayService(repo, productRepository, batchSelectionService, permissionService);
+        service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService, permissionService,
+                postingEngine, branchRepository, auditService);
         // save() returns the same entity with ids assigned, so the reserve loop can run.
         lenient().when(repo.save(any(PosLayaway.class))).thenAnswer(inv -> {
             PosLayaway l = inv.getArgument(0);

@@ -1,5 +1,9 @@
 package com.billbull.backend.inventory.serial;
 
 public enum SerialStatus {
-    AVAILABLE
+    AVAILABLE,
+    RESERVED,
+    SOLD,
+    RETURNED,
+    DEFECTIVE
 }

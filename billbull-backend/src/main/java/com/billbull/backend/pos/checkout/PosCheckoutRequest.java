@@ -4,6 +4,7 @@ import java.util.List;
 
 public class PosCheckoutRequest {
 
+    private String checkoutKey;
     private String customerCode;
     private String customerName;
     private String paymentMode;
@@ -24,6 +25,7 @@ public class PosCheckoutRequest {
     private String shippingAddress;
     private String driverName;
     private String deliveryNotes;
+    private Double deliveryCharge;
     private List<PosCheckoutItem> items;
 
     public static class PosCheckoutItem {
@@ -38,6 +40,10 @@ public class PosCheckoutRequest {
         private String batchNumber;
         /** Cashier voided this line — retained for receipt/audit/reports, excluded from totals & stock. */
         private Boolean voided;
+        /** Optional reason the cashier entered for voiding this line (displayed on receipt + audit log). */
+        private String voidReason;
+        /** Serial number scanned for a serialized product (Product.isSerial). */
+        private String serialNumber;
 
         public String getItemCode() { return itemCode; }
         public void setItemCode(String itemCode) { this.itemCode = itemCode; }
@@ -57,10 +63,16 @@ public class PosCheckoutRequest {
         public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
         public Boolean getVoided() { return voided; }
         public void setVoided(Boolean voided) { this.voided = voided; }
+        public String getVoidReason() { return voidReason; }
+        public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
+        public String getSerialNumber() { return serialNumber; }
+        public void setSerialNumber(String serialNumber) { this.serialNumber = serialNumber; }
     }
 
     // Getters & Setters
 
+    public String getCheckoutKey() { return checkoutKey; }
+    public void setCheckoutKey(String checkoutKey) { this.checkoutKey = checkoutKey; }
     public String getCustomerCode() { return customerCode; }
     public void setCustomerCode(String customerCode) { this.customerCode = customerCode; }
     public String getCustomerName() { return customerName; }
@@ -101,6 +113,8 @@ public class PosCheckoutRequest {
     public void setDriverName(String driverName) { this.driverName = driverName; }
     public String getDeliveryNotes() { return deliveryNotes; }
     public void setDeliveryNotes(String deliveryNotes) { this.deliveryNotes = deliveryNotes; }
+    public Double getDeliveryCharge() { return deliveryCharge; }
+    public void setDeliveryCharge(Double deliveryCharge) { this.deliveryCharge = deliveryCharge; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
 }

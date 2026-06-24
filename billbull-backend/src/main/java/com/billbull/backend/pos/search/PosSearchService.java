@@ -12,6 +12,9 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductAggregateResponse;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductService;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 
@@ -22,6 +25,7 @@ import com.billbull.backend.sales.customerledger.CustomerRepository;
  * <ol>
  *   <li>Exact barcode ({@code product_barcodes})</li>
  *   <li>Exact batch number ({@code batch_master}) — pins that unit on the cart line</li>
+ *   <li>Exact serial number ({@code serial_master}, status=AVAILABLE) — pins the serial</li>
  *   <li>Exact product code / SKU</li>
  *   <li>Exact customer code / mobile / phone / email</li>
  *   <li>Otherwise {@code NONE} — the frontend falls back to filtering the grid</li>
@@ -33,15 +37,18 @@ public class PosSearchService {
     private final ProductService productService;
     private final ProductRepository productRepository;
     private final BatchMasterRepository batchMasterRepository;
+    private final SerialMasterRepository serialMasterRepository;
     private final CustomerRepository customerRepository;
 
     public PosSearchService(ProductService productService,
                             ProductRepository productRepository,
                             BatchMasterRepository batchMasterRepository,
+                            SerialMasterRepository serialMasterRepository,
                             CustomerRepository customerRepository) {
         this.productService = productService;
         this.productRepository = productRepository;
         this.batchMasterRepository = batchMasterRepository;
+        this.serialMasterRepository = serialMasterRepository;
         this.customerRepository = customerRepository;
     }
 
@@ -68,7 +75,22 @@ public class PosSearchService {
             }
         }
 
-        // 3. Exact product code / SKU.
+        // 3. Exact serial number → product + pin the serial (AVAILABLE or RESERVED only; block re-selling SOLD).
+        Optional<SerialMaster> serial = serialMasterRepository.findFirstBySerialNumberIgnoreCase(q);
+        if (serial.isPresent()) {
+            SerialMaster sm = serial.get();
+            if (sm.getStatus() == SerialStatus.SOLD) {
+                // Serial already sold — surface as a NONE so the cashier sees no auto-add.
+                // The frontend grid search will still show this via text search if needed.
+                return PosResolveResponse.none();
+            }
+            ProductAggregateResponse product = loadActiveProductByCode(sm.getProductCode());
+            if (product != null) {
+                return PosResolveResponse.productWithSerial(product, sm.getSerialNumber());
+            }
+        }
+
+        // 4. Exact product code / SKU.
         Product byCode = productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue(q)
                 .or(() -> productRepository.findFirstBySkuIgnoreCaseAndIsActiveTrue(q))
                 .orElse(null);
@@ -79,15 +101,22 @@ public class PosSearchService {
             }
         }
 
-        // 4. Exact customer code / mobile / phone / email.
+        // 5. Exact customer code / mobile / phone / email.
         Optional<Customer> customer = customerRepository
                 .findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(q, q, q, q);
         if (customer.isPresent()) {
             return PosResolveResponse.customer(toCustomerMatch(customer.get()));
         }
 
-        // 5. No exact match — let the grid filter handle it.
+        // 6. No exact match — let the grid filter handle it.
         return PosResolveResponse.none();
+    }
+
+    private ProductAggregateResponse loadActiveProductByCode(String productCode) {
+        if (productCode == null || productCode.isBlank()) return null;
+        return productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue(productCode)
+                .map(p -> loadActiveProduct(p.getId()))
+                .orElse(null);
     }
 
     private ProductAggregateResponse loadActiveProduct(Long productId) {

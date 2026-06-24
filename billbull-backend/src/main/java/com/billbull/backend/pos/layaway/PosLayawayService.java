@@ -1,9 +1,14 @@
 package com.billbull.backend.pos.layaway;
 
+import com.billbull.backend.financials.generalledger.JournalEntry;
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -15,6 +20,7 @@ import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,18 +35,30 @@ public class PosLayawayService {
     private static final String CANCEL_MODULE = "sales";
 
     private final PosLayawayRepository repo;
+    private final PosLayawayPaymentRepository paymentRepo;
     private final ProductRepository productRepository;
     private final BatchSelectionService batchSelectionService;
     private final RolePermissionService permissionService;
+    private final PostingEngineService postingEngine;
+    private final BranchRepository branchRepository;
+    private final PosAuditService auditService;
 
     public PosLayawayService(PosLayawayRepository repo,
+                             PosLayawayPaymentRepository paymentRepo,
                              ProductRepository productRepository,
                              BatchSelectionService batchSelectionService,
-                             RolePermissionService permissionService) {
+                             RolePermissionService permissionService,
+                             PostingEngineService postingEngine,
+                             BranchRepository branchRepository,
+                             PosAuditService auditService) {
         this.repo = repo;
+        this.paymentRepo = paymentRepo;
         this.productRepository = productRepository;
         this.batchSelectionService = batchSelectionService;
         this.permissionService = permissionService;
+        this.postingEngine = postingEngine;
+        this.branchRepository = branchRepository;
+        this.auditService = auditService;
     }
 
     public PosLayaway create(PosLayawayCreateRequest req) {
@@ -144,6 +162,26 @@ public class PosLayawayService {
             }
         }
 
+        // Post deposit GL: Dr Cash/Card → Cr Customer Advance (2060)
+        if (saved.getDepositAmount() != null && saved.getDepositAmount().signum() > 0) {
+            Branch branch = saved.getBranchId() != null
+                    ? branchRepository.findById(saved.getBranchId()).orElse(null) : null;
+            JournalEntry depositJournal = postingEngine.createJournalFromLayawayDeposit(
+                    saved.getId(),
+                    saved.getDepositAmount(),
+                    saved.getDepositPaymentMode(),
+                    java.time.LocalDate.now(),
+                    branch);
+            if (depositJournal != null) {
+                saved.setDepositJournalId(depositJournal.getId());
+                saved = repo.save(saved);
+            }
+        }
+
+        auditService.logLayawayCreated(
+                saved.getPosSessionId(), saved.getTerminalId(), saved.getBranchId(),
+                saved.getId(), saved.getLayawayNumber());
+
         return saved;
     }
 
@@ -181,10 +219,28 @@ public class PosLayawayService {
                     "Only an open layaway can be cancelled (current status: " + layaway.getStatus() + ")");
         }
         batchSelectionService.releaseLayaway(layaway.getId());
+
+        // Reverse deposit GL if a journal was posted at creation
+        if (layaway.getDepositAmount() != null && layaway.getDepositAmount().signum() > 0
+                && layaway.getDepositJournalId() != null) {
+            Branch branch = layaway.getBranchId() != null
+                    ? branchRepository.findById(layaway.getBranchId()).orElse(null) : null;
+            postingEngine.reverseLayawayDepositJournal(
+                    layaway.getId(),
+                    layaway.getDepositAmount(),
+                    layaway.getDepositPaymentMode(),
+                    java.time.LocalDate.now(),
+                    branch);
+        }
+
         layaway.setStatus(PosLayawayStatus.CANCELLED);
         layaway.setCancelledAt(LocalDateTime.now());
         layaway.setCancelledBy(currentUsername());
-        return repo.save(layaway);
+        PosLayaway cancelled = repo.save(layaway);
+        auditService.logLayawayCancelled(
+                cancelled.getPosSessionId(), cancelled.getTerminalId(), cancelled.getBranchId(),
+                cancelled.getId(), cancelled.getLayawayNumber());
+        return cancelled;
     }
 
     /**
@@ -204,6 +260,61 @@ public class PosLayawayService {
         layaway.setConvertedInvoiceNumber(invoiceNumber);
         layaway.setConvertedAt(LocalDateTime.now());
         return repo.save(layaway);
+    }
+
+    /**
+     * §3.4 Record a partial instalment against an open layaway.
+     * Updates depositAmount + balanceAmount on the parent and derives new status.
+     * Posts a deposit GL entry for the new amount.
+     */
+    public PosLayawayPayment recordPayment(Long layawayId, BigDecimal amount,
+                                            String paymentMode, String referenceNumber, String notes) {
+        PosLayaway layaway = getById(layawayId);
+        if (!layaway.isOpen()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot record payment against a " + layaway.getStatus() + " layaway");
+        }
+        BigDecimal balance = nz(layaway.getBalanceAmount());
+        if (amount == null || amount.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be positive");
+        }
+        BigDecimal applied = amount.min(balance);
+
+        PosLayawayPayment payment = new PosLayawayPayment();
+        payment.setLayaway(layaway);
+        payment.setPaymentDate(LocalDate.now());
+        payment.setPaymentMode(paymentMode);
+        payment.setAmount(round2(applied));
+        payment.setReferenceNumber(referenceNumber);
+        payment.setNotes(notes);
+        PosLayawayPayment saved = paymentRepo.save(payment);
+
+        // Update parent totals
+        layaway.setDepositAmount(round2(nz(layaway.getDepositAmount()).add(applied)));
+        layaway.setBalanceAmount(round2(balance.subtract(applied).max(BigDecimal.ZERO)));
+        layaway.setStatus(deriveStatus(nz(layaway.getSaleTotal()), nz(layaway.getDepositAmount())));
+        repo.save(layaway);
+
+        // Post GL for the new instalment
+        Branch branch = layaway.getBranchId() != null
+                ? branchRepository.findById(layaway.getBranchId()).orElse(null) : null;
+        try {
+            JournalEntry je = postingEngine.createJournalFromLayawayDeposit(
+                    layaway.getId(), applied, paymentMode, LocalDate.now(), branch);
+            if (je != null) {
+                saved.setJournalId(je.getId());
+                paymentRepo.save(saved);
+            }
+        } catch (Exception ignored) {
+            // GL failure must not roll back the instalment record.
+        }
+
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public List<PosLayawayPayment> getPayments(Long layawayId) {
+        return paymentRepo.findByLayaway_IdOrderByPaymentDateAsc(layawayId);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

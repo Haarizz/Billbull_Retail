@@ -1,6 +1,9 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.settings.PosSettings;
+import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.settings.branch.Branch;
@@ -28,6 +31,8 @@ public class PosSessionService {
     private final BranchAccessService branchAccessService;
     private final BranchRepository branchRepository;
     private final PostingEngineService postingEngine;
+    private final PosSettingsRepository posSettingsRepository;
+    private final PosAuditService auditService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -41,12 +46,16 @@ public class PosSessionService {
                              SalesInvoiceRepository invoiceRepo,
                              BranchAccessService branchAccessService,
                              BranchRepository branchRepository,
-                             PostingEngineService postingEngine) {
+                             PostingEngineService postingEngine,
+                             PosSettingsRepository posSettingsRepository,
+                             PosAuditService auditService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
         this.branchRepository = branchRepository;
         this.postingEngine = postingEngine;
+        this.posSettingsRepository = posSettingsRepository;
+        this.auditService = auditService;
     }
 
     private String currentUser() {
@@ -82,7 +91,9 @@ public class PosSessionService {
         session.setTotalCreditSales(BigDecimal.ZERO);
         session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
-        return repo.save(session);
+        PosSession saved = repo.save(session);
+        auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -109,7 +120,8 @@ public class PosSessionService {
     }
 
     @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
+    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
+                                   boolean supervisorApproved) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
@@ -122,16 +134,78 @@ public class PosSessionService {
         BigDecimal expectedCash = nz(session.getOpeningCash())
                 .add(nz(session.getTotalCashSales()))
                 .add(cashDropNet);
+        BigDecimal actualClosing = closingCash != null ? closingCash : BigDecimal.ZERO;
+        BigDecimal variance = actualClosing.subtract(expectedCash).abs();
+
+        // Supervisor variance gate: block close if variance exceeds configured threshold
+        if (!supervisorApproved) {
+            PosSettings settings = session.getBranchId() != null
+                    ? posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null)
+                    : null;
+            BigDecimal threshold = settings != null && settings.getCashVarianceThreshold() != null
+                    ? settings.getCashVarianceThreshold() : BigDecimal.ZERO;
+            if (threshold.signum() > 0 && variance.compareTo(threshold) > 0) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Cash variance " + variance + " exceeds allowed threshold " + threshold
+                                + ". Supervisor approval required.");
+            }
+        }
 
         session.setClosedBy(currentUser());
         session.setClosedAt(LocalDateTime.now());
         session.setStatus(PosSessionStatus.CLOSED);
-        session.setClosingCash(closingCash != null ? closingCash : BigDecimal.ZERO);
+        session.setClosingCash(actualClosing);
         session.setExpectedCash(expectedCash);
-        session.setCashDifference(closingCash != null ? closingCash.subtract(expectedCash) : BigDecimal.ZERO);
+        session.setCashDifference(actualClosing.subtract(expectedCash));
         session.setNotes(notes);
-        return repo.save(session);
+
+        // Capture immutable Z-Report snapshot at close time
+        String varianceStr = actualClosing.subtract(expectedCash).toPlainString();
+        session.setZReportJson(buildZReportSnapshot(session, expectedCash, actualClosing));
+
+        PosSession closed = repo.save(session);
+
+        // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
+        try {
+            Branch branch = closed.getBranchId() != null
+                    ? branchRepository.findById(closed.getBranchId()).orElse(null) : null;
+            postingEngine.createJournalFromSessionClose(
+                    closed.getId(), actualClosing, java.time.LocalDate.now(), branch);
+        } catch (Exception e) {
+            // Non-blocking — GL failure must not prevent the session from closing.
+        }
+
+        // Async audit: session closed with variance info
+        auditService.logSessionClosed(
+                closed.getId(), closed.getTerminalId(), closed.getBranchId(), varianceStr);
+
+        return closed;
     }
+
+    /** Backward-compatible overload used by controller when supervisorApproved is not supplied. */
+    @Transactional
+    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
+        return closeSession(sessionId, closingCash, notes, false);
+    }
+
+    private String buildZReportSnapshot(PosSession s, BigDecimal expectedCash, BigDecimal closingCash) {
+        return "{\"sessionId\":" + s.getId()
+                + ",\"terminalId\":\"" + safe(s.getTerminalId()) + "\""
+                + ",\"closedAt\":\"" + LocalDateTime.now() + "\""
+                + ",\"closedBy\":\"" + safe(currentUser()) + "\""
+                + ",\"openingCash\":" + nz(s.getOpeningCash())
+                + ",\"totalSales\":" + nz(s.getTotalSales())
+                + ",\"totalCashSales\":" + nz(s.getTotalCashSales())
+                + ",\"totalCardSales\":" + nz(s.getTotalCardSales())
+                + ",\"totalCreditSales\":" + nz(s.getTotalCreditSales())
+                + ",\"invoiceCount\":" + (s.getInvoiceCount() != null ? s.getInvoiceCount() : 0)
+                + ",\"expectedCash\":" + expectedCash
+                + ",\"closingCash\":" + closingCash
+                + ",\"cashVariance\":" + closingCash.subtract(expectedCash)
+                + "}";
+    }
+
+    private static String safe(String v) { return v != null ? v.replace("\"", "\\\"") : ""; }
 
     @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount, String description) {
@@ -168,27 +242,30 @@ public class PosSessionService {
     @Transactional
     public void recordInvoiceOnSession(Long sessionId, SalesInvoice invoice) {
         if (sessionId == null) return;
-        PosSession session = repo.findById(sessionId).orElse(null);
-        if (session == null || session.getStatus() != PosSessionStatus.OPEN) return;
 
         BigDecimal total = nz(invoice.getInvoiceTotal());
         String mode = invoice.getPaymentMode() != null ? invoice.getPaymentMode().toLowerCase() : "";
 
-        session.setInvoiceCount((session.getInvoiceCount() != null ? session.getInvoiceCount() : 0) + 1);
-        session.setTotalSales(nz(session.getTotalSales()).add(total));
+        // Classify into buckets — only one bucket receives the total.
+        BigDecimal cashDelta   = BigDecimal.ZERO;
+        BigDecimal cardDelta   = BigDecimal.ZERO;
+        BigDecimal creditDelta = BigDecimal.ZERO;
+        BigDecimal mixedDelta  = BigDecimal.ZERO;
 
         if (mode.contains("cash") && mode.contains("card")) {
-            session.setTotalMixedSales(nz(session.getTotalMixedSales()).add(total));
+            mixedDelta = total;
         } else if (mode.contains("cash")) {
-            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
+            cashDelta = total;
         } else if (mode.contains("card") || mode.contains("credit card")) {
-            session.setTotalCardSales(nz(session.getTotalCardSales()).add(total));
+            cardDelta = total;
         } else if (mode.contains("credit")) {
-            session.setTotalCreditSales(nz(session.getTotalCreditSales()).add(total));
+            creditDelta = total;
         } else {
-            session.setTotalCashSales(nz(session.getTotalCashSales()).add(total));
+            cashDelta = total; // default fallback (Voucher, etc.) treated as cash
         }
-        repo.save(session);
+
+        // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
+        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta);
     }
 
     @Transactional(readOnly = true)

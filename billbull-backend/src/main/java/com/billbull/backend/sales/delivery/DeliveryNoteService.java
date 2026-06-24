@@ -24,6 +24,9 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
@@ -74,6 +77,7 @@ public class DeliveryNoteService {
     private final SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
     private final DeliveryNoteBatchConsumptionRepository consumptionRepo;
+    private final SerialMasterRepository serialMasterRepo;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -94,7 +98,8 @@ public class DeliveryNoteService {
             BatchSelectionService batchSelectionService,
             SalesSettingsService salesSettingsService,
             SalesDocumentNumberingService numberingService,
-            DeliveryNoteBatchConsumptionRepository consumptionRepo) {
+            DeliveryNoteBatchConsumptionRepository consumptionRepo,
+            SerialMasterRepository serialMasterRepo) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -114,6 +119,7 @@ public class DeliveryNoteService {
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
         this.consumptionRepo = consumptionRepo;
+        this.serialMasterRepo = serialMasterRepo;
     }
 
     @Transactional
@@ -509,6 +515,22 @@ public class DeliveryNoteService {
 
         // Persist per-item cost snapshot for later COGS reversal on returns (Phase 3.3).
         persistConsumptions(dn);
+
+        // §5.4 Mark serials SOLD at delivery for WORKFLOW_DRIVEN path.
+        // The linked invoice items carry the serialNumber scanned at order/quote time.
+        if (invoice != null && invoice.getItems() != null) {
+            for (com.billbull.backend.sales.invoice.SalesInvoiceItem item : invoice.getItems()) {
+                if (item.getSerialNumber() != null && !item.getSerialNumber().isBlank()) {
+                    serialMasterRepo.findBySerialNumberForUpdate(item.getSerialNumber()).ifPresent(serial -> {
+                        if (serial.getStatus() == SerialStatus.AVAILABLE || serial.getStatus() == SerialStatus.RESERVED) {
+                            serial.setStatus(SerialStatus.SOLD);
+                            serial.setSoldInvoiceId(invoice.getId());
+                            serialMasterRepo.save(serial);
+                        }
+                    });
+                }
+            }
+        }
 
         return toResponse(repo.save(dn));
     }

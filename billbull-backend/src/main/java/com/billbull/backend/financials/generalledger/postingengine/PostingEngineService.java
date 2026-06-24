@@ -2108,9 +2108,18 @@ public class PostingEngineService {
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {
                 String mode = normalizePaymentMode(paymentMode);
                 return switch (mode) {
-                        case "CASH"                    -> new AccountSelection("Cash",              ACC_CASH);
-                        case "CARD", "CREDIT_CARD"     -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
-                        default                        -> new AccountSelection("Bank",              ACC_BANK);
+                        case "CASH" -> new AccountSelection("Cash", ACC_CASH);
+                        case "CARD", "CREDIT_CARD" -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                        default -> {
+                                // POS sends card network names (Visa, Mastercard, Amex, etc.).
+                                // Any mode containing a card-related keyword routes to Merchant Clearing.
+                                if (mode.contains("CARD") || mode.contains("VISA")
+                                        || mode.contains("MASTER") || mode.contains("AMEX")
+                                        || mode.contains("AMERICAN_EXPRESS") || mode.contains("DISCOVER")) {
+                                        yield new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                                }
+                                yield new AccountSelection("Bank", ACC_BANK);
+                        }
                 };
         }
 
@@ -2581,6 +2590,123 @@ public class PostingEngineService {
                         addLine(entry, "General Expense", ACC_EXPENSE_GENERAL, narration, amount,          BigDecimal.ZERO);
                         addLine(entry, "Cash in Hand",    ACC_CASH,            narration, BigDecimal.ZERO, amount);
                 }
+
+                return post(entry);
+        }
+
+        private static final String TX_LAYAWAY_DEPOSIT = "LAY-DEP";
+
+        /**
+         * Layaway deposit receipt (IFRS 15 §B66 / IAS 32):
+         *   Dr  Cash in Hand (1001)        amount
+         *     Cr  Customer Advances (2060)   amount
+         *
+         * Reference: "LAY-DEP-{layawayId}" — idempotent per layaway.
+         * Card deposits debit Merchant Clearing (1013) instead of Cash (1001).
+         */
+        @Transactional
+        public JournalEntry createJournalFromLayawayDeposit(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String debitAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String debitName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit - " + ref,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, debitName,            debitAccount,        "Layaway deposit received", amount,          BigDecimal.ZERO);
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway deposit received", BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        private static final String TX_SESSION_CLOSE = "SCL";
+
+        /**
+         * §3.7 POS session-close GL: daily cash pickup.
+         *   Dr  Bank Account (1010)    closingCash   [cash moved to bank/safe at end-of-day]
+         *     Cr  Cash in Hand (1001)   closingCash
+         *
+         * Only posts when closingCash > 0 and the session has cash sales.
+         * Reference: "SCL-{sessionId}" — idempotent per session.
+         */
+        @Transactional
+        public JournalEntry createJournalFromSessionClose(
+                        Long sessionId,
+                        BigDecimal closingCash,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (sessionId == null || closingCash == null || closingCash.signum() <= 0) {
+                        return null;
+                }
+                String ref = TX_SESSION_CLOSE + "-" + sessionId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "POS Session Close - Cash Pickup - Session " + sessionId,
+                        TX_SESSION_CLOSE,
+                        branch);
+
+                addLine(entry, "Bank Account",  ACC_BANK,  "Daily cash pickup", closingCash,         BigDecimal.ZERO);
+                addLine(entry, "Cash in Hand",  ACC_CASH,  "Daily cash pickup", BigDecimal.ZERO, closingCash);
+
+                return post(entry);
+        }
+
+        /**
+         * Reverse the layaway deposit journal when the layaway is cancelled.
+         *   Dr  Customer Advances (2060)   amount
+         *     Cr  Cash in Hand (1001)        amount
+         *
+         * Reference: "LAY-DEP-REV-{layawayId}" — idempotent per layaway.
+         */
+        @Transactional
+        public JournalEntry reverseLayawayDepositJournal(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-REV-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String creditAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String creditName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit Reversal - LAY-DEP-" + layawayId,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway cancelled - deposit reversed", amount,          BigDecimal.ZERO);
+                addLine(entry, creditName,            creditAccount,        "Layaway cancelled - deposit reversed", BigDecimal.ZERO, amount);
 
                 return post(entry);
         }

@@ -75,6 +75,12 @@ export const getPosInvoices = async ({ dateFrom, dateTo, branchId } = {}) => {
   return res.data;
 };
 
+/** Returns { invoice, zatcaQr, sellerName, trn } for receipt rendering. */
+export const getPosReceiptData = async (invoiceId) => {
+  const res = await api.get(`${BASE}/checkout/invoices/${invoiceId}/receipt`);
+  return res.data;
+};
+
 // ── X-Report / Z-Report ────────────────────────────────────────────────────
 
 export const getPosXReport = async (sessionId) => {
@@ -204,6 +210,20 @@ export const posBatchCheck = async ({ batchNumber = '', invoiceNumber = '', item
 // ── Customer purchase history (POS History tab) ───────────────────────────
 export const getPosCustomerHistory = async (customerCode) => {
   const res = await api.get(`${BASE}/customer-history`, { params: { customerCode } });
+  return res.data;
+};
+
+// ── Delivery orders ────────────────────────────────────────────────────────
+
+/** List pending delivery orders (CONFIRMED / PARTIALLY_PAID) for the given branch. */
+export const getDeliveryOrders = async (branchId) => {
+  const res = await api.get(`${BASE}/checkout/deliveries`, { params: { branchId } });
+  return res.data;
+};
+
+/** Record payment for a delivery order and mark it PAID. */
+export const settleDeliveryOrder = async (invoiceId, payload) => {
+  const res = await api.post(`${BASE}/checkout/deliveries/${invoiceId}/settle`, payload);
   return res.data;
 };
 
