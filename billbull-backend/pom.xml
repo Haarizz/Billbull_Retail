@@ -71,6 +71,18 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!-- Versioned DB migrations (ARCHFIX P0 §1.1). Version managed by the Boot 3.5 BOM.
+		     Flyway runs additive, idempotent scripts; ddl-auto stays 'update' for now so the
+		     two coexist safely. Flip to ddl-auto=validate per-tenant once baselined. -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>

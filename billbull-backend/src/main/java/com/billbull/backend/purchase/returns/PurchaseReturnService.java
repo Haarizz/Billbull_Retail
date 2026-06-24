@@ -62,7 +62,8 @@ public class PurchaseReturnService {
 
     @Transactional
     public PurchaseReturn approve(Long id) {
-        PurchaseReturn ret = purchaseReturnRepository.findById(id)
+        // ARCHFIX §1.6: fetch items+branch so the returned (serialized) entity has its LAZY graph.
+        PurchaseReturn ret = purchaseReturnRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new RuntimeException("Purchase return not found: " + id));
 
         if (ret.getStatus() != PurchaseReturnStatus.DRAFT) {
@@ -82,7 +83,7 @@ public class PurchaseReturnService {
 
     @Transactional
     public PurchaseReturn cancel(Long id) {
-        PurchaseReturn ret = purchaseReturnRepository.findById(id)
+        PurchaseReturn ret = purchaseReturnRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new RuntimeException("Purchase return not found: " + id));
 
         if (ret.getStatus() == PurchaseReturnStatus.APPROVED) {
@@ -92,16 +93,21 @@ public class PurchaseReturnService {
         return purchaseReturnRepository.save(ret);
     }
 
+    // ARCHFIX §1.6: items + branch are LAZY — these read paths serialize the full return, so JOIN
+    // FETCH the graph (annotated read-only so the fetch happens in a session).
+    @Transactional(readOnly = true)
     public List<PurchaseReturn> findByBranch(Long branchId) {
-        return purchaseReturnRepository.findByBranchIdOrderByReturnDateDesc(branchId);
+        return purchaseReturnRepository.findByBranchWithItems(branchId);
     }
 
+    @Transactional(readOnly = true)
     public List<PurchaseReturn> findAll() {
-        return purchaseReturnRepository.findAll();
+        return purchaseReturnRepository.findAllWithItems();
     }
 
+    @Transactional(readOnly = true)
     public PurchaseReturn findById(Long id) {
-        return purchaseReturnRepository.findById(id)
+        return purchaseReturnRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new RuntimeException("Purchase return not found: " + id));
     }
 

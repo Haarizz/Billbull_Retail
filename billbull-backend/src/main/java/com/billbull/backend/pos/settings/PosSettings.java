@@ -84,7 +84,21 @@ public class PosSettings extends BaseEntity {
 
     // POS layout
     @Column(name = "default_layout", length = 20)
-    private String defaultLayout = "classic"; // classic or focus
+    private String defaultLayout = "classic"; // classic, compact, or focus
+
+    @Column(name = "layout_hide_category_panel")
+    private Boolean layoutHideCategoryPanel = false;
+
+    @Column(name = "layout_hide_items_panel")
+    private Boolean layoutHideItemsPanel = false;
+
+    // Comma-separated set of action button IDs that are hidden in the Cart Focus panel
+    @Column(name = "layout_hidden_panel_buttons", length = 500)
+    private String layoutHiddenPanelButtons = "";
+
+    // Print template config — JSON blob for all POS receipt/invoice template settings
+    @Column(name = "print_template_config", columnDefinition = "TEXT")
+    private String printTemplateConfig;
 
     // Walk-in customer code
     @Column(name = "walk_in_customer_code", length = 50)
@@ -102,6 +116,11 @@ public class PosSettings extends BaseEntity {
     @Column(name = "default_tax_rate")
     private Double defaultTaxRate = 5.0;
 
+    /** Maximum allowed absolute cash variance on session close before supervisor approval is required.
+     *  0 (default) = disabled (no gate). Uses branch currency. */
+    @Column(name = "cash_variance_threshold", precision = 15, scale = 2)
+    private java.math.BigDecimal cashVarianceThreshold = java.math.BigDecimal.ZERO;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -116,8 +135,18 @@ public class PosSettings extends BaseEntity {
     public String getSupervisorApprovalMode() { return supervisorApprovalMode; }
     public void setSupervisorApprovalMode(String supervisorApprovalMode) { this.supervisorApprovalMode = supervisorApprovalMode; }
 
+    // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter
+    // stays public so the save request body can still carry a new raw PIN (Jackson deserializes via
+    // the setter; @JsonIgnore on the getter only blocks the OUTBOUND value).
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getSupervisorPin() { return supervisorPin; }
     public void setSupervisorPin(String supervisorPin) { this.supervisorPin = supervisorPin; }
+
+    /** Whether a supervisor PIN is configured — lets the UI show "set/not set" without leaking it. */
+    @com.fasterxml.jackson.annotation.JsonProperty(value = "supervisorPinSet", access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public boolean isSupervisorPinSet() {
+        return supervisorPin != null && !supervisorPin.isBlank();
+    }
 
     public String getVoidMode() { return voidMode; }
     public void setVoidMode(String voidMode) { this.voidMode = voidMode; }
@@ -164,6 +193,18 @@ public class PosSettings extends BaseEntity {
     public String getDefaultLayout() { return defaultLayout; }
     public void setDefaultLayout(String defaultLayout) { this.defaultLayout = defaultLayout; }
 
+    public Boolean getLayoutHideCategoryPanel() { return layoutHideCategoryPanel; }
+    public void setLayoutHideCategoryPanel(Boolean layoutHideCategoryPanel) { this.layoutHideCategoryPanel = layoutHideCategoryPanel; }
+
+    public Boolean getLayoutHideItemsPanel() { return layoutHideItemsPanel; }
+    public void setLayoutHideItemsPanel(Boolean layoutHideItemsPanel) { this.layoutHideItemsPanel = layoutHideItemsPanel; }
+
+    public String getLayoutHiddenPanelButtons() { return layoutHiddenPanelButtons; }
+    public void setLayoutHiddenPanelButtons(String layoutHiddenPanelButtons) { this.layoutHiddenPanelButtons = layoutHiddenPanelButtons; }
+
+    public String getPrintTemplateConfig() { return printTemplateConfig; }
+    public void setPrintTemplateConfig(String printTemplateConfig) { this.printTemplateConfig = printTemplateConfig; }
+
     public String getWalkInCustomerCode() { return walkInCustomerCode; }
     public void setWalkInCustomerCode(String walkInCustomerCode) { this.walkInCustomerCode = walkInCustomerCode; }
 
@@ -175,4 +216,9 @@ public class PosSettings extends BaseEntity {
 
     public Double getDefaultTaxRate() { return defaultTaxRate; }
     public void setDefaultTaxRate(Double defaultTaxRate) { this.defaultTaxRate = defaultTaxRate; }
+
+    public java.math.BigDecimal getCashVarianceThreshold() { return cashVarianceThreshold; }
+    public void setCashVarianceThreshold(java.math.BigDecimal cashVarianceThreshold) {
+        this.cashVarianceThreshold = cashVarianceThreshold;
+    }
 }

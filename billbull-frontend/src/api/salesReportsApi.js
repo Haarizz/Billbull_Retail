@@ -1,5 +1,14 @@
 import api from './axiosConfig';
 
+export const getSalesAnalytics = async ({ from, to, branchId } = {}) => {
+    const params = {};
+    if (from) params.from = from;
+    if (to) params.to = to;
+    if (branchId && branchId !== 'All') params.branchId = branchId;
+    const res = await api.get('/api/sales/analytics', { params });
+    return res.data;
+};
+
 export const getSalesReportSalespersons = async () => {
     const res = await api.get('/api/sales/reports/salespersons');
     return res.data;

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -22,24 +23,32 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 @ExtendWith(MockitoExtension.class)
 class PosLayawayServiceTest {
 
     @Mock private PosLayawayRepository repo;
+    @Mock private PosLayawayPaymentRepository paymentRepo;
     @Mock private ProductRepository productRepository;
     @Mock private BatchSelectionService batchSelectionService;
     @Mock private RolePermissionService permissionService;
+    @Mock private PostingEngineService postingEngine;
+    @Mock private BranchRepository branchRepository;
+    @Mock private PosAuditService auditService;
 
     private PosLayawayService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosLayawayService(repo, productRepository, batchSelectionService, permissionService);
+        service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService, permissionService,
+                postingEngine, branchRepository, auditService);
         // save() returns the same entity with ids assigned, so the reserve loop can run.
         lenient().when(repo.save(any(PosLayaway.class))).thenAnswer(inv -> {
             PosLayaway l = inv.getArgument(0);
@@ -83,10 +92,10 @@ class PosLayawayServiceTest {
 
         PosLayaway saved = service.create(req);
 
-        assertEquals(210.0, saved.getSaleTotal());
-        assertEquals(10.0, saved.getTaxTotal());
-        assertEquals(50.0, saved.getDepositAmount());
-        assertEquals(160.0, saved.getBalanceAmount());
+        assertMoney("210.0", saved.getSaleTotal());
+        assertMoney("10.0", saved.getTaxTotal());
+        assertMoney("50.0", saved.getDepositAmount());
+        assertMoney("160.0", saved.getBalanceAmount());
         assertEquals(PosLayawayStatus.PARTIALLY_PAID, saved.getStatus());
     }
 
@@ -99,9 +108,9 @@ class PosLayawayServiceTest {
 
         PosLayaway saved = service.create(req);
 
-        assertEquals(105.0, saved.getSaleTotal());
-        assertEquals(105.0, saved.getDepositAmount());
-        assertEquals(0.0, saved.getBalanceAmount());
+        assertMoney("105.0", saved.getSaleTotal());
+        assertMoney("105.0", saved.getDepositAmount());
+        assertMoney("0.0", saved.getBalanceAmount());
         assertEquals(PosLayawayStatus.READY_TO_CONVERT, saved.getStatus());
     }
 
@@ -158,6 +167,12 @@ class PosLayawayServiceTest {
     }
 
     // ── fixtures ──────────────────────────────────────────────────────────────
+
+    /** Assert money equality by numeric value, scale-independent (210 == 210.00). */
+    private static void assertMoney(String expected, BigDecimal actual) {
+        assertEquals(0, new BigDecimal(expected).compareTo(actual),
+                () -> "expected " + expected + " but was " + actual);
+    }
 
     private PosLayawayCreateRequest baseRequest() {
         PosLayawayCreateRequest req = new PosLayawayCreateRequest();

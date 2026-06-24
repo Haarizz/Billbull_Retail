@@ -566,7 +566,7 @@ public class PurchaseInvoiceService {
 
             int currentQty = binStockRepository.findByProductId(productId)
                     .stream()
-                    .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
+                    .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity().intValue() : 0)
                     .sum();
 
             if (!isAgainstGrn && product.isSerial()) {

@@ -1057,6 +1057,12 @@ public class ProductService {
         if (!mediaList.isEmpty()) {
             res.setPrimaryImage(mediaList.get(0).getImageUrl());
         }
+
+        // Stock — same aggregate query used by the product list page
+        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(List.of(product.getId()));
+        int stock = stockRows.isEmpty() ? 0 : ((Number) stockRows.get(0)[1]).intValue();
+        res.setStock(stock);
+
         return res;
     }
 }

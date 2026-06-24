@@ -321,22 +321,22 @@ public class ReceiptVoucherService {
             return;
         }
 
-        double otherCompletedReceipts = repository.findBySalesInvoiceId(invoice.getId()).stream()
+        BigDecimal otherCompletedReceipts = repository.findBySalesInvoiceId(invoice.getId()).stream()
                 .filter(existing -> !Objects.equals(existing.getId(), currentReceiptId))
                 .filter(existing -> isCompletedStatus(existing.getStatus()))
                 .map(ReceiptVoucher::getAmount)
                 .filter(Objects::nonNull)
-                .mapToDouble(BigDecimal::doubleValue)
-                .sum();
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : 0.0;
-        double remainingBalance = invoiceTotal - otherCompletedReceipts;
-        if (remainingBalance <= 0) {
+        BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+        BigDecimal remainingBalance = invoiceTotal.subtract(otherCompletedReceipts);
+        if (remainingBalance.signum() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "This sales invoice is already fully settled.");
         }
 
-        if (receipt.getAmount().doubleValue() > remainingBalance + 0.0001d) {
+        // Exact compare (no float epsilon needed with BigDecimal).
+        if (receipt.getAmount().compareTo(remainingBalance) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Receipt amount exceeds the sales invoice balance.");
         }
@@ -384,15 +384,14 @@ public class ReceiptVoucherService {
                 return;
             }
 
-            double totalPaid = repository.findBySalesInvoiceId(salesInvoiceId).stream()
+            BigDecimal totalPaid = repository.findBySalesInvoiceId(salesInvoiceId).stream()
                     .filter(receipt -> isCompletedStatus(receipt.getStatus()))
                     .map(ReceiptVoucher::getAmount)
                     .filter(Objects::nonNull)
-                    .mapToDouble(BigDecimal::doubleValue)
-                    .sum();
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : 0.0;
-            double balance = Math.max(invoiceTotal - totalPaid, 0.0);
+            BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+            BigDecimal balance = invoiceTotal.subtract(totalPaid).max(BigDecimal.ZERO);
 
             invoice.setAmountPaid(totalPaid);
             invoice.setBalance(balance);
@@ -493,7 +492,7 @@ public class ReceiptVoucherService {
                 || ds == null;
     }
 
-    private SalesInvoiceStatus resolveInvoiceStatus(SalesInvoice invoice, double totalPaid, double invoiceTotal) {
+    private SalesInvoiceStatus resolveInvoiceStatus(SalesInvoice invoice, BigDecimal totalPaid, BigDecimal invoiceTotal) {
         SalesInvoiceStatus currentStatus = invoice.getStatus();
         if (currentStatus == SalesInvoiceStatus.DRAFT || currentStatus == SalesInvoiceStatus.CANCELLED) {
             return currentStatus;
@@ -501,14 +500,14 @@ public class ReceiptVoucherService {
 
         boolean delivered = isEffectivelyDelivered(invoice);
 
-        if (totalPaid >= invoiceTotal && invoiceTotal > 0) {
+        if (totalPaid.compareTo(invoiceTotal) >= 0 && invoiceTotal.signum() > 0) {
             // Full payment received → always PAID regardless of delivery status.
             // Delivery-blocks-PAID is enforced only for manual status changes in
             // SalesInvoiceService.updateStatus, not for payment sync.
             return SalesInvoiceStatus.PAID;
         }
 
-        if (totalPaid > 0) {
+        if (totalPaid.signum() > 0) {
             return SalesInvoiceStatus.PARTIALLY_PAID;
         }
 

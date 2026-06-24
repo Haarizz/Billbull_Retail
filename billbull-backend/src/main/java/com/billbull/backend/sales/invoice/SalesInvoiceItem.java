@@ -13,7 +13,8 @@ import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 public class SalesInvoiceItem {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "sales_inv_item_seq_gen")
+    @SequenceGenerator(name = "sales_inv_item_seq_gen", sequenceName = "seq_sales_invoice_items", allocationSize = 50)
     private Long id;
 
     private String itemCode;
@@ -24,15 +25,22 @@ public class SalesInvoiceItem {
     private String unit;
     private Integer quantity;
 
-    private Double price;
-    private Double cost;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal price;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal cost;
+    /** Line discount as a PERCENTAGE rate (not money). */
     private Double discount;
-    @Column(name = "footer_discount")
-    private Double footerDiscount;
+    @Column(name = "footer_discount", precision = 15, scale = 2)
+    private BigDecimal footerDiscount;
+    /** Tax rate as a PERCENTAGE (not money). */
     private Double taxRate;
-    private Double taxAmount;
-    private Double grossAmount;
-    private Double netAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal grossAmount;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal netAmount;
     private Integer foc;
     private String image;
     private Long warehouseId;
@@ -46,6 +54,22 @@ public class SalesInvoiceItem {
      */
     @Column(name = "voided")
     private Boolean voided = Boolean.FALSE;
+
+    /** Free-text reason the cashier entered when voiding this line at POS. */
+    @Column(name = "void_reason", length = 500)
+    private String voidReason;
+
+    /** Username who performed the void (set server-side from JWT, not from client). */
+    @Column(name = "voided_by", length = 100)
+    private String voidedBy;
+
+    /** Wall-clock timestamp of the void action. */
+    @Column(name = "voided_at")
+    private java.time.LocalDateTime voidedAt;
+
+    /** Serial number of the specific unit sold (for Product.isSerial items). */
+    @Column(name = "serial_number", length = 120)
+    private String serialNumber;
 
     @Transient
     private String barcode;
@@ -171,19 +195,19 @@ public class SalesInvoiceItem {
         this.quantity = quantity;
     }
 
-    public Double getPrice() {
+    public BigDecimal getPrice() {
         return price;
     }
 
-    public void setPrice(Double price) {
+    public void setPrice(BigDecimal price) {
         this.price = price;
     }
 
-    public Double getCost() {
+    public BigDecimal getCost() {
         return cost;
     }
 
-    public void setCost(Double cost) {
+    public void setCost(BigDecimal cost) {
         this.cost = cost;
     }
 
@@ -195,11 +219,11 @@ public class SalesInvoiceItem {
         this.discount = discount;
     }
 
-    public Double getFooterDiscount() {
+    public BigDecimal getFooterDiscount() {
         return footerDiscount;
     }
 
-    public void setFooterDiscount(Double footerDiscount) {
+    public void setFooterDiscount(BigDecimal footerDiscount) {
         this.footerDiscount = footerDiscount;
     }
 
@@ -211,27 +235,27 @@ public class SalesInvoiceItem {
         this.taxRate = taxRate;
     }
 
-    public Double getTaxAmount() {
+    public BigDecimal getTaxAmount() {
         return taxAmount;
     }
 
-    public void setTaxAmount(Double taxAmount) {
+    public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
     }
 
-    public Double getGrossAmount() {
+    public BigDecimal getGrossAmount() {
         return grossAmount;
     }
 
-    public void setGrossAmount(Double grossAmount) {
+    public void setGrossAmount(BigDecimal grossAmount) {
         this.grossAmount = grossAmount;
     }
 
-    public Double getNetAmount() {
+    public BigDecimal getNetAmount() {
         return netAmount;
     }
 
-    public void setNetAmount(Double netAmount) {
+    public void setNetAmount(BigDecimal netAmount) {
         this.netAmount = netAmount;
     }
 
@@ -286,6 +310,18 @@ public class SalesInvoiceItem {
     public void setVoided(Boolean voided) {
         this.voided = voided != null ? voided : Boolean.FALSE;
     }
+
+    public String getVoidReason() { return voidReason; }
+    public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
+
+    public String getVoidedBy() { return voidedBy; }
+    public void setVoidedBy(String voidedBy) { this.voidedBy = voidedBy; }
+
+    public java.time.LocalDateTime getVoidedAt() { return voidedAt; }
+    public void setVoidedAt(java.time.LocalDateTime voidedAt) { this.voidedAt = voidedAt; }
+
+    public String getSerialNumber() { return serialNumber; }
+    public void setSerialNumber(String serialNumber) { this.serialNumber = serialNumber; }
 
     public String getBarcode() {
         return barcode;

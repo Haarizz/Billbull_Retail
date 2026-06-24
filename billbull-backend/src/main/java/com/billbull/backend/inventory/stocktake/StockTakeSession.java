@@ -41,7 +41,10 @@ public class StockTakeSession extends BaseEntity {
     private String reconciledBy;
     private java.time.LocalDateTime reconciledAt;
 
-    @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true, fetch = jakarta.persistence.FetchType.EAGER)
+    // ARCHFIX §1.6/§1.9: LAZY (was EAGER) + @BatchSize. Read paths JOIN FETCH / init items + their
+    // batches in-session before serialization (StockTakeService.hydrateForSerialization).
+    @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true, fetch = jakarta.persistence.FetchType.LAZY)
+    @org.hibernate.annotations.BatchSize(size = 100)
     private List<StockTakeItem> items = new ArrayList<>();
 
     // Enum definitions

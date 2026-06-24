@@ -36,4 +36,74 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
     BigDecimal netBalanceByAccountCodeBefore(
             @org.springframework.data.repository.query.Param("accountCode") String accountCode,
             @org.springframework.data.repository.query.Param("beforeDate") java.time.LocalDate beforeDate);
+
+    // ==================== SQL-side aggregation for reports (ARCHFIX §4.1) ====================
+    // The report service used to load every LedgerEntry in a date range and SUM/GROUP BY
+    // account_code in Java (memory + time scaling with total ledger volume, not result size).
+    // These projections push the GROUP BY into PostgreSQL so the DB returns one row per account.
+    // account_name is consistent per account_code in practice, so MAX(accountName) reproduces the
+    // previous "first-seen name" exactly while keeping a single grouped row per code.
+
+    /** One row per account: summed debits/credits over [start, end]. Optional branch filter when
+     *  {@code branchId} is null (matches the no-branch report path). */
+    @Query("""
+            SELECT le.accountCode                  AS accountCode,
+                   MAX(le.accountName)             AS accountName,
+                   COALESCE(SUM(le.debitAmount), 0)  AS sumDebit,
+                   COALESCE(SUM(le.creditAmount), 0) AS sumCredit
+            FROM LedgerEntry le
+            WHERE le.accountCode IS NOT NULL
+              AND le.transactionDate BETWEEN :start AND :end
+              AND (:branchId IS NULL OR le.branch.id = :branchId)
+            GROUP BY le.accountCode
+            """)
+    List<AccountAggregate> aggregateByAccountCode(
+            @org.springframework.data.repository.query.Param("branchId") Long branchId,
+            @org.springframework.data.repository.query.Param("start") java.time.LocalDate start,
+            @org.springframework.data.repository.query.Param("end") java.time.LocalDate end);
+
+    /** Same as {@link #aggregateByAccountCode} but additionally filtered to a single cost center
+     *  (used by the P&L cost-center drill-down). */
+    @Query("""
+            SELECT le.accountCode                  AS accountCode,
+                   MAX(le.accountName)             AS accountName,
+                   COALESCE(SUM(le.debitAmount), 0)  AS sumDebit,
+                   COALESCE(SUM(le.creditAmount), 0) AS sumCredit
+            FROM LedgerEntry le
+            WHERE le.accountCode IS NOT NULL
+              AND le.transactionDate BETWEEN :start AND :end
+              AND (:branchId IS NULL OR le.branch.id = :branchId)
+              AND le.costCenter = :costCenter
+            GROUP BY le.accountCode
+            """)
+    List<AccountAggregate> aggregateByAccountCodeAndCostCenter(
+            @org.springframework.data.repository.query.Param("branchId") Long branchId,
+            @org.springframework.data.repository.query.Param("start") java.time.LocalDate start,
+            @org.springframework.data.repository.query.Param("end") java.time.LocalDate end,
+            @org.springframework.data.repository.query.Param("costCenter") String costCenter);
+
+    /** One row per account: summed debits/credits for all entries STRICTLY BEFORE {@code before}
+     *  (used by the balance sheet as-of-date cumulative balance). Optional branch filter. */
+    @Query("""
+            SELECT le.accountCode                  AS accountCode,
+                   MAX(le.accountName)             AS accountName,
+                   COALESCE(SUM(le.debitAmount), 0)  AS sumDebit,
+                   COALESCE(SUM(le.creditAmount), 0) AS sumCredit
+            FROM LedgerEntry le
+            WHERE le.accountCode IS NOT NULL
+              AND le.transactionDate < :before
+              AND (:branchId IS NULL OR le.branch.id = :branchId)
+            GROUP BY le.accountCode
+            """)
+    List<AccountAggregate> aggregateByAccountCodeBefore(
+            @org.springframework.data.repository.query.Param("branchId") Long branchId,
+            @org.springframework.data.repository.query.Param("before") java.time.LocalDate before);
+
+    /** Spring Data projection: a per-account debit/credit aggregate row. */
+    interface AccountAggregate {
+        String getAccountCode();
+        String getAccountName();
+        BigDecimal getSumDebit();
+        BigDecimal getSumCredit();
+    }
 }

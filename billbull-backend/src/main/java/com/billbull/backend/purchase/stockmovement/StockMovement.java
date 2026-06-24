@@ -33,7 +33,10 @@ public class StockMovement extends BaseEntity {
 	private Long locatorId; // Optional locator (aisle/rack) within zone
 	private Long binId; // Optional bin within locator
 
-	private Integer quantity; // always +ve here (IN)
+	// ARCHFIX §1.11: BigDecimal(18,3) (was Integer) — supports fractional units (kg/L) and avoids
+	// SUM(int) overflow on the highest-volume ledger table. Signed: +ve inbound, -ve deduction.
+	@jakarta.persistence.Column(precision = 18, scale = 3)
+	private java.math.BigDecimal quantity; // always +ve here (IN)
 
 	private LocalDate movementDate;
 
@@ -136,12 +139,17 @@ public class StockMovement extends BaseEntity {
 		this.warehouseId = warehouseId;
 	}
 
-	public Integer getQuantity() {
+	public java.math.BigDecimal getQuantity() {
 		return quantity;
 	}
 
-	public void setQuantity(Integer quantity) {
+	public void setQuantity(java.math.BigDecimal quantity) {
 		this.quantity = quantity;
+	}
+
+	/** Convenience setter for the many integer-quantity call sites (ARCHFIX §1.11). */
+	public void setQuantity(int quantity) {
+		this.quantity = java.math.BigDecimal.valueOf(quantity);
 	}
 
 	public LocalDate getMovementDate() {

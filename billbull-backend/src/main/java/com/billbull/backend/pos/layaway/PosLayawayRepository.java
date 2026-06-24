@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.layaway;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,5 +42,6 @@ public interface PosLayawayRepository extends JpaRepository<PosLayaway, Long> {
             @Param("branchId") Long branchId,
             @Param("status") String status,
             @Param("customer") String customer,
-            @Param("number") String number);
+            @Param("number") String number,
+            Pageable pageable);
 }

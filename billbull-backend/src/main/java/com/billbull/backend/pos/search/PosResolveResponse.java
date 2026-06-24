@@ -28,6 +28,12 @@ public class PosResolveResponse {
      */
     private String pinnedBatchNumber;
 
+    /**
+     * Set when the query matched an exact serial number on a serialized product.
+     * The frontend pre-fills this serial on the cart line for checkout tracking.
+     */
+    private String pinnedSerialNumber;
+
     /** Populated when {@code type == CUSTOMER}. */
     private CustomerMatch customer;
 
@@ -65,6 +71,14 @@ public class PosResolveResponse {
         return res;
     }
 
+    public static PosResolveResponse productWithSerial(ProductAggregateResponse product, String serialNumber) {
+        PosResolveResponse res = new PosResolveResponse();
+        res.type = Type.PRODUCT;
+        res.product = product;
+        res.pinnedSerialNumber = serialNumber;
+        return res;
+    }
+
     public static PosResolveResponse customer(CustomerMatch customer) {
         PosResolveResponse res = new PosResolveResponse();
         res.type = Type.CUSTOMER;
@@ -78,6 +92,8 @@ public class PosResolveResponse {
     public void setProduct(ProductAggregateResponse product) { this.product = product; }
     public String getPinnedBatchNumber() { return pinnedBatchNumber; }
     public void setPinnedBatchNumber(String pinnedBatchNumber) { this.pinnedBatchNumber = pinnedBatchNumber; }
+    public String getPinnedSerialNumber() { return pinnedSerialNumber; }
+    public void setPinnedSerialNumber(String pinnedSerialNumber) { this.pinnedSerialNumber = pinnedSerialNumber; }
     public CustomerMatch getCustomer() { return customer; }
     public void setCustomer(CustomerMatch customer) { this.customer = customer; }
 }

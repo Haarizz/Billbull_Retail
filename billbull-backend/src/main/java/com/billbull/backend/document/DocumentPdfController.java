@@ -4,6 +4,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,6 +39,7 @@ public class DocumentPdfController {
         public void setFilename(String filename) { this.filename = filename; }
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PostMapping("/pdf")
     public ResponseEntity<byte[]> renderPdf(@RequestBody PdfRequest request) {
         if (request == null || request.getHtml() == null || request.getHtml().isBlank()) {

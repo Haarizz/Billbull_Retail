@@ -39,20 +39,20 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Query("SELECT p FROM Payment p ORDER BY p.paymentNumber DESC LIMIT 1")
     Optional<Payment> findTopByOrderByPaymentNumberDesc();
 
-    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p WHERE p.paymentType = 'RECEIVED' AND p.paymentDate = :date")
+    @Query("SELECT CAST(COALESCE(SUM(p.amount), 0) AS double) FROM Payment p WHERE p.paymentType = 'RECEIVED' AND p.paymentDate = :date")
     Double getTotalReceivedForDate(LocalDate date);
 
-    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p WHERE p.paymentType = 'RECEIVED' AND p.paymentDate BETWEEN :startDate AND :endDate")
+    @Query("SELECT CAST(COALESCE(SUM(p.amount), 0) AS double) FROM Payment p WHERE p.paymentType = 'RECEIVED' AND p.paymentDate BETWEEN :startDate AND :endDate")
     Double getTotalReceivedBetweenDates(LocalDate startDate, LocalDate endDate);
 
-    @Query("SELECT COALESCE(SUM(p.invoiceBalance - p.amount), 0) FROM Payment p WHERE p.status IN ('PENDING', 'PARTIAL')")
+    @Query("SELECT CAST(COALESCE(SUM(p.invoiceBalance - p.amount), 0) AS double) FROM Payment p WHERE p.status IN ('PENDING', 'PARTIAL')")
     Double getTotalPendingAmount();
 
     // --- STATEMENT QUERIES ---
-    @Query("SELECT SUM(p.amount) FROM Payment p WHERE p.customerCode = :customerCode AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
+    @Query("SELECT CAST(SUM(p.amount) AS double) FROM Payment p WHERE p.customerCode = :customerCode AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
     Double calculateOpeningBalance(String customerCode, java.time.LocalDate startDate);
 
-    @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.paymentNumber, 'PAYMENT_RECEIVED', CAST(0 AS double), p.amount, CAST(p.status AS string)) FROM Payment p WHERE p.customerCode = :customerCode AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
+    @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.paymentNumber, 'PAYMENT_RECEIVED', CAST(0 AS big_decimal), p.amount, CAST(p.status AS string)) FROM Payment p WHERE p.customerCode = :customerCode AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
     List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String customerCode,
             java.time.LocalDate startDate, java.time.LocalDate endDate);
 }

@@ -1,5 +1,6 @@
 package com.billbull.backend.financials.expense;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -14,11 +15,11 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 
     @Query("SELECT COALESCE(SUM(e.total), 0) FROM Expense e " +
            "WHERE e.date BETWEEN :from AND :to AND (e.status IS NULL OR e.status <> 'CANCELLED')")
-    Double sumTotalBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+    BigDecimal sumTotalBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
     @Query("SELECT COALESCE(SUM(e.taxAmount), 0) FROM Expense e " +
            "WHERE e.date BETWEEN :from AND :to AND (e.status IS NULL OR e.status <> 'CANCELLED')")
-    Double sumTaxBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
+    BigDecimal sumTaxBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
     @Query("SELECT e.category, SUM(e.total) FROM Expense e " +
            "WHERE e.date BETWEEN :from AND :to AND (e.status IS NULL OR e.status <> 'CANCELLED') " +

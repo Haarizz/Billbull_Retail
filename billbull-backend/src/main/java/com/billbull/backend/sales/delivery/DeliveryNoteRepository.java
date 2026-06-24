@@ -7,6 +7,9 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long> {
+
+  long countByStatusIn(java.util.Collection<DeliveryNoteStatus> statuses);
+
   // Sums DN items for proforma-backed notes by productId, converting to base units via ProductPacking.
   // Used to deduct PI-level reservations already covered by an active DN (deduplication).
   @Query("""

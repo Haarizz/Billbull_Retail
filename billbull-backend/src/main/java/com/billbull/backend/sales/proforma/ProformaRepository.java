@@ -9,6 +9,8 @@ import java.util.List;
 public interface ProformaRepository extends JpaRepository<ProformaInvoice, Long> {
     List<ProformaInvoice> findByStatus(ProformaStatus status);
 
+    long countByStatus(ProformaStatus status);
+
     List<ProformaInvoice> findByPiDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 
     boolean existsByPiNumber(String piNumber);

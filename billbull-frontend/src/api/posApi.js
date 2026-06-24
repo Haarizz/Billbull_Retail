@@ -23,6 +23,13 @@ export const savePosSettings = async (settings) => {
   return res.data;
 };
 
+// Verify a supervisor PIN server-side. The PIN is no longer shipped to the client
+// (ARCHFIX S5); the backend compares it against the stored BCrypt hash.
+export const verifyPosSupervisorPin = async (pin) => {
+  const res = await api.post(`${BASE}/settings/verify-pin`, { pin });
+  return res.data?.valid === true;
+};
+
 // ── Session management ─────────────────────────────────────────────────────
 
 export const openPosSession = async ({ terminalId, counterName, openingCash = 0 }) => {
@@ -49,10 +56,28 @@ export const addPosCashMovement = async (sessionId, { movementType, amount, desc
 
 // ── POS Invoice list (for Reprint screen) ─────────────────────────────────
 
+/**
+ * Look up a single invoice for the Sales Return flow.
+ * Pass invoiceNumber for exact/prefix lookup, or customerMobile for mobile-based lookup.
+ * Returns the SalesInvoice with items, or throws 404.
+ */
+export const lookupPosInvoice = async ({ invoiceNumber, customerMobile, dateFrom, branchId } = {}) => {
+  const res = await api.get(`${BASE}/checkout/invoices/lookup`, {
+    params: { invoiceNumber, customerMobile, dateFrom, branchId },
+  });
+  return res.data;
+};
+
 export const getPosInvoices = async ({ dateFrom, dateTo, branchId } = {}) => {
   const res = await api.get(`${BASE}/checkout/invoices`, {
     params: { dateFrom, dateTo, branchId },
   });
+  return res.data;
+};
+
+/** Returns { invoice, zatcaQr, sellerName, trn } for receipt rendering. */
+export const getPosReceiptData = async (invoiceId) => {
+  const res = await api.get(`${BASE}/checkout/invoices/${invoiceId}/receipt`);
   return res.data;
 };
 
@@ -181,3 +206,24 @@ export const posBatchCheck = async ({ batchNumber = '', invoiceNumber = '', item
   });
   return res.data;
 };
+
+// ── Customer purchase history (POS History tab) ───────────────────────────
+export const getPosCustomerHistory = async (customerCode) => {
+  const res = await api.get(`${BASE}/customer-history`, { params: { customerCode } });
+  return res.data;
+};
+
+// ── Delivery orders ────────────────────────────────────────────────────────
+
+/** List pending delivery orders (CONFIRMED / PARTIALLY_PAID) for the given branch. */
+export const getDeliveryOrders = async (branchId) => {
+  const res = await api.get(`${BASE}/checkout/deliveries`, { params: { branchId } });
+  return res.data;
+};
+
+/** Record payment for a delivery order and mark it PAID. */
+export const settleDeliveryOrder = async (invoiceId, payload) => {
+  const res = await api.post(`${BASE}/checkout/deliveries/${invoiceId}/settle`, payload);
+  return res.data;
+};
+

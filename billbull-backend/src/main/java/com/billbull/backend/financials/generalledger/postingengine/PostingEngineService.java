@@ -281,9 +281,7 @@ public class PostingEngineService {
                 if (creditPolicy == com.billbull.backend.sales.settings.CreditLimitPolicy.BLOCK) {
                         customerCreditService.assertWithinLimit(
                                         invoice.getCustomerCode(),
-                                        invoice.getInvoiceTotal() != null
-                                                ? java.math.BigDecimal.valueOf(invoice.getInvoiceTotal())
-                                                : java.math.BigDecimal.ZERO);
+                                        nvl(invoice.getInvoiceTotal()));
                 }
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
@@ -293,42 +291,23 @@ public class PostingEngineService {
                 // item netAmounts that DeliveryNoteService will recognise into Sales Revenue.
                 // Trade discounts reduce the transaction price (IFRS 15 §47) — no separate
                 // Discount Allowed account is needed; the revenue is simply measured net.
-                BigDecimal billDiscAmt = nz(invoice.getBillDiscountAmount());
-                BigDecimal subTotalBD = BigDecimal.valueOf(invoice.getSubTotal());
+                BigDecimal billDiscAmt = nvl(invoice.getBillDiscountAmount());
+                BigDecimal subTotalBD = nvl(invoice.getSubTotal());
                 BigDecimal deferredRevenue = subTotalBD.subtract(billDiscAmt);
 
-                // For POS cash sales, debit Cash directly instead of AR (PDF §05 / GAP-002).
-                // Card POS goes through Merchant Clearing (ACC_MERCHANT_CLEARING).
-                // All other flows (credit sales, workflow-driven) use AR.
-                String debitAccount;
-                String debitAccountName;
-                String payMode = invoice.getPaymentMode() != null
-                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
-                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
-                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
-                boolean isPosCash = "CASH".equals(payMode)
-                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
-
-                if (isPosCash) {
-                        debitAccount = ACC_CASH;
-                        debitAccountName = "Cash";
-                } else if (isPosCard) {
-                        debitAccount = ACC_MERCHANT_CLEARING;
-                        debitAccountName = "Merchant Clearing";
-                } else {
-                        debitAccount = ACC_ACCOUNTS_RECEIVABLE;
-                        debitAccountName = "Accounts Receivable";
-                }
-
-                addLine(entry, debitAccountName, debitAccount,
+                // All invoice postings debit AR; the accompanying Receipt Voucher (created by
+                // PaymentService → ReceiptVoucherService) posts Dr Cash/Card / Cr AR to clear it.
+                // This avoids double-posting Cash for POS sales and keeps a clean AR trail for
+                // every sale regardless of payment mode.
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Sales - " + ref,
-                                BigDecimal.valueOf(invoice.getInvoiceTotal()), BigDecimal.ZERO);
+                                nvl(invoice.getInvoiceTotal()), BigDecimal.ZERO);
                 addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
                                 "Deferred - " + ref,
                                 BigDecimal.ZERO, deferredRevenue);
-                if (invoice.getTaxTotal() != null && invoice.getTaxTotal() > 0) {
+                if (invoice.getTaxTotal() != null && invoice.getTaxTotal().signum() > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + ref,
-                                        BigDecimal.ZERO, BigDecimal.valueOf(invoice.getTaxTotal()));
+                                        BigDecimal.ZERO, nvl(invoice.getTaxTotal()));
                 }
 
                 // Delivery charge is recognized as income immediately (not deferred like
@@ -385,33 +364,16 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(date, ref,
                                 "Fast Sale - " + invoice.getInvoiceNumber(), TX_SALES_INVOICE, branch);
 
-                // Resolve debit account from payment mode (same logic as createJournalFromInvoicePosting)
-                String payMode = invoice.getPaymentMode() != null
-                                ? invoice.getPaymentMode().trim().toUpperCase() : "";
-                com.billbull.backend.sales.invoice.SalesType salesType = invoice.getSalesType();
-                boolean isPosCard = "CARD".equals(payMode) || "CREDIT_CARD".equals(payMode);
-                boolean isPosCash = "CASH".equals(payMode)
-                                || salesType == com.billbull.backend.sales.invoice.SalesType.POS_SALE;
-
-                String debitAccount     = isPosCard ? ACC_MERCHANT_CLEARING
-                                        : isPosCash ? ACC_CASH
-                                        : ACC_ACCOUNTS_RECEIVABLE;
-                String debitAccountName = isPosCard ? "Merchant Clearing"
-                                        : isPosCash ? "Cash"
-                                        : "Accounts Receivable";
-
-                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null
-                                ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
-                BigDecimal taxTotal     = invoice.getTaxTotal() != null
-                                ? BigDecimal.valueOf(invoice.getTaxTotal()) : BigDecimal.ZERO;
-                BigDecimal delivery     = nz(invoice.getDeliveryCharge());
-                BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
-                BigDecimal subTotal     = invoice.getSubTotal() != null
-                                ? BigDecimal.valueOf(invoice.getSubTotal()) : BigDecimal.ZERO;
+                // Debit AR — the Receipt Voucher posted by PaymentService clears AR with
+                // Dr Cash/Card / Cr AR. This avoids double-posting the settlement account.
+                BigDecimal invoiceTotal = nvl(invoice.getInvoiceTotal());
+                BigDecimal taxTotal     = nvl(invoice.getTaxTotal());
+                BigDecimal delivery     = nvl(invoice.getDeliveryCharge());
+                BigDecimal billDisc     = nvl(invoice.getBillDiscountAmount());
+                BigDecimal subTotal     = nvl(invoice.getSubTotal());
                 BigDecimal netRevenue   = subTotal.subtract(billDisc);
 
-                // Debit: cash / card / AR
-                addLine(entry, debitAccountName, debitAccount,
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Fast Sale - " + ref, invoiceTotal, BigDecimal.ZERO);
 
                 // Credits: revenue, VAT, delivery, rounding
@@ -529,9 +491,9 @@ public class PostingEngineService {
                 String refKey = "CANCEL-" + invoice.getInvoiceNumber();
                 if (findDuplicate(refKey) != null) return;
 
-                BigDecimal subTotal     = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
-                BigDecimal taxTotal     = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
-                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
+                BigDecimal subTotal     = nz(invoice.getSubTotal());
+                BigDecimal taxTotal     = nz(invoice.getTaxTotal());
+                BigDecimal invoiceTotal = nz(invoice.getInvoiceTotal());
                 BigDecimal delivery     = nz(invoice.getDeliveryCharge());
                 BigDecimal billDisc     = nz(invoice.getBillDiscountAmount());
                 BigDecimal netRevenue   = subTotal.subtract(billDisc);
@@ -819,10 +781,10 @@ public class PostingEngineService {
                                 "Expense - " + expense.getCategory(), TX_EXPENSE, expense.getBranch());
                 addLine(entry, expenseAccountName, expenseAccountCode,
                                 expense.getNotes() != null ? expense.getNotes() : "",
-                                BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
-                if (expense.getTaxAmount() > 0) {
+                                expense.getAmount(), BigDecimal.ZERO);
+                if (expense.getTaxAmount() != null && expense.getTaxAmount().signum() > 0) {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
-                                        BigDecimal.valueOf(expense.getTaxAmount()), BigDecimal.ZERO);
+                                        expense.getTaxAmount(), BigDecimal.ZERO);
                 }
 
                 // QA-054: credit the pay-ledger the user selected on the expense entry.
@@ -844,7 +806,7 @@ public class PostingEngineService {
                         payName = sel.name;
                 }
                 addLine(entry, payName, payCode, "Payment for expense",
-                                BigDecimal.ZERO, BigDecimal.valueOf(expense.getTotal()));
+                                BigDecimal.ZERO, expense.getTotal());
                 return post(entry);
         }
 
@@ -1108,9 +1070,9 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
                                 "Sales Return " + ref, TX_CREDIT_NOTE, salesReturn.getBranch());
 
-                BigDecimal subTotal   = salesReturn.getSubTotal()   != null ? BigDecimal.valueOf(salesReturn.getSubTotal())   : BigDecimal.ZERO;
-                BigDecimal taxAmount  = salesReturn.getTaxAmount()  != null ? BigDecimal.valueOf(salesReturn.getTaxAmount())  : BigDecimal.ZERO;
-                BigDecimal totalAmount = salesReturn.getTotalAmount() != null ? BigDecimal.valueOf(salesReturn.getTotalAmount()) : BigDecimal.ZERO;
+                BigDecimal subTotal   = nz(salesReturn.getSubTotal());
+                BigDecimal taxAmount  = nz(salesReturn.getTaxAmount());
+                BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
 
                 // Debit the correct revenue account
                 String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE     : ACC_DEFERRED_REVENUE;
@@ -1908,6 +1870,11 @@ public class PostingEngineService {
                 return value != null ? BigDecimal.valueOf(value) : BigDecimal.ZERO;
         }
 
+        /** Null-safe BigDecimal from a possibly-null BigDecimal amount (treats null as zero). */
+        private BigDecimal nz(BigDecimal value) {
+                return value != null ? value : BigDecimal.ZERO;
+        }
+
         /**
          * Posts a round-off adjustment to {@link #ACC_ROUNDING}. A positive roundOff
          * (total rounded up) is a rounding gain → credit; negative (rounded down) is a
@@ -2040,17 +2007,48 @@ public class PostingEngineService {
                         BigDecimal dr = nvl(line.getDebit());
                         BigDecimal cr = nvl(line.getCredit());
 
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
-                                glBalanceRepository.findByAccountCodeAndFiscalPeriodIdAndBranchId(code, periodId, branchId)
-                                        .orElseGet(() -> {
-                                                com.billbull.backend.financials.generalledger.GlAccountBalance b
-                                                        = new com.billbull.backend.financials.generalledger.GlAccountBalance();
-                                                b.setAccountCode(code);
-                                                b.setFiscalPeriodId(periodId);
-                                                b.setBranchId(branchId);
-                                                return b;
-                                        });
+                        applyGlBalanceDelta(code, periodId, branchId, dr, cr);
+                }
+        }
 
+        /**
+         * Atomically applies a (debit, credit) delta to the GlAccountBalance row for a
+         * (accountCode, periodId, branchId) triple, creating it if absent.
+         *
+         * Concurrency (ARCHFIX P0 §1.3): the row is read through a PESSIMISTIC_WRITE lock so
+         * two concurrent postings to the same triple are serialized and no increment is lost.
+         * The first-ever insert for a triple is guarded with a flush + retry: if a concurrent
+         * thread wins the insert, we fall back to the now-existing locked row and re-apply.
+         */
+        private void applyGlBalanceDelta(String code, Long periodId, Long branchId,
+                        BigDecimal dr, BigDecimal cr) {
+                java.util.Optional<com.billbull.backend.financials.generalledger.GlAccountBalance> existing =
+                                glBalanceRepository.findForUpdate(code, periodId, branchId);
+
+                if (existing.isPresent()) {
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal = existing.get();
+                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
+                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
+                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
+                        glBalanceRepository.save(bal);
+                        return;
+                }
+
+                com.billbull.backend.financials.generalledger.GlAccountBalance b
+                                = new com.billbull.backend.financials.generalledger.GlAccountBalance();
+                b.setAccountCode(code);
+                b.setFiscalPeriodId(periodId);
+                b.setBranchId(branchId);
+                b.setDebitTotal(dr);
+                b.setCreditTotal(cr);
+                b.setClosingBalance(dr.subtract(cr));
+                try {
+                        glBalanceRepository.saveAndFlush(b);
+                } catch (org.springframework.dao.DataIntegrityViolationException raceLost) {
+                        // A concurrent posting inserted the row first. Re-read under lock and re-apply.
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
+                                        glBalanceRepository.findForUpdate(code, periodId, branchId)
+                                                .orElseThrow(() -> raceLost);
                         bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
                         bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
                         bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
@@ -2110,9 +2108,18 @@ public class PostingEngineService {
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {
                 String mode = normalizePaymentMode(paymentMode);
                 return switch (mode) {
-                        case "CASH"                    -> new AccountSelection("Cash",              ACC_CASH);
-                        case "CARD", "CREDIT_CARD"     -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
-                        default                        -> new AccountSelection("Bank",              ACC_BANK);
+                        case "CASH" -> new AccountSelection("Cash", ACC_CASH);
+                        case "CARD", "CREDIT_CARD" -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                        default -> {
+                                // POS sends card network names (Visa, Mastercard, Amex, etc.).
+                                // Any mode containing a card-related keyword routes to Merchant Clearing.
+                                if (mode.contains("CARD") || mode.contains("VISA")
+                                        || mode.contains("MASTER") || mode.contains("AMEX")
+                                        || mode.contains("AMERICAN_EXPRESS") || mode.contains("DISCOVER")) {
+                                        yield new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                                }
+                                yield new AccountSelection("Bank", ACC_BANK);
+                        }
                 };
         }
 
@@ -2523,6 +2530,183 @@ public class PostingEngineService {
                 AccountSelection cashAcc = resolveIncomingPaymentAccount(paymentMode);
                 addLine(entry, cashAcc.name, cashAcc.code, narration, amount, BigDecimal.ZERO, null);
                 addLine(entry, "Share Capital", ACC_SHARE_CAPITAL, narration, BigDecimal.ZERO, amount, null);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // POS CASH MOVEMENT — cash drop in / cash out from till
+        // =========================================================
+
+        private static final String TX_CASH_MOVEMENT = "CMD";
+
+        /**
+         * Posts a GL journal for a POS cash movement (cash drop in or cash out).
+         *
+         * DROP_IN  — cash brought into the drawer from the safe/float:
+         *   Dr 1001 Cash in Hand  [amount]
+         *   Cr 1012 Petty Cash    [amount]
+         *
+         * DROP_OUT — petty cash paid out of the drawer for expenses:
+         *   Dr 6099 General Expense  [amount]
+         *   Cr 1001 Cash in Hand     [amount]
+         *
+         * Reference key: "CMD-{movementId}" — idempotent per movement row.
+         *
+         * @param movementId   PK of the PosCashMovement row
+         * @param movementType "DROP_IN" or "DROP_OUT"
+         * @param amount       positive amount
+         * @param description  free-text narration from the cashier
+         * @param date         effective date (session date or today)
+         * @param branch       branch dimension
+         */
+        @Transactional
+        public JournalEntry createJournalFromCashMovement(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = TX_CASH_MOVEMENT + "-" + movementId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String narration = description != null && !description.isBlank()
+                        ? description
+                        : ("DROP_IN".equals(movementType) ? "Cash Drop In" : "Cash Out");
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(),
+                        ref, narration, TX_CASH_MOVEMENT, branch);
+
+                if ("DROP_IN".equals(movementType)) {
+                        // Cash transferred from safe/petty cash float into the POS till
+                        addLine(entry, "Cash in Hand", ACC_CASH,       narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Petty Cash",   ACC_PETTY_CASH, narration, BigDecimal.ZERO, amount);
+                } else {
+                        // Petty expense paid out of the POS till
+                        addLine(entry, "General Expense", ACC_EXPENSE_GENERAL, narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash in Hand",    ACC_CASH,            narration, BigDecimal.ZERO, amount);
+                }
+
+                return post(entry);
+        }
+
+        private static final String TX_LAYAWAY_DEPOSIT = "LAY-DEP";
+
+        /**
+         * Layaway deposit receipt (IFRS 15 §B66 / IAS 32):
+         *   Dr  Cash in Hand (1001)        amount
+         *     Cr  Customer Advances (2060)   amount
+         *
+         * Reference: "LAY-DEP-{layawayId}" — idempotent per layaway.
+         * Card deposits debit Merchant Clearing (1013) instead of Cash (1001).
+         */
+        @Transactional
+        public JournalEntry createJournalFromLayawayDeposit(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String debitAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String debitName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit - " + ref,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, debitName,            debitAccount,        "Layaway deposit received", amount,          BigDecimal.ZERO);
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway deposit received", BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        private static final String TX_SESSION_CLOSE = "SCL";
+
+        /**
+         * §3.7 POS session-close GL: daily cash pickup.
+         *   Dr  Bank Account (1010)    closingCash   [cash moved to bank/safe at end-of-day]
+         *     Cr  Cash in Hand (1001)   closingCash
+         *
+         * Only posts when closingCash > 0 and the session has cash sales.
+         * Reference: "SCL-{sessionId}" — idempotent per session.
+         */
+        @Transactional
+        public JournalEntry createJournalFromSessionClose(
+                        Long sessionId,
+                        BigDecimal closingCash,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (sessionId == null || closingCash == null || closingCash.signum() <= 0) {
+                        return null;
+                }
+                String ref = TX_SESSION_CLOSE + "-" + sessionId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "POS Session Close - Cash Pickup - Session " + sessionId,
+                        TX_SESSION_CLOSE,
+                        branch);
+
+                addLine(entry, "Bank Account",  ACC_BANK,  "Daily cash pickup", closingCash,         BigDecimal.ZERO);
+                addLine(entry, "Cash in Hand",  ACC_CASH,  "Daily cash pickup", BigDecimal.ZERO, closingCash);
+
+                return post(entry);
+        }
+
+        /**
+         * Reverse the layaway deposit journal when the layaway is cancelled.
+         *   Dr  Customer Advances (2060)   amount
+         *     Cr  Cash in Hand (1001)        amount
+         *
+         * Reference: "LAY-DEP-REV-{layawayId}" — idempotent per layaway.
+         */
+        @Transactional
+        public JournalEntry reverseLayawayDepositJournal(
+                        Long layawayId,
+                        BigDecimal amount,
+                        String paymentMode,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (layawayId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+                String ref = TX_LAYAWAY_DEPOSIT + "-REV-" + layawayId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String creditAccount = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? ACC_MERCHANT_CLEARING : ACC_CASH;
+                String creditName    = (paymentMode != null && paymentMode.toLowerCase().contains("card"))
+                        ? "Merchant Clearing" : "Cash in Hand";
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "Layaway Deposit Reversal - LAY-DEP-" + layawayId,
+                        TX_LAYAWAY_DEPOSIT,
+                        branch);
+
+                addLine(entry, "Customer Advance",   ACC_CUSTOMER_ADVANCE, "Layaway cancelled - deposit reversed", amount,          BigDecimal.ZERO);
+                addLine(entry, creditName,            creditAccount,        "Layaway cancelled - deposit reversed", BigDecimal.ZERO, amount);
 
                 return post(entry);
         }

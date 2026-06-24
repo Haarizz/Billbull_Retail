@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -69,25 +70,33 @@ public class SalesInvoice {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private Branch branchEntity;
 
-    private Double subTotal;
-    private Double taxTotal;
-    private Double invoiceTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal subTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal taxTotal;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal invoiceTotal;
 
-    private Double amountPaid;
-    private Double balance;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal amountPaid;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal balance;
+    /** Bill-level discount as a PERCENTAGE rate (not money) — paired with {@link #billDiscountAmount}. */
     private Double billDiscount;
-    
-    @Column(name = "bill_discount_amount")
-    private Double billDiscountAmount;
+
+    @Column(name = "bill_discount_amount", precision = 15, scale = 2)
+    private BigDecimal billDiscountAmount;
 
     @Column(name = "bill_discount_type", length = 20)
     private String billDiscountType;
 
     /** Flat delivery/shipping charge added to the invoice total (no VAT applied). */
-    private Double deliveryCharge;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal deliveryCharge;
 
     /** Manual rounding adjustment (+/-) applied to the invoice total. */
-    private Double roundOff;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal roundOff;
 
     /**
      * Customer's credit limit (copied from Customer record at invoice creation, or
@@ -95,7 +104,8 @@ public class SalesInvoice {
      * Settings.
      * A value of 0 or null means no limit is configured.
      */
-    private Double creditLimit;
+    @Column(precision = 15, scale = 2)
+    private BigDecimal creditLimit;
 
     @Column(length = 1000)
     private String customerNotes;
@@ -125,8 +135,21 @@ public class SalesInvoice {
     @Column(name = "pos_terminal_id", length = 100)
     private String posTerminalId;
 
+    @Column(name = "pos_checkout_key", length = 100, unique = true)
+    private String posCheckoutKey;
+
     @Column(name = "pos_counter_name", length = 100)
     private String posCounterName;
+
+    @Column(name = "pos_driver_name", length = 200)
+    private String posDriverName;
+
+    @Column(name = "pos_delivery_notes", length = 1000)
+    private String posDeliveryNotes;
+
+    /** ZATCA Phase-1 TLV base64 QR stored at checkout time for receipt archival and reprint. */
+    @Column(name = "pos_receipt_qr", length = 500)
+    private String posReceiptQr;
 
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
@@ -321,43 +344,43 @@ public class SalesInvoice {
 
     public Branch getBranchEntity() { return branchEntity; }
 
-    public Double getSubTotal() {
+    public BigDecimal getSubTotal() {
         return subTotal;
     }
 
-    public void setSubTotal(Double subTotal) {
+    public void setSubTotal(BigDecimal subTotal) {
         this.subTotal = subTotal;
     }
 
-    public Double getTaxTotal() {
+    public BigDecimal getTaxTotal() {
         return taxTotal;
     }
 
-    public void setTaxTotal(Double taxTotal) {
+    public void setTaxTotal(BigDecimal taxTotal) {
         this.taxTotal = taxTotal;
     }
 
-    public Double getInvoiceTotal() {
+    public BigDecimal getInvoiceTotal() {
         return invoiceTotal;
     }
 
-    public void setInvoiceTotal(Double invoiceTotal) {
+    public void setInvoiceTotal(BigDecimal invoiceTotal) {
         this.invoiceTotal = invoiceTotal;
     }
 
-    public Double getAmountPaid() {
+    public BigDecimal getAmountPaid() {
         return amountPaid;
     }
 
-    public void setAmountPaid(Double amountPaid) {
+    public void setAmountPaid(BigDecimal amountPaid) {
         this.amountPaid = amountPaid;
     }
 
-    public Double getBalance() {
+    public BigDecimal getBalance() {
         return balance;
     }
 
-    public void setBalance(Double balance) {
+    public void setBalance(BigDecimal balance) {
         this.balance = balance;
     }
 
@@ -369,11 +392,11 @@ public class SalesInvoice {
         this.billDiscount = billDiscount;
     }
 
-    public Double getBillDiscountAmount() {
+    public BigDecimal getBillDiscountAmount() {
         return billDiscountAmount;
     }
 
-    public void setBillDiscountAmount(Double billDiscountAmount) {
+    public void setBillDiscountAmount(BigDecimal billDiscountAmount) {
         this.billDiscountAmount = billDiscountAmount;
     }
 
@@ -385,27 +408,27 @@ public class SalesInvoice {
         this.billDiscountType = billDiscountType;
     }
 
-    public Double getDeliveryCharge() {
+    public BigDecimal getDeliveryCharge() {
         return deliveryCharge;
     }
 
-    public void setDeliveryCharge(Double deliveryCharge) {
+    public void setDeliveryCharge(BigDecimal deliveryCharge) {
         this.deliveryCharge = deliveryCharge;
     }
 
-    public Double getRoundOff() {
+    public BigDecimal getRoundOff() {
         return roundOff;
     }
 
-    public void setRoundOff(Double roundOff) {
+    public void setRoundOff(BigDecimal roundOff) {
         this.roundOff = roundOff;
     }
 
-    public Double getCreditLimit() {
+    public BigDecimal getCreditLimit() {
         return creditLimit;
     }
 
-    public void setCreditLimit(Double creditLimit) {
+    public void setCreditLimit(BigDecimal creditLimit) {
         this.creditLimit = creditLimit;
     }
 
@@ -454,9 +477,20 @@ public class SalesInvoice {
 
     public String getPosTerminalId() { return posTerminalId; }
     public void setPosTerminalId(String posTerminalId) { this.posTerminalId = posTerminalId; }
+    public String getPosCheckoutKey() { return posCheckoutKey; }
+    public void setPosCheckoutKey(String posCheckoutKey) { this.posCheckoutKey = posCheckoutKey; }
 
     public String getPosCounterName() { return posCounterName; }
     public void setPosCounterName(String posCounterName) { this.posCounterName = posCounterName; }
+
+    public String getPosDriverName() { return posDriverName; }
+    public void setPosDriverName(String posDriverName) { this.posDriverName = posDriverName; }
+
+    public String getPosDeliveryNotes() { return posDeliveryNotes; }
+    public void setPosDeliveryNotes(String posDeliveryNotes) { this.posDeliveryNotes = posDeliveryNotes; }
+
+    public String getPosReceiptQr() { return posReceiptQr; }
+    public void setPosReceiptQr(String posReceiptQr) { this.posReceiptQr = posReceiptQr; }
 
     public DeliveryStatus getDeliveryStatus() {
         return deliveryStatus;

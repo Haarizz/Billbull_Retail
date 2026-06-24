@@ -24,6 +24,9 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
@@ -74,6 +77,7 @@ public class DeliveryNoteService {
     private final SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
     private final DeliveryNoteBatchConsumptionRepository consumptionRepo;
+    private final SerialMasterRepository serialMasterRepo;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -94,7 +98,8 @@ public class DeliveryNoteService {
             BatchSelectionService batchSelectionService,
             SalesSettingsService salesSettingsService,
             SalesDocumentNumberingService numberingService,
-            DeliveryNoteBatchConsumptionRepository consumptionRepo) {
+            DeliveryNoteBatchConsumptionRepository consumptionRepo,
+            SerialMasterRepository serialMasterRepo) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -114,6 +119,7 @@ public class DeliveryNoteService {
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
         this.consumptionRepo = consumptionRepo;
+        this.serialMasterRepo = serialMasterRepo;
     }
 
     @Transactional
@@ -191,10 +197,10 @@ public class DeliveryNoteService {
             ir.binId = item.getBinId();
             ir.salesOrderItemId = item.getSalesOrderItemId();
             ir.sourceLineId = item.getSourceLineId();
-            ir.price = item.getPrice();
+            ir.price = item.getPrice() != null ? item.getPrice().doubleValue() : null;
             ir.disc = item.getDisc();
             ir.tax = item.getTax();
-            ir.cost = item.getCost();
+            ir.cost = item.getCost() != null ? item.getCost().doubleValue() : null;
 
             Product product = item.getProduct();
             if (product != null && product.getBrand() != null) {
@@ -510,6 +516,22 @@ public class DeliveryNoteService {
         // Persist per-item cost snapshot for later COGS reversal on returns (Phase 3.3).
         persistConsumptions(dn);
 
+        // §5.4 Mark serials SOLD at delivery for WORKFLOW_DRIVEN path.
+        // The linked invoice items carry the serialNumber scanned at order/quote time.
+        if (invoice != null && invoice.getItems() != null) {
+            for (com.billbull.backend.sales.invoice.SalesInvoiceItem item : invoice.getItems()) {
+                if (item.getSerialNumber() != null && !item.getSerialNumber().isBlank()) {
+                    serialMasterRepo.findBySerialNumberForUpdate(item.getSerialNumber()).ifPresent(serial -> {
+                        if (serial.getStatus() == SerialStatus.AVAILABLE || serial.getStatus() == SerialStatus.RESERVED) {
+                            serial.setStatus(SerialStatus.SOLD);
+                            serial.setSoldInvoiceId(invoice.getId());
+                            serialMasterRepo.save(serial);
+                        }
+                    });
+                }
+            }
+        }
+
         return toResponse(repo.save(dn));
     }
 
@@ -670,7 +692,7 @@ public class DeliveryNoteService {
                     deduction.getLocatorId(),
                     deduction.getBatchNumber(),
                     deduction.getExpiryDate(),
-                    Math.abs(deduction.getQuantity()),
+                    deduction.getQuantity().abs().intValue(), // ARCHFIX §1.11: quantity is BigDecimal; reverseOutboundStock takes Integer
                     dn.getDnNumber() + "-REV");
         }
     }
@@ -808,14 +830,14 @@ public class DeliveryNoteService {
     private void persistConsumptions(DeliveryNote dn) {
         if (dn == null || dn.getItems() == null) return;
         for (DeliveryNoteItem item : dn.getItems()) {
-            if (item.getCost() == null || item.getCost() <= 0) continue;
+            if (item.getCost() == null || item.getCost().signum() <= 0) continue;
             Long dnItemId = item.getId();
             if (dnItemId != null && !consumptionRepo.findByDeliveryNoteItemId(dnItemId).isEmpty()) continue;
 
             int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
             if (qty <= 0) continue;
 
-            BigDecimal unitCost  = BigDecimal.valueOf(item.getCost());
+            BigDecimal unitCost  = item.getCost();
             BigDecimal totalCost = unitCost.multiply(BigDecimal.valueOf(qty));
 
             DeliveryNoteBatchConsumption c = new DeliveryNoteBatchConsumption();
@@ -872,7 +894,7 @@ public class DeliveryNoteService {
             totalCogs = totalCogs.add(itemCogs);
 
             // Stamp WAC cost back onto DN item so invoice items can copy it for profit reporting
-            dnItem.setCost(effectiveCost.doubleValue());
+            dnItem.setCost(effectiveCost);
 
             // Match DN item to invoice item by itemCode for proportional revenue
             SalesInvoiceItem matchedInvoiceItem = invoice.getItems().stream()
@@ -887,7 +909,7 @@ public class DeliveryNoteService {
                         + (matchedInvoiceItem.getFoc() != null ? matchedInvoiceItem.getFoc() : 0);
 
                 BigDecimal netAmount = matchedInvoiceItem.getNetAmount() != null
-                        ? BigDecimal.valueOf(matchedInvoiceItem.getNetAmount()) : BigDecimal.ZERO;
+                        ? matchedInvoiceItem.getNetAmount() : BigDecimal.ZERO;
 
                 BigDecimal proportionalRevenue = totalInvoiceQty > 0
                         ? netAmount.multiply(BigDecimal.valueOf(deliveredQty))
@@ -910,8 +932,8 @@ public class DeliveryNoteService {
                 }
 
                 // Stamp WAC unit cost onto invoice item for dashboard profit calculation
-                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost() == 0.0) {
-                    matchedInvoiceItem.setCost(effectiveCost.doubleValue());
+                if (matchedInvoiceItem.getCost() == null || matchedInvoiceItem.getCost().signum() == 0) {
+                    matchedInvoiceItem.setCost(effectiveCost);
                 }
             }
         }
@@ -920,7 +942,7 @@ public class DeliveryNoteService {
         boolean isFinalDelivery = invoice.getItems().stream()
                 .allMatch(si -> {
                     BigDecimal net = si.getNetAmount() != null
-                            ? BigDecimal.valueOf(si.getNetAmount()) : BigDecimal.ZERO;
+                            ? si.getNetAmount() : BigDecimal.ZERO;
                     return si.getRecognizedRevenue().compareTo(net) >= 0;
                 });
         if (isFinalDelivery) {
@@ -929,7 +951,7 @@ public class DeliveryNoteService {
             // and exclude tax, causing a large spurious snap on discounted/taxed invoices.
             BigDecimal totalItemNet = invoice.getItems().stream()
                     .map(si -> si.getNetAmount() != null
-                            ? BigDecimal.valueOf(si.getNetAmount()) : BigDecimal.ZERO)
+                            ? si.getNetAmount() : BigDecimal.ZERO)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal totalAlreadyRecognized = invoice.getItems().stream()
                     .map(SalesInvoiceItem::getRecognizedRevenue)
@@ -1098,7 +1120,7 @@ public class DeliveryNoteService {
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingPrice(product.getId(), item.getUnit());
             if (packingPrice != null) {
-                item.setPrice(packingPrice.doubleValue());
+                item.setPrice(packingPrice);
             } else if (product.getPricing() != null) {
                 com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
                 com.billbull.backend.sales.settings.SalesItemPricePolicy policy =
@@ -1108,7 +1130,7 @@ public class DeliveryNoteService {
                 java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
                         .resolve(product.getPricing(), policy);
                 if (resolved != null) {
-                    item.setPrice(resolved.doubleValue());
+                    item.setPrice(resolved);
                 }
             }
         }
@@ -1117,9 +1139,9 @@ public class DeliveryNoteService {
         if (item.getCost() == null) {
             java.math.BigDecimal packingCost = lookupPackingCost(product.getId(), item.getUnit());
             if (packingCost != null) {
-                item.setCost(packingCost.doubleValue());
+                item.setCost(packingCost);
             } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
-                item.setCost(product.getPricing().getCost().doubleValue());
+                item.setCost(product.getPricing().getCost());
             }
         }
     }

@@ -3,6 +3,7 @@ package com.billbull.backend.sales.delivery;
 import com.billbull.backend.inventory.product.Product;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "delivery_note_items")
@@ -30,10 +31,14 @@ public class DeliveryNoteItem {
 	private Long salesOrderItemId;
 	private Long sourceLineId;
 
-	private Double price;
+	@Column(precision = 15, scale = 2)
+	private BigDecimal price;
+	/** Line discount PERCENTAGE rate (not money). */
 	private Double disc;
+	/** Tax PERCENTAGE rate (not money). */
 	private Double tax;
-	private Double cost;
+	@Column(precision = 15, scale = 2)
+	private BigDecimal cost;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
@@ -187,11 +192,11 @@ public class DeliveryNoteItem {
 		this.sourceLineId = sourceLineId;
 	}
 
-	public Double getPrice() {
+	public BigDecimal getPrice() {
 		return price;
 	}
 
-	public void setPrice(Double price) {
+	public void setPrice(BigDecimal price) {
 		this.price = price;
 	}
 
@@ -211,11 +216,11 @@ public class DeliveryNoteItem {
 		this.tax = tax;
 	}
 
-	public Double getCost() {
+	public BigDecimal getCost() {
 		return cost;
 	}
 
-	public void setCost(Double cost) {
+	public void setCost(BigDecimal cost) {
 		this.cost = cost;
 	}
 }

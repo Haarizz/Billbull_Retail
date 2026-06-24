@@ -15,6 +15,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         Optional<SalesInvoice> findByInvoiceNumber(String invoiceNumber);
 
+        Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
+
         boolean existsByCustomerCode(String customerCode);
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
@@ -66,7 +68,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         @org.springframework.data.repository.query.Param("itemCode") String itemCode);
 
         // --- STATEMENT QUERIES ---
-        @Query("SELECT SUM(s.invoiceTotal) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")
+        @Query("SELECT CAST(SUM(s.invoiceTotal) AS double) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")
         Double calculateOpeningBalance(String customerCode, java.time.LocalDate startDate);
 
         // --- CREDIT LIMIT QUERIES ---
@@ -74,13 +76,13 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * Returns total outstanding (unpaid) balance for a customer across all
          * non-cancelled invoices. Used by the credit-limit enforcement logic.
          */
-        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
+        @Query("SELECT CAST(COALESCE(SUM(s.balance), 0) AS double) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
                         + "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, "
                         + "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         Double findOutstandingBalanceByCustomerCode(
                         @org.springframework.data.repository.query.Param("customerCode") String customerCode);
 
-        @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', s.invoiceTotal, CAST(0 AS double), CAST(s.status AS string)) "
+        @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', s.invoiceTotal, CAST(0 AS big_decimal), CAST(s.status AS string)) "
                         +
                         "FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String customerCode,
@@ -141,7 +143,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return findPaymentBreakdown(startDate, endDate, null);
         }
 
-        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.invoiceTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status NOT IN (" +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
@@ -165,7 +167,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return countBetween(from, to, null);
         }
 
-        @Query("SELECT COALESCE(SUM(si.balance), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.balance), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status NOT IN (" +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
                "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID" +
@@ -194,7 +196,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(Pageable pageable);
 
-        @Query("SELECT COALESCE(SUM(si.taxTotal), 0) FROM SalesInvoice si " +
+        @Query("SELECT CAST(COALESCE(SUM(si.taxTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :from AND :to " +
                "AND (:branchId IS NULL OR si.branchId = :branchId)")
@@ -279,7 +281,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         }
 
         // Total profit for a date range
-        @Query(value = "SELECT COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) " +
+        @Query(value = "SELECT CAST(COALESCE(SUM(sii.net_amount - COALESCE(sii.cost, 0) * sii.quantity), 0) AS double precision) " +
                        "FROM sales_invoices si " +
                        "JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id " +
                        "WHERE si.status <> 'CANCELLED' " +
@@ -315,6 +317,46 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         + "GROUP BY s "
                         + "HAVING COALESCE(SUM(i.recognizedRevenue), 0) > s.subTotal")
         List<SalesInvoice> findOverRecognizedInvoices();
+
+        // --- ANALYTICS QUERIES ---
+
+        /** Count unpaid invoices whose invoice date is more than 30 days before today. */
+        @Query("SELECT COUNT(s) FROM SalesInvoice s " +
+               "WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID) " +
+               "AND s.balance > 0 " +
+               "AND s.invoiceDate < :cutoff")
+        long countOverdueInvoices(@Param("cutoff") java.time.LocalDate cutoff);
+
+        /**
+         * Returns aging buckets for outstanding balances: [rangeLabel, totalAmount, invoiceCount].
+         * Buckets: 0-30, 31-60, 61-90, 90+ days past invoice date.
+         */
+        @Query(value =
+               "SELECT CASE " +
+               "  WHEN (:today - invoice_date) <= 30 THEN '0-30 days' " +
+               "  WHEN (:today - invoice_date) <= 60 THEN '31-60 days' " +
+               "  WHEN (:today - invoice_date) <= 90 THEN '61-90 days' " +
+               "  ELSE '90+ days' END AS age_range, " +
+               "COALESCE(SUM(balance), 0) AS total_balance, COUNT(*) AS cnt " +
+               "FROM sales_invoices " +
+               "WHERE status NOT IN ('CANCELLED','PAID') AND balance > 0 " +
+               "GROUP BY age_range " +
+               "ORDER BY MIN((:today - invoice_date))",
+               nativeQuery = true)
+        java.util.List<Object[]> findAgingBucketsRaw(@Param("today") java.time.LocalDate today);
+
+        /**
+         * POS History tab: recent invoices for a named customer, latest first, capped at 20.
+         * Excludes DRAFT and CANCELLED; includes all sales types so the cashier sees
+         * both POS and workflow invoices for the same customer.
+         */
+        @Query("SELECT s FROM SalesInvoice s WHERE s.customerCode = :customerCode " +
+               "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) " +
+               "ORDER BY s.id DESC")
+        List<SalesInvoice> findRecentByCustomerCode(@Param("customerCode") String customerCode,
+                                                    Pageable pageable);
 
         // POS session queries
         List<SalesInvoice> findByPosSessionId(Long posSessionId);
@@ -372,7 +414,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * POS Reprint: fetch POS_SALE invoices for a branch within a date range, latest first.
          * Items are not fetched here — caller uses the summary projection only.
          */
-        @Query("SELECT s FROM SalesInvoice s " +
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items " +
                "WHERE s.salesType = com.billbull.backend.sales.invoice.SalesType.POS_SALE " +
                "AND s.invoiceDate BETWEEN :dateFrom AND :dateTo " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
@@ -381,4 +423,11 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                 @Param("dateFrom") LocalDate dateFrom,
                 @Param("dateTo") LocalDate dateTo,
                 @Param("branchId") Long branchId);
+
+        @Query("SELECT s FROM SalesInvoice s WHERE s.salesChannel = 'POS' " +
+               "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
+               "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
+               "AND (:branchId IS NULL OR s.branchId = :branchId) " +
+               "ORDER BY s.createdAt DESC")
+        List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);
 }

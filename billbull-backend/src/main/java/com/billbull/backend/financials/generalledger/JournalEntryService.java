@@ -54,8 +54,11 @@ public class JournalEntryService {
     }
 
     public List<JournalEntry> getAllEntries() {
+        // ARCHFIX §1.6: lines + branch are LAZY — JOIN FETCH them so the response serializes without
+        // a LazyInitializationException (these methods are not @Transactional). @BatchSize on lines
+        // keeps the fetch efficient. DISTINCT collapses the lines-join row duplication.
         List<JournalEntry> entries = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
-                journalEntryRepository.findAll(), JournalEntry::getBranch));
+                journalEntryRepository.findAllWithLinesAndBranch(), JournalEntry::getBranch));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 entries,
                 JournalEntry::getDate,
@@ -65,7 +68,9 @@ public class JournalEntryService {
     }
 
     public JournalEntry getEntryById(Long id) {
-        return journalEntryRepository.findById(id != null ? id : -1L)
+        // ARCHFIX §1.6: fetch lines + branch eagerly via JOIN FETCH so both the serialized response
+        // and the in-transaction write callers (postEntry/update/approve/...) see a fully-loaded graph.
+        return journalEntryRepository.findByIdWithLinesAndBranch(id != null ? id : -1L)
                 .orElseThrow(() -> new RuntimeException("Journal Entry not found with id: " + id));
     }
 

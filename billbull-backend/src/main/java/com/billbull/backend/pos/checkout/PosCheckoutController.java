@@ -1,17 +1,40 @@
 package com.billbull.backend.pos.checkout;
 
+import com.billbull.backend.inventory.product.ProductPricing;
+import com.billbull.backend.inventory.product.ProductPricingRepository;
+import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.serial.SerialMaster;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
+import com.billbull.backend.inventory.serial.SerialStatus;
+import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.receipt.ZatcaQrGenerator;
 import com.billbull.backend.pos.session.PosSessionService;
+import com.billbull.backend.sales.customerledger.Customer;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
+import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.security.RolePermissionService;
+import com.billbull.backend.settings.branch.BranchRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * POS-specific checkout endpoint. Accepts the cart + payment details in one call,
@@ -25,26 +48,97 @@ public class PosCheckoutController {
     private final SalesInvoiceService invoiceService;
     private final PosSessionService sessionService;
     private final SalesInvoiceRepository invoiceRepository;
+    private final CustomerRepository customerRepository;
+    private final PosAuditService auditService;
+    private final BranchRepository branchRepository;
+    private final SerialMasterRepository serialMasterRepository;
+    private final ProductRepository productRepository;
+    private final ProductPricingRepository pricingRepository;
+    private final RolePermissionService permissionService;
 
-    public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService, SalesInvoiceRepository invoiceRepository) {
+    public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
+                                  SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
+                                  PosAuditService auditService, BranchRepository branchRepository,
+                                  SerialMasterRepository serialMasterRepository,
+                                  ProductRepository productRepository,
+                                  ProductPricingRepository pricingRepository,
+                                  RolePermissionService permissionService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
+        this.customerRepository = customerRepository;
+        this.auditService = auditService;
+        this.branchRepository = branchRepository;
+        this.serialMasterRepository = serialMasterRepository;
+        this.productRepository = productRepository;
+        this.pricingRepository = pricingRepository;
+        this.permissionService = permissionService;
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalesInvoice> checkout(@RequestBody PosCheckoutRequest request) {
+        // Idempotency guard: if the frontend sends the same checkoutKey twice (network retry),
+        // return the already-completed invoice instead of creating a duplicate.
+        if (request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank()) {
+            var existing = invoiceRepository.findByPosCheckoutKey(request.getCheckoutKey().trim());
+            if (existing.isPresent()) {
+                return ResponseEntity.ok(invoiceService.getById(existing.get().getId()));
+            }
+        }
+
         SalesInvoice invoice = buildInvoice(request);
+
+        // Step 1: save builds the invoice (number, totals, items) as DRAFT.
+        // amountPaid is zero at this point — status/side-effects are deferred.
         SalesInvoice saved = invoiceService.save(invoice);
 
-        // Record payment via existing payment service
-        if (request.getAmountTendered() != null && request.getAmountTendered() > 0) {
-            double paymentAmount = Math.min(request.getAmountTendered(), saved.getInvoiceTotal());
-            String paymentMode = resolvePaymentMode(request);
-            String cardRef = request.getCardReference();
-            invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode, cardRef, LocalDate.now(),
-                    null, null, null, request.getCombinedPaymentMode());
+        double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
+        double cashAmt = request.getCashAmount() != null ? request.getCashAmount() : 0.0;
+        double cardAmt = request.getCardAmount() != null ? request.getCardAmount() : 0.0;
+        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001;
+        double paymentAmount = hasSplitAmounts
+                ? Math.min(cashAmt + cardAmt, invoiceTotal)
+                : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
+
+        // Step 2: transition status while the invoice is still DRAFT so that
+        // doUpdateStatus() fires: FEFO/batch reservation, auto-DN generation,
+        // stock deduction, and the GL invoice-posting journal all happen here.
+        SalesInvoiceStatus intendedStatus =
+                (paymentAmount >= invoiceTotal - 0.001 && invoiceTotal > 0) ? SalesInvoiceStatus.PAID
+              : (paymentAmount > 0)                                           ? SalesInvoiceStatus.PARTIALLY_PAID
+              :                                                                  SalesInvoiceStatus.CONFIRMED;
+        invoiceService.updateStatus(saved.getId(), intendedStatus);
+
+        // Step 3: record payment — creates Payment row(s) + Receipt Voucher(s) + GL.
+        // Split into per-leg rows when both cash and card amounts are provided: each leg
+        // gets the correct settlement account (Cash 1001 vs Merchant Clearing 1013).
+        if (paymentAmount > 0) {
+            if (hasSplitAmounts && cashAmt > 0.001 && cardAmt > 0.001) {
+                // Card leg first (exact); cash fills the remainder up to invoiceTotal.
+                double cardPayment = Math.min(cardAmt, invoiceTotal);
+                double cashPayment = Math.max(0, Math.min(invoiceTotal - cardPayment, cashAmt));
+                String cardMode = resolveCardMode(request);
+                if (cardPayment > 0) {
+                    invoiceService.recordPayment(saved.getId(), cardPayment, cardMode,
+                            request.getCardReference(), LocalDate.now(),
+                            null, null, null, null);
+                }
+                if (cashPayment > 0) {
+                    invoiceService.recordPayment(saved.getId(), cashPayment, "Cash",
+                            null, LocalDate.now(), null, null, null, null);
+                }
+            } else {
+                // Single-leg payment (pure Cash, pure Card, Credit, Bank Transfer, etc.)
+                String paymentMode = hasSplitAmounts && cardAmt > 0.001
+                        ? resolveCardMode(request)      // card-only with explicit cardAmt
+                        : hasSplitAmounts               // cash-only with explicit cashAmt
+                        ? "Cash"
+                        : resolvePaymentMode(request);  // legacy: use paymentMode string
+                invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode,
+                        request.getCardReference(), LocalDate.now(),
+                        null, null, null, request.getCombinedPaymentMode());
+            }
         }
 
         // Update session totals
@@ -52,7 +146,105 @@ public class PosCheckoutController {
             sessionService.recordInvoiceOnSession(request.getSessionId(), saved);
         }
 
+        // Mark serial numbers as SOLD for serialized-product line items
+        if (saved.getItems() != null) {
+            for (SalesInvoiceItem soldItem : saved.getItems()) {
+                if (soldItem.getSerialNumber() != null && !soldItem.getSerialNumber().isBlank()
+                        && !Boolean.TRUE.equals(soldItem.getVoided())) {
+                    serialMasterRepository.findBySerialNumberForUpdate(soldItem.getSerialNumber())
+                            .ifPresent(sm -> {
+                                sm.setStatus(SerialStatus.SOLD);
+                                sm.setSoldInvoiceId(saved.getId());
+                                sm.setSoldInvoiceNumber(saved.getInvoiceNumber());
+                                sm.setSoldAt(LocalDateTime.now());
+                                serialMasterRepository.save(sm);
+                            });
+                }
+            }
+        }
+
+        // §4.1 Receipt archival: generate ZATCA QR at checkout time and store on the invoice.
+        try {
+            String sellerName = saved.getBranchName();
+            String trn = null;
+            if (saved.getBranchId() != null) {
+                var branch = branchRepository.findById(saved.getBranchId()).orElse(null);
+                if (branch != null) {
+                    if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                    trn = branch.getTrnNumber();
+                }
+            }
+            BigDecimal totalWithVat = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : BigDecimal.ZERO;
+            BigDecimal vatTotal = saved.getTaxTotal() != null ? saved.getTaxTotal() : BigDecimal.ZERO;
+            LocalDateTime invoiceAt = saved.getInvoiceDate() != null
+                    ? saved.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+            String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+            saved.setPosReceiptQr(qr);
+            invoiceRepository.save(saved);
+        } catch (Exception e) {
+            // Non-blocking — QR archival failure must not roll back the checkout.
+        }
+
+        // Audit: completed checkout + any voided lines
+        final SalesInvoice finalSaved = saved;
+        auditService.logCheckoutCompleted(
+                request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                finalSaved.getId(), finalSaved.getInvoiceNumber());
+        if (request.getItems() != null) {
+            request.getItems().stream()
+                    .filter(it -> Boolean.TRUE.equals(it.getVoided()))
+                    .forEach(it -> auditService.logItemVoided(
+                            request.getSessionId(), request.getTerminalId(), request.getBranchId(),
+                            it.getItemCode(), it.getItemName(), it.getVoidReason()));
+        }
+
         return ResponseEntity.ok(invoiceService.getById(saved.getId()));
+    }
+
+    /**
+     * Look up a single POS invoice by invoice number (exact) for the Sales Return flow.
+     * Optionally filtered by customerMobile and/or dateFrom when no invoice number is given,
+     * returning the best match (latest first).
+     */
+    @GetMapping("/invoices/lookup")
+    @PreAuthorize("hasPermission(null, 'sales', 'view')")
+    public ResponseEntity<?> lookupInvoiceForReturn(
+            @RequestParam(required = false) String invoiceNumber,
+            @RequestParam(required = false) String customerMobile,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) Long branchId) {
+
+        if (invoiceNumber != null && !invoiceNumber.isBlank()) {
+            Optional<SalesInvoice> found = invoiceRepository.findByInvoiceNumber(invoiceNumber.trim().toUpperCase());
+            if (found.isEmpty()) {
+                // Try prefix search — return first (latest) match
+                List<SalesInvoice> byPrefix = invoiceRepository.findByInvoiceNumberPrefixWithItems(invoiceNumber.trim().toUpperCase());
+                if (byPrefix.isEmpty()) return ResponseEntity.notFound().build();
+                return ResponseEntity.ok(byPrefix.get(0));
+            }
+            SalesInvoice inv = found.get();
+            // Eagerly initialize items to avoid lazy-load issues in serialization
+            if (inv.getItems() != null) inv.getItems().size();
+            return ResponseEntity.ok(inv);
+        }
+
+        if (customerMobile != null && !customerMobile.isBlank()) {
+            String mobile = customerMobile.trim();
+            Optional<Customer> customer = customerRepository
+                    .findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(
+                            mobile, mobile, mobile, mobile);
+            if (customer.isEmpty()) return ResponseEntity.notFound().build();
+            String code = customer.get().getCode();
+            LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now().minusDays(90);
+            List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, LocalDate.now(), branchId);
+            return invoices.stream()
+                    .filter(i -> code.equalsIgnoreCase(i.getCustomerCode()))
+                    .findFirst()
+                    .map(ResponseEntity::ok)
+                    .orElse(ResponseEntity.notFound().build());
+        }
+
+        return ResponseEntity.badRequest().build();
     }
 
     /**
@@ -70,9 +262,181 @@ public class PosCheckoutController {
         return invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
     }
 
+    /**
+     * Receipt data endpoint: returns the invoice plus a ZATCA-compliant QR code payload.
+     * The QR payload is a base64 TLV string the frontend passes to qrcode.js for rendering.
+     *
+     * GET /api/pos/checkout/invoices/{id}/receipt
+     */
+    @GetMapping("/invoices/{id}/receipt")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getReceiptData(@PathVariable Long id) {
+        SalesInvoice invoice = invoiceService.getById(id);
+        if (invoice.getItems() != null) invoice.getItems().size(); // init LAZY
+
+        // Resolve seller name + TRN from branch
+        String sellerName = invoice.getBranchName();
+        String trn = null;
+        if (invoice.getBranchId() != null) {
+            var branch = branchRepository.findById(invoice.getBranchId()).orElse(null);
+            if (branch != null) {
+                if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                trn = branch.getTrnNumber();
+            }
+        }
+
+        BigDecimal totalWithVat = invoice.getInvoiceTotal() != null
+                ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+        BigDecimal vatTotal = invoice.getTaxTotal() != null
+                ? invoice.getTaxTotal() : BigDecimal.ZERO;
+
+        LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
+                ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+
+        String qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("invoice", invoice);
+        result.put("zatcaQr", qrCode);
+        result.put("sellerName", sellerName);
+        result.put("trn", trn);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * §4.2 Receipt reprint: same data as /receipt but also logs a RECEIPT_REPRINTED
+     * audit entry for fraud detection (duplicate printout tracking).
+     *
+     * GET /api/pos/checkout/invoices/{id}/reprint
+     */
+    @GetMapping("/invoices/{id}/reprint")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> reprintReceipt(@PathVariable Long id,
+            @RequestParam(required = false) Long sessionId,
+            @RequestParam(required = false) String terminalId,
+            @RequestParam(required = false) Long branchId) {
+        SalesInvoice invoice = invoiceService.getById(id);
+        if (invoice.getItems() != null) invoice.getItems().size();
+
+        String sellerName = invoice.getBranchName();
+        String trn = null;
+        if (invoice.getBranchId() != null) {
+            var branch = branchRepository.findById(invoice.getBranchId()).orElse(null);
+            if (branch != null) {
+                if (sellerName == null || sellerName.isBlank()) sellerName = branch.getName();
+                trn = branch.getTrnNumber();
+            }
+        }
+
+        // Use stored QR if available, otherwise regenerate.
+        String qrCode = invoice.getPosReceiptQr();
+        if (qrCode == null || qrCode.isBlank()) {
+            BigDecimal totalWithVat = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
+            BigDecimal vatTotal = invoice.getTaxTotal() != null ? invoice.getTaxTotal() : BigDecimal.ZERO;
+            LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
+                    ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+            qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
+        }
+
+        // §4.2 Audit log: RECEIPT_REPRINTED for fraud detection
+        auditService.logReceiptReprinted(
+                sessionId, terminalId, branchId != null ? branchId : invoice.getBranchId(),
+                id, invoice.getInvoiceNumber());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("invoice", invoice);
+        result.put("zatcaQr", qrCode);
+        result.put("sellerName", sellerName);
+        result.put("trn", trn);
+        return ResponseEntity.ok(result);
+    }
+
+    // ── Delivery orders ────────────────────────────────────────────────────────
+
+    /** List POS invoices sent out for delivery (CONFIRMED / PARTIALLY_PAID with a driver set). */
+    @GetMapping("/deliveries")
+    @PreAuthorize("isAuthenticated()")
+    public List<SalesInvoice> getPendingDeliveries(@RequestParam(required = false) Long branchId) {
+        return invoiceRepository.findPendingDeliveryOrders(branchId);
+    }
+
+    /** Settle (collect payment for) a pending delivery order. */
+    @PostMapping("/deliveries/{id}/settle")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<SalesInvoice> settleDelivery(@PathVariable Long id,
+            @RequestBody DeliverySettleRequest req) {
+        SalesInvoice invoice = invoiceRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
+
+        double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal().doubleValue() : 0.0;
+        double alreadyPaid = invoice.getAmountPaid() != null ? invoice.getAmountPaid().doubleValue() : 0.0;
+        double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
+        if (balanceDue <= 0.001) return ResponseEntity.ok(invoiceService.getById(id));
+
+        double cashAmt = req.getCashAmount() != null ? req.getCashAmount() : 0.0;
+        double cardAmt = req.getCardAmount() != null ? req.getCardAmount() : 0.0;
+        boolean hasSplit = cashAmt > 0.001 || cardAmt > 0.001;
+        double paymentAmount = hasSplit
+                ? Math.min(cashAmt + cardAmt, balanceDue)
+                : Math.min(req.getAmountTendered() != null ? req.getAmountTendered() : balanceDue, balanceDue);
+        if (paymentAmount <= 0.001)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero");
+
+        if (hasSplit && cashAmt > 0.001 && cardAmt > 0.001) {
+            double cardPayment = Math.min(cardAmt, balanceDue);
+            double cashPayment = Math.max(0, Math.min(balanceDue - cardPayment, cashAmt));
+            String cardMode = (req.getCardType() != null && !req.getCardType().isBlank()) ? req.getCardType() : "Card";
+            if (cardPayment > 0) invoiceService.recordPayment(id, cardPayment, cardMode, req.getCardReference(), LocalDate.now(), null, null, null, null);
+            if (cashPayment > 0) invoiceService.recordPayment(id, cashPayment, "Cash", null, LocalDate.now(), null, null, null, null);
+        } else {
+            String mode = hasSplit && cardAmt > 0.001
+                    ? (req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card")
+                    : hasSplit ? "Cash"
+                    : (req.getPaymentMode() != null && !req.getPaymentMode().isBlank() ? req.getPaymentMode() : "Cash");
+            invoiceService.recordPayment(id, paymentAmount, mode, req.getCardReference(), LocalDate.now(), null, null, null, null);
+        }
+
+        auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
+                req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
+                id, invoice.getInvoiceNumber());
+        return ResponseEntity.ok(invoiceService.getById(id));
+    }
+
+    public static class DeliverySettleRequest {
+        private String paymentMode;
+        private Double amountTendered;
+        private Double cashAmount;
+        private Double cardAmount;
+        private String cardType;
+        private String cardReference;
+        private Long sessionId;
+        private String terminalId;
+        private Long branchId;
+
+        public String getPaymentMode() { return paymentMode; }
+        public void setPaymentMode(String paymentMode) { this.paymentMode = paymentMode; }
+        public Double getAmountTendered() { return amountTendered; }
+        public void setAmountTendered(Double amountTendered) { this.amountTendered = amountTendered; }
+        public Double getCashAmount() { return cashAmount; }
+        public void setCashAmount(Double cashAmount) { this.cashAmount = cashAmount; }
+        public Double getCardAmount() { return cardAmount; }
+        public void setCardAmount(Double cardAmount) { this.cardAmount = cardAmount; }
+        public String getCardType() { return cardType; }
+        public void setCardType(String cardType) { this.cardType = cardType; }
+        public String getCardReference() { return cardReference; }
+        public void setCardReference(String cardReference) { this.cardReference = cardReference; }
+        public Long getSessionId() { return sessionId; }
+        public void setSessionId(Long sessionId) { this.sessionId = sessionId; }
+        public String getTerminalId() { return terminalId; }
+        public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
+        public Long getBranchId() { return branchId; }
+        public void setBranchId(Long branchId) { this.branchId = branchId; }
+    }
+
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
+        inv.setSalesChannel("POS");
         inv.setInvoiceDate(LocalDate.now());
         inv.setCustomerCode(req.getCustomerCode() != null ? req.getCustomerCode() : "WALK-IN");
         inv.setCustomerName(req.getCustomerName() != null ? req.getCustomerName() : "Walk-in Customer");
@@ -83,8 +447,54 @@ public class PosCheckoutController {
         inv.setPosSessionId(req.getSessionId());
         inv.setPosTerminalId(req.getTerminalId());
         inv.setPosCounterName(req.getCounterName());
-        inv.setBillDiscountAmount(req.getBillDiscountAmount());
+        if (req.getCheckoutKey() != null && !req.getCheckoutKey().isBlank()) {
+            inv.setPosCheckoutKey(req.getCheckoutKey().trim());
+        }
+        inv.setBillDiscountAmount(req.getBillDiscountAmount() != null
+                ? java.math.BigDecimal.valueOf(req.getBillDiscountAmount()) : null);
         inv.setInternalNotes(req.getNotes());
+        if (req.getShippingAddress() != null && !req.getShippingAddress().isBlank()) {
+            inv.setShippingAddress(req.getShippingAddress());
+        }
+        if (req.getDriverName() != null && !req.getDriverName().isBlank()) {
+            inv.setPosDriverName(req.getDriverName());
+        }
+        if (req.getDeliveryNotes() != null && !req.getDeliveryNotes().isBlank()) {
+            inv.setPosDeliveryNotes(req.getDeliveryNotes());
+        }
+        if (req.getDeliveryCharge() != null && req.getDeliveryCharge() > 0) {
+            inv.setDeliveryCharge(java.math.BigDecimal.valueOf(req.getDeliveryCharge()));
+        }
+
+        // §2.4 Price override gate: batch-load product pricings and verify that any
+        // below-list-price sale is made by a user with the pos_price_override permission.
+        if (req.getItems() != null && !req.getItems().isEmpty()) {
+            List<String> codes = req.getItems().stream()
+                    .filter(i -> !Boolean.TRUE.equals(i.getVoided()) && i.getItemCode() != null)
+                    .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
+                    .distinct().collect(Collectors.toList());
+            if (!codes.isEmpty()) {
+                Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
+                productRepository.findByCodeIn(codes).forEach(p -> {
+                    pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
+                });
+                for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
+                    if (Boolean.TRUE.equals(item.getVoided()) || item.getPrice() == null) continue;
+                    ProductPricing pr = pricingByCode.get(item.getItemCode());
+                    if (pr == null) continue;
+                    BigDecimal itemPrice = BigDecimal.valueOf(item.getPrice());
+                    BigDecimal minPrice = pr.getMinPrice() != null ? pr.getMinPrice()
+                                       : (pr.getRetailPrice() != null ? pr.getRetailPrice() : null);
+                    if (minPrice != null && itemPrice.compareTo(minPrice) < 0) {
+                        if (!permissionService.currentUserCanEdit("pos_price_override")) {
+                            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                                    "Price below minimum for " + item.getItemCode()
+                                    + ". Supervisor override required (pos_price_override).");
+                        }
+                    }
+                }
+            }
+        }
 
         if (req.getItems() != null) {
             inv.setItems(req.getItems().stream().map(item -> {
@@ -93,12 +503,21 @@ public class PosCheckoutController {
                 si.setItemName(item.getItemName());
                 si.setQuantity(item.getQuantity());
                 si.setUnit(item.getUnit() != null ? item.getUnit() : "Each");
-                si.setPrice(item.getPrice());
+                si.setPrice(item.getPrice() != null ? java.math.BigDecimal.valueOf(item.getPrice()) : null);
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
                 si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
                 si.setVoided(Boolean.TRUE.equals(item.getVoided()));
-                if (!si.isVoided() && item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
-                    si.setPinnedBatchNumber(item.getBatchNumber().trim());
+                if (si.isVoided()) {
+                    si.setVoidReason(item.getVoidReason());
+                    si.setVoidedBy(currentUser());
+                    si.setVoidedAt(LocalDateTime.now());
+                } else {
+                    if (item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
+                        si.setPinnedBatchNumber(item.getBatchNumber().trim());
+                    }
+                    if (item.getSerialNumber() != null && !item.getSerialNumber().isBlank()) {
+                        si.setSerialNumber(item.getSerialNumber().trim());
+                    }
                 }
                 si.setSalesInvoice(inv);
                 return si;
@@ -106,6 +525,17 @@ public class PosCheckoutController {
         }
 
         return inv;
+    }
+
+    private String currentUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null ? auth.getName() : "system";
+    }
+
+    /** Returns the card network name to use as payment mode (e.g. "Visa", "Card"). */
+    private String resolveCardMode(PosCheckoutRequest req) {
+        if (req.getCardType() != null && !req.getCardType().isBlank()) return req.getCardType();
+        return "Card";
     }
 
     private String resolvePaymentMode(PosCheckoutRequest req) {

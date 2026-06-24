@@ -118,8 +118,8 @@ public class DashboardService {
         CompletableFuture<Long>           activeEmpF    = CompletableFuture.supplyAsync(() -> employeeRepo.countByStatus("ACTIVE"), QUERY_POOL);
         CompletableFuture<Long>           totalProdF    = CompletableFuture.supplyAsync(() -> productRepo.countAllActive(), QUERY_POOL);
         CompletableFuture<List<Object[]>> productStockF = CompletableFuture.supplyAsync(() -> stockMovementRepo.findActiveProductStockSummary(), QUERY_POOL);
-        CompletableFuture<Double> expenseTotalF         = CompletableFuture.supplyAsync(() -> expenseRepo.sumTotalBetween(startDate, endDate), QUERY_POOL);
-        CompletableFuture<Double> expenseTaxF           = CompletableFuture.supplyAsync(() -> expenseRepo.sumTaxBetween(startDate, endDate), QUERY_POOL);
+        CompletableFuture<BigDecimal> expenseTotalF     = CompletableFuture.supplyAsync(() -> expenseRepo.sumTotalBetween(startDate, endDate), QUERY_POOL);
+        CompletableFuture<BigDecimal> expenseTaxF       = CompletableFuture.supplyAsync(() -> expenseRepo.sumTaxBetween(startDate, endDate), QUERY_POOL);
         CompletableFuture<List<Object[]>> expenseCatF   = CompletableFuture.supplyAsync(() -> expenseRepo.findTopCategoryBetween(startDate, endDate), QUERY_POOL);
         CompletableFuture<Double> vatOnSalesF           = CompletableFuture.supplyAsync(() -> invoiceRepo.sumTaxTotalBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<List<Object[]>> hourlySalesF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findHourlySalesTrend(today, branchId), QUERY_POOL);
@@ -204,7 +204,7 @@ public class DashboardService {
                     inv.getId().toString(),
                     inv.getInvoiceNumber(),
                     inv.getCustomerName(),
-                    inv.getInvoiceTotal() != null ? inv.getInvoiceTotal() : 0d,
+                    inv.getInvoiceTotal() != null ? inv.getInvoiceTotal().doubleValue() : 0d,
                     inv.getStatus() != null ? inv.getStatus().toString() : "DRAFT",
                     inv.getInvoiceDate() != null ? inv.getInvoiceDate().format(fmt) : null,
                     createdAtStr
@@ -285,10 +285,10 @@ public class DashboardService {
 
         // Accounting snapshot
         double cashInflow   = totalRevenue;
-        double expTotal     = expenseTotalF.join() != null ? expenseTotalF.join() : 0d;
+        double expTotal     = expenseTotalF.join() != null ? expenseTotalF.join().doubleValue() : 0d;
         double cashOutflow  = grnTotal + expTotal;
         double vatSales     = vatOnSalesF.join() != null ? vatOnSalesF.join() : 0d;
-        double vatPurchases = expenseTaxF.join() != null ? expenseTaxF.join() : 0d;
+        double vatPurchases = expenseTaxF.join() != null ? expenseTaxF.join().doubleValue() : 0d;
         List<Object[]> topCats = expenseCatF.join();
         String majorHead = topCats != null && !topCats.isEmpty() && topCats.get(0)[0] != null
                 ? topCats.get(0)[0].toString() : "";

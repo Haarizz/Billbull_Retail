@@ -9,14 +9,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.Locale;
 
 /**
  * Service for RBAC access logs and ERP business audit events.
+ *
+ * Every method snapshots all caller-thread state (SecurityContext, MDC,
+ * HttpServletRequest) into plain values before handing off to {@link AuditLogWriter},
+ * whose @Async methods perform the DB write on the shared task-executor pool.
+ * This removes audit persistence from the HTTP response critical path.
  */
 @Service
 public class AuditLogService {
@@ -24,16 +26,15 @@ public class AuditLogService {
     private static final Long SYSTEM_USER_ID = -1L;
     private static final int MAX_DETAIL_LENGTH = 4000;
 
-    private final AuditLogRepository auditLogRepository;
+    private final AuditLogWriter writer;
 
     @Autowired(required = false)
     private UserRepository userRepository;
 
-    public AuditLogService(AuditLogRepository auditLogRepository) {
-        this.auditLogRepository = auditLogRepository;
+    public AuditLogService(AuditLogWriter writer) {
+        this.writer = writer;
     }
 
-    @Transactional
     public void logAccess(
             Long userId,
             String username,
@@ -43,149 +44,129 @@ public class AuditLogService {
             boolean allowed,
             String denialReason,
             HttpServletRequest request) {
-        AuditLog log = new AuditLog();
-        log.setUserId(resolveUserId(userId, username));
-        log.setUsername(safe(username, currentUsername()));
-        log.setRole(safe(role, currentRoles()));
-        log.setEndpoint(safe(endpoint, "-"));
-        log.setHttpMethod(safe(httpMethod, "-"));
-        log.setAction(allowed ? "ALLOWED" : "DENIED");
-        log.setDenialReason(truncate(denialReason));
-        log.setIpAddress(getClientIp(request));
-        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
-        log.setAccessTime(LocalDateTime.now());
-        log.setEventType("ACCESS");
-        applyRequestContext(log, request);
-
-        auditLogRepository.save(log);
+        writer.saveAccessLog(
+                resolveUserId(userId, username),
+                safe(username, currentUsername()),
+                safe(role, currentRoles()),
+                safe(endpoint, "-"),
+                safe(httpMethod, "-"),
+                allowed,
+                truncate(denialReason),
+                getClientIp(request),
+                request != null ? request.getHeader("User-Agent") : null,
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
     }
 
-    @Transactional
     public void logAllowedAccess(String endpoint, String httpMethod, HttpServletRequest request) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
             return;
         }
-
         String roles = auth.getAuthorities().stream()
                 .map(Object::toString)
                 .reduce((a, b) -> a + "," + b)
                 .orElse("NONE");
-
-        logAccess(
-                LogContext.getLong(LogContext.USER_ID),
+        writer.saveAccessLog(
+                resolveUserId(LogContext.getLong(LogContext.USER_ID), auth.getName()),
                 auth.getName(),
                 roles,
-                endpoint,
-                httpMethod,
+                safe(endpoint, "-"),
+                safe(httpMethod, "-"),
                 true,
                 null,
-                request);
+                getClientIp(request),
+                request != null ? request.getHeader("User-Agent") : null,
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
     }
 
-    @Transactional
     public void logDeniedAccess(
             String username,
             String endpoint,
             String httpMethod,
             String reason,
             HttpServletRequest request) {
-        logAccess(
-                null,
+        writer.saveAccessLog(
+                SYSTEM_USER_ID,
                 username != null ? username : "ANONYMOUS",
                 "NONE",
-                endpoint,
-                httpMethod,
+                safe(endpoint, "-"),
+                safe(httpMethod, "-"),
                 false,
-                reason,
-                request);
+                truncate(reason),
+                getClientIp(request),
+                request != null ? request.getHeader("User-Agent") : null,
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logDomainEvent(String entityType, String entityId, String action, String detail) {
-        AuditLog log = new AuditLog();
-        log.setUserId(resolveUserId(null, currentUsername()));
-        log.setUsername(currentUsername());
-        log.setRole("DOMAIN");
-        log.setEndpoint(safe(entityType, "ENTITY") + ":" + safe(entityId, "-"));
-        log.setHttpMethod(safe(action, "EVENT"));
-        log.setAction("ALLOWED");
-        log.setDenialReason(truncate(detail));
-        log.setEventType("BUSINESS");
-        log.setEntityType(safe(entityType, "ENTITY"));
-        log.setEntityId(safe(entityId, "-"));
-        log.setDetails(truncate(detail));
-        log.setAccessTime(LocalDateTime.now());
-        applyRequestContext(log, null);
-
-        auditLogRepository.save(log);
+        String username = currentUsername();
+        writer.saveDomainEvent(
+                resolveUserId(null, username),
+                username,
+                entityType,
+                entityId,
+                action,
+                truncate(detail),
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.get(LogContext.CLIENT_HOST));
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logApiRequestEvent(HttpServletRequest request, int status, long durationMs) {
-        AuditLog log = new AuditLog();
-        log.setUserId(resolveUserId(LogContext.getLong(LogContext.USER_ID), currentUsername()));
-        log.setUsername(currentUsername());
-        log.setRole(currentRoles());
-        log.setEndpoint(request != null ? request.getRequestURI() : LogContext.getOrDefault(LogContext.HTTP_PATH, "-"));
-        log.setHttpMethod(request != null ? request.getMethod() : LogContext.getOrDefault(LogContext.HTTP_METHOD, "-"));
-        log.setAction(status >= 400 ? "FAILED" : "SUCCESS");
-        log.setEventType("API_MUTATION");
-        log.setEntityType("API");
-        log.setEntityId(log.getEndpoint());
-        log.setHttpStatus(status);
-        log.setDurationMs(durationMs);
-        log.setDenialReason(status >= 400 ? "HTTP " + status : null);
-        log.setDetails("status=" + status + ", durationMs=" + durationMs);
-        log.setIpAddress(getClientIp(request));
-        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
-        log.setAccessTime(LocalDateTime.now());
-        applyRequestContext(log, request);
-
-        auditLogRepository.save(log);
+        String username = currentUsername();
+        writer.saveApiEvent(
+                resolveUserId(LogContext.getLong(LogContext.USER_ID), username),
+                username,
+                currentRoles(),
+                request != null ? request.getRequestURI()
+                                : LogContext.getOrDefault(LogContext.HTTP_PATH, "-"),
+                request != null ? request.getMethod()
+                                : LogContext.getOrDefault(LogContext.HTTP_METHOD, "-"),
+                getClientIp(request),
+                request != null ? request.getHeader("User-Agent") : null,
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null),
+                status,
+                durationMs);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void logClientIssueEvent(String level, String message, String url, String details, HttpServletRequest request) {
+    public void logClientIssueEvent(String level, String message, String url, String details,
+                                    HttpServletRequest request) {
         String normalizedLevel = safe(level, "INFO").toUpperCase(Locale.ROOT);
-        if (!"ERROR".equals(normalizedLevel) && !"WARN".equals(normalizedLevel) && !"WARNING".equals(normalizedLevel)) {
+        if (!"ERROR".equals(normalizedLevel) && !"WARN".equals(normalizedLevel)
+                && !"WARNING".equals(normalizedLevel)) {
             return;
         }
-
-        AuditLog log = new AuditLog();
-        log.setUserId(resolveUserId(LogContext.getLong(LogContext.USER_ID), currentUsername()));
-        log.setUsername(currentUsername());
-        log.setRole(currentRoles());
-        log.setEndpoint(safe(url, "/api/client-logs"));
-        log.setHttpMethod("CLIENT");
-        log.setAction("WARNING".equals(normalizedLevel) ? "WARN" : normalizedLevel);
-        log.setEventType("CLIENT_ISSUE");
-        log.setEntityType("CLIENT_LOG");
-        log.setEntityId(LogContext.getOrDefault(LogContext.REQUEST_ID, "-"));
-        log.setDenialReason(truncate(message));
-        log.setDetails(truncate(details));
-        log.setIpAddress(getClientIp(request));
-        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
-        log.setAccessTime(LocalDateTime.now());
-        applyRequestContext(log, request);
-
-        auditLogRepository.save(log);
+        String username = currentUsername();
+        writer.saveClientIssue(
+                resolveUserId(LogContext.getLong(LogContext.USER_ID), username),
+                username,
+                currentRoles(),
+                safe(url, "/api/client-logs"),
+                normalizedLevel,
+                truncate(message),
+                truncate(details),
+                getClientIp(request),
+                request != null ? request.getHeader("User-Agent") : null,
+                LogContext.get(LogContext.REQUEST_ID),
+                LogContext.getLong(LogContext.BRANCH_ID),
+                LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
     }
 
-    private void applyRequestContext(AuditLog log, HttpServletRequest request) {
-        log.setRequestId(LogContext.get(LogContext.REQUEST_ID));
-        log.setBranchId(LogContext.getLong(LogContext.BRANCH_ID));
-        log.setClientHost(LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
-    }
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private Long resolveUserId(Long explicitUserId, String username) {
         if (explicitUserId != null) {
             return explicitUserId;
-        }
-
-        Long mdcUserId = LogContext.getLong(LogContext.USER_ID);
-        if (mdcUserId != null) {
-            return mdcUserId;
         }
 
         if (userRepository != null && username != null

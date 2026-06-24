@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -53,6 +54,37 @@ public class PosLayawayController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> convert(@PathVariable Long id, @RequestBody ConvertRequest body) {
         return ResponseEntity.ok(service.markConverted(id, body.getInvoiceId(), body.getInvoiceNumber()));
+    }
+
+    // §3.4 Partial instalment recording
+    @PostMapping("/{id}/payments")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosLayawayPayment> recordPayment(@PathVariable Long id,
+                                                            @RequestBody PaymentRequest body) {
+        return ResponseEntity.ok(service.recordPayment(
+                id, body.getAmount(), body.getPaymentMode(), body.getReferenceNumber(), body.getNotes()));
+    }
+
+    @GetMapping("/{id}/payments")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<PosLayawayPayment>> getPayments(@PathVariable Long id) {
+        return ResponseEntity.ok(service.getPayments(id));
+    }
+
+    public static class PaymentRequest {
+        private BigDecimal amount;
+        private String paymentMode;
+        private String referenceNumber;
+        private String notes;
+
+        public BigDecimal getAmount() { return amount; }
+        public void setAmount(BigDecimal amount) { this.amount = amount; }
+        public String getPaymentMode() { return paymentMode; }
+        public void setPaymentMode(String paymentMode) { this.paymentMode = paymentMode; }
+        public String getReferenceNumber() { return referenceNumber; }
+        public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
+        public String getNotes() { return notes; }
+        public void setNotes(String notes) { this.notes = notes; }
     }
 
     public static class ConvertRequest {

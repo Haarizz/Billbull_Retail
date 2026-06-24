@@ -16,6 +16,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 
 @Entity
@@ -29,7 +30,8 @@ import jakarta.persistence.Table;
 public class JournalLine {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "journal_line_seq_gen")
+    @SequenceGenerator(name = "journal_line_seq_gen", sequenceName = "seq_journal_lines", allocationSize = 50)
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)

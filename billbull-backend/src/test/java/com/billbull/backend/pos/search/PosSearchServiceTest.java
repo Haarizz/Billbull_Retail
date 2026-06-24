@@ -23,6 +23,7 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductAggregateResponse;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductService;
+import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 
@@ -32,13 +33,15 @@ class PosSearchServiceTest {
     @Mock private ProductService productService;
     @Mock private ProductRepository productRepository;
     @Mock private BatchMasterRepository batchMasterRepository;
+    @Mock private SerialMasterRepository serialMasterRepository;
     @Mock private CustomerRepository customerRepository;
 
     private PosSearchService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosSearchService(productService, productRepository, batchMasterRepository, customerRepository);
+        service = new PosSearchService(productService, productRepository, batchMasterRepository,
+                serialMasterRepository, customerRepository);
     }
 
     @Test
