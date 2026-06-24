@@ -60,6 +60,23 @@ public interface StockMovementRepository
                         @Param("batchNumber") String batchNumber,
                         @Param("expiryDate") LocalDate expiryDate);
 
+        @Query(value = """
+                            SELECT COUNT(sm.id) > 0
+                            FROM stock_movements sm
+                            WHERE sm.source_type = :sourceType
+                              AND sm.source_id = :sourceId
+                              AND sm.product_id = :productId
+                              AND sm.warehouse_id = :warehouseId
+                              AND sm.serial_number = :serialNumber
+                              AND sm.quantity > 0
+                        """, nativeQuery = true)
+        boolean existsInboundSerialIdentity(
+                        @Param("sourceType") String sourceType,
+                        @Param("sourceId") Long sourceId,
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("serialNumber") String serialNumber);
+
         List<StockMovement> findBySourceTypeAndSourceIdAndProductIdAndQuantityLessThan(
                         StockSourceType sourceType,
                         Long sourceId,
@@ -222,12 +239,12 @@ public interface StockMovementRepository
                         @Param("binId") Long binId);
 
         @Query("""
-                            SELECT sm.productId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            SELECT sm.productId, sm.batchNumber, sm.serialNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
                             FROM StockMovement sm
                             WHERE sm.binId = :binId
-                            GROUP BY sm.productId, sm.batchNumber, sm.expiryDate
+                            GROUP BY sm.productId, sm.batchNumber, sm.serialNumber, sm.expiryDate
                             HAVING COALESCE(SUM(sm.quantity), 0) > 0
-                            ORDER BY sm.productId, sm.expiryDate, sm.batchNumber
+                            ORDER BY sm.productId, sm.expiryDate, sm.batchNumber, sm.serialNumber
                         """)
         List<Object[]> findStockIdentitiesByBin(@Param("binId") Long binId);
 

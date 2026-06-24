@@ -116,6 +116,8 @@ const normalizeRecentProduct = (product, detail = null) => {
         minPrice: detailPricing?.minPrice ?? product?.minPrice ?? null,
         maxPrice: detailPricing?.maxPrice ?? product?.maxPrice ?? null,
         stock: product?.stock ?? detailProduct?.stock ?? 0,
+        isSerial: Boolean(detailProduct?.isSerial ?? product?.isSerial),
+        isBatch: Boolean(detailProduct?.isBatch ?? product?.isBatch),
         category:
             product?.category ||
             product?.departmentName ||

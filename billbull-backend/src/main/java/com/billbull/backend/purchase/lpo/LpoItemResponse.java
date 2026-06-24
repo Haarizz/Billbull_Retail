@@ -2,6 +2,8 @@ package com.billbull.backend.purchase.lpo;
 
 import java.math.BigDecimal;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class LpoItemResponse {
 
     private Long productId;
@@ -23,6 +25,10 @@ public class LpoItemResponse {
     private String image;
     private BigDecimal purchaseTax;
     private String detailedDesc;
+    @JsonProperty("isSerial")
+    private boolean isSerial;
+    @JsonProperty("isBatchTracked")
+    private boolean isBatchTracked;
 
     public LpoItemResponse(LpoItem item) {
         this.productId = item.getProduct().getId();
@@ -46,6 +52,8 @@ public class LpoItemResponse {
                 ? item.getProduct().getTax().getPurchaseTax()
                 : java.math.BigDecimal.valueOf(5);
         this.detailedDesc = item.getProduct().getDetailedDesc();
+        this.isSerial = item.getProduct().isSerial();
+        this.isBatchTracked = item.getProduct().isBatch();
     }
 
     public Long getProductId() {
@@ -134,5 +142,15 @@ public class LpoItemResponse {
 
     public String getDetailedDesc() {
         return detailedDesc;
+    }
+
+    @JsonProperty("isSerial")
+    public boolean isSerial() {
+        return isSerial;
+    }
+
+    @JsonProperty("isBatchTracked")
+    public boolean isBatchTracked() {
+        return isBatchTracked;
     }
 }

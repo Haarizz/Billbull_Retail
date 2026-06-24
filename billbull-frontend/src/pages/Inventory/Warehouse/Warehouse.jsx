@@ -6,7 +6,7 @@ import {
   ArrowRight, RefreshCw, Building2, Grid3X3, ScanLine
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getWarehouseTree, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
+import { getWarehouseTree, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary, getWarehouseStock } from '../../../api/warehouseApi';
 import { getBranches } from '../../../api/branchApi';
 import { hasRole } from '../../../api/auth';
 import { useBranch } from '../../../context/BranchContext';
@@ -686,10 +686,20 @@ const Warehouse = () => {
 // ─── Warehouse Detail ─────────────────────────────────────────────────────────
 const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEditZone, onDeleteZone }) => {
   const [stock, setStock] = useState({ totalSkus: 0, totalQty: 0, fastMoving: 0, expiring: 0, reserved: 0, deadStock: 0 });
+  const [productStock, setProductStock] = useState([]);
+  const [stockSearch, setStockSearch] = useState('');
   useEffect(() => {
-    if (warehouse?.id) getWarehouseStockSummary(warehouse.id).then(setStock).catch(() => {});
+    if (warehouse?.id) {
+      getWarehouseStockSummary(warehouse.id).then(setStock).catch(() => {});
+      getWarehouseStock(warehouse.id).then(setProductStock).catch(() => {});
+    }
   }, [warehouse?.id]);
   const available = stock.totalQty - stock.reserved;
+  const filteredProductStock = productStock.filter(s => {
+    if (!stockSearch.trim()) return true;
+    const term = stockSearch.toLowerCase();
+    return (s.productCode || '').toLowerCase().includes(term) || (s.productName || '').toLowerCase().includes(term);
+  });
 
   return (
     <div className="space-y-5">
@@ -785,6 +795,53 @@ const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEdit
             </tr>
           ))}
           empty="No zones yet — click New Zone to create one"
+        />
+      </SectionCard>
+
+      {/* Product Stock */}
+      <SectionCard
+        title={`Product Stock (${filteredProductStock.length})`}
+        subtitle="All products with on-hand stock in this warehouse"
+        action={
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              value={stockSearch}
+              onChange={e => setStockSearch(e.target.value)}
+              placeholder="Search product..."
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#F5C742] w-52"
+            />
+          </div>
+        }
+      >
+        <DataTable
+          cols={[
+            { key: 'sno', label: 'S.No', center: true },
+            { key: 'code', label: 'Code' },
+            { key: 'name', label: 'Product Name' },
+            { key: 'onhand', label: 'On Hand', center: true },
+            { key: 'reserved', label: 'Reserved', center: true },
+            { key: 'available', label: 'Available', center: true },
+          ]}
+          rows={filteredProductStock.map((s, idx) => (
+            <tr key={s.productId} className="hover:bg-amber-50/30 transition-colors">
+              <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+              <td className="px-4 py-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-md text-xs font-bold">{s.productCode}</span>
+              </td>
+              <td className="px-4 py-3 text-sm font-medium text-slate-800">{s.productName}</td>
+              <td className="px-4 py-3 text-center">
+                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-xs font-bold">{s.quantity}</span>
+              </td>
+              <td className="px-4 py-3 text-center">
+                <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded text-xs font-bold">{s.reserved}</span>
+              </td>
+              <td className="px-4 py-3 text-center">
+                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${s.available < 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>{s.available}</span>
+              </td>
+            </tr>
+          ))}
+          empty="No stock found in this warehouse"
         />
       </SectionCard>
     </div>
@@ -1025,6 +1082,7 @@ const BinDetail = ({ bin, onEdit }) => {
     .sort((a, b) => {
       return naturalCompare(a.productName, b.productName)
           || naturalCompare(a.productCode, b.productCode)
+          || naturalCompare(a.serialNumber, b.serialNumber)
           || naturalCompare(a.batchNumber, b.batchNumber);
     })
     .filter(s => {
@@ -1033,7 +1091,8 @@ const BinDetail = ({ bin, onEdit }) => {
       return (
         (s.productCode || '').toLowerCase().includes(term) ||
         (s.productName || '').toLowerCase().includes(term) ||
-        (s.batchNumber || '').toLowerCase().includes(term)
+        (s.batchNumber || '').toLowerCase().includes(term) ||
+        (s.serialNumber || '').toLowerCase().includes(term)
       );
     });
 
@@ -1099,7 +1158,7 @@ const BinDetail = ({ bin, onEdit }) => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by SKU, name, or batch…"
+              placeholder="Search by SKU, name, batch, or serial…"
               value={stockSearch}
               onChange={e => setStockSearch(e.target.value)}
               className="w-64 pl-9 pr-8 py-1.5 text-xs bg-[#F7F7FA] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 focus:border-[#F5C742] transition-all"
@@ -1127,6 +1186,7 @@ const BinDetail = ({ bin, onEdit }) => {
               { key: 'sku', label: 'SKU' },
               { key: 'desc', label: 'Description' },
               { key: 'batch', label: 'Batch' },
+              { key: 'serial', label: 'Serial Number' },
               { key: 'onhand', label: 'On Hand' },
               { key: 'expiry', label: 'Expiry' },
               { key: 'reserved', label: 'Reserved' },
@@ -1146,8 +1206,14 @@ const BinDetail = ({ bin, onEdit }) => {
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-600">{s.productName || '—'}</td>
                   <td className="px-4 py-3">
-                    {s.batchNumber
+                    {s.batchNumber && s.batchNumber !== '-'
                       ? <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 text-[10px] rounded font-semibold">{s.batchNumber}</span>
+                      : <span className="text-slate-400 text-xs">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-3">
+                    {s.serialNumber
+                      ? <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] rounded font-semibold font-mono">{s.serialNumber}</span>
                       : <span className="text-slate-400 text-xs">—</span>
                     }
                   </td>

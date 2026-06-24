@@ -165,8 +165,10 @@ public class Product extends BaseEntity {
 
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
+    @JsonProperty("isSerial")
     public boolean isSerial() { return isSerial; }
     public void setSerial(boolean isSerial) { this.isSerial = isSerial; }
+    @JsonProperty("isBatch")
     public boolean isBatch() { return isBatch; }
     public void setBatch(boolean isBatch) { this.isBatch = isBatch; }
     public boolean isExpiryEnabled() { return expiryEnabled; }
