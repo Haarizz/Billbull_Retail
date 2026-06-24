@@ -213,3 +213,17 @@ export const getPosCustomerHistory = async (customerCode) => {
   return res.data;
 };
 
+// ── Delivery orders ────────────────────────────────────────────────────────
+
+/** List pending delivery orders (CONFIRMED / PARTIALLY_PAID) for the given branch. */
+export const getDeliveryOrders = async (branchId) => {
+  const res = await api.get(`${BASE}/checkout/deliveries`, { params: { branchId } });
+  return res.data;
+};
+
+/** Record payment for a delivery order and mark it PAID. */
+export const settleDeliveryOrder = async (invoiceId, payload) => {
+  const res = await api.post(`${BASE}/checkout/deliveries/${invoiceId}/settle`, payload);
+  return res.data;
+};
+

@@ -351,6 +351,88 @@ public class PosCheckoutController {
         return ResponseEntity.ok(result);
     }
 
+    // ── Delivery orders ────────────────────────────────────────────────────────
+
+    /** List POS invoices sent out for delivery (CONFIRMED / PARTIALLY_PAID with a driver set). */
+    @GetMapping("/deliveries")
+    @PreAuthorize("isAuthenticated()")
+    public List<SalesInvoice> getPendingDeliveries(@RequestParam(required = false) Long branchId) {
+        return invoiceRepository.findPendingDeliveryOrders(branchId);
+    }
+
+    /** Settle (collect payment for) a pending delivery order. */
+    @PostMapping("/deliveries/{id}/settle")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<SalesInvoice> settleDelivery(@PathVariable Long id,
+            @RequestBody DeliverySettleRequest req) {
+        SalesInvoice invoice = invoiceRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
+
+        double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal().doubleValue() : 0.0;
+        double alreadyPaid = invoice.getAmountPaid() != null ? invoice.getAmountPaid().doubleValue() : 0.0;
+        double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
+        if (balanceDue <= 0.001) return ResponseEntity.ok(invoiceService.getById(id));
+
+        double cashAmt = req.getCashAmount() != null ? req.getCashAmount() : 0.0;
+        double cardAmt = req.getCardAmount() != null ? req.getCardAmount() : 0.0;
+        boolean hasSplit = cashAmt > 0.001 || cardAmt > 0.001;
+        double paymentAmount = hasSplit
+                ? Math.min(cashAmt + cardAmt, balanceDue)
+                : Math.min(req.getAmountTendered() != null ? req.getAmountTendered() : balanceDue, balanceDue);
+        if (paymentAmount <= 0.001)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero");
+
+        if (hasSplit && cashAmt > 0.001 && cardAmt > 0.001) {
+            double cardPayment = Math.min(cardAmt, balanceDue);
+            double cashPayment = Math.max(0, Math.min(balanceDue - cardPayment, cashAmt));
+            String cardMode = (req.getCardType() != null && !req.getCardType().isBlank()) ? req.getCardType() : "Card";
+            if (cardPayment > 0) invoiceService.recordPayment(id, cardPayment, cardMode, req.getCardReference(), LocalDate.now(), null, null, null, null);
+            if (cashPayment > 0) invoiceService.recordPayment(id, cashPayment, "Cash", null, LocalDate.now(), null, null, null, null);
+        } else {
+            String mode = hasSplit && cardAmt > 0.001
+                    ? (req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card")
+                    : hasSplit ? "Cash"
+                    : (req.getPaymentMode() != null && !req.getPaymentMode().isBlank() ? req.getPaymentMode() : "Cash");
+            invoiceService.recordPayment(id, paymentAmount, mode, req.getCardReference(), LocalDate.now(), null, null, null, null);
+        }
+
+        auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
+                req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
+                id, invoice.getInvoiceNumber());
+        return ResponseEntity.ok(invoiceService.getById(id));
+    }
+
+    public static class DeliverySettleRequest {
+        private String paymentMode;
+        private Double amountTendered;
+        private Double cashAmount;
+        private Double cardAmount;
+        private String cardType;
+        private String cardReference;
+        private Long sessionId;
+        private String terminalId;
+        private Long branchId;
+
+        public String getPaymentMode() { return paymentMode; }
+        public void setPaymentMode(String paymentMode) { this.paymentMode = paymentMode; }
+        public Double getAmountTendered() { return amountTendered; }
+        public void setAmountTendered(Double amountTendered) { this.amountTendered = amountTendered; }
+        public Double getCashAmount() { return cashAmount; }
+        public void setCashAmount(Double cashAmount) { this.cashAmount = cashAmount; }
+        public Double getCardAmount() { return cardAmount; }
+        public void setCardAmount(Double cardAmount) { this.cardAmount = cardAmount; }
+        public String getCardType() { return cardType; }
+        public void setCardType(String cardType) { this.cardType = cardType; }
+        public String getCardReference() { return cardReference; }
+        public void setCardReference(String cardReference) { this.cardReference = cardReference; }
+        public Long getSessionId() { return sessionId; }
+        public void setSessionId(Long sessionId) { this.sessionId = sessionId; }
+        public String getTerminalId() { return terminalId; }
+        public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
+        public Long getBranchId() { return branchId; }
+        public void setBranchId(Long branchId) { this.branchId = branchId; }
+    }
+
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
@@ -379,6 +461,9 @@ public class PosCheckoutController {
         }
         if (req.getDeliveryNotes() != null && !req.getDeliveryNotes().isBlank()) {
             inv.setPosDeliveryNotes(req.getDeliveryNotes());
+        }
+        if (req.getDeliveryCharge() != null && req.getDeliveryCharge() > 0) {
+            inv.setDeliveryCharge(java.math.BigDecimal.valueOf(req.getDeliveryCharge()));
         }
 
         // §2.4 Price override gate: batch-load product pricings and verify that any

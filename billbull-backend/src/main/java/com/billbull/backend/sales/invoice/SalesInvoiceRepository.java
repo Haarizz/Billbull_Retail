@@ -423,4 +423,11 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                 @Param("dateFrom") LocalDate dateFrom,
                 @Param("dateTo") LocalDate dateTo,
                 @Param("branchId") Long branchId);
+
+        @Query("SELECT s FROM SalesInvoice s WHERE s.salesChannel = 'POS' " +
+               "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
+               "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
+               "AND (:branchId IS NULL OR s.branchId = :branchId) " +
+               "ORDER BY s.createdAt DESC")
+        List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);
 }

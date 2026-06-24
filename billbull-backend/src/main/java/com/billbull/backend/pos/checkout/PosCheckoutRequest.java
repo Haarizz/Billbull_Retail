@@ -25,6 +25,7 @@ public class PosCheckoutRequest {
     private String shippingAddress;
     private String driverName;
     private String deliveryNotes;
+    private Double deliveryCharge;
     private List<PosCheckoutItem> items;
 
     public static class PosCheckoutItem {
@@ -112,6 +113,8 @@ public class PosCheckoutRequest {
     public void setDriverName(String driverName) { this.driverName = driverName; }
     public String getDeliveryNotes() { return deliveryNotes; }
     public void setDeliveryNotes(String deliveryNotes) { this.deliveryNotes = deliveryNotes; }
+    public Double getDeliveryCharge() { return deliveryCharge; }
+    public void setDeliveryCharge(Double deliveryCharge) { this.deliveryCharge = deliveryCharge; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
 }
