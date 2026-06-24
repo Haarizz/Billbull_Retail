@@ -1024,14 +1024,17 @@ export default function POSSales() {
     }
   };
 
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null) => {
-    const qtyToAdd = Math.max(1, Number(quantity) || 1);
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null) => {
+    // A serialized unit is always qty 1 and never merges (a serial is unique by
+    // definition). A pinned batch is also a single scanned physical unit.
+    const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
+    const qtyToAdd = pinnedSerialNumber ? 1 : Math.max(1, Number(quantity) || 1);
     const unitPrice = toNumber(product.price, 0);
     setCurrentInvoice(prev => {
-      // A pinned-batch line represents one specific scanned unit, so it always
-      // gets its own cart row (with a composite id) and never stacks onto an
-      // existing line. Non-pinned lines still merge by product id as before.
-      const existingItem = pinnedBatchNumber
+      // A pinned line (scanned batch or serial) represents one specific physical
+      // unit, so it always gets its own cart row (with a composite id) and never
+      // stacks onto an existing line. Non-pinned lines still merge by product id.
+      const existingItem = isPinned
         ? null
         : prev.items.find(item => item.id === product.id);
       let newItems;
@@ -1051,8 +1054,9 @@ export default function POSSales() {
         // so every existing item.id-keyed cart op (qty/discount/remove/void/
         // React key) keeps targeting exactly one row. productId carries the real
         // product id; the checkout payload reads item.code for the item code.
+        const pinKey = pinnedSerialNumber ? `S:${pinnedSerialNumber}` : pinnedBatchNumber;
         newItems = [{
-          id: pinnedBatchNumber ? `${product.id}::${pinnedBatchNumber}` : product.id,
+          id: isPinned ? `${product.id}::${pinKey}` : product.id,
           productId: product.id,
           name: product.name,
           nameAr: product.nameAr || '',
@@ -1065,6 +1069,7 @@ export default function POSSales() {
           taxRate: toNumber(product.salesTax, 5),
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
+          serialNumber: pinnedSerialNumber || null,
         }, ...prev.items];
       }
 
@@ -1218,6 +1223,15 @@ export default function POSSales() {
     setShowSupervisorPin(true);
   };
 
+  // RemovalBehavior (VOID vs DELETE) governs how a *single* removed line is
+  // treated: VOID keeps it struck-through so it carries onto the posted
+  // invoice/receipt + audit log; DELETE drops it. Clearing the whole cart is a
+  // different action — it abandons an un-posted sale outright. An un-posted cart
+  // lives only in client state and produces no backend audit record, so there
+  // is nothing to preserve by voiding every line (and doing so would strand the
+  // cashier with un-clearable struck-through rows). Clear therefore always
+  // empties; only the layaway-conversion case is gated behind approval because
+  // it would dump reserved stock.
   const guardedClearInvoice = () => {
     if (activeLayawayId && posSettings?.requireSupervisorForVoid) {
       requireLayawayApproval(clearInvoice, true);
@@ -1232,11 +1246,10 @@ export default function POSSales() {
   };
 
   const guardedRemoveFromInvoice = (itemId) => {
-    if (activeLayawayId && posSettings?.requireSupervisorForVoid) {
-      requireLayawayApproval(() => removeFromInvoice(itemId), false);
-      return;
-    }
-    removeFromInvoice(itemId);
+    // Delegate to voidFromInvoice — it already honors RemovalBehavior
+    // (VOID vs DELETE), the supervisor-PIN gate, and the active-layaway
+    // approval flow, so the action-bar Remove behaves like the per-line button.
+    voidFromInvoice(itemId);
   };
 
   // ── Behavior settings (Console → Behavior tab) ─────────────────────────────
@@ -1343,6 +1356,7 @@ export default function POSSales() {
         discount: item.discount || 0,
         taxRate: toNumber(item.taxRate, 5),
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
+        serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
       }));
   }, [posSettings?.voidMode]);
@@ -1431,6 +1445,22 @@ export default function POSSales() {
   }, [currentInvoice, deliveryAddress, deliveryModalTab, deliveryCustomerId, deliveryDriver,
       deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
       currentTerminal, cartItemsToPayload, clearInvoice]);
+
+  // Open the New Delivery Order dialog, pre-seeding the customer + default
+  // address from whoever is already selected on the POS bill (a walk-in seeds
+  // nothing). The cashier can still change either field in the dialog.
+  const openDeliveryModal = useCallback(() => {
+    setDeliveryModalTab('existing');
+    const cust = selectedCustomerData;
+    const isReal = cust && cust.id !== WALK_IN_CUSTOMER.id;
+    if (isReal) {
+      setDeliveryCustomerId(String(cust.id));
+      if (cust.address) setDeliveryAddress(prev => (prev?.trim() ? prev : cust.address));
+    } else {
+      setDeliveryCustomerId('');
+    }
+    setShowDeliveryModal(true);
+  }, [selectedCustomerData]);
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
   const sessionId = currentSession?.id && typeof currentSession.id === 'number' ? currentSession.id : null;
@@ -1724,6 +1754,7 @@ export default function POSSales() {
           discount: item.discount || 0,
           taxRate: toNumber(item.taxRate, 5),
           batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
+          serialNumber: item.isVoided ? null : (item.serialNumber || null),
           voided: !!item.isVoided,
         }));
 
@@ -1976,11 +2007,32 @@ export default function POSSales() {
       const product = mapPosProductAggregateItem(result.product, value);
       cachePosProduct(productCacheRef.current, product);
       const pinnedBatchNumber = result.pinnedBatchNumber || null;
+      const pinnedSerialNumber = result.pinnedSerialNumber || null;
+      const cartItems = currentInvoiceRef.current?.items || [];
+
+      // A scanned serial is a single unique unit. The same serial can never be
+      // sold twice on one bill, so block the duplicate outright (no qty bump).
+      if (pinnedSerialNumber) {
+        if (cartItems.some(i => i.serialNumber === pinnedSerialNumber)) {
+          showFeedback('error', `Serial number ${pinnedSerialNumber} already exists in cart`);
+          clearInputs();
+          return;
+        }
+        addToInvoice(product, 1, null, pinnedSerialNumber);
+        setLastScannedItem({
+          name: product.name, nameAr: product.nameAr || '',
+          barcode: pinnedSerialNumber, qty: 1, total: product.price,
+        });
+        showFeedback('success', `${product.name} — serial ${pinnedSerialNumber}`);
+        clearInputs();
+        return;
+      }
+
       // A pinned batch is one physical unit — force qty 1 for that line.
       const effectiveQty = pinnedBatchNumber ? 1 : qty;
       // Prevent the same physical batch unit from being added twice.
-      if (pinnedBatchNumber && currentInvoiceRef.current?.items?.some(i => i.pinnedBatchNumber === pinnedBatchNumber)) {
-        showFeedback('error', `Batch ${pinnedBatchNumber} is already in the cart`);
+      if (pinnedBatchNumber && cartItems.some(i => i.pinnedBatchNumber === pinnedBatchNumber)) {
+        showFeedback('error', `Batch ${pinnedBatchNumber} already exists in cart`);
         clearInputs();
         return;
       }
@@ -4509,6 +4561,7 @@ export default function POSSales() {
     setShowAddCustomerDialog, setShowDeliveryModal, setDeliveryModalTab, setDeliveryCustomerId,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
     setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
+    openDeliveryModal,
     formatCurrency, showFeedback,
   };
 
@@ -8306,7 +8359,13 @@ export default function POSSales() {
                               <button
                                 key={c.id}
                                 type="button"
-                                onClick={() => { setDeliveryCustomerId(String(c.id)); setDeliveryCustomerSearch(''); }}
+                                onClick={() => {
+                                  setDeliveryCustomerId(String(c.id));
+                                  setDeliveryCustomerSearch('');
+                                  // Pre-fill the delivery address from the customer
+                                  // master unless the cashier already typed one.
+                                  if (c.address) setDeliveryAddress(prev => prev?.trim() ? prev : c.address);
+                                }}
                                 className="w-full text-left px-3 py-2 text-sm hover:bg-[#FFF8E7] transition-colors border-b border-gray-100 last:border-0">
                                 <span className="font-medium text-gray-800">{c.name}</span>
                                 {c.mobile && <span className="ml-2 text-gray-400 text-xs">{c.mobile}</span>}

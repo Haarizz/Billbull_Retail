@@ -57,7 +57,7 @@ const POSTouchScreen = React.memo((props) => {
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
     setReturnInvoiceFound, setReturnSelectedItems, setReturnReasons, setShowAddShippingDialog,
-    setShowAddCustomerDialog, setShowDeliveryModal, setDeliveryModalTab, setDeliveryCustomerId,
+    setShowAddCustomerDialog, openDeliveryModal,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
     setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
     // utils
@@ -467,7 +467,7 @@ const POSTouchScreen = React.memo((props) => {
                     { id: 'reprint',    label: 'Reprint',      icon: <Printer className="h-5 w-5" />,     color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',     action: () => setShowReprintModal(true) },
                     { id: 'lock-pos',   label: 'Lock POS',     icon: <Lock className="h-5 w-5" />,        color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
                     { id: 'close-session', label: 'Close Session', icon: <XCircle className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',         action: () => setShowCloseSessionDialog(true) },
-                    { id: 'delivery',       label: 'Delivery',       icon: <Truck className="h-5 w-5" />,        color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliveryModalTab('existing'); setDeliveryCustomerId(''); setShowDeliveryModal(true); } },
+                    { id: 'delivery',       label: 'Delivery',       icon: <Truck className="h-5 w-5" />,        color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => openDeliveryModal() },
                     { id: 'delivery-settle',label: 'Delivery Settle', icon: <PackageCheck className="h-5 w-5" />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
                   ];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
@@ -1108,7 +1108,7 @@ const POSTouchScreen = React.memo((props) => {
                     { id:'z-report',     label:'Z-Report',      icon:<FileBarChart className="h-4 w-4"/>,color:'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',          action:()=>setCurrentView('z-report') },
                     { id:'lock-pos',     label:'Lock POS',      icon:<Lock className="h-4 w-4"/>,       color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',  action:()=>setShowLockPOS(true) },
                     { id:'close-session',  label:'Close Session',   icon:<XCircle className="h-4 w-4"/>,      color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',           action:()=>setShowCloseSessionDialog(true) },
-                    { id:'delivery',       label:'Delivery',        icon:<Truck className="h-4 w-4"/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliveryModalTab('existing'); setDeliveryCustomerId(''); setShowDeliveryModal(true); } },
+                    { id:'delivery',       label:'Delivery',        icon:<Truck className="h-4 w-4"/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>openDeliveryModal() },
                     { id:'delivery-settle',label:'Delivery Settle', icon:<PackageCheck className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
                   ];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
