@@ -29,6 +29,38 @@ BEGIN
     );
   END IF;
 
+  -- Backfill columns for databases where serial_master was created before this migration.
+  ALTER TABLE serial_master
+    ADD COLUMN IF NOT EXISTS serial_number VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS product_code VARCHAR(80),
+    ADD COLUMN IF NOT EXISTS product_id BIGINT,
+    ADD COLUMN IF NOT EXISTS product_name VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'AVAILABLE',
+    ADD COLUMN IF NOT EXISTS warehouse_code VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS branch_code VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS purchase_reference VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS source_document_type VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS source_document_id BIGINT,
+    ADD COLUMN IF NOT EXISTS source_line_id BIGINT,
+    ADD COLUMN IF NOT EXISTS source_ref_no VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS warehouse_id BIGINT,
+    ADD COLUMN IF NOT EXISTS zone_id BIGINT,
+    ADD COLUMN IF NOT EXISTS locator_id BIGINT,
+    ADD COLUMN IF NOT EXISTS bin_id BIGINT,
+    ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(15, 4),
+    ADD COLUMN IF NOT EXISTS manufacturing_date DATE,
+    ADD COLUMN IF NOT EXISTS expiry_date DATE,
+    ADD COLUMN IF NOT EXISTS sold_invoice_id BIGINT,
+    ADD COLUMN IF NOT EXISTS sold_invoice_number VARCHAR(60),
+    ADD COLUMN IF NOT EXISTS sold_at TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS notes TEXT,
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS created_by VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS updated_by VARCHAR(100);
+
   -- Unique index on serial_number
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_sm_serial_number') THEN
     CREATE UNIQUE INDEX idx_sm_serial_number ON serial_master (serial_number);

@@ -175,7 +175,7 @@ const SUB_GROUP_OPTIONS_MAP = {
 };
 
 const Ledger = () => {
-  const { branches, defaultBranchName, activeBranch } = useBranch();
+  const { branches, defaultBranchName, activeBranch, activeBranchId, isAllBranches } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
@@ -494,6 +494,13 @@ const Ledger = () => {
 
   useEffect(() => {
     fetchData();
+    const handler = () => {
+      fetchData();
+      setStatementData(null);
+    };
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -808,7 +815,12 @@ const Ledger = () => {
   const fetchStatementData = async (accountCode, start, end) => {
     setLoadingStatement(true);
     try {
-      const data = await reportApi.getLedgerStatement(accountCode, start, end);
+      const data = await reportApi.getLedgerStatement(
+        accountCode,
+        start,
+        end,
+        isAllBranches ? undefined : activeBranchId
+      );
       setStatementData(data);
     } catch (err) {
       console.error("Failed to load ledger statement", err);

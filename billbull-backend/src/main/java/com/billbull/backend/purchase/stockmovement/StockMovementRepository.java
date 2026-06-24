@@ -463,10 +463,16 @@ public interface StockMovementRepository
                                         THEN sm.quantity * sm.unit_cost ELSE 0 END), 0) AS stock_value
                 FROM products p
                 LEFT JOIN stock_movements sm ON sm.product_id = p.id
+                LEFT JOIN warehouses w ON sm.warehouse_id = w.id
                 WHERE p.is_active = true
+                AND (:branchId IS NULL OR w.branch_id = :branchId OR sm.warehouse_id IS NULL)
                 GROUP BY p.id, p.code, p.name
                 """, nativeQuery = true)
-        List<Object[]> findActiveProductStockSummary();
+        List<Object[]> findActiveProductStockSummary(@Param("branchId") Long branchId);
+
+        default List<Object[]> findActiveProductStockSummary() {
+            return findActiveProductStockSummary(null);
+        }
 
         /** All distinct (productId, warehouseId) pairs that have at least one movement. */
         @Query("""

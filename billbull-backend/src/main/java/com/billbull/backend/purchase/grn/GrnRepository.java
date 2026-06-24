@@ -70,10 +70,25 @@ public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
                                 List.of(GrnSourceType.DIRECT_PURCHASE));
         }
 
-        @Query("SELECT COALESCE(SUM(g.grandTotal), 0) FROM GrnEntity g WHERE g.grnDate BETWEEN :from AND :to")
+        @Query("SELECT COALESCE(SUM(g.grandTotal), 0) FROM GrnEntity g " +
+               "WHERE g.grnDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR g.branchId = :branchId)")
         java.math.BigDecimal sumGrandTotalBetween(@Param("from") java.time.LocalDate from,
-                                                  @Param("to") java.time.LocalDate to);
+                                                  @Param("to") java.time.LocalDate to,
+                                                  @Param("branchId") Long branchId);
 
-        @Query("SELECT COUNT(g) FROM GrnEntity g WHERE g.grnDate BETWEEN :from AND :to")
-        long countBetween(@Param("from") java.time.LocalDate from, @Param("to") java.time.LocalDate to);
+        default java.math.BigDecimal sumGrandTotalBetween(java.time.LocalDate from, java.time.LocalDate to) {
+            return sumGrandTotalBetween(from, to, null);
+        }
+
+        @Query("SELECT COUNT(g) FROM GrnEntity g " +
+               "WHERE g.grnDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR g.branchId = :branchId)")
+        long countBetween(@Param("from") java.time.LocalDate from,
+                          @Param("to") java.time.LocalDate to,
+                          @Param("branchId") Long branchId);
+
+        default long countBetween(java.time.LocalDate from, java.time.LocalDate to) {
+            return countBetween(from, to, null);
+        }
 }

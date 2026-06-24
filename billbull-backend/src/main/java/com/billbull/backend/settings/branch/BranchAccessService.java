@@ -254,6 +254,32 @@ public class BranchAccessService {
         return scoped(ids);
     }
 
+    /**
+     * Exact branch scope used by branch-sensitive summaries and finance views.
+     * Unlike {@link #currentListScope()}, a specific-branch scope must not pull in
+     * legacy/null-branch rows.
+     */
+    public ListScope currentExactScope() {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        Long active = ctx != null ? ctx.activeBranchId() : null;
+        if (active != null) {
+            return scoped(java.util.Set.of(active));
+        }
+        if (ctx != null && ctx.isAllBranches()) {
+            return new ListScope(true, java.util.Set.of(-1L));
+        }
+        if (ctx == null) {
+            Long current = getCurrentUserBranchId();
+            return scoped(current != null ? java.util.Set.of(current) : java.util.Set.of());
+        }
+        java.util.Set<Long> ids = new java.util.HashSet<>(ctx.allowedBranchIds());
+        Long current = getCurrentUserBranchId();
+        if (current != null) {
+            ids.add(current);
+        }
+        return scoped(ids);
+    }
+
     private ListScope scoped(java.util.Set<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return new ListScope(false, java.util.Set.of(-1L));
@@ -277,6 +303,32 @@ public class BranchAccessService {
                 .filter(item -> {
                     Branch b = branchExtractor.apply(item);
                     return matchesActiveListScope(b != null ? b.getId() : null);
+                })
+                .toList();
+    }
+
+    public <T> List<T> filterExactBranchScoped(List<T> items, java.util.function.Function<T, Long> branchIdExtractor) {
+        ListScope scope = currentExactScope();
+        if (scope.allBranches()) {
+            return items;
+        }
+        return items.stream()
+                .filter(item -> {
+                    Long branchId = branchIdExtractor.apply(item);
+                    return branchId != null && scope.branchIds().contains(branchId);
+                })
+                .toList();
+    }
+
+    public <T> List<T> filterExactBranchScopedByBranch(List<T> items, java.util.function.Function<T, Branch> branchExtractor) {
+        ListScope scope = currentExactScope();
+        if (scope.allBranches()) {
+            return items;
+        }
+        return items.stream()
+                .filter(item -> {
+                    Branch branch = branchExtractor.apply(item);
+                    return branch != null && branch.getId() != null && scope.branchIds().contains(branch.getId());
                 })
                 .toList();
     }

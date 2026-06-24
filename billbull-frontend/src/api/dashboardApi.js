@@ -1357,3 +1357,8 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
         inFlightRequests.delete(cacheKey);
     }
 };
+
+export const clearDashboardApiCache = () => {
+    dashboardCache.clear();
+    inFlightRequests.clear();
+};

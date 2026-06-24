@@ -30,6 +30,7 @@ import com.billbull.backend.purchase.lpo.LpoRepository;
 import com.billbull.backend.purchase.lpo.LpoStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 /**
  * Service for generating IFRS/GAAP-compliant financial reports.
@@ -46,6 +47,7 @@ public class FinancialReportService {
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
     private final LpoRepository lpoRepository;
+    private final BranchAccessService branchAccessService;
 
     public FinancialReportService(
             AccountRepository accountRepository,
@@ -55,7 +57,8 @@ public class FinancialReportService {
             PurchaseInvoiceRepository purchaseInvoiceRepository,
             OpeningInvoiceRepository openingInvoiceRepository,
             CustomerRepository customerRepository,
-            LpoRepository lpoRepository) {
+            LpoRepository lpoRepository,
+            BranchAccessService branchAccessService) {
         this.accountRepository = accountRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.expenseRepository = expenseRepository;
@@ -64,6 +67,7 @@ public class FinancialReportService {
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
         this.lpoRepository = lpoRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     // ==================== BRANCH FILTER HELPER ====================
@@ -800,13 +804,20 @@ public class FinancialReportService {
     }
 
     public List<Object> generateLedgerStatement(String accountCode, LocalDate from, LocalDate to) {
+        return generateLedgerStatement(accountCode, from, to, null);
+    }
+
+    public List<Object> generateLedgerStatement(String accountCode, LocalDate from, LocalDate to, Long branchId) {
         if (from == null)
             from = LocalDate.now().withDayOfMonth(1);
         if (to == null)
             to = LocalDate.now();
 
-        List<LedgerEntry> entries = ledgerEntryRepository.findByTransactionDateBetweenOrderByTransactionDateAsc(from,
-                to);
+        List<LedgerEntry> entries = branchId != null
+                ? ledgerEntryRepository.findByBranchIdAndTransactionDateBetweenOrderByTransactionDateAsc(branchId, from, to)
+                : branchAccessService.filterExactBranchScopedByBranch(
+                        ledgerEntryRepository.findByTransactionDateBetweenOrderByTransactionDateAsc(from, to),
+                        LedgerEntry::getBranch);
         List<Object> statementLines = new ArrayList<>();
         BigDecimal runningBalance = BigDecimal.ZERO;
 

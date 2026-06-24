@@ -1094,6 +1094,7 @@ const Quotations = () => {
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
         const handler = () => {
+            fetchQtnStats();
             if (activeTab === 'list') fetchQuotationsList();
         };
         window.addEventListener('billbull:branch-changed', handler);

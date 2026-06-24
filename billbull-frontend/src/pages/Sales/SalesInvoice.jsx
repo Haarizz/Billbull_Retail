@@ -1059,6 +1059,7 @@ const SalesInvoice = () => {
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
         const handler = () => {
+            fetchInvoiceStats();
             if (activeTab === 'list') fetchInvoices();
         };
         window.addEventListener('billbull:branch-changed', handler);

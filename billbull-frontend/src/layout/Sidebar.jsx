@@ -374,9 +374,10 @@ const Sidebar = ({ children }) => {
     }
 
     .brand-info p {
-      font-size: 0.875rem; 
-      color: #475569; 
+      font-size: 0.875rem;
+      color: #475569;
       margin: 0;
+      white-space: nowrap;
     }
 
     /* MENU LIST */

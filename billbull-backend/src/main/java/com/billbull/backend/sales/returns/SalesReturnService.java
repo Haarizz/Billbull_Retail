@@ -206,15 +206,35 @@ public class SalesReturnService {
         YearMonth currentMonth = YearMonth.now();
         LocalDate monthStart   = currentMonth.atDay(1);
         LocalDate monthEnd     = currentMonth.atEndOfMonth();
+        List<SalesReturn> scopedReturns = branchAccessService.filterExactBranchScopedByBranch(
+                salesReturnRepository.findAll(),
+                SalesReturn::getBranch);
 
-        Double todayReturns  = salesReturnRepository.getTotalReturnsForDate(today);
-        Double monthReturns  = salesReturnRepository.getTotalReturnsBetweenDates(monthStart, monthEnd);
-        Double totalApproved = salesReturnRepository.getTotalApprovedReturns();
-        long   totalCount    = salesReturnRepository.count();
+        double todayReturns = scopedReturns.stream()
+                .filter(salesReturn -> salesReturn.getReturnDate() != null && salesReturn.getReturnDate().isEqual(today))
+                .map(SalesReturn::getTotalAmount)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        double monthReturns = scopedReturns.stream()
+                .filter(salesReturn -> salesReturn.getReturnDate() != null
+                        && !salesReturn.getReturnDate().isBefore(monthStart)
+                        && !salesReturn.getReturnDate().isAfter(monthEnd))
+                .map(SalesReturn::getTotalAmount)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        double totalApproved = scopedReturns.stream()
+                .filter(salesReturn -> salesReturn.getStatus() == SalesReturnStatus.APPROVED)
+                .map(SalesReturn::getTotalAmount)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        long totalCount = scopedReturns.size();
 
-        stats.put("todayReturns",         todayReturns  != null ? todayReturns  : 0.0);
-        stats.put("thisMonthReturns",      monthReturns  != null ? monthReturns  : 0.0);
-        stats.put("totalApprovedReturns",  totalApproved != null ? totalApproved : 0.0);
+        stats.put("todayReturns",         todayReturns);
+        stats.put("thisMonthReturns",      monthReturns);
+        stats.put("totalApprovedReturns",  totalApproved);
         stats.put("totalTransactions",     totalCount);
 
         return stats;

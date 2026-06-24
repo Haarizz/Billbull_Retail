@@ -37,9 +37,9 @@ import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDas
 import { exportToExcel } from "../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../utils/printGenerator";
 import { getCompanyProfile } from "../../api/companyProfileApi";
-import { getBranches } from "../../api/branchApi";
 import { getAccounts, getCostCenters } from "../../api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
+import { useBranch } from "../../context/BranchContext";
 import { CurrencySymbol } from "../../components/CurrencyAmount";
 
 // ─── Report data types ────────────────────────────────────────────────────────
@@ -3355,6 +3355,14 @@ const GROUP_META: Record<ReportGroupId, { label: string; icon: React.ReactNode; 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function FinancialReports({ onNavigate }: { onNavigate?: (s: string) => void }) {
+  const {
+    activeBranchId,
+    activeBranch,
+    branches: availableBranches,
+    defaultBranch,
+    isAllBranches,
+    isLoading: branchLoading,
+  } = useBranch();
   const [activeReport, setActiveReport] = useState<ReportId>("profit_loss");
   const [query, setQuery] = useState("");
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
@@ -3374,7 +3382,6 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const yearStart = `${new Date().getFullYear()}-01-01`;
   const [dateFrom, setDateFrom] = useState(yearStart);
   const [dateTo, setDateTo] = useState(today);
-  const [branch, setBranch] = useState("All");
   const [accountSearch, setAccountSearch] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState("All");
@@ -3390,7 +3397,6 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
-  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [glAccountOptions, setGlAccountOptions] = useState<{ value: string; label: string }[]>([]);
   const [costCentreOptions, setCostCentreOptions] = useState<{ value: string; label: string }[]>([]);
   // Combined for backward compatibility with appliedFilters label lookup
@@ -3398,9 +3404,6 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
-    getBranches()
-      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
-      .catch(() => {});
     Promise.all([getAccounts(), getCostCenters()])
       .then(([accs, ccs]: [any[], any[]]) => {
         const accOpts = (accs || [])
@@ -3415,24 +3418,70 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
       .catch(() => {});
   }, []);
 
+  const reportBranchId = useMemo(
+    () => (isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)),
+    [activeBranchId, isAllBranches]
+  );
+
+  const activeBranchLabel = useMemo(() => {
+    if (reportBranchId === "All") return "All Branches";
+    const match =
+      activeBranch ||
+      availableBranches.find((b) => String(b.id) === reportBranchId) ||
+      defaultBranch;
+    return match?.name || "Selected Branch";
+  }, [activeBranch, availableBranches, defaultBranch, reportBranchId]);
+
+  const reportSupportsBranchScope = useMemo(
+    () =>
+      new Set<ReportId>([
+        "profit_loss",
+        "gross_profit",
+        "departmental_pl",
+        "comparative_pl",
+        "balance_sheet",
+        "trial_balance",
+        "cash_flow_statement",
+        "vat_return_summary",
+        "vat_output_register",
+        "vat_input_register",
+      ]).has(activeReport),
+    [activeReport]
+  );
+
+  const branchMetaLabel = reportSupportsBranchScope
+    ? activeBranchLabel
+    : `${activeBranchLabel} (display only)`;
+
+  const branchScopeNote = reportSupportsBranchScope
+    ? ""
+    : activeReport === "customer_aging" ||
+      activeReport === "collection_efficiency" ||
+      activeReport === "credit_utilization" ||
+      activeReport === "vendor_aging" ||
+      activeReport === "soa_ledger"
+      ? "Branch follows the sidebar for display, but this report's current backend data is not branch-scoped yet."
+      : "Branch follows the sidebar for display. This report view is not branch-scoped yet.";
+
   // When the selected report changes, trigger a fresh fetch automatically.
-  // Filter changes (date/branch/account) require pressing Generate to avoid
+  // Filter changes (date/account) require pressing Generate to avoid
   // firing a request on every keystroke.
   useEffect(() => {
+    if (branchLoading) return;
     setFetchKey(k => k + 1);
-  }, [activeReport]);
+  }, [activeReport, reportBranchId, branchLoading]);
 
   useEffect(() => {
-    if (fetchKey === 0) return; // skip double-fire on mount before activeReport effect runs
+    if (fetchKey === 0 || branchLoading) return;
     const controller = new AbortController();
     const periodLabel = dateFrom && dateTo ? `${dateFrom} – ${dateTo}` : dateTo || dateFrom || "";
-    const branchLabel = branch === "All" ? "All Branches" : branches.find((b) => String(b.id) === String(branch))?.name || branch;
+    const branchLabel = branchMetaLabel;
 
     async function fetchReport() {
       setFetching(true);
       setFetchError(null);
       try {
-        const branchParam = branch !== "All" ? branch : undefined;
+        const branchParam = reportSupportsBranchScope && reportBranchId !== "All" ? reportBranchId : undefined;
         if (activeReport === "profit_loss" || activeReport === "gross_profit" || activeReport === "departmental_pl" || activeReport === "comparative_pl") {
           const costCenterParam = selectedAccount !== "All" ? selectedAccount : undefined;
           const data = await getProfitLoss(dateFrom, dateTo, branchParam, costCenterParam);
@@ -3506,7 +3555,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
     return [
       { label: "Date From", value: dateFrom },
       { label: "Date To", value: dateTo },
-      { label: "Branch", value: branch === "All" ? "All" : branches.find((b: any) => String(b.id) === String(branch))?.name || branch },
+      { label: "Branch", value: branchMetaLabel },
       { label: "Account", value: selectedAccount !== "All" ? accountOptions.find((a: any) => a.value === selectedAccount)?.label || selectedAccount : "All" }
     ].filter((f) => f.value && f.value !== "All");
   }
@@ -3515,7 +3564,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
     reportTitle: activeDef.label,
     dateFrom,
     dateTo,
-    branch: branch === "All" ? "All" : branches.find((b: any) => String(b.id) === String(branch))?.name || branch,
+    branch: branchMetaLabel,
     filters: appliedFilters(),
     companyProfile
   });
@@ -3903,16 +3952,17 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                     <Building className="h-3.5 w-3.5" />
                     Branch
                   </label>
-                  <select
-                    value={branch}
-                    onChange={(e) => setBranch(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option value="All">All</option>
-                    {branches.map((b) => (
-                      <option key={b.id} value={String(b.id)}>{b.name}</option>
-                    ))}
-                  </select>
+                  <Input
+                    value={activeBranchLabel}
+                    readOnly
+                    disabled
+                    className="h-8 text-[11px] bg-slate-100 border-slate-200 text-slate-500"
+                  />
+                  {branchScopeNote && (
+                    <p className="text-[10px] text-amber-700 leading-4">
+                      {branchScopeNote}
+                    </p>
+                  )}
                 </div>
 
                 {showAdvanced && (

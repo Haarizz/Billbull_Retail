@@ -558,9 +558,13 @@ const SalesOrders = () => {
 
   // Refetch when the global Branch Selector changes the active branch.
   useEffect(() => {
-    const handler = () => fetchSalesOrders();
+    const handler = () => {
+      fetchSoStats();
+      fetchSalesOrders();
+    };
     window.addEventListener('billbull:branch-changed', handler);
     return () => window.removeEventListener('billbull:branch-changed', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Close overflow menu when clicking outside.

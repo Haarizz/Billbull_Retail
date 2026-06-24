@@ -99,6 +99,7 @@ const LPO_COLUMNS = [
 import {
   getLpos,
   getLposPage,
+  getLpoStatusCounts,
   getLpoSuggestions,
   getLpoByNumber,
   createLpo,
@@ -2178,6 +2179,7 @@ const LPOList = () => {
   const [currentEditorData, setCurrentEditorData] = useState(null);
   const [vendors, setVendors] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
+  const [lpoStatusCounts, setLpoStatusCounts] = useState({});
   // products state removed — ProductSelector fetches its own data from backend
   const [loading, setLoading] = useState(false);
   const [isViewOnly, setIsViewOnly] = useState(false);
@@ -2236,13 +2238,6 @@ const LPOList = () => {
     handleViewLPO({ lpoNumber });
   }, []);
 
-  // Refetch when the global Branch Selector changes the active branch.
-  useEffect(() => {
-    const handler = () => loadData();
-    window.addEventListener('billbull:branch-changed', handler);
-    return () => window.removeEventListener('billbull:branch-changed', handler);
-  }, []);
-
   const loadData = async () => {
     try {
       setLoading(true);
@@ -2250,15 +2245,17 @@ const LPOList = () => {
       // Reference data only — the LPO rows themselves are now fetched a page at
       // a time by the per-tab effects below. (Products are fetched server-side
       // by ProductSelector.)
-      const [suggestionsData, vendorsData, warehousesData] = await Promise.all([
+      const [suggestionsData, vendorsData, warehousesData, statusCounts] = await Promise.all([
         getLpoSuggestions().catch(() => []),
         getVendors().catch(() => []),
-        getWarehouses().catch(() => [])
+        getWarehouses().catch(() => []),
+        getLpoStatusCounts().catch(() => ({}))
       ]);
 
       setAutoSuggestions(suggestionsData);
       setVendors(vendorsData);
       setWarehouses(warehousesData);
+      setLpoStatusCounts(statusCounts || {});
 
     } catch (error) {
       console.error('Failed to load data:', error);
@@ -2279,6 +2276,22 @@ const LPOList = () => {
     () => (activeStatusTab === "All LPOs" ? "" : activeStatusTab.toUpperCase().replace(/ /g, "_")),
     [activeStatusTab]
   );
+  const lpoSummaryCards = useMemo(() => {
+    const total = Number(lpoStatusCounts.ALL || 0);
+    const pendingApproval = Number(lpoStatusCounts.PENDING_APPROVAL || 0);
+    const openReceiving =
+      Number(lpoStatusCounts.APPROVED || 0) +
+      Number(lpoStatusCounts.SENT_TO_VENDOR || 0) +
+      Number(lpoStatusCounts.PARTIALLY_RECEIVED || 0);
+    const completed = Number(lpoStatusCounts.COMPLETED || 0);
+
+    return [
+      { label: 'Total LPOs', value: total, tone: 'text-slate-900 bg-slate-50 border-slate-200' },
+      { label: 'Pending Approval', value: pendingApproval, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
+      { label: 'Open Receiving', value: openReceiving, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
+      { label: 'Completed', value: completed, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+    ];
+  }, [lpoStatusCounts]);
 
   // Reset to the first page whenever a filter changes.
   useEffect(() => {
@@ -2355,6 +2368,18 @@ const LPOList = () => {
   useEffect(() => {
     if (activeNavTab === "history") fetchHistory();
   }, [activeNavTab, fetchHistory]);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => {
+      loadData();
+      if (activeNavTab === 'list') fetchListPage();
+      if (activeNavTab === 'approval') fetchApprovalQueue();
+      if (activeNavTab === 'history') fetchHistory();
+    };
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+  }, [activeNavTab, fetchApprovalQueue, fetchHistory, fetchListPage]);
 
   // --- Handlers ---
 
@@ -2543,6 +2568,8 @@ const LPOList = () => {
 
   const refreshLpos = async () => {
     try {
+      const counts = await getLpoStatusCounts().catch(() => ({}));
+      setLpoStatusCounts(counts || {});
       await fetchListPage();
       if (activeNavTab === 'approval') await fetchApprovalQueue();
       if (activeNavTab === 'history') await fetchHistory();
@@ -2944,6 +2971,22 @@ const LPOList = () => {
                 })}
               </>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-4">
+            {lpoSummaryCards.map((card) => (
+              <div
+                key={card.label}
+                className={`rounded-xl border px-3 py-2 shadow-sm ${card.tone}`}
+              >
+                <div className="text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">
+                  {card.label}
+                </div>
+                <div className="mt-1 text-2xl font-bold leading-none">
+                  {card.value}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Status Filters (Only for List View) */}
