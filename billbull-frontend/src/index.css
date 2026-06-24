@@ -22,6 +22,7 @@
   --input: #e2e8f0;
   --ring: #F5C742;
   --radius: 0.5rem;
+  --switch-background: #cbd5e1;
   --sidebar: #F7F7FA;
   --sidebar-foreground: #1E1E1E;
   --sidebar-border: #E2E8F0;
@@ -48,6 +49,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-switch-background: var(--switch-background);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-border: var(--sidebar-border);

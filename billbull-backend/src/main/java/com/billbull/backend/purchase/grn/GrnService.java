@@ -526,20 +526,11 @@ public class GrnService {
                             grn.getGrnNo());
                     serialMasters.add(purchaseSerialService.newSerialMaster(
                             serial.getSerialNumber(),
-                            productId,
                             item.getProductCode(),
                             item.getProductName(),
-                            "GRN",
-                            grn.getId(),
-                            item.getId(),
                             grn.getGrnNo(),
-                            grn.getWarehouse().getId(),
-                            grnZoneId,
-                            grnLocatorId,
-                            effectiveBinId,
-                            baseUnitCost,
-                            serial.getManufacturingDate(),
-                            serial.getExpiryDate()));
+                            grn.getWarehouse() != null ? grn.getWarehouse().getName() : null,
+                            grn.getBranchCode()));
                 }
                 serialMasterRepository.saveAll(serialMasters);
             } else if (item.getProduct().isBatch()) {

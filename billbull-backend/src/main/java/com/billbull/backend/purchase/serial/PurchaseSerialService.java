@@ -1,7 +1,5 @@
 package com.billbull.backend.purchase.serial;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -84,36 +82,18 @@ public class PurchaseSerialService {
 
     public SerialMaster newSerialMaster(
             String serialNumber,
-            Long productId,
             String productCode,
             String productName,
-            String sourceDocumentType,
-            Long sourceDocumentId,
-            Long sourceLineId,
-            String sourceRefNo,
-            Long warehouseId,
-            Long zoneId,
-            Long locatorId,
-            Long binId,
-            BigDecimal unitCost,
-            LocalDate manufacturingDate,
-            LocalDate expiryDate) {
+            String purchaseReference,
+            String warehouseCode,
+            String branchCode) {
         SerialMaster serial = new SerialMaster();
         serial.setSerialNumber(normalizeSerialNumber(serialNumber));
-        serial.setProductId(productId);
         serial.setProductCode(productCode);
         serial.setProductName(productName);
-        serial.setSourceDocumentType(sourceDocumentType);
-        serial.setSourceDocumentId(sourceDocumentId);
-        serial.setSourceLineId(sourceLineId);
-        serial.setSourceRefNo(sourceRefNo);
-        serial.setWarehouseId(warehouseId);
-        serial.setZoneId(zoneId);
-        serial.setLocatorId(locatorId);
-        serial.setBinId(binId);
-        serial.setUnitCost(unitCost);
-        serial.setManufacturingDate(manufacturingDate);
-        serial.setExpiryDate(expiryDate);
+        serial.setPurchaseReference(purchaseReference);
+        serial.setWarehouseCode(warehouseCode);
+        serial.setBranchCode(branchCode);
         serial.setStatus(SerialStatus.AVAILABLE);
         return serial;
     }

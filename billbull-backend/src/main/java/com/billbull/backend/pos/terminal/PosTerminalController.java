@@ -55,4 +55,10 @@ public class PosTerminalController {
         PosTerminalStatus status = PosTerminalStatus.valueOf(statusStr.toUpperCase());
         return ResponseEntity.ok(service.setStatus(terminalId, status));
     }
+
+    @PutMapping("/{terminalId}/set-main")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> setMainPos(@PathVariable String terminalId) {
+        return ResponseEntity.ok(service.setMainPos(terminalId));
+    }
 }

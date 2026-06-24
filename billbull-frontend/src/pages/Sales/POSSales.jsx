@@ -23,7 +23,7 @@ import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, openPosSession, getActivePosSession,
   closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
-  getAllPosTerminals, renamePosTerminal, setTerminalStatus, resolvePosEntry,
+  getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   holdSale, getHeldSales, recallHeldSale,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
@@ -142,6 +142,7 @@ import {
   ServiceJobA4Preview, PaperSizePicker, ImageUploadBox, A4ScaledPreview,
 } from './POS/POSPrintPreview';
 import CustomerPicker from './POS/CustomerPicker';
+import { formatUserDisplayName } from '../../utils/displayName';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
@@ -166,6 +167,12 @@ export default function POSSales() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
+  // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
+  // Sidebar's display-name derivation: strip the @domain then title-case.
+  const cashierDisplayName = useMemo(() => {
+    const raw = sessionStorage.getItem('user') || '';
+    return formatUserDisplayName(raw.includes('@') ? raw.split('@')[0] : raw);
+  }, []);
   const [posInitLoading, setPosInitLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState(null);
@@ -1887,7 +1894,13 @@ export default function POSSales() {
         } else {
           const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
           const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
-          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, isReprint: true, zatcaQrDataUrl: qrDataUrlR }));
+          const custRec = customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode);
+          const isWalkIn = !full.customerName || full.customerName === 'Walk-in Customer';
+          let creditPrevBal = null;
+          if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
+            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
+          }
+          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, customerPhone: custRec?.phone, customerEmail: custRec?.email, creditPreviousBalance: creditPrevBal }));
         }
       }
     } catch (err) {
@@ -4445,7 +4458,7 @@ export default function POSSales() {
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
-    getAllPosTerminals, renamePosTerminal, setTerminalStatus, savePosSettings, templateSubTab, setTemplateSubTab,
+    getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt,
@@ -4512,7 +4525,7 @@ export default function POSSales() {
 
       {/* Start Session Dialog */}
       <Dialog open={showStartSessionDialog} onOpenChange={setShowStartSessionDialog}>
-        <DialogContent className="sm:max-w-3xl border-0 shadow-xl">
+        <DialogContent className="sm:max-w-3xl border-0 shadow-xl bg-white">
           <DialogHeader>
             <DialogTitle className="text-[#1E293B]">Start New POS Session</DialogTitle>
             <DialogDescription>
@@ -4635,7 +4648,7 @@ export default function POSSales() {
 
       {/* Close Session Dialog */}
       <Dialog open={showCloseSessionDialog} onOpenChange={setShowCloseSessionDialog}>
-        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col border-0 shadow-xl">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col border-0 shadow-xl bg-white">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="text-[#1E293B]">Close POS Session</DialogTitle>
             <DialogDescription>Count closing cash and settle card payments before closing</DialogDescription>
@@ -4934,7 +4947,12 @@ export default function POSSales() {
                         } else {
                           const tlv = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
                           const qrDataUrl = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 }) : null;
-                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, zatcaQrDataUrl: qrDataUrl }));
+                          const isWalkInPrint = !full.customerName || full.customerName === 'Walk-in Customer';
+                          let creditPrevBalPrint = null;
+                          if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
+                            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
+                          }
+                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: qrDataUrl, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: cashierDisplayName, terminalId: full.posTerminalId || currentTerminal?.terminalId, counterName: full.posCounterName || currentTerminal?.counterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalPrint }));
                         }
                       } catch (err) { console.warn('POS print error', err); }
                     }}
@@ -5546,112 +5564,99 @@ export default function POSSales() {
 
       {/* Cash Drop/Out Dialog */}
       <Dialog open={showCashDropDialog} onOpenChange={setShowCashDropDialog}>
-        <DialogContent className="sm:max-w-md border-0 shadow-2xl">
-          {/* Coloured header strip */}
-          <div className={`-mx-6 -mt-6 px-6 pt-6 pb-5 rounded-t-lg mb-2 ${cashDropType === 'in' ? 'bg-gradient-to-r from-[#327F74]/10 to-transparent border-b border-[#327F74]/15' : 'bg-gradient-to-r from-red-50 to-transparent border-b border-red-100'}`}>
-            <div className="flex items-center gap-3">
-              <div className={`p-2.5 rounded-xl ${cashDropType === 'in' ? 'bg-[#327F74]/15' : 'bg-red-100'}`}>
-                {cashDropType === 'in'
-                  ? <ArrowDown className="h-5 w-5 text-[#327F74]" />
-                  : <ArrowUp className="h-5 w-5 text-red-500" />}
+        <DialogContent className="sm:max-w-md border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          {/* Header */}
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${cashDropType === 'in' ? 'bg-[#327F74]/10' : 'bg-red-50'}`}>
+                  {cashDropType === 'in'
+                    ? <ArrowDown className="h-5 w-5 text-[#327F74]" />
+                    : <ArrowUp className="h-5 w-5 text-red-500" />}
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#1E293B]">Cash Drop / Out</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">Record cash movements other than sales</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-bold text-[#1E293B]">Cash Drop / Out</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Record cash movements other than sales</p>
-              </div>
+              <button onClick={() => setShowCashDropDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
+                <X className="h-5 w-5" />
+              </button>
             </div>
           </div>
 
-          <div className="space-y-5 py-1">
-            {/* Type */}
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Movement Type</label>
-              <Select value={cashDropType} onValueChange={(val) => setCashDropType(val || 'in')}>
-                <SelectTrigger className="h-11 border-gray-200 focus:ring-2 focus:ring-[#327F74]/30 bg-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="in">
-                    <div className="flex items-center gap-2.5 py-0.5">
-                      <div className="p-1 bg-[#327F74]/10 rounded"><ArrowDown className="h-3.5 w-3.5 text-[#327F74]" /></div>
-                      <div>
-                        <div className="text-sm font-medium text-[#1E293B]">Cash Drop (IN)</div>
-                        <div className="text-xs text-gray-400">Add cash to drawer</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="out">
-                    <div className="flex items-center gap-2.5 py-0.5">
-                      <div className="p-1 bg-red-50 rounded"><ArrowUp className="h-3.5 w-3.5 text-red-500" /></div>
-                      <div>
-                        <div className="text-sm font-medium text-[#1E293B]">Cash Out</div>
-                        <div className="text-xs text-gray-400">Pay for expenses</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Amount */}
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1">
-                Amount <span className="inline-flex items-center gap-0.5 text-gray-400 normal-case font-normal">(<DirhamSymbol />)</span>
-              </label>
+          <div className="px-6 py-5 space-y-5">
+            {/* Type dropdown */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Type</label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 flex items-center">
-                  <DirhamSymbol />
-                </span>
-                <Input
-                  type="number"
-                  value={cashDropAmount}
-                  onChange={(e) => setCashDropAmount(e.target.value)}
-                  placeholder="0.00"
-                  className="pl-9 h-11 text-lg font-semibold border-gray-200 focus:ring-2 focus:ring-[#327F74]/30"
-                />
+                <select
+                  value={cashDropType}
+                  onChange={e => setCashDropType(e.target.value)}
+                  className="w-full h-11 pl-4 pr-10 text-sm font-medium text-[#1E293B] border border-gray-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40 cursor-pointer"
+                >
+                  <option value="in">Cash Drop (IN) - Add cash to drawer</option>
+                  <option value="out">Cash Out - Pay for expenses</option>
+                </select>
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                  <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
               </div>
             </div>
 
+            {/* Amount */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Amount (AED)</label>
+              <input
+                type="number"
+                value={cashDropAmount}
+                onChange={e => setCashDropAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
+              />
+            </div>
+
             {/* Description */}
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Description / Purpose</label>
-              <Input
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Description / Purpose</label>
+              <input
+                type="text"
                 value={cashDropDescription}
-                onChange={(e) => setCashDropDescription(e.target.value)}
+                onChange={e => setCashDropDescription(e.target.value)}
                 placeholder={cashDropType === 'in' ? 'e.g., Cash from admin safe' : 'e.g., Office supplies, Cleaning'}
-                className="h-11 border-gray-200 focus:ring-2 focus:ring-[#327F74]/30"
+                className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
               />
             </div>
           </div>
 
-          <DialogFooter className="mt-4 gap-2 sm:justify-between">
-            <Button
-              variant="outline"
-              onClick={() => openCashDrawer('MANUAL_OPEN')}
-              className="border-[#327F74]/30 text-[#327F74] hover:bg-[#327F74]/5 h-10"
+          {/* Footer */}
+          <div className="px-6 pb-6 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setShowCashDropDialog(false)}
+              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
             >
-              <Wallet className="h-4 w-4 mr-2" />
-              Open Drawer
-            </Button>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShowCashDropDialog(false)} className="border-gray-200 text-gray-600 h-10">
-                Cancel
-              </Button>
-              <Button
-                onClick={handleCashDrop}
-                className={`h-10 px-6 font-semibold ${cashDropType === 'in' ? 'bg-[#327F74] hover:bg-[#2a6b61] text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-              >
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Record {cashDropType === 'in' ? 'Cash Drop' : 'Cash Out'}
-              </Button>
-            </div>
-          </DialogFooter>
+              Cancel
+            </button>
+            <button
+              onClick={handleCashDrop}
+              className={`h-10 px-6 text-sm font-semibold rounded-xl flex items-center gap-2 transition-colors ${
+                cashDropType === 'in'
+                  ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'
+                  : 'bg-red-500 hover:bg-red-600 text-white'
+              }`}
+            >
+              <CheckCircle className="h-4 w-4" />
+              Record {cashDropType === 'in' ? 'Cash Drop' : 'Cash Out'}
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Lock POS Dialog */}
       <Dialog open={showLockPOS} onOpenChange={v => { if (!v) { setShowLockPOS(false); setLockPOSPin(''); } }}>
-        <DialogContent className="max-w-sm border-0 shadow-2xl">
+        <DialogContent className="max-w-sm border-0 shadow-2xl bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5 text-[#F5C742]" /> Lock POS</DialogTitle>
             <DialogDescription>Enter a PIN to lock the POS terminal. Staff will need to enter this PIN to continue.</DialogDescription>
@@ -5690,7 +5695,7 @@ export default function POSSales() {
 
       {/* Credit Card Balance Dialog */}
       <Dialog open={showCreditCardBalance} onOpenChange={v => { if (!v) { setShowCreditCardBalance(false); setCreditCardNumber(''); setCreditCardResult(null); } }}>
-        <DialogContent className="max-w-sm border-0 shadow-2xl">
+        <DialogContent className="max-w-sm border-0 shadow-2xl bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><CreditCard className="h-5 w-5 text-violet-500" /> Check Credit Balance</DialogTitle>
             <DialogDescription>Swipe or enter the card number to check the available balance.</DialogDescription>
@@ -5718,7 +5723,7 @@ export default function POSSales() {
 
       {/* Last Receipt Dialog */}
       <Dialog open={showLastReceiptDialog} onOpenChange={setShowLastReceiptDialog}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Receipt className="h-5 w-5 text-gray-600" /> Last Receipt</DialogTitle>
             <DialogDescription>Most recent completed transaction</DialogDescription>
@@ -5754,7 +5759,12 @@ export default function POSSales() {
                 } else {
                   const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
                   const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
-                  printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: true, isReprint: true, zatcaQrDataUrl: qrDataUrlR }));
+                  const isWalkInLR = !full.customerName || full.customerName === 'Walk-in Customer';
+                  let creditPrevBalLR = null;
+                  if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
+                    try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
+                  }
+                  printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalLR }));
                 }
                 setShowLastReceiptDialog(false);
               } catch (err) { console.warn('Last receipt reprint error', err); }
@@ -6001,7 +6011,7 @@ export default function POSSales() {
 
       {/* Reprint Confirm Popup */}
       <Dialog open={reprintConfirmOpen} onOpenChange={setReprintConfirmOpen}>
-        <DialogContent className="sm:max-w-[380px]" aria-describedby={undefined}>
+        <DialogContent className="sm:max-w-[380px] bg-white" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-[#1E293B]"><Printer className="h-4 w-4 text-[#327F74]" />Confirm Reprint</DialogTitle>
             <DialogDescription>
@@ -6027,7 +6037,7 @@ export default function POSSales() {
 
       {/* Coupons Dialog */}
       <Dialog open={showCouponsDialog} onOpenChange={v => { if (!v) { setShowCouponsDialog(false); setCouponCode(''); } }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Tag className="h-5 w-5 text-pink-500" /> Apply Coupon</DialogTitle>
             <DialogDescription>Enter a coupon code to apply a discount to the current sale.</DialogDescription>
@@ -6099,7 +6109,7 @@ export default function POSSales() {
 
       {/* Promotions Dialog */}
       <Dialog open={showPromotionsDialog} onOpenChange={setShowPromotionsDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-orange-500" /> Active Promotions</DialogTitle>
             <DialogDescription>Current promotions available for this sale</DialogDescription>
@@ -6139,7 +6149,7 @@ export default function POSSales() {
 
       {/* Save as Order Dialog */}
       <Dialog open={showSaveOrderDialog} onOpenChange={v => { if (!v) { setShowSaveOrderDialog(false); setOrderNotes(''); setSaveOrderError(''); } }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-indigo-500" /> Save as Order</DialogTitle>
             <DialogDescription>Save this sale as a pending order to fulfil later.</DialogDescription>
@@ -6256,7 +6266,7 @@ export default function POSSales() {
 
       {/* Legacy Layaways Dialog (kept for backward compat) */}
       <Dialog open={showLayawaysDialog} onOpenChange={v => { if (!v) setShowLayawaysDialog(false); }}>
-        <DialogContent className="max-w-sm" aria-describedby={undefined}>
+        <DialogContent className="max-w-sm bg-white" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>Layaway</DialogTitle></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => setShowLayawaysDialog(false)}>Close</Button></DialogFooter>
         </DialogContent>
@@ -6866,15 +6876,60 @@ export default function POSSales() {
             const saved = await saveSalesReturn(payload);
             if (andApprove || andPrint) await updateSalesReturnStatus(saved.id, 'APPROVED');
             if (andPrint) {
-              const html = `<html><body style="font-family:monospace;font-size:12px;max-width:300px;margin:auto">
-                <p style="text-align:center;font-weight:bold">${inv.branchName || 'BillBull'}</p>
-                <p style="text-align:center">SALES RETURN / CREDIT NOTE</p><hr/>
-                <p>Invoice: ${inv.invoiceNumber}</p><p>Return: ${saved.returnNumber}</p>
-                <p>Customer: ${inv.customerName || 'Walk-in'}</p><p>Refund: ${returnRefundMethod}</p><hr/>
-                ${itemsPayload.map(i=>`<p>${i.itemName} ×${i.returnQty} = AED ${i.total?.toFixed(2)}</p>`).join('')}
-                <hr/><p>VAT: AED ${returnVAT.toFixed(2)}</p><p><b>Total Refund: AED ${returnNet.toFixed(2)}</b></p>
-                </body></html>`;
-              printHtml(html);
+              const returnInvoiceData = {
+                invoiceNumber: saved.returnNumber || '',
+                invoiceDate: saved.returnDate || new Date().toISOString(),
+                createdAt: saved.createdAt || new Date().toISOString(),
+                customerName: inv.customerName || 'Walk-in Customer',
+                customerAddress: inv.customerAddress || '',
+                customerPhone: inv.customerPhone || '',
+                paymentMode: returnRefundMethod,
+                subTotal: returnSubtotal,
+                taxTotal: returnVAT,
+                invoiceTotal: returnNet,
+                items: itemsPayload.map(i => ({
+                  itemName: i.itemName,
+                  quantity: i.returnQty,
+                  unitPrice: i.price,
+                  netAmount: i.total,
+                  batchNumber: i.batches?.[0]?.batchNumber || '',
+                })),
+              };
+              if (tplReturnPaper === 'A4') {
+                const returnA4Template = buildPosA4Template(tplReturnFooter, {
+                  showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
+                  showTrn: tplReturnShowTrn, showCustomerDetails: tplReturnShowCustomerDetails,
+                  showTerms: tplReturnShowTerms, showNotes: tplReturnShowNotes,
+                  showQRCode: tplReturnShowQRCode, showStamp: tplReturnShowStamp,
+                  showSignature: tplReturnShowSignature, showGrandTotalBanner: tplReturnShowGrandTotalBanner,
+                  colItemCode: tplReturnColItemCode, colBatchNo: tplReturnColBatchNo,
+                  colDiscount: tplReturnColDiscount, colVatPct: tplReturnColVatPct, colVatAmt: tplReturnColVatAmt,
+                }, 'Sales Return');
+                const returnA4Data = {
+                  title: 'CREDIT NOTE',
+                  docNo: saved.returnNumber || '',
+                  date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
+                  customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
+                  items: itemsPayload.map(i => ({
+                    code: i.itemCode || '',
+                    name: i.itemName,
+                    desc: `Orig. Invoice: ${inv.invoiceNumber}`,
+                    qty: i.returnQty,
+                    price: i.price,
+                    disc: 0,
+                    tax: i.taxRate || 5,
+                    taxAmt: i.taxAmount || 0,
+                    total: i.total,
+                    batchNumber: i.batches?.[0]?.batchNumber || '',
+                  })),
+                  totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
+                  meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
+                };
+                const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
+                printHtml(generateDocumentPrintHtml(returnA4Template, returnA4Data, returnA4Options));
+              } else {
+                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms }));
+              }
             }
             setShowReturn(false); setReturnStep(1); setReturnInvoiceQuery(''); setReturnCustomerMobile('');
             setReturnDateFrom(''); setReturnInvoiceFound(null); setReturnableItems([]);
@@ -7172,7 +7227,7 @@ export default function POSSales() {
 
       {/* Add Shipping Dialog */}
       <Dialog open={showAddShippingDialog} onOpenChange={v => { if (!v) setShowAddShippingDialog(false); }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5 text-teal-500" /> Add Shipping</DialogTitle>
             <DialogDescription>Add shipping details and cost to this order.</DialogDescription>
@@ -7227,7 +7282,7 @@ export default function POSSales() {
 
       {/* Add Customer Dialog */}
       <Dialog open={showAddCustomerDialog} onOpenChange={v => { if (!v) { setShowAddCustomerDialog(false); setNewCustomerName(''); setNewCustomerPhone(''); setNewCustomerEmail(''); setAddCustomerError(''); } }}>
-        <DialogContent className="max-w-sm border-0 shadow-2xl">
+        <DialogContent className="max-w-sm border-0 shadow-2xl bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-sky-500" /> Add New Customer</DialogTitle>
             <DialogDescription>Register a new customer and assign them to this sale.</DialogDescription>
