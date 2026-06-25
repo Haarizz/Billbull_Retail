@@ -306,15 +306,12 @@ export const useA4BlobUrl = (html) => {
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     setUrl(blobUrl);
-    // Revoke on a macrotask, NOT synchronously on unmount. Revoking the blob
-    // URL in the same tick that React tears down the consuming <iframe> makes
-    // the browser detach the iframe's document out from under React's
-    // reconciler, which then throws "Failed to execute 'removeChild' on 'Node'"
-    // (seen on POS Settle Payment, where clearInvoice + phase switch unmount the
-    // preview iframe in one commit). Deferring lets React finish removing the
-    // iframe node first, then we free the URL.
+    // Revoke on a macrotask well after React's commit + paint cycle. A delay
+    // of 0ms can fire within the same animation frame in some browsers, racing
+    // the iframe teardown. 100ms gives React ample headroom to finish removing
+    // the iframe DOM node before the blob URL is freed.
     return () => {
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
     };
   }, [html]);
   return url;

@@ -711,6 +711,9 @@ const normaliseItem = (item = {}) => {
         accepted: asNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? 0),
         receivedBy: item.receivedBy || item.received_by || '',
         checkedBy: item.checkedBy || item.checked_by || '',
+        // Voided line: kept on the document (audit trail) but struck through and
+        // excluded from financial totals by the caller.
+        voided: Boolean(item.voided ?? item.isVoided ?? false),
         total
     };
 };
@@ -840,7 +843,7 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
         <div class="description-wrap">
             ${showImage ? `<img src="${escapeHtml(item.image)}" class="item-thumb" alt="" />` : ''}
             <div class="description-copy">
-                <div class="description-title">${escapeHtml(productName)}</div>
+                <div class="description-title">${escapeHtml(productName)}${item.voided ? '<span class="void-badge">VOID</span>' : ''}</div>
                 ${metaLines.map((line) => `<div class="description-meta">${escapeHtml(line)}</div>`).join('')}
             </div>
         </div>
@@ -1029,7 +1032,7 @@ const buildItemsTable = (layout) => {
                 currentLocation = loc;
             }
             buffer.push(`
-                <tr>
+                <tr class="${item.voided ? 'voided-row' : ''}">
                     ${layout.columnModel.map((column) => renderTableCell(column, item, index, layout.displayOptions, layout.columnOptions)).join('')}
                 </tr>
             `);
@@ -1037,7 +1040,7 @@ const buildItemsTable = (layout) => {
         rows = buffer.join('');
     } else {
         rows = layout.items.map((item, index) => `
-            <tr>
+            <tr class="${item.voided ? 'voided-row' : ''}">
                 ${layout.columnModel.map((column) => renderTableCell(column, item, index, layout.displayOptions, layout.columnOptions)).join('')}
             </tr>
         `).join('');
@@ -2234,6 +2237,29 @@ const buildCoreStyles = () => `
         letter-spacing: -0.01em;
     }
     .cell-strong { font-weight: 700; }
+    /* Voided line: struck through, muted red, kept for audit but not counted. */
+    .voided-row .table-cell,
+    .voided-row .table-cell * {
+        color: #dc2626 !important;
+        text-decoration: line-through;
+        text-decoration-color: #dc2626;
+    }
+    .voided-row .void-badge { text-decoration: none; }
+    .void-badge {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 5px;
+        font-size: 8px;
+        font-weight: 800;
+        line-height: 1.4;
+        letter-spacing: 0.05em;
+        color: #fff;
+        background: #dc2626;
+        border-radius: 3px;
+        vertical-align: middle;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
     .cell-unit,
     .cell-sub {
         color: #111827;

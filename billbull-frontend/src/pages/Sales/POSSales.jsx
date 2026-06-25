@@ -16,7 +16,7 @@ import { getProductsList } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getAllCustomers, createCustomer } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
-import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage } from '../../api/salesorderApi';
+import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
@@ -235,6 +235,8 @@ export default function POSSales() {
   const [deliverySettlePersonFilter, setDeliverySettlePersonFilter] = useState('All Persons');
   const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
   const [deliverySettlePayMode, setDeliverySettlePayMode] = useState('Cash');
+  const [deliverySettleMixCash, setDeliverySettleMixCash] = useState('');
+  const [deliverySettleMixCard, setDeliverySettleMixCard] = useState('');
   const [deliveryOrders, setDeliveryOrders] = useState([]);
   const [deliveryOrdersLoading, setDeliveryOrdersLoading] = useState(false);
   const [deliveryOutLoading, setDeliveryOutLoading] = useState(false);
@@ -269,6 +271,15 @@ export default function POSSales() {
   // Receipt sharing — 'payment' shows the checkout form, 'complete' shows the
   // payment-done screen in the SAME overlay (avoids simultaneous unmount+mount).
   const [checkoutPhase, setCheckoutPhase] = useState('payment'); // 'payment' | 'complete'
+  // While a settlement is in flight we FREEZE the A4 preview html so clearInvoice()
+  // (which empties the cart) cannot null the live iframe's blob src in the same
+  // commit that the phase switch unmounts that iframe — that race is what threw
+  // "Failed to execute 'removeChild' on 'Node'" on Settle Payment.
+  const [checkoutSettling, setCheckoutSettling] = useState(false);
+  const checkoutPreviewFreezeRef = useRef('');
+  // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
+  // and no company stamp occupies that slot — "stamp if uploaded, else QR").
+  const [checkoutPreviewQrDataUrl, setCheckoutPreviewQrDataUrl] = useState(null);
   const [receiptSharePhone, setReceiptSharePhone] = useState('');
   const [receiptShareEmail, setReceiptShareEmail] = useState('');
   const [lastPaidInvoice, setLastPaidInvoice] = useState(null);
@@ -352,6 +363,7 @@ export default function POSSales() {
   const [reprintLoading, setReprintLoading] = useState(false);
   const [reprintError, setReprintError] = useState(null);
   const [reprintPrinting, setReprintPrinting] = useState(false);
+  const [reprintPrintMode, setReprintPrintMode] = useState('thermal');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
   const [showCouponsDialog, setShowCouponsDialog] = useState(false);
   const [couponCode, setCouponCode] = useState('');
@@ -366,6 +378,11 @@ export default function POSSales() {
   const [showOrdersListDialog, setShowOrdersListDialog] = useState(false);
   const [ordersList, setOrdersList] = useState([]);
   const [ordersListLoading, setOrdersListLoading] = useState(false);
+  const [ordersListSearch, setOrdersListSearch] = useState('');
+  const [ordersListStatusFilter, setOrdersListStatusFilter] = useState('All');
+  const [ordersListSelected, setOrdersListSelected] = useState(null);
+  const [ordersListSelectedDetail, setOrdersListSelectedDetail] = useState(null);
+  const [ordersListDetailLoading, setOrdersListDetailLoading] = useState(false);
   const [addCustomerBusy, setAddCustomerBusy] = useState(false);
   const [addCustomerError, setAddCustomerError] = useState('');
   const [showLayawaysDialog, setShowLayawaysDialog] = useState(false);
@@ -608,16 +625,25 @@ export default function POSSales() {
   );
 
   const checkoutA4Html = useMemo(() => {
+    // Settlement in flight: keep the last-rendered preview so clearInvoice() can't
+    // collapse the iframe src while the phase switch unmounts it (removeChild race).
+    if (checkoutSettling) return checkoutPreviewFreezeRef.current;
     if (!currentInvoice) return '';
     try {
       const now = new Date();
       const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
       const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
+      // Stamp-else-QR: a stamp is shown only when enabled AND an image exists;
+      // the QR is shown only when enabled AND no stamp is taking that slot — so
+      // the preview matches the print's "stamp if uploaded, else QR" behaviour.
+      const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+      const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const template = buildPosA4Template(tplInvoiceFooter, {
         showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
         showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails,
         showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes,
         showBankDetails: tplInvoiceShowBankDetails, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
+        showStamp: stampAvailable, showQRCode: showQrInPreview, showSignature: tplInvoiceShowSignature,
         colItemCode: tplInvoiceColItemCode, colBatchNo: tplInvoiceColBatchNo,
         colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
       });
@@ -633,7 +659,11 @@ export default function POSSales() {
           email: customer?.email || '',
           trn: customer?.trn || '',
         },
-        items: (currentInvoice.items || []).filter(it => !it.isVoided).map(it => {
+        // Voided lines are KEPT on the preview (struck-through + VOID badge) so the
+        // checkout preview matches the cart exactly. The renderer styles them; the
+        // totals below already exclude voided lines (currentInvoice is recalculated
+        // without them), so they don't affect the financial figures.
+        items: (currentInvoice.items || []).map(it => {
           // Use the real product code, never the composite cart-line id (pinned
           // batch/serial lines have ids like "<productId>::<batch>").
           const lineCode = it.code || it.productId || it.id || '';
@@ -651,6 +681,7 @@ export default function POSSales() {
             total: it.total || 0,
             batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
             serialNumber: it.serialNumber || '',
+            voided: !!it.isVoided,
           };
         }),
         totals: {
@@ -671,20 +702,60 @@ export default function POSSales() {
           companyName: tplOutletName, trn: tplOutletTrn,
           address: tplOutletAddress, phone: tplOutletPhone,
           currency: 'AED', logoUrl: tplLogoDataUrl || undefined,
+          // Stamp must be passed here too — the renderer gates the stamp on both
+          // the template flag AND company.showStampInPrint + a stampUrl.
+          stampUrl: stampAvailable ? (tplStampDataUrl || undefined) : undefined,
+          showStampInPrint: stampAvailable,
         },
+        // ZATCA QR for the preview (stamp-else-QR). Async-generated into state.
+        qrCodeDataUrl: showQrInPreview ? (checkoutPreviewQrDataUrl || null) : null,
       };
-      return generateDocumentPrintHtml(template, data, options);
+      const html = generateDocumentPrintHtml(template, data, options);
+      // Remember the last good render so a settlement can freeze on it.
+      checkoutPreviewFreezeRef.current = html;
+      return html;
     } catch (e) {
       console.warn('Checkout A4 preview failed:', e);
       return '';
     }
-  }, [currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
+  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
       tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
       tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
+      tplInvoiceShowStamp, tplInvoiceShowQRCode, tplInvoiceShowSignature, tplStampDataUrl, checkoutPreviewQrDataUrl,
       tplInvoiceColItemCode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutA4Html);
+
+  // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
+  // taking its slot. Built from the live (unsaved) totals so the preview shows a
+  // representative code; the real archived QR is regenerated at print time.
+  useEffect(() => {
+    const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+    if (!tplInvoiceShowQRCode || stampAvailable || !showPaymentDialog) {
+      setCheckoutPreviewQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    try {
+      const total = currentInvoice?.total || 0;
+      const vat = currentInvoice?.tax || 0;
+      const tlv = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, new Date().toISOString(), total, vat);
+      QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 })
+        .then(url => { if (!cancelled) setCheckoutPreviewQrDataUrl(url); })
+        .catch(() => { if (!cancelled) setCheckoutPreviewQrDataUrl(null); });
+    } catch { setCheckoutPreviewQrDataUrl(null); }
+    return () => { cancelled = true; };
+  }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
+      currentInvoice?.total, currentInvoice?.tax, tplOutletName, tplOutletTrn]);
+
+  // Safety net: whenever the checkout overlay is fully dismissed, drop the
+  // settle-freeze so the next sale's preview tracks the live cart again. Covers
+  // every exit path (close X, cancel, auto-new-sale) without threading a reset
+  // through each handler.
+  useEffect(() => {
+    if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);
+  }, [showPaymentDialog, checkoutSettling]);
 
   useEffect(() => {
     const code = selectedCustomerData?.code;
@@ -898,6 +969,16 @@ export default function POSSales() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView]);
 
+  // Load dashboard stats once the session becomes available on initial page load.
+  // The view-change effect above misses this because currentView is already 'dashboard'
+  // when currentSession resolves asynchronously after terminal registration.
+  useEffect(() => {
+    if (currentView === 'dashboard' && (currentSession?.status === 'active' || currentSession?.status === 'OPEN') && !xReportData && !xReportLoading) {
+      loadXReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSession?.id]);
+
   // Auto-load terminals when console Terminals tab is active and terminal becomes available
   useEffect(() => {
     if (currentView === 'console' && consoleTab === 'terminals' && currentTerminal?.branchId && terminalList.length === 0 && !terminalsLoading) {
@@ -1044,17 +1125,36 @@ export default function POSSales() {
     }
   };
 
+  // Returns { ok, reason }. Callers can surface `reason` when ok === false so
+  // the cashier learns why an add was refused (one-batch-one-unit enforcement).
   const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null) => {
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
-    const qtyToAdd = pinnedSerialNumber ? 1 : Math.max(1, Number(quantity) || 1);
+    // In this system a batch/serial-controlled product is stored one-physical-
+    // unit-per-batch-number. A grid add without a scanned batch therefore can't
+    // legitimately bump quantity (each extra unit needs its own distinct batch).
+    // We add a single qty-1 line and refuse to merge/re-add; extra units must be
+    // scanned. Non-controlled products keep the normal merge-by-id behaviour.
+    const isBatchControlled = !isPinned && (Boolean(product.isBatch) || Boolean(product.isSerial));
+    const qtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
     const unitPrice = toNumber(product.price, 0);
+
+    // Block re-adding a batch-controlled product from the grid (its line already
+    // holds one physical unit; another unit means another batch → must be scanned).
+    if (isBatchControlled) {
+      const already = (currentInvoiceRef.current?.items || [])
+        .some(item => item.productId === product.id || item.id === product.id);
+      if (already) {
+        return { ok: false, reason: `${product.name} is batch-tracked — scan a specific batch to add another unit.` };
+      }
+    }
+
     setCurrentInvoice(prev => {
       // A pinned line (scanned batch or serial) represents one specific physical
       // unit, so it always gets its own cart row (with a composite id) and never
-      // stacks onto an existing line. Non-pinned lines still merge by product id.
-      const existingItem = isPinned
+      // stacks onto an existing line. Batch-controlled grid lines also never merge.
+      const existingItem = (isPinned || isBatchControlled)
         ? null
         : prev.items.find(item => item.id === product.id);
       let newItems;
@@ -1090,11 +1190,15 @@ export default function POSSales() {
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
+          // Lock qty on batch/serial lines — each line is exactly one physical
+          // unit. The cart UI disables +/- for lines flagged batchControlled.
+          batchControlled: isPinned || isBatchControlled,
         }, ...prev.items];
       }
 
       return recalculateInvoice(newItems);
     });
+    return { ok: true };
   };
 
   const updateQuantity = (itemId, newQuantity) => {
@@ -1102,12 +1206,20 @@ export default function POSSales() {
       removeFromInvoice(itemId);
       return;
     }
-    
+
+    // A batch/serial line is exactly one physical unit — its quantity is fixed.
+    // Selling more means scanning more distinct batches, not bumping this line.
+    const target = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
+    if (target?.batchControlled && newQuantity !== target.quantity) {
+      showFeedback?.('error', 'Batch-tracked items are one unit per line — scan another batch to add more.');
+      return;
+    }
+
     setCurrentInvoice(prev => {
       const newItems = prev.items.map(item =>
-        item.id === itemId 
-          ? { 
-              ...item, 
+        item.id === itemId
+          ? {
+              ...item,
               quantity: newQuantity,
               total: newQuantity * item.price * (1 - item.discount / 100)
             }
@@ -1411,6 +1523,9 @@ export default function POSSales() {
       setDeliverySettleSearch('');
       setDeliverySettlePersonFilter('All Persons');
       setDeliverySettleSelected(null);
+      setDeliverySettlePayMode('Cash');
+      setDeliverySettleMixCash('');
+      setDeliverySettleMixCard('');
       loadDeliveryOrders();
     }
   }, [showDeliverySettleModal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1735,6 +1850,12 @@ export default function POSSales() {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
     setCheckoutLoading(true);
     setCheckoutError(null);
+    // Freeze the A4 preview on its current render BEFORE we touch the cart, so the
+    // clearInvoice()/phase-switch below can't tear the live iframe src out from
+    // under React (the removeChild crash). Snapshot the latest html into the ref
+    // in case the memo hasn't run yet this render.
+    if (checkoutA4Html) checkoutPreviewFreezeRef.current = checkoutA4Html;
+    setCheckoutSettling(true);
     try {
       const grandTotal = currentInvoice.total;
       const tenderedNum = parseFloat(tenderedAmount) || 0;
@@ -1861,11 +1982,23 @@ export default function POSSales() {
       setCheckoutRemarks('');
       setCheckoutCreditCustomer(null);
       setCheckoutCreditCustomerSearch('');
-      // Transition the checkout overlay to the "complete" screen in-place
-      // (avoids simultaneous overlay unmount + Dialog mount which triggers a
-      // removeChild DOM error in React 18 StrictMode development).
-      setCheckoutPhase('complete');
+      // Transition the checkout overlay to the "complete" screen in-place.
+      // Deferred to a separate React commit (queueMicrotask) so the state
+      // resets above (clearInvoice, setCheckoutPayMode, etc.) are committed
+      // and painted BEFORE React unmounts the payment form subtree and mounts
+      // the complete screen. Without this, React 18's automatic batching
+      // tries to reconcile DOM changes inside the payment-form buttons (e.g.
+      // indicator divs) while simultaneously unmounting those buttons — which
+      // throws "Failed to execute 'removeChild' on 'Node'".
+      queueMicrotask(() => setCheckoutPhase('complete'));
     } catch (err) {
+      // Settle failed — the cart is untouched (clearInvoice only runs on success).
+      // Do NOT unfreeze the preview here: flipping checkoutSettling false in the
+      // same render that mounts the error banner swaps the live iframe's blob src
+      // while React is reconciling, which races the iframe's external DOM mutation
+      // and throws "Failed to execute 'removeChild' on 'Node'". The freeze is
+      // released safely when the payment dialog closes (effect on showPaymentDialog),
+      // so the cashier can read the error / retry against the still-frozen preview.
       const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
       setCheckoutError(typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
     } finally {
@@ -1936,12 +2069,21 @@ export default function POSSales() {
       const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
       if (inv?.id) {
         const full = await getSalesInvoiceById(inv.id);
-        openCashDrawer('RECEIPT_PRINT');
-        if (tplInvoicePaper === 'A4') {
+        const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+        if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
           const template = buildPosA4Template(tplInvoiceFooter, { showLogo:tplInvoiceShowLogo, showCompanyDetails:tplInvoiceShowCompanyDetails, showTrn:tplInvoiceShowTrn, showCustomerDetails:tplInvoiceShowCustomerDetails, showTerms:tplInvoiceShowTerms, showNotes:tplInvoiceShowNotes, showBankDetails:tplInvoiceShowBankDetails, showQRCode:tplInvoiceShowQRCode, showStamp:tplInvoiceShowStamp, showSignature:tplInvoiceShowSignature, showGrandTotalBanner:tplInvoiceShowGrandTotalBanner, colItemCode:tplInvoiceColItemCode, colItemImage:tplInvoiceColItemImage, colBarcode:tplInvoiceColBarcode, colBatchNo:tplInvoiceColBatchNo, colDiscount:tplInvoiceColDiscount, colVatPct:tplInvoiceColVatPct, colVatAmt:tplInvoiceColVatAmt });
           const data = buildPosPrintData(full, tplInvoiceFooter);
-          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
-          printHtml(generateDocumentPrintHtml(template, data, options));
+          const html = generateDocumentPrintHtml(template, data, companyOptions);
+          if (reprintPrintMode === 'pdf') {
+            const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
+            try { await downloadPdfViaServer(html, filename); } catch {
+              const { downloadPdf } = await import('../../utils/printGenerator');
+              await downloadPdf(html, filename);
+            }
+          } else {
+            openCashDrawer('RECEIPT_PRINT');
+            printHtml(html);
+          }
         } else {
           const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
           const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
@@ -1951,6 +2093,7 @@ export default function POSSales() {
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
           }
+          openCashDrawer('RECEIPT_PRINT');
           printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, customerPhone: custRec?.phone, customerEmail: custRec?.email, creditPreviousBalance: creditPrevBal }));
         }
       }
@@ -1997,9 +2140,17 @@ export default function POSSales() {
     };
 
     // Fast path: a previously-seen product in the in-memory cache (no batch pin).
+    // Batch/serial-controlled products skip the cache and always go through the
+    // backend resolver so a scanned barcode can still pin the exact unit and the
+    // one-batch-one-unit rule is enforced rather than silently merging quantity.
     const cached = productCacheRef.current.get(value.toLowerCase());
-    if (cached) {
-      addToInvoice(cached, qty);
+    if (cached && !cached.isBatch && !cached.isSerial) {
+      const res = addToInvoice(cached, qty);
+      if (res && res.ok === false) {
+        showFeedback('error', res.reason || 'Could not add this item.');
+        clearInputs();
+        return;
+      }
       setLastScannedItem({ name: cached.name, nameAr: cached.nameAr || '', barcode: cached.barcode || cached.id, qty, total: cached.price * qty });
       showFeedback('success', qty > 1 ? `${cached.name} ×${qty} added` : `${cached.name} added`);
       clearInputs();
@@ -2012,6 +2163,15 @@ export default function POSSales() {
     } catch (error) {
       console.error('Failed to resolve POS entry', error);
       showFeedback('error', `Lookup failed: ${value}`);
+      return;
+    }
+
+    // A batch/serial unit that exists but can't be sold (reserved / consumed /
+    // sold). The backend already refuses to add it — surface its reason so the
+    // cashier knows why, and never fall through to the grid-filter branch.
+    if (result?.type === 'BLOCKED') {
+      showFeedback('error', result.message || 'This unit is not available for sale.');
+      setBarcodeInput('');
       return;
     }
 
@@ -2056,7 +2216,14 @@ export default function POSSales() {
         clearInputs();
         return;
       }
-      addToInvoice(product, effectiveQty, pinnedBatchNumber);
+      // addToInvoice enforces one-batch-one-unit for batch/serial products added
+      // without a pin (e.g. resolved by product code) — surface its refusal.
+      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber);
+      if (addRes && addRes.ok === false) {
+        showFeedback('error', addRes.reason || 'Could not add this item.');
+        clearInputs();
+        return;
+      }
       setLastScannedItem({
         name: product.name,
         nameAr: product.nameAr || '',
@@ -2969,7 +3136,7 @@ export default function POSSales() {
         const durM = diffMin % 60;
         const sessionDuration = sessionStart ? (durH > 0 ? `${durH}h ${durM}m` : `${durM}m`) : '—';
 
-        const loading = xReportLoading;
+        const loading = xReportLoading || xReportData === null;
 
         const statCards = [
           {
@@ -4566,6 +4733,10 @@ export default function POSSales() {
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway,
     setShowOrdersListDialog: async () => {
       setOrdersListLoading(true);
+      setOrdersListSearch('');
+      setOrdersListStatusFilter('All');
+      setOrdersListSelected(null);
+      setOrdersListSelectedDetail(null);
       setShowOrdersListDialog(true);
       try {
         const result = await getSalesOrdersPage({ page: 0, size: 50 });
@@ -4940,6 +5111,7 @@ export default function POSSales() {
           const closeComplete = () => {
             setShowPaymentDialog(false);
             setCheckoutPhase('payment');
+            setCheckoutSettling(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
           };
@@ -5151,7 +5323,7 @@ export default function POSSales() {
                             <Icon className={`h-4 w-4 ${checkoutPayMode === id ? 'text-[#1E293B]' : 'text-gray-500'}`} />
                           </div>
                           <span className={`text-xs font-bold ${checkoutPayMode === id ? 'text-[#1E293B]' : 'text-gray-500'}`}>{label}</span>
-                          {checkoutPayMode === id && <div className="w-4 h-1 rounded-full bg-[#F5C742]" />}
+                          <div className={`w-4 h-1 rounded-full bg-[#F5C742] transition-opacity ${checkoutPayMode === id ? 'opacity-100' : 'opacity-0'}`} />
                         </button>
                       ))}
                     </div>
@@ -5807,7 +5979,7 @@ export default function POSSales() {
             ) : (
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-gray-500">Invoice #</span><span className="font-semibold">{lastPaidInvoice.id}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-semibold">{lastPaidInvoice.customer || 'Walk-in'}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-semibold">{lastPaidInvoice.customer?.name || 'Walk-in'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Amount</span><span className="font-semibold text-[#F5C742]">{formatCurrency(lastPaidInvoice.total)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold">{formatCurrency(lastPaidInvoice.paidAmount || lastPaidInvoice.total)}</span></div>
                 {(lastPaidInvoice.changeAmount || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Change</span><span className="font-semibold text-green-600">{formatCurrency(lastPaidInvoice.changeAmount)}</span></div>}
@@ -6042,15 +6214,33 @@ export default function POSSales() {
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
+                      {/* Audit / Reprint History */}
+                      <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
+                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Audit / Reprint History</p>
+                        {[
+                          ['Original Printed By', selected.cashier || '—'],
+                          ['Original Printed Time', (() => { const raw = selected._raw?.createdAt; return raw ? new Date(raw).toLocaleString('en-US', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'; })()],
+                          ['Reprint Count', selected.reprints > 0 ? `${selected.reprints} Times` : '0 Times'],
+                          ['Last Reprinted By', selected.reprints > 0 ? (selected.lastReprintedBy || '—') : '—'],
+                          ['Last Reprinted Time', selected.reprints > 0 ? (selected.lastReprintedTime || '—') : '—'],
+                        ].map(([k,v])=>(
+                          <div key={k} className="flex gap-2"><span className="text-gray-400 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
+                        ))}
+                      </div>
                     </div>
                     {/* Print Actions */}
                     <div className="border-t border-[#327F74]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
-                      <button onClick={() => setReprintConfirmOpen(true)} disabled={selected.status==='Cancelled' || reprintPrinting}
+                      <button onClick={() => { setReprintPrintMode('thermal'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
-                        <Printer className="h-3.5 w-3.5" />{reprintPrinting ? 'Printing…' : 'Print Receipt'}
+                        <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
-                      <button onClick={() => setReprintSelectedInvoice(null)} className="ml-auto flex items-center gap-1 text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50">
-                        <X className="h-3 w-3" />Close
+                      <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-white border border-[#327F74]/40 text-[#327F74] hover:bg-[#327F74]/5'}`}>
+                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='a4' ? 'Printing…' : 'Print A4 Invoice'}
+                      </button>
+                      <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                        <Download className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='pdf' ? 'Downloading…' : 'Download PDF'}
                       </button>
                       {selected.status === 'Cancelled' && (
                         <div className="w-full flex items-center gap-1 text-xs text-red-600 bg-red-50 rounded p-1.5 border border-red-200">
@@ -6102,7 +6292,8 @@ export default function POSSales() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setReprintConfirmOpen(false)}>Cancel</Button>
             <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" onClick={handleReprintConfirm} disabled={reprintPrinting}>
-              <Printer className="h-4 w-4 mr-1" />{reprintPrinting ? 'Printing…' : 'Confirm & Print'}
+              {reprintPrintMode === 'pdf' ? <Download className="h-4 w-4 mr-1" /> : <Printer className="h-4 w-4 mr-1" />}
+              {reprintPrinting ? (reprintPrintMode === 'pdf' ? 'Downloading…' : 'Printing…') : (reprintPrintMode === 'thermal' ? 'Confirm & Print Thermal' : reprintPrintMode === 'a4' ? 'Confirm & Print A4' : 'Confirm & Download PDF')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -6285,51 +6476,263 @@ export default function POSSales() {
 
       {/* Orders List Dialog */}
       {showOrdersListDialog && (() => {
+        const pendingCount = ordersList.filter(o => o.status === 'DRAFT' || o.status === 'CONFIRMED').length;
+        const statusTabs = ['All', 'Pending', 'Completed', 'Cancelled'];
+        const filteredOrders = ordersList.filter(o => {
+          const matchSearch = !ordersListSearch.trim() ||
+            (o.soNumber || '').toLowerCase().includes(ordersListSearch.toLowerCase()) ||
+            (o.customerName || '').toLowerCase().includes(ordersListSearch.toLowerCase());
+          const matchStatus = ordersListStatusFilter === 'All' ||
+            (ordersListStatusFilter === 'Pending' && (o.status === 'DRAFT' || o.status === 'CONFIRMED')) ||
+            (ordersListStatusFilter === 'Completed' && (o.status === 'INVOICED' || o.status === 'DELIVERED')) ||
+            (ordersListStatusFilter === 'Cancelled' && o.status === 'CANCELLED');
+          return matchSearch && matchStatus;
+        });
+        const sel = ordersListSelectedDetail;
+        const selOrder = ordersListSelected;
+        const statusBadge = (status) => {
+          if (status === 'DRAFT') return 'bg-orange-100 text-orange-700 border-orange-200';
+          if (status === 'CONFIRMED') return 'bg-blue-100 text-blue-700 border-blue-200';
+          if (status === 'INVOICED') return 'bg-green-100 text-green-700 border-green-200';
+          if (status === 'DELIVERED') return 'bg-teal-100 text-teal-700 border-teal-200';
+          if (status === 'CANCELLED') return 'bg-red-100 text-red-600 border-red-200';
+          return 'bg-gray-100 text-gray-500 border-gray-200';
+        };
+        const statusLabel = (status) => {
+          if (status === 'DRAFT') return 'Pending';
+          if (status === 'CONFIRMED') return 'Confirmed';
+          return status ? status.charAt(0) + status.slice(1).toLowerCase() : '';
+        };
+        const handleSelectOrder = async (order) => {
+          setOrdersListSelected(order);
+          setOrdersListSelectedDetail(null);
+          setOrdersListDetailLoading(true);
+          try {
+            const detail = await getSalesOrderById(order.id);
+            setOrdersListSelectedDetail(detail);
+          } catch { setOrdersListSelectedDetail(order); }
+          finally { setOrdersListDetailLoading(false); }
+        };
+        const handleCancelOrder = async () => {
+          if (!selOrder) return;
+          if (!window.confirm(`Cancel order ${selOrder.soNumber}?`)) return;
+          try {
+            await updateSalesOrderStatus(selOrder.id, 'CANCELLED');
+            const result = await getSalesOrdersPage({ page: 0, size: 50 });
+            setOrdersList(Array.isArray(result?.content) ? result.content : (Array.isArray(result) ? result : []));
+            setOrdersListSelected(null);
+            setOrdersListSelectedDetail(null);
+          } catch (e) { alert(e?.response?.data?.message || 'Failed to cancel order'); }
+        };
+        const handleOpenOrder = async () => {
+          if (!sel) return;
+          const items = sel.items || sel.orderItems || [];
+          if (items.length === 0) { alert('Order has no items to load.'); return; }
+          const mapped = items.map(it => ({
+            id: it.productId || it.id || it.itemCode,
+            name: it.productName || it.itemName || it.name || '',
+            code: it.productCode || it.itemCode || it.code || '',
+            price: toNumber(it.unitPrice || it.rate || it.price, 0),
+            qty: toNumber(it.quantity || it.qty, 1),
+            discount: toNumber(it.discountPercent || it.discount, 0),
+            taxRate: toNumber(it.taxRate || it.vatRate, 0),
+            unit: it.unit || 'Pcs',
+            batchNumber: it.batchNumber || null,
+            serialNumber: it.serialNumber || null,
+          }));
+          setCurrentInvoice(recalculateInvoice(mapped));
+          setShowOrdersListDialog(false);
+          setOrdersListSelected(null);
+          setOrdersListSelectedDetail(null);
+        };
+        const handleCheckout = async () => {
+          await handleOpenOrder();
+          setShowPaymentDialog(true);
+        };
         return (
-          <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowOrdersListDialog(false)} />
-            <div className="relative ml-auto w-full max-w-2xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
-              <div className="bg-white border-b border-gray-200 px-5 py-3 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                  <Package className="h-5 w-5 text-orange-500" />
-                  <span className="text-base font-semibold text-[#1E293B]">Saved Orders</span>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} />
+            <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+              {/* Header */}
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+                <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                  <Package className="h-5 w-5 text-amber-600" />
                 </div>
-                <button type="button" onClick={() => setShowOrdersListDialog(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <div>
+                  <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide">SAVED ORDERS</p>
+                  <p className="text-sm text-gray-500">{pendingCount} pending · {ordersList.length} total</p>
+                </div>
+                <button type="button" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} className="ml-auto text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                {ordersListLoading ? (
-                  <div className="flex items-center justify-center h-32 text-gray-400 gap-2 text-sm">
-                    <RefreshCw className="h-4 w-4 animate-spin" />Loading orders…
+
+              {/* Body — split layout */}
+              <div className="flex flex-1 min-h-0">
+                {/* Left: list */}
+                <div className="w-64 border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
+                  <div className="p-3 border-b border-gray-100">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={ordersListSearch}
+                        onChange={e => setOrdersListSearch(e.target.value)}
+                        placeholder="Search by order no., customer, or item..."
+                        className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      />
+                    </div>
                   </div>
-                ) : ordersList.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-gray-300 gap-2">
-                    <Package className="h-10 w-10" />
-                    <p className="text-sm text-gray-400">No saved orders found</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {ordersList.map(order => (
-                      <div key={order.id} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center justify-between gap-3 hover:border-[#F5C742] transition-colors">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-[#1E293B]">{order.soNumber}</p>
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${order.status === 'DRAFT' ? 'bg-gray-50 text-gray-500 border-gray-200' : order.status === 'CONFIRMED' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-green-50 text-green-700 border-green-200'}`}>{order.status}</span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-0.5">{order.customerName || 'Walk-in'} · {order.orderDate} · {(order.items || []).length} items</p>
-                          {order.customerNotes && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{order.customerNotes}</p>}
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-sm font-black text-[#F5C742]">{formatCurrency(order.orderTotal)}</p>
-                        </div>
-                      </div>
+                  <div className="flex gap-1 px-3 py-2 border-b border-gray-100 flex-wrap">
+                    {statusTabs.map(tab => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setOrdersListStatusFilter(tab)}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-colors ${ordersListStatusFilter === tab ? 'bg-amber-400 text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'}`}
+                      >
+                        {tab}
+                      </button>
                     ))}
                   </div>
-                )}
+                  <div className="flex-1 overflow-y-auto">
+                    {ordersListLoading ? (
+                      <div className="flex items-center justify-center h-24 text-gray-400 gap-2 text-xs">
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />Loading…
+                      </div>
+                    ) : filteredOrders.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-32 text-gray-300 gap-1">
+                        <Package className="h-8 w-8" />
+                        <p className="text-xs text-gray-400">No orders found</p>
+                      </div>
+                    ) : filteredOrders.map(order => (
+                      <button
+                        key={order.id}
+                        type="button"
+                        onClick={() => handleSelectOrder(order)}
+                        className={`w-full text-left px-3 py-3 border-b border-gray-100 transition-colors ${selOrder?.id === order.id ? 'bg-amber-50 border-l-2 border-l-amber-400' : 'hover:bg-white'}`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="text-xs font-bold text-amber-600">{order.soNumber}</span>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusBadge(order.status)}`}>{statusLabel(order.status)}</span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 truncate">{order.customerName || 'Walk-in Customer'}</p>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-[10px] text-gray-400">{order.orderDate} · {(order.items || []).length} item{(order.items || []).length !== 1 ? 's' : ''}</span>
+                          <span className="text-[11px] font-bold text-amber-500">{formatCurrency(order.orderTotal)}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right: detail */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  {!selOrder ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-gray-300 gap-2">
+                      <Package className="h-12 w-12" />
+                      <p className="text-sm text-gray-400">Select an order to view details</p>
+                    </div>
+                  ) : ordersListDetailLoading ? (
+                    <div className="flex-1 flex items-center justify-center text-gray-400 gap-2 text-sm">
+                      <RefreshCw className="h-4 w-4 animate-spin" />Loading details…
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 overflow-y-auto p-5">
+                        <div className="flex items-start justify-between mb-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-base font-black text-amber-600">{selOrder.soNumber}</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${statusBadge(selOrder.status)}`}>{statusLabel(selOrder.status)}</span>
+                            </div>
+                            <p className="text-base font-semibold text-gray-800">{(sel || selOrder).customerName || 'Walk-in Customer'}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{selOrder.orderDate} {selOrder.orderTime ? ', ' + selOrder.orderTime : ''}</p>
+                          </div>
+                        </div>
+                        {/* Items table */}
+                        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Item</th>
+                                <th className="text-center px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Qty</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Price</th>
+                                <th className="text-center px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Disc</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {((sel || selOrder).items || (sel || selOrder).orderItems || []).map((it, idx) => {
+                                const price = toNumber(it.unitPrice || it.rate || it.price, 0);
+                                const qty = toNumber(it.quantity || it.qty, 1);
+                                const disc = toNumber(it.discountPercent || it.discount, 0);
+                                const amt = toNumber(it.lineTotal || it.amount || (price * qty * (1 - disc / 100)), 0);
+                                return (
+                                  <tr key={idx} className="border-t border-gray-50">
+                                    <td className="px-3 py-2 text-gray-800 font-medium">{it.productName || it.itemName || it.name || '—'}</td>
+                                    <td className="px-3 py-2 text-center text-gray-600">{qty}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600">{formatCurrency(price)}</td>
+                                    <td className="px-3 py-2 text-center text-gray-400">{disc ? `${disc}%` : '—'}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-gray-800">{formatCurrency(amt)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* Totals */}
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between text-gray-500">
+                            <span>Subtotal</span>
+                            <span>{formatCurrency(toNumber((sel || selOrder).subTotal || (sel || selOrder).orderTotal, 0))}</span>
+                          </div>
+                          {toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0) > 0 && (
+                            <div className="flex justify-between text-gray-500">
+                              <span>VAT ({toNumber((sel || selOrder).vatRate || (sel || selOrder).taxRate, 5)}%)</span>
+                              <span>{formatCurrency(toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0))}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-black text-base text-gray-800 pt-1 border-t border-gray-200">
+                            <span>Total</span>
+                            <span>{formatCurrency(toNumber((sel || selOrder).orderTotal, 0))}</span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      <div className="border-t border-gray-100 px-5 py-3 flex gap-2 bg-gray-50 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleCancelOrder}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                        >
+                          <X className="h-3.5 w-3.5" />Cancel Order
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenOrder}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#1E293B] rounded-lg hover:bg-gray-700 transition-colors"
+                        >
+                          <ShoppingCart className="h-3.5 w-3.5" />Open / Pick Order
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCheckout}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-amber-400 hover:bg-amber-500 rounded-lg transition-colors"
+                        >
+                          <CheckCircle className="h-3.5 w-3.5" />Checkout
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="bg-white border-t border-gray-200 px-5 py-3 flex justify-between shrink-0">
-                <Button variant="outline" onClick={() => setShowOrdersListDialog(false)}>Close</Button>
-                <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => { setShowOrdersListDialog(false); setShowSaveOrderDialog(true); }}>
-                  <Plus className="h-4 w-4 mr-2" />New Order
+
+              {/* Footer */}
+              <div className="border-t border-gray-100 px-5 py-3 flex justify-between items-center bg-white shrink-0">
+                <button type="button" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); }} className="text-sm font-medium text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">Close</button>
+                <Button className="bg-amber-400 hover:bg-amber-500 text-white text-xs font-semibold" onClick={() => { setShowOrdersListDialog(false); setOrdersListSelected(null); setOrdersListSelectedDetail(null); setShowSaveOrderDialog(true); }}>
+                  <Plus className="h-3.5 w-3.5 mr-1.5" />New Order
                 </Button>
               </div>
             </div>
@@ -8349,56 +8752,42 @@ export default function POSSales() {
 
             <div className="p-5 space-y-4 max-h-[55vh] overflow-y-auto">
               {deliveryModalTab === 'existing' ? (
-                <div>
+                <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Select Customer</label>
-                  {deliveryCustomerId ? (
-                    <div className="flex items-center gap-2 border border-[#327F74] rounded-xl px-3 py-2.5 bg-[#f0faf8]">
-                      <span className="flex-1 text-sm text-gray-800">
-                        {(() => { const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId)); return c ? `${c.name}${c.mobile ? ` · ${c.mobile}` : ''}` : ''; })()}
-                      </span>
-                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); }}
-                        className="text-gray-400 hover:text-red-500 text-xs font-semibold shrink-0">✕ Clear</button>
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={deliveryCustomerSearch}
-                        onChange={e => setDeliveryCustomerSearch(e.target.value)}
-                        placeholder="Search by name or mobile…"
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]"
-                        autoFocus
-                      />
-                      {deliveryCustomerSearch.trim() && (
-                        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
-                          {customerOptions
-                            .filter(c => c.id !== WALK_IN_CUSTOMER.id &&
-                              (`${c.name} ${c.mobile || ''}`).toLowerCase().includes(deliveryCustomerSearch.toLowerCase()))
-                            .slice(0, 50)
-                            .map(c => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                onClick={() => {
-                                  setDeliveryCustomerId(String(c.id));
-                                  setDeliveryCustomerSearch('');
-                                  // Pre-fill the delivery address from the customer
-                                  // master unless the cashier already typed one.
-                                  if (c.address) setDeliveryAddress(prev => prev?.trim() ? prev : c.address);
-                                }}
-                                className="w-full text-left px-3 py-2 text-sm hover:bg-[#FFF8E7] transition-colors border-b border-gray-100 last:border-0">
-                                <span className="font-medium text-gray-800">{c.name}</span>
-                                {c.mobile && <span className="ml-2 text-gray-400 text-xs">{c.mobile}</span>}
-                              </button>
-                            ))}
-                          {customerOptions.filter(c => c.id !== WALK_IN_CUSTOMER.id &&
-                            (`${c.name} ${c.mobile || ''}`).toLowerCase().includes(deliveryCustomerSearch.toLowerCase())).length === 0 && (
-                            <p className="px-3 py-3 text-sm text-gray-400 text-center">No customers found</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <select
+                    value={deliveryCustomerId}
+                    onChange={e => {
+                      const id = e.target.value;
+                      setDeliveryCustomerId(id);
+                      if (id) {
+                        const c = customerOptions.find(x => String(x.id) === String(id));
+                        if (c?.address) setDeliveryAddress(prev => prev?.trim() ? prev : c.address);
+                      }
+                    }}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]"
+                  >
+                    <option value="">— Select customer —</option>
+                    {customerOptions
+                      .filter(c => c.id !== WALK_IN_CUSTOMER.id)
+                      .map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.phone ? ` · ${c.phone}` : ''}
+                        </option>
+                      ))}
+                  </select>
+                  {deliveryCustomerId && (() => {
+                    const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
+                    if (!c) return null;
+                    return (
+                      <div className="border border-[#327F74]/30 rounded-xl px-3 py-2.5 bg-[#f0faf8]">
+                        <p className="text-sm font-semibold text-gray-800">{c.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {c.phone || ''}
+                          {c.tier ? <span className="ml-2 text-[#327F74] font-medium">· {c.tier}</span> : null}
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -8435,9 +8824,12 @@ export default function POSSales() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Charge (AED)</label>
-                  <input type="number" min="0" step="0.01" value={deliveryCharge} onChange={e => setDeliveryCharge(e.target.value)}
-                    placeholder="AED 0.00"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                  <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden focus-within:border-[#327F74]">
+                    <span className="px-3 py-2.5 text-sm text-gray-500 bg-gray-50 border-r border-gray-200 shrink-0">AED</span>
+                    <input type="number" min="0" step="0.01" value={deliveryCharge} onChange={e => setDeliveryCharge(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 px-3 py-2.5 text-sm focus:outline-none bg-white" />
+                  </div>
                   <p className="text-[10px] text-gray-400 mt-0.5">Optional — leave blank if free delivery</p>
                 </div>
                 <div>
@@ -8458,6 +8850,15 @@ export default function POSSales() {
               </div>
             </div>
 
+            {parseFloat(deliveryCharge) > 0 && (
+              <div className="px-5 py-3 bg-[#FFF8E7] border-t border-[#FDE6A9] flex items-center justify-between text-sm">
+                <span className="text-gray-600">
+                  Order: <span className="font-semibold text-gray-800">{formatCurrency(currentInvoice.total)}</span>
+                  {' '}+{' '}Delivery: <span className="font-semibold text-gray-800">{formatCurrency(parseFloat(deliveryCharge) || 0)}</span>
+                </span>
+                <span className="font-bold text-[#1E293B]">= {formatCurrency(currentInvoice.total + (parseFloat(deliveryCharge) || 0))}</span>
+              </div>
+            )}
             <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
               <button type="button" onClick={() => setShowDeliveryModal(false)}
                 className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors">
@@ -8488,20 +8889,29 @@ export default function POSSales() {
         const selTotal = sel ? sel.invoiceAmt + sel.deliveryCharge : 0;
         const selBalance = sel ? Math.max(0, selTotal - sel.paidAmt) : 0;
 
+        const mixCash = parseFloat(deliverySettleMixCash) || 0;
+        const mixCard = parseFloat(deliverySettleMixCard) || 0;
+        const mixTotal = mixCash + mixCard;
+        const mixBalanced = deliverySettlePayMode === 'Mix' ? Math.abs(mixTotal - selBalance) < 0.01 : true;
+
         const handleFinalize = async () => {
-          if (!sel || selBalance <= 0 || deliverySettleLoading) return;
+          if (!sel || selBalance <= 0 || deliverySettleLoading || !mixBalanced) return;
           setDeliverySettleLoading(true);
           try {
+            const cashAmt = deliverySettlePayMode === 'Cash' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCash : 0;
+            const cardAmt = deliverySettlePayMode === 'Card' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCard : 0;
             await settleDeliveryOrder(sel.id, {
               paymentMode: deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode,
               amountTendered: selBalance,
-              cashAmount: deliverySettlePayMode === 'Cash' ? selBalance : 0,
-              cardAmount: deliverySettlePayMode === 'Card' ? selBalance : 0,
+              cashAmount: cashAmt,
+              cardAmount: cardAmt,
               sessionId: currentSession?.id || null,
               terminalId: currentTerminal?.terminalId || null,
               branchId: currentTerminal?.branchId || null,
             });
             setDeliverySettleSelected(null);
+            setDeliverySettleMixCash('');
+            setDeliverySettleMixCard('');
             await loadDeliveryOrders();
           } catch (err) {
             console.error('Delivery settle failed', err);
@@ -8567,7 +8977,7 @@ export default function POSSales() {
                       const isSelected = sel?.id === o.id;
                       return (
                         <div key={o.id}>
-                          <button type="button" onClick={() => setDeliverySettleSelected(isSelected ? null : o)}
+                          <button type="button" onClick={() => { setDeliverySettleSelected(isSelected ? null : o); setDeliverySettlePayMode('Cash'); setDeliverySettleMixCash(''); setDeliverySettleMixCard(''); }}
                             className={`w-full grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-3 border-b border-gray-100 text-left transition-colors ${isSelected ? 'bg-[#FFF8E7] border-[#FDE6A9]' : 'hover:bg-gray-50'}`}>
                             <div>
                               <p className="text-sm font-semibold text-[#1E293B]">{o.customer}</p>
@@ -8609,15 +9019,48 @@ export default function POSSales() {
                                 <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-2">Payment Mode</p>
                                 <div className="flex gap-2">
                                   {['Cash', 'Card', 'Credit', 'Mix'].map(m => (
-                                    <button key={m} type="button" onClick={() => setDeliverySettlePayMode(m)}
+                                    <button key={m} type="button" onClick={() => { setDeliverySettlePayMode(m); setDeliverySettleMixCash(''); setDeliverySettleMixCard(''); }}
                                       className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${deliverySettlePayMode === m ? 'border-[#F5C742] bg-[#F5C742]/20 text-[#1E293B]' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
                                       {m}
                                     </button>
                                   ))}
                                 </div>
                               </div>
+
+                              {deliverySettlePayMode === 'Credit' && (
+                                <div className="mb-3 rounded-xl bg-purple-50 border border-purple-200 px-4 py-3">
+                                  <p className="text-sm font-semibold text-purple-800">Credit Settlement</p>
+                                  <p className="text-xs text-purple-600 mt-0.5">Balance of AED {selBalance.toFixed(2)} will be posted to {o.customer}'s credit account.</p>
+                                </div>
+                              )}
+
+                              {deliverySettlePayMode === 'Mix' && (
+                                <div className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                                  <div className="grid grid-cols-2 gap-3 mb-2">
+                                    <div>
+                                      <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Cash (AED)</label>
+                                      <input type="number" min="0" step="0.01" value={deliverySettleMixCash}
+                                        onChange={e => setDeliverySettleMixCash(e.target.value)}
+                                        placeholder="0.00"
+                                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74]" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Card (AED)</label>
+                                      <input type="number" min="0" step="0.01" value={deliverySettleMixCard}
+                                        onChange={e => setDeliverySettleMixCard(e.target.value)}
+                                        placeholder="0.00"
+                                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74]" />
+                                    </div>
+                                  </div>
+                                  <div className={`flex items-center justify-between text-xs font-semibold ${mixBalanced ? 'text-[#327F74]' : 'text-red-500'}`}>
+                                    <span>{mixBalanced ? '✓ Amount balanced' : 'Total must equal balance due'}</span>
+                                    <span>AED {mixTotal.toFixed(2)} / AED {selBalance.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              )}
+
                               <button type="button"
-                                disabled={selBalance === 0 || deliverySettleLoading}
+                                disabled={selBalance === 0 || deliverySettleLoading || !mixBalanced}
                                 onClick={handleFinalize}
                                 className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
                                 <CheckCircle className="h-4 w-4" />

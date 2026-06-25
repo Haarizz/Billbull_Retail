@@ -391,8 +391,65 @@ const normaliseReportMoney = (value) => {
     return stripNegativeZero(text);
 };
 
+// Two section shapes flow into this renderer (see project_sales_reports_pipeline):
+//
+//   A) Sales-report shape (the renderer's native format):
+//      { title, columns: [{ header, key, align }], rows: [{ key: value }],
+//        totals: { key: value }, totalsLabel }
+//
+//   B) Legacy POS X/Z-report shape (built in POSSales.buildX/ZReportViewModel):
+//      { title, cols: ['Header', …], rows: [['cell', …], …], footer: ['cell', …] }
+//
+// Feeding shape B straight into the renderer crashed it: `section.columns` was
+// undefined, so `columns.map(...)` threw "Cannot read properties of undefined
+// (reading 'map')" (the X/Z-Report / Export / Session-Close print crash).
+// normalizeReportSection converts B → A so a single renderer serves both, and
+// also hardens A against missing/legacy fields. The downstream code can then
+// assume `columns` is always an array of { header, key, align }.
+const normalizeReportSection = (section = {}) => {
+    // Already in native shape — only fill defensive gaps.
+    if (Array.isArray(section.columns)) {
+        return {
+            title: section.title || '',
+            columns: section.columns,
+            rows: Array.isArray(section.rows) ? section.rows : [],
+            totals: section.totals || null,
+            totalsLabel: section.totalsLabel || 'TOTAL',
+        };
+    }
+
+    // Legacy { cols, rows: [[…]], footer } shape — map positionally onto
+    // synthetic keys (c0, c1, …) so the keyed renderer can consume it.
+    const cols = Array.isArray(section.cols) ? section.cols : [];
+    const columns = cols.map((header, idx) => ({
+        header,
+        key: `c${idx}`,
+        // First column is a label; remaining columns are numeric/amount → right-align.
+        align: idx === 0 ? 'left' : 'right',
+    }));
+    const rows = (Array.isArray(section.rows) ? section.rows : []).map((row) => {
+        const cells = Array.isArray(row) ? row : [];
+        const obj = {};
+        columns.forEach((col, idx) => { obj[col.key] = cells[idx]; });
+        return obj;
+    });
+    let totals = null;
+    if (Array.isArray(section.footer) && section.footer.length) {
+        totals = {};
+        columns.forEach((col, idx) => { totals[col.key] = section.footer[idx]; });
+    }
+
+    return {
+        title: section.title || '',
+        columns,
+        rows,
+        totals,
+        totalsLabel: 'TOTAL',
+    };
+};
+
 const renderReportColumnsHtml = (columns, companyProfile) =>
-    columns
+    (Array.isArray(columns) ? columns : [])
         .map((col) => {
             const cls = col.align === 'right' ? 'num' : col.align === 'center' ? 'center' : '';
             return `<th class="${cls}">${renderTextWithCurrencySymbols(col.header, companyProfile)}</th>`;
@@ -408,8 +465,8 @@ const renderReportCellHtml = (col, value, companyProfile) => {
     return `<td class="${cls}">${display}</td>`;
 };
 
-const renderReportSectionHtml = (section, companyProfile) => {
-    const { title, columns, rows, totals, totalsLabel } = section;
+const renderReportSectionHtml = (rawSection, companyProfile) => {
+    const { title, columns, rows, totals, totalsLabel } = normalizeReportSection(rawSection);
     const head = `<thead><tr>${renderReportColumnsHtml(columns, companyProfile)}</tr></thead>`;
     const body = rows.length
         ? rows

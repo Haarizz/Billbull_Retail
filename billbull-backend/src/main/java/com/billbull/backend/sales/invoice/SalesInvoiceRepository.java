@@ -430,4 +430,15 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
                "ORDER BY s.createdAt DESC")
         List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);
+
+        /**
+         * Persist ONLY the archived ZATCA receipt QR for an invoice, as a single-column
+         * UPDATE. POS checkout posts status/payment/delivery side-effects in their own
+         * committed transactions before the QR is generated; re-saving a stale in-memory
+         * invoice entity here would merge those columns back to their pre-payment snapshot
+         * (the DRAFT/Paid=0/PENDING bug). A targeted update touches nothing else.
+         */
+        @org.springframework.data.jpa.repository.Modifying
+        @Query("UPDATE SalesInvoice s SET s.posReceiptQr = :qr WHERE s.id = :id")
+        void updatePosReceiptQr(@Param("id") Long id, @Param("qr") String qr);
 }

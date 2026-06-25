@@ -28,6 +28,7 @@ import com.billbull.backend.purchase.lpo.LpoRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 /**
  * Characterization tests for the ARCHFIX §4.1 SQL-side aggregation: the trial balance is now built
@@ -45,6 +46,7 @@ class FinancialReportServiceTest {
     @Mock private OpeningInvoiceRepository openingInvoiceRepository;
     @Mock private CustomerRepository customerRepository;
     @Mock private LpoRepository lpoRepository;
+    @Mock private BranchAccessService branchAccessService;
 
     private FinancialReportService service;
 
@@ -52,7 +54,7 @@ class FinancialReportServiceTest {
     void setUp() {
         service = new FinancialReportService(accountRepository, ledgerEntryRepository, expenseRepository,
                 salesInvoiceRepository, purchaseInvoiceRepository, openingInvoiceRepository,
-                customerRepository, lpoRepository);
+                customerRepository, lpoRepository, branchAccessService);
     }
 
     /** Minimal AccountAggregate projection stub. */

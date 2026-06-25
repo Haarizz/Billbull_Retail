@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, UserPlus, Zap, RotateCcw, DollarSign, Receipt, Hash, FileBarChart, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2 } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
@@ -202,10 +202,10 @@ const POSTouchScreen = React.memo((props) => {
                         ))}
                       </div>
                       <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
-                        {!item.isVoided && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
+                        {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
                           className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
                         <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
-                        {!item.isVoided && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                        {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                           className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
                       </div>
                       <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
@@ -719,14 +719,14 @@ const POSTouchScreen = React.memo((props) => {
                     {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
                   </div>
                   <div className="col-span-2 flex items-center justify-center gap-0.5">
-                    {!item.isVoided && <>
+                    {!item.isVoided && !item.batchControlled && <>
                       <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
                         className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                         <Minus className="h-2.5 w-2.5" />
                       </button>
                     </>}
                     <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
-                    {!item.isVoided && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                    {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                       className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                       <Plus className="h-2.5 w-2.5" />
                     </button>}
@@ -893,7 +893,13 @@ const POSTouchScreen = React.memo((props) => {
                           showFeedback('error', `Batch ${pin} is already in the cart`);
                           return;
                         }
-                        addToInvoice(product, 1, pin);
+                        // addToInvoice enforces one-batch-one-unit and returns
+                        // { ok, reason } — surface the reason when it refuses.
+                        const res = addToInvoice(product, 1, pin);
+                        if (res && res.ok === false) {
+                          showFeedback('error', res.reason || 'Could not add this item.');
+                          return;
+                        }
                         if (pin) setSearchQuery('');
                       }}
                       className="group bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
@@ -1006,7 +1012,7 @@ const POSTouchScreen = React.memo((props) => {
                   setClassicNumpadValue('');
                 };
                 return (
-                  <div className="bg-white border-b border-gray-200 p-2.5 shrink-0">
+                  <div key={classicNumpadMode} className="bg-white border-b border-gray-200 p-2.5 shrink-0">
                     {/* Header */}
                     <div className="flex items-center justify-between mb-2">
                       <span className={`text-[10px] font-black uppercase tracking-wide ${modeColor}`}>{modeLabel}</span>
@@ -1042,10 +1048,26 @@ const POSTouchScreen = React.memo((props) => {
                       </div>
                     )}
                     {/* Display */}
-                    <div className="bg-gray-50 border-2 border-[#F5C742]/40 rounded-xl px-3 py-2 text-right font-mono mb-2 min-h-[38px] flex items-center justify-end">
-                      {classicNumpadValue
-                        ? <span className="text-lg text-[#1E293B]">{classicNumpadValue}</span>
-                        : <span className="text-gray-300 text-sm font-sans">0</span>}
+                    <div className="mb-2">
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="0"
+                        value={classicNumpadValue}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^0-9.]/g, '');
+                          setClassicNumpadValue(val);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (selectedFocusItemId && classicNumpadValue) {
+                              handleNumpadEnter();
+                            }
+                          }
+                        }}
+                        className="w-full bg-gray-50 border-2 border-[#F5C742]/40 rounded-xl px-3 py-2 text-right font-mono text-lg text-[#1E293B] placeholder:text-gray-300 placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
+                      />
                     </div>
                     {/* Number pad */}
                     <div className="grid grid-cols-3 gap-1 mb-1">
@@ -1178,7 +1200,17 @@ const POSTouchScreen = React.memo((props) => {
                 <span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span>
               </div>
             )}
-            <button type="button" onClick={() => { setCheckoutPhase('payment'); setShowPaymentDialog(true); setTenderedAmount(currentInvoice.total > 0 ? currentInvoice.total.toFixed(2) : ''); setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender'); }}
+            <button type="button" onClick={() => {
+                // Pre-fill the tender to the amount actually due NOW (grand total minus
+                // any layaway deposit already collected) so the cashier isn't pushed to
+                // over-tender the full invoice when a deposit exists.
+                const balanceDue = activeLayawayId && activeLayawayDeposit > 0
+                  ? Math.max(0, currentInvoice.total - activeLayawayDeposit)
+                  : currentInvoice.total;
+                setCheckoutPhase('payment'); setShowPaymentDialog(true);
+                setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
+                setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
+              }}
               disabled={currentInvoice.items.length === 0}
               className="w-full h-12 rounded-xl bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-sm shadow-[#F5C742]/30">
               <CreditCard className="h-4 w-4" />

@@ -84,6 +84,45 @@ class PosSearchServiceTest {
     }
 
     @Test
+    void reservedBatchIsBlockedNotPinned() {
+        // One batch == one physical unit. A RESERVED unit (held for a layaway /
+        // another open sale) has no available quantity, so POS must refuse to add
+        // it rather than overselling stock the warehouse already shows as reserved.
+        when(productService.searchProductsByBarcode("OS-120626-L01-10672-3")).thenReturn(List.of());
+        BatchMaster batch = new BatchMaster();
+        batch.setBatchNumber("OS-120626-L01-10672-3");
+        batch.setProductId(42L);
+        batch.setStatus(com.billbull.backend.inventory.batch.BatchStatus.RESERVED);
+        when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("OS-120626-L01-10672-3"))
+                .thenReturn(Optional.of(batch));
+
+        PosResolveResponse res = service.resolve("OS-120626-L01-10672-3");
+
+        assertEquals(PosResolveResponse.Type.BLOCKED, res.getType());
+        org.junit.jupiter.api.Assertions.assertTrue(res.getMessage().toLowerCase().contains("reserved"));
+        assertNull(res.getProduct());
+        // Blocked before any product lookup — never resolves the product aggregate.
+        verify(productService, never()).getById(org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void consumedBatchIsBlockedNotPinned() {
+        when(productService.searchProductsByBarcode("OS-120626-L01-10672-9")).thenReturn(List.of());
+        BatchMaster batch = new BatchMaster();
+        batch.setBatchNumber("OS-120626-L01-10672-9");
+        batch.setProductId(42L);
+        batch.setStatus(com.billbull.backend.inventory.batch.BatchStatus.CONSUMED);
+        when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("OS-120626-L01-10672-9"))
+                .thenReturn(Optional.of(batch));
+
+        PosResolveResponse res = service.resolve("OS-120626-L01-10672-9");
+
+        assertEquals(PosResolveResponse.Type.BLOCKED, res.getType());
+        org.junit.jupiter.api.Assertions.assertTrue(res.getMessage().toLowerCase().contains("sold")
+                || res.getMessage().toLowerCase().contains("consumed"));
+    }
+
+    @Test
     void exactProductCodeResolvesWhenNotBarcodeOrBatch() {
         when(productService.searchProductsByBarcode("ITEM-1")).thenReturn(List.of());
         when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("ITEM-1")).thenReturn(Optional.empty());

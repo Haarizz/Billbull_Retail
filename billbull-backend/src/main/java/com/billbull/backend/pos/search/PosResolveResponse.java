@@ -13,10 +13,19 @@ public class PosResolveResponse {
     public enum Type {
         PRODUCT,
         CUSTOMER,
+        /**
+         * The query matched an exact batch/serial unit that cannot be sold (e.g.
+         * already RESERVED for a layaway, or CONSUMED/SOLD). The frontend must NOT
+         * add it to the cart — it shows {@link #message} to the cashier instead.
+         */
+        BLOCKED,
         NONE
     }
 
     private Type type = Type.NONE;
+
+    /** Human-readable reason, set when {@code type == BLOCKED}. */
+    private String message;
 
     /** Populated when {@code type == PRODUCT}. */
     private ProductAggregateResponse product;
@@ -86,8 +95,17 @@ public class PosResolveResponse {
         return res;
     }
 
+    public static PosResolveResponse blocked(String message) {
+        PosResolveResponse res = new PosResolveResponse();
+        res.type = Type.BLOCKED;
+        res.message = message;
+        return res;
+    }
+
     public Type getType() { return type; }
     public void setType(Type type) { this.type = type; }
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
     public ProductAggregateResponse getProduct() { return product; }
     public void setProduct(ProductAggregateResponse product) { this.product = product; }
     public String getPinnedBatchNumber() { return pinnedBatchNumber; }

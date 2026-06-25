@@ -179,6 +179,7 @@ class SalesInvoiceTotalsTest {
                 mock(com.billbull.backend.sales.customerledger.CustomerRepository.class),
                 mock(com.billbull.backend.sales.customerledger.OpeningInvoiceRepository.class),
                 mock(com.billbull.backend.inventory.warehouse.WarehouseRepository.class),
+                mock(com.billbull.backend.settings.branch.BranchRepository.class),
                 mock(com.billbull.backend.settings.branch.BranchAccessService.class),
                 mock(com.billbull.backend.purchase.stockmovement.StockMovementRepository.class),
                 mock(com.billbull.backend.inventory.warehouse.BinRepository.class),
