@@ -59,6 +59,17 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* Heart favourite animation */
+@keyframes heart-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  70%  { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+.heart-pop {
+  animation: heart-pop 250ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
 /* App-wide compact mode that mimics ~90% browser zoom on desktop. */
 :root {
   --bb-ui-scale: 0.9;

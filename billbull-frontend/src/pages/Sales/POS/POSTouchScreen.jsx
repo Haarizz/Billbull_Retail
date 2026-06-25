@@ -1,5 +1,5 @@
-import React from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, UserPlus, Zap, RotateCcw, DollarSign, Receipt, Hash, FileBarChart, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2 } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2, Heart } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
@@ -20,7 +20,7 @@ const POSTouchScreen = React.memo((props) => {
     // products
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
-    productCategories, selectedCategory, setSelectedCategory,
+    productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     // search / barcode
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
@@ -57,12 +57,29 @@ const POSTouchScreen = React.memo((props) => {
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
     setReturnInvoiceFound, setReturnSelectedItems, setReturnReasons, setShowAddShippingDialog,
-    setShowAddCustomerDialog, openDeliveryModal,
+    openDeliveryModal,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
     setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
     // utils
     formatCurrency, showFeedback, sessionId,
+    // favourites
+    favouriteProductIds = new Set(), toggleFavourite,
   } = props;
+
+  const [animatingHearts, setAnimatingHearts] = useState(new Set());
+  const handleHeartClick = useCallback((e, productId) => {
+    e.stopPropagation();
+    if (!toggleFavourite) return;
+    setAnimatingHearts(prev => new Set([...prev, productId]));
+    toggleFavourite(productId);
+    setTimeout(() => {
+      setAnimatingHearts(prev => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+    }, 300);
+  }, [toggleFavourite]);
   return (
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
       {/* Top Bar */}
@@ -453,7 +470,6 @@ const POSTouchScreen = React.memo((props) => {
                     { id: 'save-layaway', label: 'Save Layaway', icon: <Archive className="h-5 w-5" />,  color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',  action: () => setShowSaveLayaway(true) },
                     { id: 'save-order', label: 'Save as Order', icon: <FileText className="h-5 w-5" />,   color: 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action: () => setShowSaveOrderDialog(true) },
                     { id: 'add-shipping', label: 'Add Shipping', icon: <TrendingUp className="h-5 w-5" />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',   action: () => setShowAddShippingDialog(true) },
-                    { id: 'add-customer', label: 'Add Customer', icon: <UserPlus className="h-5 w-5" />, color: 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',          action: () => setShowAddCustomerDialog(true) },
                     { id: 'coupons',    label: 'Coupons',      icon: <Tag className="h-5 w-5" />,         color: 'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700',      action: () => setShowCouponsDialog(true) },
                     { id: 'promotions', label: 'Promotions',   icon: <Zap className="h-5 w-5" />,         color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800', action: () => setShowPromotionsDialog(true) },
                     { id: 'return',     label: 'Return',       icon: <RotateCcw className="h-5 w-5" />,   color: 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action: () => { setReturnStep(1); setReturnInvoiceQuery(''); setReturnInvoiceFound(null); setReturnSelectedItems({}); setReturnReasons({}); setShowReturn(true); } },
@@ -463,7 +479,6 @@ const POSTouchScreen = React.memo((props) => {
                     { id: 'orders',       label: 'Orders',       icon: <Package className="h-5 w-5" />,    color: 'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action: () => setShowOrdersListDialog() },
                     { id: 'credit-balance', label: 'Credit Balance', icon: <CreditCard className="h-5 w-5" />, color: 'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
                     { id: 'serial-batch', label: 'Serial/Batch Check', icon: <Hash className="h-5 w-5" />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
-                    { id: 'z-report',   label: 'Z-Report',     icon: <FileBarChart className="h-5 w-5" />, color: 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',        action: () => setCurrentView('z-report') },
                     { id: 'reprint',    label: 'Reprint',      icon: <Printer className="h-5 w-5" />,     color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',     action: () => setShowReprintModal(true) },
                     { id: 'lock-pos',   label: 'Lock POS',     icon: <Lock className="h-5 w-5" />,        color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
                     { id: 'close-session', label: 'Close Session', icon: <XCircle className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',         action: () => setShowCloseSessionDialog(true) },
@@ -816,21 +831,23 @@ const POSTouchScreen = React.memo((props) => {
 
           {/* Category sidebar */}
           {!hideCategoriesPanel && (
-            <div className="w-[120px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
-              <div className="p-2 space-y-1">
-                <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pt-1 pb-0.5">Categories</p>
-                {productCategories.map(cat => (
-                  <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
-                    className={`w-full flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl border-2 transition-all text-center ${selectedCategory === cat.id ? 'border-[#F5C742] bg-[#F5C742]/10' : 'border-transparent hover:bg-gray-50 hover:border-gray-200'}`}>
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${selectedCategory === cat.id ? 'bg-[#F5C742] text-white' : 'bg-gray-100 text-gray-500'}`}>
-                      <cat.icon className="h-4 w-4" />
-                    </div>
-                    <span className={`text-[9px] font-bold leading-tight ${selectedCategory === cat.id ? 'text-[#1E293B]' : 'text-gray-500'}`}>{cat.name}</span>
-                    <span className={`text-[8px] ${selectedCategory === cat.id ? 'text-[#b8920e]' : 'text-gray-300'}`}>
-                      {cat.count === null || cat.count === undefined ? '' : cat.count}
-                    </span>
-                  </button>
-                ))}
+            <div className="w-[168px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+              <div className="p-2.5">
+                <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pb-1.5">Categories</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {productCategories.map(cat => (
+                    <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
+                      className={`w-full min-h-[84px] flex flex-col items-center justify-center gap-1.5 px-1.5 py-2 rounded-2xl border transition-all text-center ${selectedCategory === cat.id ? 'border-[#F5C742] bg-[#F5C742]/10 shadow-[0_4px_12px_rgba(245,199,66,0.18)]' : 'border-gray-100 hover:bg-gray-50 hover:border-gray-200'}`}>
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${selectedCategory === cat.id ? 'bg-[#F5C742] text-white' : 'bg-gray-100 text-gray-500'}`}>
+                        <cat.icon className="h-4 w-4" />
+                      </div>
+                      <span className={`text-[9px] font-bold leading-tight line-clamp-2 ${selectedCategory === cat.id ? 'text-[#1E293B]' : 'text-gray-500'}`}>{cat.name}</span>
+                      <span className={`text-[8px] leading-none ${selectedCategory === cat.id ? 'text-[#b8920e]' : 'text-gray-300'}`}>
+                        {cat.count === null || cat.count === undefined ? '' : `${cat.count} items`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -867,34 +884,34 @@ const POSTouchScreen = React.memo((props) => {
                     {barcodeScanFeedback.message}
                   </div>
                 )}
-                {/* Category pill strip */}
-                <div className="flex gap-1.5 mt-2 overflow-x-auto pb-0.5">
-                  {productCategories.map(cat => (
+                {/* Horizontal category pill strip — All Items | Favourites | Recently Sold | Top Sold */}
+                <div className="flex gap-1.5 mt-2 pb-0.5">
+                  {(horizontalCategories || []).map(cat => (
                     <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
-                      className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${selectedCategory === cat.id ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/50 bg-white'}`}>
+                      className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${selectedCategory === cat.id ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/50 bg-white'}`}>
                       {cat.name}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Product grid — 5-per-row compact tiles */}
+              {/* Product grid — tightened slightly to balance the wider 2-column category panel */}
               <div className="flex-1 overflow-y-auto p-2.5">
                 {posProductsError && (
                   <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
                     {posProductsError}
                   </div>
                 )}
-                <div className="grid grid-cols-5 gap-2">
-                  {filteredProducts.map(product => (
+                <div className="grid grid-cols-5 gap-1.5">
+                  {filteredProducts.map(product => {
+                    const isFav = favouriteProductIds.has(product.id);
+                    return (
                     <button key={product.id} type="button" onClick={() => {
                         const pin = product._pinnedBatch || null;
                         if (pin && currentInvoiceRef.current?.items?.some(i => i.pinnedBatchNumber === pin)) {
                           showFeedback('error', `Batch ${pin} is already in the cart`);
                           return;
                         }
-                        // addToInvoice enforces one-batch-one-unit and returns
-                        // { ok, reason } — surface the reason when it refuses.
                         const res = addToInvoice(product, 1, pin);
                         if (res && res.ok === false) {
                           showFeedback('error', res.reason || 'Could not add this item.');
@@ -904,7 +921,7 @@ const POSTouchScreen = React.memo((props) => {
                       }}
                       className="group bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
                       {/* Image area */}
-                      <div className="aspect-square bg-gradient-to-br from-[#F7F7FA] to-gray-100 flex items-center justify-center relative border-b border-gray-100">
+                      <div className="aspect-[0.95/1] bg-gradient-to-br from-[#F7F7FA] to-gray-100 flex items-center justify-center relative border-b border-gray-100">
                         {product.image ? (
                           <img
                             src={product.image}
@@ -914,6 +931,23 @@ const POSTouchScreen = React.memo((props) => {
                           />
                         ) : (
                           <Package className="h-7 w-7 text-[#F5C742] opacity-40 group-hover:opacity-70 transition-opacity" />
+                        )}
+                        {/* Heart favourite button — bottom-right of image */}
+                        {toggleFavourite && (
+                          <button
+                            type="button"
+                            onClick={e => handleHeartClick(e, product.id)}
+                            className="absolute bottom-1 right-1 z-10 p-0.5 rounded-full bg-white/80 hover:bg-white transition-all"
+                            title={isFav ? 'Remove from favourites' : 'Add to favourites'}
+                          >
+                            <Heart
+                              className={`h-3.5 w-3.5 transition-colors duration-200${animatingHearts.has(product.id) ? ' heart-pop' : ''}`}
+                              style={{
+                                fill: isFav ? '#ef4444' : 'none',
+                                stroke: isFav ? '#ef4444' : '#9ca3af',
+                              }}
+                            />
+                          </button>
                         )}
                         {product.stock <= 5 && product.stock > 0 && (
                           <span className="absolute top-1 right-1 text-[8px] font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded">LOW</span>
@@ -934,13 +968,14 @@ const POSTouchScreen = React.memo((props) => {
                         </div>
                       </div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 {posProductsLoading && (
-                  <div className="grid grid-cols-5 gap-2">
+                  <div className="grid grid-cols-5 gap-1.5">
                     {Array.from({ length: 10 }).map((_, index) => (
-                      <div key={index} className="h-48 animate-pulse rounded-xl border border-gray-200 bg-white">
-                        <div className="h-32 rounded-t-xl bg-gray-100" />
+                      <div key={index} className="h-44 animate-pulse rounded-xl border border-gray-200 bg-white">
+                        <div className="h-28 rounded-t-xl bg-gray-100" />
                         <div className="space-y-2 p-2">
                           <div className="h-3 rounded bg-gray-100" />
                           <div className="h-2 w-2/3 rounded bg-gray-100" />
@@ -951,8 +986,27 @@ const POSTouchScreen = React.memo((props) => {
                 )}
                 {!posProductsLoading && filteredProducts.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-48 text-gray-300">
-                    <Package className="h-10 w-10 mb-2" />
-                    <p className="text-xs">No items found</p>
+                    {selectedCategory === 'favourites' ? (
+                      <>
+                        <Heart className="h-10 w-10 mb-2" />
+                        <p className="text-xs text-center px-4">No favourite products yet.<br/>Tap the heart icon to add products.</p>
+                      </>
+                    ) : selectedCategory === 'recently-sold' ? (
+                      <>
+                        <Clock className="h-10 w-10 mb-2" />
+                        <p className="text-xs">No recently sold products.</p>
+                      </>
+                    ) : selectedCategory === 'top-sold' ? (
+                      <>
+                        <TrendingUp className="h-10 w-10 mb-2" />
+                        <p className="text-xs">No sales data available.</p>
+                      </>
+                    ) : (
+                      <>
+                        <Package className="h-10 w-10 mb-2" />
+                        <p className="text-xs">No items found</p>
+                      </>
+                    )}
                   </div>
                 )}
                 {!posProductsLoading && posProductPage + 1 < posProductTotalPages && (
@@ -1119,7 +1173,6 @@ const POSTouchScreen = React.memo((props) => {
                     { id:'save-layaway', label:'Save Layaway',   icon:<Archive className="h-4 w-4"/>,    color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',   action:()=>setShowSaveLayaway(true) },
                     { id:'save-order',   label:'Save as Order',  icon:<FileText className="h-4 w-4"/>,   color:'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action:()=>setShowSaveOrderDialog(true) },
                     { id:'add-shipping', label:'Add Shipping',   icon:<Truck className="h-4 w-4"/>,      color:'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',       action:()=>setShowAddShippingDialog(true) },
-                    { id:'add-customer', label:'Add Customer',   icon:<UserPlus className="h-4 w-4"/>,   color:'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',            action:()=>setShowAddCustomerDialog(true) },
                     { id:'coupons',      label:'Coupons',        icon:<Tag className="h-4 w-4"/>,        color:'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700',        action:()=>setShowCouponsDialog(true) },
                     { id:'promotions',   label:'Promotions',     icon:<Zap className="h-4 w-4"/>,        color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800',   action:()=>setShowPromotionsDialog(true) },
                     { id:'last-receipt', label:'Last Receipt',   icon:<Receipt className="h-4 w-4"/>,    color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',       action:()=>setShowLastReceiptDialog(true) },
@@ -1127,7 +1180,6 @@ const POSTouchScreen = React.memo((props) => {
                     { id:'reprint',      label:'Reprint Inv.',  icon:<Printer className="h-4 w-4"/>,    color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',       action:()=>setShowReprintModal(true) },
                     { id:'cash-drop',    label:'Cash Drop',     icon:<DollarSign className="h-4 w-4"/>, color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowCashDropDialog(true) },
                     { id:'service',      label:'Service & Repair', icon:<Wrench className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/30 text-[#327F74]', action:()=>{ setShowServiceRepair(true); setServiceView('list'); } },
-                    { id:'z-report',     label:'Z-Report',      icon:<FileBarChart className="h-4 w-4"/>,color:'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700',          action:()=>setCurrentView('z-report') },
                     { id:'lock-pos',     label:'Lock POS',      icon:<Lock className="h-4 w-4"/>,       color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',  action:()=>setShowLockPOS(true) },
                     { id:'close-session',  label:'Close Session',   icon:<XCircle className="h-4 w-4"/>,      color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',           action:()=>setShowCloseSessionDialog(true) },
                     { id:'delivery',       label:'Delivery',        icon:<Truck className="h-4 w-4"/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>openDeliveryModal() },
