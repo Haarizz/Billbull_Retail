@@ -177,7 +177,12 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
+  currency = 'AED',
+  // QR/stamp/footer-image placement relative to the footer text: 'before' | 'after' (§4).
+  qrPlacement = 'before',
 }) => {
+  // Configured currency code/symbol shown before amounts (§6).
+  const cur = currency || 'AED';
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -243,50 +248,62 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (counter) html += `<div class="row"><span class="lbl">Counter:</span><span class="num">${esc(counter)}</span></div>`;
   html += D;
 
-  // ── Line items ──
+  // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
+  // row 2 so unit price is always visible (was: qty×name + total only). ──
   items.forEach(it => {
     const qty = it.quantity || 0;
-    const total = it.netAmount || it.lineTotal || (qty * (it.unitPrice || it.price || 0));
+    const unit = parseFloat(it.unitPrice || it.price || 0);
+    const total = it.netAmount || it.lineTotal || (qty * unit);
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
     const desc = it.description || '';
-    html += `<div class="row"><span class="val" style="text-align:left">${qty}x ${esc(it.itemName || it.productName || '')}</span><span class="num">${fmt(total)}</span></div>`;
-    if (desc) html += `<div style="font-size:9px;color:#555;padding-left:4px">${esc(desc)}</div>`;
-    if (serial) html += `<div style="font-size:9px;color:#555;padding-left:4px">S/N: ${esc(serial)}</div>`;
-    else if (batch) html += `<div style="font-size:9px;color:#555;padding-left:4px">Batch: ${esc(batch)}</div>`;
+    const sku = it.sku || it.itemCode || '';
+    // Row 1: quantity × product name (name wraps if long).
+    html += `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(it.itemName || it.productName || '')}</span></div>`;
+    // Row 2: unit price → line total, right-aligned and aligned with the total column.
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
+    if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
+    if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
+    else if (batch) html += `<div style="font-size:9px;color:#555;padding-left:8px">Batch: ${esc(batch)}</div>`;
   });
   html += D;
 
   // ── Totals (§3): Subtotal, Discount (if any), VAT (no hardcoded %), TOTAL ──
-  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">AED ${fmt(subTotal)}</span></div>`;
-  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">AED ${fmt(discountTotal)}</span></div>`;
-  if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">AED ${fmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">AED ${fmt(taxTotal)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
+  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
+  if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
   html += D;
-  html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">AED ${fmt(grandTotal)}</span></div>`;
+  html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
   html += D;
 
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
   if (showPaymentDetails) {
     if (payMode) html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="val">${esc(payMode)}</span></div>`;
-    if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">AED ${fmt(cashGiven)}</span></div>`;
-    if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">AED ${fmt(changeAmount)}</span></div>`;
+    if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
     if (payMode || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
   }
 
-  // ── QR / Stamp (§5): stamp uploaded → show stamp ONLY and hide QR; else real QR ──
+  // ── QR / Stamp / footer image (§4+§5) ──
+  // Build the block once; placement (before/after footer text) is applied later
+  // via qrPlacement. Stamp uploaded → show stamp ONLY and hide QR; else real QR.
+  let qrStampHtml = '';
   if (stampDataUrl) {
-    html += `<div class="c" style="margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain;display:block;margin:0 auto" alt="Stamp" /></div>`;
-    if (footerLogoDataUrl) html += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-    html += D;
+    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain;display:block;margin:0 auto" alt="Stamp" /></div>`;
+    if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
   } else if (showQRCode && zatcaQrDataUrl) {
-    html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
-    if (footerLogoDataUrl) html += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-    html += D;
+    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
+    if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
   } else if (footerLogoDataUrl) {
-    html += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-    html += D;
+    qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
   }
+  // 'before' (default): QR/stamp renders here, ahead of customer/credit/footer.
+  if (qrPlacement !== 'after') html += qrStampHtml;
 
   // ── Customer (§6): label fixed-width, name/email wrap gracefully within width ──
   if (showCustomerDetails && !isWalkIn) {
@@ -315,16 +332,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
       ? creditUpdatedBalance
       : (parseFloat(creditPreviousBalance) + parseFloat(invCredit));
     html += `<div class="s">CREDIT ACCOUNT</div>`;
-    html += `<div class="row"><span class="lbl">Previous Balance:</span><span class="num">AED ${fmt(creditPreviousBalance)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Invoice Credit:</span><span class="num">AED ${fmt(invCredit)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Amount Paid:</span><span class="num">AED ${fmt(amtPaid)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Updated Balance:</span><span class="num">AED ${fmt(updatedBal)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Previous Balance:</span><span class="num">${cur} ${fmt(creditPreviousBalance)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Invoice Credit:</span><span class="num">${cur} ${fmt(invCredit)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Amount Paid:</span><span class="num">${cur} ${fmt(amtPaid)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Updated Balance:</span><span class="num">${cur} ${fmt(updatedBal)}</span></div>`;
     html += D;
   }
 
   if (showFooterText && footer) {
     html += `<div class="c" style="font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
   }
+
+  // 'after': QR/stamp renders below the footer text.
+  if (qrPlacement === 'after') { html += D; html += qrStampHtml; }
 
   html += '</body></html>';
   return html;
@@ -511,14 +531,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += srow('Terminal ID:', 'POS-01');
   html += srow('Counter:', 'Counter-01');
   html += D;
+  // Item rows mirror the live receipt (§5): "Qty x Name" then "@ unit  =  total".
+  const itemRow = (qty, name, unit, total, note) => {
+    let h = `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(name)}</span></div>`;
+    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
+    if (note) h += `<div style="font-size:9px;padding-left:8px;color:#555">${esc(note)}</div>`;
+    return h;
+  };
   if (isReturn) {
-    html += srow('1x Samsung A55', '-1,380.00');
-    html += `<div style="font-size:9px;padding-left:4px;color:#555">VAT Reversal  -69.00</div>`;
+    html += itemRow(1, 'Samsung A55', '1,380.00', '-1,380.00', 'VAT Reversal  -69.00');
   } else {
-    html += srow('1x Margherita Pizza', '45.00');
-    html += `<div style="font-size:9px;padding-left:4px;color:#555">Extra cheese, No olives</div>`;
-    html += srow('2x Coke', '16.00');
-    html += srow('1x Caesar Salad', '28.00');
+    html += itemRow(1, 'Margherita Pizza', '45.00', '45.00', 'Extra cheese, No olives');
+    html += itemRow(2, 'Coke', '8.00', '16.00');
+    html += itemRow(1, 'Caesar Salad', '28.00', '28.00');
   }
   html += D;
   html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');

@@ -363,6 +363,22 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         List<SalesInvoice> findByBranchIdAndPosSessionIdIn(Long branchId, java.util.Collection<Long> sessionIds);
 
+        /**
+         * X/Z-Report loader: a session's invoices WITH their line items fetched in a
+         * single query. The report service streams items for tax/discount/qty sums and
+         * for the per-line void detail; without this fetch each invoice triggers a
+         * separate lazy SELECT for its items (N+1) — the report's main scalability risk.
+         */
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                + "WHERE i.posSessionId = :sessionId")
+        List<SalesInvoice> findByPosSessionIdWithItems(@Param("sessionId") Long sessionId);
+
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                + "WHERE i.branchId = :branchId AND i.posSessionId IN :sessionIds")
+        List<SalesInvoice> findByBranchIdAndPosSessionIdInWithItems(
+                @Param("branchId") Long branchId,
+                @Param("sessionIds") java.util.Collection<Long> sessionIds);
+
         /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         java.math.BigDecimal sumGlobalOutstandingBalance();
@@ -424,7 +440,7 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                 @Param("dateTo") LocalDate dateTo,
                 @Param("branchId") Long branchId);
 
-        @Query("SELECT s FROM SalesInvoice s WHERE s.salesChannel = 'POS' " +
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items WHERE s.salesChannel = 'POS' " +
                "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
                "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
