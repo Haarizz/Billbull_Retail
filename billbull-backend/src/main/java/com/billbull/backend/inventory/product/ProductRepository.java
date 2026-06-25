@@ -198,6 +198,33 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         List<Object[]> getProductReportDetails(
                         @org.springframework.data.repository.query.Param("productIds") List<Long> productIds);
 
+        /** Recently sold products — ordered by last_sold_at DESC, limited to 100. */
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                "WHERE p.isActive = true AND p.lastSoldAt IS NOT NULL " +
+                "ORDER BY p.lastSoldAt DESC")
+        Page<Product> findRecentlySold(Pageable pageable);
+
+        /** Top sold products — ordered by total_quantity_sold DESC. */
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                "WHERE p.isActive = true AND p.totalQuantitySold > 0 " +
+                "ORDER BY p.totalQuantitySold DESC")
+        Page<Product> findTopSold(Pageable pageable);
+
+        /** Favourite products for a user — by product ID list. */
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                "WHERE p.isActive = true AND p.id IN :productIds " +
+                "ORDER BY p.name ASC")
+        List<Product> findFavouriteProducts(
+                @org.springframework.data.repository.query.Param("productIds") List<Long> productIds);
+
+        /** Batch update sales stats for a single product. */
+        @org.springframework.data.jpa.repository.Modifying
+        @Query("UPDATE Product p SET p.lastSoldAt = :soldAt, p.totalQuantitySold = p.totalQuantitySold + :qty WHERE p.id = :id")
+        void updateSalesStats(
+                @org.springframework.data.repository.query.Param("id") Long id,
+                @org.springframework.data.repository.query.Param("qty") int qty,
+                @org.springframework.data.repository.query.Param("soldAt") java.time.LocalDateTime soldAt);
+
         /** Batch lookup by code list — used by POS price override check. */
         List<Product> findByCodeIn(List<String> codes);
 

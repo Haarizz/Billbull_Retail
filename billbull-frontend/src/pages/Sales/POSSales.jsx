@@ -12,7 +12,7 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { getProductsList } from '../../api/productsApi';
+import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getAllCustomers, createCustomer } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
@@ -110,7 +110,8 @@ import {
   BadgeDollarSign,
   LayoutDashboard,
   Phone,
-  Upload
+  Upload,
+  Heart,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -146,6 +147,8 @@ import { formatUserDisplayName } from '../../utils/displayName';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
+
+const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 
 export default function POSSales() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -286,6 +289,8 @@ export default function POSSales() {
 
   // Touch screen POS states
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [favouriteProductIds, setFavouriteProductIds] = useState(new Set());
+  const [favouriteTogglePending, setFavouriteTogglePending] = useState(new Set());
   const [currentInvoice, setCurrentInvoice] = useState({
     items: [],
     subtotal: 0,
@@ -616,6 +621,13 @@ export default function POSSales() {
       count: selectedCategory === String(department.id) ? posProductTotalElements : null
     }))
   ]), [posDepartments, posProductTotalElements, selectedCategory]);
+
+  const horizontalCategories = useMemo(() => ([
+    { id: 'all',           name: 'All Items',     icon: Package },
+    { id: 'favourites',    name: 'Favourites ❤️',  icon: Heart },
+    { id: 'recently-sold', name: 'Recently Sold',  icon: Clock },
+    { id: 'top-sold',      name: 'Top Sold',       icon: TrendingUp },
+  ]), []);
 
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
 
@@ -993,12 +1005,9 @@ export default function POSSales() {
   }, [currentView, consoleTab, currentTerminal]);
 
   const loadPosProducts = useCallback(async (page = 0, append = false, signal = undefined) => {
-    // While the user is searching/scanning, ignore the selected category so a
-    // product from any category can be found (e.g. browsing "Electronics" but
-    // searching for a "Groceries" item). The category filter only constrains
-    // plain browsing with no active search term.
     const hasSearch = Boolean(debouncedSearchQuery);
-    const departmentId = (hasSearch || selectedCategory === 'all') ? null : Number(selectedCategory);
+    const isSpecial = !hasSearch && SPECIAL_CATEGORIES.has(selectedCategory);
+
     if (append) {
       setPosProductsLoadingMore(true);
     } else {
@@ -1008,31 +1017,42 @@ export default function POSSales() {
     }
 
     try {
-      const data = await getProductsList(
-        page,
-        POS_PRODUCT_PAGE_SIZE,
-        debouncedSearchQuery,
-        signal,
-        null,
-        Number.isFinite(departmentId) ? departmentId : null,
-        null
-      );
+      let data;
+
+      if (isSpecial) {
+        if (selectedCategory === 'favourites') {
+          data = await getFavouriteProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
+        } else if (selectedCategory === 'recently-sold') {
+          data = await getRecentlySoldProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
+        } else if (selectedCategory === 'top-sold') {
+          data = await getTopSoldProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
+        }
+      } else {
+        const departmentId = (hasSearch || selectedCategory === 'all') ? null : Number(selectedCategory);
+        data = await getProductsList(
+          page,
+          POS_PRODUCT_PAGE_SIZE,
+          debouncedSearchQuery,
+          signal,
+          null,
+          Number.isFinite(departmentId) ? departmentId : null,
+          null
+        );
+      }
+
       const mapped = Array.isArray(data?.content)
         ? data.content.map(mapPosProductListItem)
         : [];
 
       mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
 
-      // If the text search returned nothing but the user is searching for something
-      // (likely a batch/serial/barcode), fall back to the resolve endpoint so the
-      // product still appears in the grid rather than showing "No items found".
-      if (mapped.length === 0 && !append && debouncedSearchQuery) {
+      // When searching, fall back to resolve endpoint if no products found
+      if (mapped.length === 0 && !append && debouncedSearchQuery && !isSpecial) {
         try {
           const resolved = await resolvePosEntry(debouncedSearchQuery);
-          if (signal?.aborted) return; // search changed while resolving
+          if (signal?.aborted) return;
           if (resolved?.type === 'PRODUCT' && resolved.product) {
             const resolvedProduct = mapPosProductAggregateItem(resolved.product, debouncedSearchQuery);
-            // Carry the pinned batch so the product card click can use it.
             if (resolved.pinnedBatchNumber) resolvedProduct._pinnedBatch = resolved.pinnedBatchNumber;
             cachePosProduct(productCacheRef.current, resolvedProduct);
             setPosProducts([resolvedProduct]);
@@ -1046,6 +1066,11 @@ export default function POSSales() {
         }
       }
 
+      // Load favourite IDs in background when switching to favourites tab
+      if (selectedCategory === 'favourites' && mapped.length > 0) {
+        setFavouriteProductIds(new Set(mapped.map(p => p.id)));
+      }
+
       setPosProducts(prev => append ? [...prev, ...mapped] : mapped);
       setPosProductPage(data?.page ?? page);
       setPosProductTotalPages(data?.totalPages ?? 0);
@@ -1053,7 +1078,27 @@ export default function POSSales() {
     } catch (error) {
       if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
       console.error('Failed to load POS products', error);
-      if (!append) setPosProducts([]);
+      if (!append) {
+        try {
+          const fallbackProducts = await getProducts();
+          if (signal?.aborted) return;
+          const fallbackMapped = Array.isArray(fallbackProducts)
+            ? fallbackProducts.map(product => mapPosProductAggregateItem(product))
+            : [];
+
+          fallbackMapped.forEach(product => cachePosProduct(productCacheRef.current, product));
+          setPosProducts(fallbackMapped);
+          setPosProductPage(0);
+          setPosProductTotalPages(1);
+          setPosProductTotalElements(fallbackMapped.length);
+          setPosProductsError('');
+          return;
+        } catch (fallbackError) {
+          if (fallbackError?.name === 'CanceledError' || fallbackError?.code === 'ERR_CANCELED') return;
+          console.error('Fallback POS product load failed', fallbackError);
+          setPosProducts([]);
+        }
+      }
       setPosProductsError('Products could not be loaded.');
     } finally {
       if (append) {
@@ -1062,6 +1107,7 @@ export default function POSSales() {
         setPosProductsLoading(false);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearchQuery, selectedCategory]);
 
   useEffect(() => {
@@ -1074,6 +1120,42 @@ export default function POSSales() {
     if (posProductsLoading || posProductsLoadingMore || posProductPage + 1 >= posProductTotalPages) return;
     loadPosProducts(posProductPage + 1, true);
   };
+
+  const toggleFavourite = useCallback(async (productId) => {
+    if (favouriteTogglePending.has(productId)) return;
+    setFavouriteTogglePending(prev => new Set([...prev, productId]));
+    const isFav = favouriteProductIds.has(productId);
+    // Optimistic update
+    setFavouriteProductIds(prev => {
+      const next = new Set(prev);
+      if (isFav) next.delete(productId); else next.add(productId);
+      return next;
+    });
+    try {
+      if (isFav) {
+        await removeProductFavourite(productId);
+        // Remove from grid if currently on favourites tab
+        if (selectedCategory === 'favourites') {
+          setPosProducts(prev => prev.filter(p => p.id !== productId));
+        }
+      } else {
+        await addProductFavourite(productId);
+      }
+    } catch {
+      // Revert optimistic update on failure
+      setFavouriteProductIds(prev => {
+        const next = new Set(prev);
+        if (isFav) next.add(productId); else next.delete(productId);
+        return next;
+      });
+    } finally {
+      setFavouriteTogglePending(prev => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+    }
+  }, [favouriteProductIds, favouriteTogglePending, selectedCategory]);
 
   const formatCurrency = (amount) => <CurrencyAmount amount={amount} />;
   const formatCurrencyStr = (amount) => `AED ${Number(amount || 0).toFixed(2)}`;
@@ -3096,26 +3178,6 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
-        {/* Sales Analytics Tile */}
-        <Card
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('sales-analytics')}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
-              <BarChart2 className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Sales Analytics</CardTitle>
-            <CardDescription>
-              Customers &amp; Sales performance dashboard
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              Pipeline, receivables, customer trends &amp; returns
-            </p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Quick Stats */}
@@ -4710,7 +4772,7 @@ export default function POSSales() {
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
-    productCategories, selectedCategory, setSelectedCategory,
+    productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
@@ -4754,6 +4816,7 @@ export default function POSSales() {
     setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
     openDeliveryModal,
     formatCurrency, showFeedback,
+    favouriteProductIds, toggleFavourite,
   };
 
   return (
@@ -8681,7 +8744,6 @@ export default function POSSales() {
                       { id: 'save-layaway', label: 'Save Layaway' },
                       { id: 'save-order', label: 'Save ' },
                       { id: 'add-shipping', label: 'Add Shipping' },
-                      { id: 'add-customer', label: 'Add Customer' },
                       { id: 'coupons', label: 'Coupons' },
                       { id: 'promotions', label: 'Promotions' },
                       { id: 'return', label: 'Return' },
@@ -8689,7 +8751,6 @@ export default function POSSales() {
                       { id: 'cash-drop', label: 'Cash Drawer' },
                       { id: 'last-receipt', label: 'Last Receipt' },
                       { id: 'credit-balance', label: 'Credit Balance' },
-                      { id: 'z-report', label: 'Z-Report' },
                       { id: 'serial-batch', label: 'Serial/Batch Check' },
                       { id: 'reprint', label: 'Reprint' },
                       { id: 'lock-pos', label: 'Lock POS' },

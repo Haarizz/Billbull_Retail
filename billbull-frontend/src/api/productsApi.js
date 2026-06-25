@@ -112,3 +112,35 @@ export const getProductImportProgress = async (jobId) => {
   const res = await api.get(`/api/products/import/excel/progress/${encodeURIComponent(jobId)}`);
   return res.data;
 };
+
+// --------------------
+// FAVOURITES
+// --------------------
+export const addProductFavourite = async (productId) => {
+  await api.post(`/api/products/${productId}/favourite`);
+};
+
+export const removeProductFavourite = async (productId) => {
+  await api.delete(`/api/products/${productId}/favourite`);
+};
+
+export const getFavouriteProducts = async (page = 0, size = 100, signal = undefined) => {
+  const res = await api.get(`/api/products/favourites?page=${page}&size=${size}`, { signal });
+  return res.data;
+};
+
+// --------------------
+// RECENTLY SOLD
+// --------------------
+export const getRecentlySoldProducts = async (page = 0, size = 100, signal = undefined) => {
+  const res = await api.get(`/api/products/recently-sold?page=${page}&size=${size}`, { signal });
+  return res.data;
+};
+
+// --------------------
+// TOP SOLD
+// --------------------
+export const getTopSoldProducts = async (page = 0, size = 100, signal = undefined) => {
+  const res = await api.get(`/api/products/top-sold?page=${page}&size=${size}`, { signal });
+  return res.data;
+};

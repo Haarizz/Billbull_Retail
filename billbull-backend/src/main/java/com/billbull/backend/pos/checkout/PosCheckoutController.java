@@ -3,6 +3,7 @@ package com.billbull.backend.pos.checkout;
 import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.product.ProductService;
 import com.billbull.backend.inventory.serial.SerialMaster;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
@@ -55,6 +56,7 @@ public class PosCheckoutController {
     private final ProductRepository productRepository;
     private final ProductPricingRepository pricingRepository;
     private final RolePermissionService permissionService;
+    private final ProductService productService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -62,7 +64,8 @@ public class PosCheckoutController {
                                   SerialMasterRepository serialMasterRepository,
                                   ProductRepository productRepository,
                                   ProductPricingRepository pricingRepository,
-                                  RolePermissionService permissionService) {
+                                  RolePermissionService permissionService,
+                                  ProductService productService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -73,6 +76,7 @@ public class PosCheckoutController {
         this.productRepository = productRepository;
         this.pricingRepository = pricingRepository;
         this.permissionService = permissionService;
+        this.productService = productService;
     }
 
     @PostMapping
@@ -204,6 +208,23 @@ public class PosCheckoutController {
             invoiceService.archiveReceiptQr(saved.getId(), qr);
         } catch (Exception e) {
             // Non-blocking — QR archival failure must not roll back the checkout.
+        }
+
+        // Update sales stats (last_sold_at + total_quantity_sold) for each non-voided line
+        if (request.getItems() != null && !request.getItems().isEmpty()) {
+            try {
+                java.util.Map<String, Integer> codeToQty = new java.util.LinkedHashMap<>();
+                for (PosCheckoutRequest.PosCheckoutItem item : request.getItems()) {
+                    if (Boolean.TRUE.equals(item.getVoided())) continue;
+                    String code = item.getItemCode();
+                    if (code == null || code.isBlank()) continue;
+                    int qty = item.getQuantity() != null ? item.getQuantity() : 1;
+                    codeToQty.merge(code, qty, Integer::sum);
+                }
+                productService.recordSaleStats(codeToQty);
+            } catch (Exception ignored) {
+                // Non-blocking — stats update must never roll back the checkout
+            }
         }
 
         // Audit: completed checkout + any voided lines

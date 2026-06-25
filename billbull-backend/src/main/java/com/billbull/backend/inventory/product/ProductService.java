@@ -28,6 +28,7 @@ import com.billbull.backend.security.BranchContextHolder;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
+import com.billbull.backend.user.UserRepository;
 
 @Service
 @Transactional
@@ -60,6 +61,8 @@ public class ProductService {
     private final BranchRepository branchRepo;
     private final AuditLogService auditLogService;
     private final ModulePermissionService modulePermissionService;
+    private final UserFavouriteProductRepository favouriteRepo;
+    private final UserRepository userRepository;
 
     public ProductService(
             ProductRepository productRepo,
@@ -82,7 +85,9 @@ public class ProductService {
             StockMovementRepository stockMovementRepo,
             BranchRepository branchRepo,
             AuditLogService auditLogService,
-            ModulePermissionService modulePermissionService) {
+            ModulePermissionService modulePermissionService,
+            UserFavouriteProductRepository favouriteRepo,
+            UserRepository userRepository) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -104,6 +109,8 @@ public class ProductService {
         this.branchRepo = branchRepo;
         this.auditLogService = auditLogService;
         this.modulePermissionService = modulePermissionService;
+        this.favouriteRepo = favouriteRepo;
+        this.userRepository = userRepository;
     }
 
     private void auditProduct(String action, Product product, ProductAggregateRequest req) {
@@ -951,7 +958,234 @@ public class ProductService {
     }
 
     // ==================================================
-    // 7. RESPONSE BUILDER (UPDATED to fetch Barcodes)
+    // 7. FAVOURITES / RECENTLY-SOLD / TOP-SOLD
+    // ==================================================
+
+    @Transactional
+    public void recordSaleStats(java.util.Map<String, Integer> codeToQty) {
+        if (codeToQty == null || codeToQty.isEmpty()) return;
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        List<Product> products = productRepo.findByCodeIn(new ArrayList<>(codeToQty.keySet()));
+        for (Product p : products) {
+            int qty = codeToQty.getOrDefault(p.getCode(), 0);
+            if (qty > 0) {
+                productRepo.updateSalesStats(p.getId(), qty, now);
+            }
+        }
+    }
+
+    private Long resolveCurrentUserId(String username) {
+        return userRepository.findByUsername(username)
+                .map(u -> u.getId())
+                .orElseThrow(() -> new RuntimeException("User not found: " + username));
+    }
+
+    @Transactional
+    public void addFavourite(Long productId, String username) {
+        Long userId = resolveCurrentUserId(username);
+        if (!productRepo.existsById(productId)) {
+            throw new RuntimeException("Product not found: " + productId);
+        }
+        if (!favouriteRepo.existsByUserIdAndProductId(userId, productId)) {
+            UserFavouriteProduct fav = new UserFavouriteProduct();
+            fav.setUserId(userId);
+            fav.setProductId(productId);
+            favouriteRepo.save(fav);
+        }
+    }
+
+    @Transactional
+    public void removeFavourite(Long productId, String username) {
+        Long userId = resolveCurrentUserId(username);
+        favouriteRepo.deleteByUserIdAndProductId(userId, productId);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> getFavouriteProducts(String username, int page, int size) {
+        Long userId = resolveCurrentUserId(username);
+        List<Long> productIds = favouriteRepo.findProductIdsByUserId(userId);
+        if (productIds.isEmpty()) {
+            return emptyPageResponse(page, size);
+        }
+        List<Product> products = productRepo.findFavouriteProducts(productIds);
+        int total = products.size();
+        int fromIdx = Math.min(page * size, total);
+        int toIdx = Math.min(fromIdx + size, total);
+        List<Product> pageProducts = products.subList(fromIdx, toIdx);
+        List<java.util.Map<String, Object>> content = fetchProductContent(pageProducts);
+        return pageResponse(content, total, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> getRecentlySold(int page, int size) {
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        org.springframework.data.domain.Page<Product> productPage = productRepo.findRecentlySold(pageable);
+        List<java.util.Map<String, Object>> content = fetchProductContent(productPage.getContent());
+        return pageResponse(content, (int) productPage.getTotalElements(), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> getTopSold(int page, int size) {
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        org.springframework.data.domain.Page<Product> productPage = productRepo.findTopSold(pageable);
+        List<java.util.Map<String, Object>> content = fetchProductContent(productPage.getContent());
+        return pageResponse(content, (int) productPage.getTotalElements(), page, size);
+    }
+
+    private java.util.Map<String, Object> emptyPageResponse(int page, int size) {
+        java.util.Map<String, Object> res = new java.util.HashMap<>();
+        res.put("content", java.util.Collections.emptyList());
+        res.put("totalElements", 0);
+        res.put("totalPages", 0);
+        res.put("page", page);
+        res.put("size", size);
+        return res;
+    }
+
+    private java.util.Map<String, Object> pageResponse(List<java.util.Map<String, Object>> content, int total, int page, int size) {
+        java.util.Map<String, Object> res = new java.util.HashMap<>();
+        res.put("content", content);
+        res.put("totalElements", total);
+        res.put("totalPages", size > 0 ? (int) Math.ceil((double) total / size) : 0);
+        res.put("page", page);
+        res.put("size", size);
+        return res;
+    }
+
+    private List<java.util.Map<String, Object>> fetchProductContent(List<Product> products) {
+        if (products.isEmpty()) return new ArrayList<>();
+        List<Long> ids = products.stream().map(Product::getId).collect(Collectors.toList());
+
+        java.util.Map<Long, ProductPricing> pricingMap = pricingRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.toMap(pr -> pr.getProduct().getId(), pr -> pr));
+        Long activeBranchId = activeBranchId();
+        java.util.Map<Long, ProductBranchPricing> activeBranchPricingMap = activeBranchId != null
+                ? branchPricingRepo.findByProductIdIn(ids).stream()
+                        .filter(row -> row.getBranch() != null && activeBranchId.equals(row.getBranch().getId()))
+                        .collect(Collectors.toMap(row -> row.getProduct().getId(), row -> row, (a, b) -> a))
+                : java.util.Collections.emptyMap();
+
+        java.util.Map<Long, String> imageMap = mediaRepo.findByProductIdInAndIsPrimaryTrue(ids)
+                .stream().collect(Collectors.toMap(m -> m.getProduct().getId(), m -> m.getImageUrl(), (a, b) -> a));
+
+        java.util.Map<Long, ProductTax> taxMap = taxRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.toMap(t -> t.getProduct().getId(), t -> t));
+
+        java.util.Map<Long, ProductInventoryPolicy> inventoryMap = inventoryRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.toMap(inv -> inv.getProduct().getId(), inv -> inv));
+
+        java.util.Map<Long, List<ProductBarcode>> barcodeMap = barcodeRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.groupingBy(b -> b.getProduct().getId()));
+
+        java.util.Map<Long, List<ProductPacking>> packingMap = packingRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
+
+        java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
+        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(ids);
+        for (Object[] row : stockRows) {
+            stockMap.put((Long) row[0], ((Number) row[1]).intValue());
+        }
+
+        return products.stream().map(p -> {
+            java.util.Map<String, Object> item = new java.util.HashMap<>();
+            item.put("id", p.getId());
+            item.put("code", p.getCode());
+            item.put("name", p.getName());
+            item.put("sku", p.getSku());
+            item.put("description", p.getShortDesc());
+            item.put("shortDesc", p.getShortDesc());
+            item.put("detailedDesc", p.getDetailedDesc());
+            item.put("status", p.getStatus());
+            item.put("localName", p.getLocalName());
+            item.put("brandId", p.getBrand() != null ? p.getBrand().getId() : null);
+            item.put("brandName", p.getBrand() != null ? p.getBrand().getName() : null);
+            item.put("departmentId", p.getDepartment() != null ? p.getDepartment().getId() : null);
+            item.put("departmentName", p.getDepartment() != null ? p.getDepartment().getName() : null);
+
+            ProductPricing basePricing = pricingMap.get(p.getId());
+            ProductBranchPricing activeBranchPrice = activeBranchPricingMap.get(p.getId());
+            ProductPricing pr = cloneEffectivePricing(basePricing, activeBranchPrice);
+            item.put("cost", pr != null ? pr.getCost() : null);
+            item.put("retailPrice", pr != null ? pr.getRetailPrice() : null);
+            item.put("minPrice", pr != null ? pr.getMinPrice() : null);
+            item.put("maxPrice", pr != null ? pr.getMaxPrice() : null);
+            item.put("wholesalePrice", pr != null ? pr.getWholesalePrice() : null);
+            item.put("onlinePrice", pr != null ? pr.getOnlinePrice() : null);
+            item.put("branchStatus", activeBranchPrice != null ? activeBranchPrice.getStatus() : p.getStatus());
+
+            ProductTax tx = taxMap.get(p.getId());
+            item.put("salesTax", tx != null ? tx.getSalesTax() : null);
+            item.put("purchaseTax", tx != null ? tx.getPurchaseTax() : null);
+
+            ProductInventoryPolicy inv = inventoryMap.get(p.getId());
+            item.put("unitName", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getName() : null);
+            item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
+
+            item.put("maxDiscount", p.getMaxDiscount());
+            item.put("isSerial", p.isSerial());
+            item.put("isBatch", p.isBatch());
+            item.put("expiryEnabled", p.isExpiryEnabled());
+            item.put("fefoEnabled", p.isFefoEnabled());
+            item.put("minExpiryDaysForSale", p.getMinExpiryDaysForSale());
+            item.put("productType", p.getProductType() != null ? p.getProductType().name() : null);
+
+            String imgUrl = imageMap.get(p.getId());
+            item.put("image", imgUrl);
+
+            List<ProductBarcode> bcs = barcodeMap.getOrDefault(p.getId(), java.util.Collections.emptyList());
+            item.put("barcode", bcs.isEmpty() ? null : bcs.get(0).getBarcode());
+
+            item.put("packings", bcs.stream().map(b -> {
+                java.util.Map<String, Object> bc = new java.util.HashMap<>();
+                bc.put("barcode", b.getBarcode());
+                ProductPacking bPacking = b.getPacking();
+                if (bPacking != null) {
+                    bc.put("level", bPacking.getLevel());
+                    if (bPacking.getUnit() != null) {
+                        java.util.Map<String, Object> unitMap = new java.util.HashMap<>();
+                        unitMap.put("id", bPacking.getUnit().getId());
+                        unitMap.put("name", bPacking.getUnit().getName());
+                        bc.put("unit", unitMap);
+                    }
+                }
+                return bc;
+            }).collect(Collectors.toList()));
+
+            List<ProductPacking> pkgs = packingMap.getOrDefault(p.getId(), java.util.Collections.emptyList());
+            List<String> availableUnits = new java.util.ArrayList<>();
+            java.util.Map<String, java.math.BigDecimal> unitConversions = new java.util.HashMap<>();
+            java.util.Map<String, java.math.BigDecimal> unitPrices = new java.util.HashMap<>();
+            java.util.Map<String, java.math.BigDecimal> unitCosts = new java.util.HashMap<>();
+
+            for (ProductPacking pkg : pkgs) {
+                if (pkg.getUnit() != null) {
+                    String uName = pkg.getUnit().getName();
+                    availableUnits.add(uName);
+                    unitConversions.put(uName, pkg.getConversion());
+                    ProductBranchPricing activeBranchPriceForPacking = activeBranchPricingMap.get(p.getId());
+                    if (activeBranchPriceForPacking != null && activeBranchPriceForPacking.getRetailPrice() != null && pkg.getConversion() != null) {
+                        unitPrices.put(uName, activeBranchPriceForPacking.getRetailPrice().multiply(pkg.getConversion()));
+                    } else if (pkg.getPrice() != null) {
+                        unitPrices.put(uName, pkg.getPrice());
+                    }
+                    if (pkg.getCost() != null) {
+                        unitCosts.put(uName, pkg.getCost());
+                    }
+                }
+            }
+
+            item.put("availableUnits", availableUnits.isEmpty() ? java.util.List.of("PCS") : availableUnits);
+            item.put("unitConversions", unitConversions);
+            item.put("unitPrices", unitPrices);
+            item.put("unitCosts", unitCosts);
+            item.put("stock", stockMap.getOrDefault(p.getId(), 0));
+
+            return item;
+        }).collect(Collectors.toList());
+    }
+
+    // ==================================================
+    // 8. RESPONSE BUILDER (UPDATED to fetch Barcodes)
     // ==================================================
     private ProductAggregateResponse buildResponse(Product product) {
         ProductAggregateResponse res = new ProductAggregateResponse();

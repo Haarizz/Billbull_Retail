@@ -5,6 +5,8 @@ import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -145,6 +147,56 @@ public class ProductController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> getByBarcode(@RequestParam String barcode) {
         return ResponseEntity.ok(service.searchProductsByBarcode(barcode));
+    }
+
+    // -------------------------------------------------
+    // FAVOURITES
+    // -------------------------------------------------
+    @PostMapping("/{productId}/favourite")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> addFavourite(@PathVariable Long productId) {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        service.addFavourite(productId, username);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/{productId}/favourite")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> removeFavourite(@PathVariable Long productId) {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        service.removeFavourite(productId, username);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/favourites")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.Map<String, Object>> getFavourites(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ResponseEntity.ok(service.getFavouriteProducts(username, page, size));
+    }
+
+    // -------------------------------------------------
+    // RECENTLY SOLD
+    // -------------------------------------------------
+    @GetMapping("/recently-sold")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.Map<String, Object>> getRecentlySold(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        return ResponseEntity.ok(service.getRecentlySold(page, size));
+    }
+
+    // -------------------------------------------------
+    // TOP SOLD
+    // -------------------------------------------------
+    @GetMapping("/top-sold")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.Map<String, Object>> getTopSold(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        return ResponseEntity.ok(service.getTopSold(page, size));
     }
 
     // -------------------------------------------------
