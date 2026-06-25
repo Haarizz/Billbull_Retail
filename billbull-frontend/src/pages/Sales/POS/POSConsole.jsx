@@ -1,11 +1,11 @@
-﻿import React from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock } from 'lucide-react';
+import React, { useState } from 'react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu } from 'lucide-react';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
-import { A4LivePreview, ThermalMock, ImageUploadBox, PaperSizePicker } from './POSPrintPreview';
-import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html } from './posPrintUtils';
+import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
+import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
 
 const POSConsole = React.memo((props) => {
@@ -20,8 +20,9 @@ const POSConsole = React.memo((props) => {
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature, 
     tplInvoiceHeader, tplInvoiceFooter, tplInvoicePaper, 
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature, 
-    tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, 
-    tplInvoiceColItemCode, tplInvoiceColItemImage, tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt, 
+    tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
+    tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
+    tplInvoiceColItemCode, tplInvoiceColItemImage, tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
     tplReturnHeader, tplReturnFooter, tplReturnPaper, 
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails, 
     tplReturnColItemCode, tplReturnColBatchNo, tplReturnColDiscount, tplReturnColVatPct, tplReturnColVatAmt, 
@@ -32,7 +33,7 @@ const POSConsole = React.memo((props) => {
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton, 
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp, 
-    getAllPosTerminals, renamePosTerminal, setTerminalStatus, savePosSettings, templateSubTab, setTemplateSubTab, 
+    getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, 
@@ -170,7 +171,7 @@ const POSConsole = React.memo((props) => {
                       invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                       invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                       invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
-                      invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,
+                      invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
                       invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
                       invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
                       returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
@@ -588,378 +589,606 @@ const POSConsole = React.memo((props) => {
           )}
 
           {/* ══ PRINT TEMPLATES ══ */}
-          {consoleTab==='templates' && (
-            <div className="space-y-5">
+          {consoleTab==='templates' && (() => {
+            // Derive current template config based on active sub-tab
+            const tplCfg = {
+              receipt: {
+                paper: tplReceiptPaper, setPaper: setTplReceiptPaper,
+                header: tplReceiptHeader, setHeader: setTplReceiptHeader,
+                footer: tplReceiptFooter, setFooter: setTplReceiptFooter,
+                showLogo: tplReceiptShowLogo, setShowLogo: setTplReceiptShowLogo,
+                showTrn: tplReceiptShowTrn, setShowTrn: setTplReceiptShowTrn,
+                showStamp: tplReceiptShowStamp, setShowStamp: setTplReceiptShowStamp,
+                showBarcode: tplReceiptShowBarcode, setShowBarcode: setTplReceiptShowBarcode,
+                showCompanyDetails: tplReceiptShowCompanyDetails, setShowCompanyDetails: setTplReceiptShowCompanyDetails,
+                showCustomerDetails: tplReceiptShowCustomerDetails, setShowCustomerDetails: setTplReceiptShowCustomerDetails,
+                showServiceCharge: tplReceiptShowGrandTotalBanner, setShowServiceCharge: setTplReceiptShowGrandTotalBanner,
+                showVatSummary: tplReceiptColVatAmt, setShowVatSummary: setTplReceiptColVatAmt,
+                showPaymentDetails: tplReceiptColDiscount, setShowPaymentDetails: setTplReceiptColDiscount,
+                showQRCode: tplReceiptShowQRCode, setShowQRCode: setTplReceiptShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
+                showLoyaltyPoints: tplReceiptShowNotes, setShowLoyaltyPoints: setTplReceiptShowNotes,
+                showCreditBalance: tplReceiptShowBankDetails, setShowCreditBalance: setTplReceiptShowBankDetails,
+                showFooterText: tplReceiptShowTerms, setShowFooterText: setTplReceiptShowTerms,
+                colItemCode: tplReceiptColItemCode, setColItemCode: setTplReceiptColItemCode,
+                colItemImage: tplReceiptColItemImage, setColItemImage: setTplReceiptColItemImage,
+                colBarcode: tplReceiptColBatchNo, setColBarcode: setTplReceiptColBatchNo,
+                colBatchNo: tplReceiptColBatchNo, setColBatchNo: setTplReceiptColBatchNo,
+                colDiscount: tplReceiptColDiscount, setColDiscount: setTplReceiptColDiscount,
+                colVatPct: tplReceiptColVatPct, setColVatPct: setTplReceiptColVatPct,
+                colVatAmt: tplReceiptColVatAmt, setColVatAmt: setTplReceiptColVatAmt,
+              },
+              invoice: {
+                paper: tplInvoicePaper, setPaper: setTplInvoicePaper,
+                header: tplInvoiceHeader, setHeader: setTplInvoiceHeader,
+                footer: tplInvoiceFooter, setFooter: setTplInvoiceFooter,
+                showLogo: tplInvoiceShowLogo, setShowLogo: setTplInvoiceShowLogo,
+                showTrn: tplInvoiceShowTrn, setShowTrn: setTplInvoiceShowTrn,
+                showStamp: tplInvoiceShowStamp, setShowStamp: setTplInvoiceShowStamp,
+                showBarcode: tplInvoiceColBarcode, setShowBarcode: setTplInvoiceColBarcode,
+                showCompanyDetails: tplInvoiceShowCompanyDetails, setShowCompanyDetails: setTplInvoiceShowCompanyDetails,
+                showCustomerDetails: tplInvoiceShowCustomerDetails, setShowCustomerDetails: setTplInvoiceShowCustomerDetails,
+                showServiceCharge: tplInvoiceShowGrandTotalBanner, setShowServiceCharge: setTplInvoiceShowGrandTotalBanner,
+                showVatSummary: tplInvoiceColVatAmt, setShowVatSummary: setTplInvoiceColVatAmt,
+                showPaymentDetails: tplInvoiceColDiscount, setShowPaymentDetails: setTplInvoiceColDiscount,
+                showQRCode: tplInvoiceShowQRCode, setShowQRCode: setTplInvoiceShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
+                showLoyaltyPoints: tplInvoiceShowNotes, setShowLoyaltyPoints: setTplInvoiceShowNotes,
+                showCreditBalance: tplInvoiceShowBankDetails, setShowCreditBalance: setTplInvoiceShowBankDetails,
+                showFooterText: tplInvoiceShowTerms, setShowFooterText: setTplInvoiceShowTerms,
+                colItemCode: tplInvoiceColItemCode, setColItemCode: setTplInvoiceColItemCode,
+                colItemImage: tplInvoiceColItemImage, setColItemImage: setTplInvoiceColItemImage,
+                colBarcode: tplInvoiceColBarcode, setColBarcode: setTplInvoiceColBarcode,
+                colBatchNo: tplInvoiceColBatchNo, setColBatchNo: setTplInvoiceColBatchNo,
+                colDiscount: tplInvoiceColDiscount, setColDiscount: setTplInvoiceColDiscount,
+                colVatPct: tplInvoiceColVatPct, setColVatPct: setTplInvoiceColVatPct,
+                colVatAmt: tplInvoiceColVatAmt, setColVatAmt: setTplInvoiceColVatAmt,
+              },
+              return: {
+                paper: tplReturnPaper, setPaper: setTplReturnPaper,
+                header: tplReturnHeader, setHeader: setTplReturnHeader,
+                footer: tplReturnFooter, setFooter: setTplReturnFooter,
+                showLogo: tplReturnShowLogo, setShowLogo: setTplReturnShowLogo,
+                showTrn: tplReturnShowTrn, setShowTrn: setTplReturnShowTrn,
+                showStamp: tplReturnShowStamp, setShowStamp: setTplReturnShowStamp,
+                showBarcode: tplReturnShowQRCode, setShowBarcode: setTplReturnShowQRCode,
+                showCompanyDetails: tplReturnShowCompanyDetails, setShowCompanyDetails: setTplReturnShowCompanyDetails,
+                showCustomerDetails: tplReturnShowCustomerDetails, setShowCustomerDetails: setTplReturnShowCustomerDetails,
+                showServiceCharge: tplReturnShowGrandTotalBanner, setShowServiceCharge: setTplReturnShowGrandTotalBanner,
+                showVatSummary: tplReturnColVatAmt, setShowVatSummary: setTplReturnColVatAmt,
+                showPaymentDetails: tplReturnColDiscount, setShowPaymentDetails: setTplReturnColDiscount,
+                showQRCode: tplReturnShowQRCode, setShowQRCode: setTplReturnShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
+                showLoyaltyPoints: tplReturnShowNotes, setShowLoyaltyPoints: setTplReturnShowNotes,
+                showCreditBalance: false, setShowCreditBalance: ()=>{},
+                showFooterText: tplReturnShowTerms, setShowFooterText: setTplReturnShowTerms,
+                colItemCode: tplReturnColItemCode, setColItemCode: setTplReturnColItemCode,
+                colItemImage: false, setColItemImage: ()=>{},
+                colBarcode: false, setColBarcode: ()=>{},
+                colBatchNo: tplReturnColBatchNo, setColBatchNo: setTplReturnColBatchNo,
+                colDiscount: tplReturnColDiscount, setColDiscount: setTplReturnColDiscount,
+                colVatPct: tplReturnColVatPct, setColVatPct: setTplReturnColVatPct,
+                colVatAmt: tplReturnColVatAmt, setColVatAmt: setTplReturnColVatAmt,
+              },
+              jobcard: {
+                paper: tplJobCardPaper, setPaper: setTplJobCardPaper,
+                header: 'SERVICE JOB CARD', setHeader: ()=>{},
+                footer: tplJobCardFooter, setFooter: setTplJobCardFooter,
+                showLogo: tplJobCardShowLogo, setShowLogo: setTplJobCardShowLogo,
+                showTrn: tplJobCardShowTrn, setShowTrn: setTplJobCardShowTrn,
+                showStamp: tplJobCardShowStamp, setShowStamp: setTplJobCardShowStamp,
+                showBarcode: false, setShowBarcode: ()=>{},
+                showCompanyDetails: tplJobCardShowCompanyDetails, setShowCompanyDetails: setTplJobCardShowCompanyDetails,
+                showCustomerDetails: tplJobCardShowCustomerDetails, setShowCustomerDetails: setTplJobCardShowCustomerDetails,
+                showSerialNumber: tplJobCardShowSerialNumber, setShowSerialNumber: setTplJobCardShowSerialNumber,
+                showWarranty: tplJobCardShowWarranty, setShowWarranty: setTplJobCardShowWarranty,
+                showTechnician: tplJobCardShowTechnician, setShowTechnician: setTplJobCardShowTechnician,
+                showExpectedDate: tplJobCardShowExpectedDate, setShowExpectedDate: setTplJobCardShowExpectedDate,
+                showCustomerSignature: tplJobCardShowCustomerSignature, setShowCustomerSignature: setTplJobCardShowCustomerSignature,
+                showQRCode: false, setShowQRCode: ()=>{},
+                showLoyaltyPoints: false, setShowLoyaltyPoints: ()=>{},
+                showCreditBalance: false, setShowCreditBalance: ()=>{},
+                showFooterText: tplJobCardShowTerms, setShowFooterText: setTplJobCardShowTerms,
+                showServiceCharge: tplJobCardShowSerialNumber, setShowServiceCharge: setTplJobCardShowSerialNumber,
+                showVatSummary: tplJobCardShowWarranty, setShowVatSummary: setTplJobCardShowWarranty,
+                showPaymentDetails: tplJobCardShowTechnician, setShowPaymentDetails: setTplJobCardShowTechnician,
+                colItemCode: false, setColItemCode: ()=>{},
+                colItemImage: false, setColItemImage: ()=>{},
+                colBarcode: false, setColBarcode: ()=>{},
+                colBatchNo: false, setColBatchNo: ()=>{},
+                colDiscount: false, setColDiscount: ()=>{},
+                colVatPct: false, setColVatPct: ()=>{},
+                colVatAmt: false, setColVatAmt: ()=>{},
+              },
+            };
 
-              {/* ── Outlet / Company Info ── */}
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Users className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  <div>
-                    <h3 className="text-sm font-bold text-[#1E293B] leading-none">Outlet / Company Info</h3>
-                    <p className="text-[11px] text-gray-400 mt-0.5">Appears on all document types</p>
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="flex gap-8">
-                    <div className="flex-1 grid grid-cols-2 gap-x-5 gap-y-4">
-                      {[{l:'Company Name',v:tplOutletName,s:setTplOutletName},{l:'TRN',v:tplOutletTrn,s:setTplOutletTrn},{l:'Address',v:tplOutletAddress,s:setTplOutletAddress},{l:'Phone',v:tplOutletPhone,s:setTplOutletPhone}].map(f=>(
-                        <div key={f.l}>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">{f.l}</label>
-                          <input value={f.v} onChange={e=>f.s(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                        </div>
-                      ))}
-                    </div>
-                    <div className="shrink-0 flex flex-col gap-4 justify-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Branding</p>
-                      <div className="flex gap-4">
-                        <ImageUploadBox label="Logo" value={tplLogoDataUrl} onChange={setTplLogoDataUrl} hint="PNG · SVG · JPG" />
-                        <ImageUploadBox label="Stamp" value={tplStampDataUrl} onChange={setTplStampDataUrl} hint="PNG · SVG · JPG" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            const templateTabs = [
+              { id:'receipt', label:'POS Receipt',       icon:<Printer className="h-3.5 w-3.5" /> },
+              { id:'invoice', label:'Tax Invoice',       icon:<FileText className="h-3.5 w-3.5" /> },
+              { id:'return',  label:'Return / Credit',   icon:<RotateCcw className="h-3.5 w-3.5" /> },
+              { id:'jobcard', label:'Service Job Card',  icon:<Wrench className="h-3.5 w-3.5" /> },
+            ];
 
-              {/* ── Template picker + detail panel ── */}
-              <div className="flex gap-4 items-start">
+            const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
 
-                {/* Left nav — template types */}
-                <div className="shrink-0 w-48 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-100">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Templates</p>
-                  </div>
-                  <div className="p-2 space-y-1">
-                    {[
-                      {id:'receipt',   label:'Receipt',          icon:<Printer className="h-4 w-4" />},
-                      {id:'invoice',   label:'Tax Invoice',      icon:<FileText className="h-4 w-4" />},
-                      {id:'return',    label:'Return / CN',      icon:<RotateCcw className="h-4 w-4" />},
-                      {id:'jobcard',   label:'Service Job Card', icon:<Wrench className="h-4 w-4" />},
-                    ].map(item=>(
-                      <button key={item.id} onClick={()=>setTemplateSubTab(item.id)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-semibold transition-all ${templateSubTab===item.id?'bg-[#F5C742]/15 text-[#1E293B]':'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}>
-                        <span className={templateSubTab===item.id?'text-[#b8920e]':'text-gray-400'}>{item.icon}</span>
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right detail panel */}
-                <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-
-                  {/* ── Receipt ── */}
-                  {templateSubTab==='receipt' && (<>
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Printer className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#1E293B] leading-none">Receipt</h4>
-                          <p className="text-[11px] text-gray-400 mt-0.5">POS sale confirmation slip</p>
-                        </div>
-                      </div>
-                      <PaperSizePicker value={tplReceiptPaper} onChange={setTplReceiptPaper} />
+            const fieldToggleSection = (label, items) => (
+              <div key={label}>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
+                <div className="space-y-1">
+                  {items.map(([lbl, val, setter]) => (
+                    <div key={lbl} className="flex items-center justify-between py-2.5 px-1">
+                      <span className="text-sm text-[#1E293B]">{lbl}</span>
+                      <Switch checked={!!val} onCheckedChange={setter} />
                     </div>
-                    <div className="flex min-h-[420px]">
-                      <div className={`shrink-0 bg-[#F7F7FA] border-r border-gray-100 flex flex-col gap-3 p-5 transition-all ${tplReceiptPaper==='A4'?'w-[560px]':tplReceiptPaper==='80mm'?'w-[280px]':'w-[250px]'}`}>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{tplReceiptPaper} Preview</span>
-                        {tplReceiptPaper==='A4'
-                          ? <A4LivePreview category="Sales Invoice" companyName={tplOutletName} trn={tplOutletTrn} address={tplOutletAddress} phone={tplOutletPhone} footerNote={tplReceiptFooter} scale={0.655}
-                              toggles={{ showLogo:tplReceiptShowLogo, showCompanyDetails:tplReceiptShowCompanyDetails, showTrn:tplReceiptShowTrn, showCustomerDetails:tplReceiptShowCustomerDetails, showTerms:tplReceiptShowTerms, showNotes:tplReceiptShowNotes, showBankDetails:tplReceiptShowBankDetails, showQRCode:tplReceiptShowQRCode, showStamp:tplReceiptShowStamp, showSignature:tplReceiptShowSignature, showGrandTotalBanner:tplReceiptShowGrandTotalBanner, colItemCode:tplReceiptColItemCode, colItemImage:tplReceiptColItemImage, colBarcode:tplReceiptShowBarcode, colBatchNo:tplReceiptColBatchNo, colDiscount:tplReceiptColDiscount, colVatPct:tplReceiptColVatPct, colVatAmt:tplReceiptColVatAmt, logoDataUrl:tplLogoDataUrl, stampDataUrl:tplStampDataUrl }} />
-                          : <ThermalMock paperSize={tplReceiptPaper} lines={[tplOutletName,tplReceiptShowTrn?`TRN: ${tplOutletTrn}`:'','─────────────',tplReceiptHeader||'','INV: SI-POS-000001','22 Jun 2026  10:30 AM','─────────────','Samsung A55 x1 . AED 1,380','iPhone Case x2 ... AED 45','─────────────','Subtotal ...... AED 1,425','VAT 5% ........... AED 71','─────────────','TOTAL: AED 1,496.25','─────────────',tplReceiptFooter]} />
-                        }
-                        <button onClick={()=>printHtml(tplReceiptPaper==='A4'
-                          ? buildDocumentPreviewHtml('Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:tplReceiptFooter})
-                          : buildThermalPrintHtml(tplReceiptPaper,{companyName:tplOutletName,trn:tplOutletTrn,header:tplReceiptHeader,footer:tplReceiptFooter,showTrn:tplReceiptShowTrn})
-                        )} className="flex items-center gap-1.5 text-xs font-bold text-[#b8920e] bg-[#F5C742]/10 hover:bg-[#F5C742]/20 border border-[#F5C742]/30 rounded-lg px-3 py-1.5 transition-colors self-start mt-auto">
-                          <Printer className="h-3 w-3" />Test Print
-                        </button>
-                      </div>
-                      <div className="flex-1 p-6 space-y-5 overflow-y-auto max-h-[560px]">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Header Text</label>
-                            <input value={tplReceiptHeader} onChange={e=>setTplReceiptHeader(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Footer Text</label>
-                            <input value={tplReceiptFooter} onChange={e=>setTplReceiptFooter(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                        </div>
-                        {tplReceiptPaper === 'A4' ? (
-                          <div className="space-y-4">
-                            {[
-                              {label:'Company Header', items:[{l:'Show Logo',v:tplReceiptShowLogo,s:setTplReceiptShowLogo},{l:'Show Company Name & Address',v:tplReceiptShowCompanyDetails,s:setTplReceiptShowCompanyDetails},{l:'Show TRN',v:tplReceiptShowTrn,s:setTplReceiptShowTrn}]},
-                              {label:'Customer',       items:[{l:'Show Customer Details (Bill To)',v:tplReceiptShowCustomerDetails,s:setTplReceiptShowCustomerDetails}]},
-                              {label:'Items Table',    items:[{l:'Item Code',v:tplReceiptColItemCode,s:setTplReceiptColItemCode},{l:'Item Image',v:tplReceiptColItemImage,s:setTplReceiptColItemImage},{l:'Batch Number',v:tplReceiptColBatchNo,s:setTplReceiptColBatchNo},{l:'Discount Column',v:tplReceiptColDiscount,s:setTplReceiptColDiscount},{l:'VAT % Column',v:tplReceiptColVatPct,s:setTplReceiptColVatPct},{l:'VAT Amount Column',v:tplReceiptColVatAmt,s:setTplReceiptColVatAmt},{l:'Barcode Column',v:tplReceiptShowBarcode,s:setTplReceiptShowBarcode}]},
-                              {label:'Footer & Summary',items:[{l:'Show Grand Total Banner',v:tplReceiptShowGrandTotalBanner,s:setTplReceiptShowGrandTotalBanner},{l:'Show Terms & Conditions',v:tplReceiptShowTerms,s:setTplReceiptShowTerms},{l:'Show Notes',v:tplReceiptShowNotes,s:setTplReceiptShowNotes},{l:'Show Bank Details',v:tplReceiptShowBankDetails,s:setTplReceiptShowBankDetails},{l:'Show QR Code',v:tplReceiptShowQRCode,s:setTplReceiptShowQRCode},{l:'Show Stamp',v:tplReceiptShowStamp,s:setTplReceiptShowStamp},{l:'Show Authorized Signature',v:tplReceiptShowSignature,s:setTplReceiptShowSignature}]},
-                            ].map(group=>(
-                              <div key={group.label}>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">{group.label}</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {group.items.map(t=>(
-                                    <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                      <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                      <Switch checked={t.v} onCheckedChange={t.s} />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Display Options</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{l:'Show Logo',v:tplReceiptShowLogo,s:setTplReceiptShowLogo},{l:'Show TRN',v:tplReceiptShowTrn,s:setTplReceiptShowTrn},{l:'Show Stamp',v:tplReceiptShowStamp,s:setTplReceiptShowStamp},{l:'Show Barcode / QR',v:tplReceiptShowBarcode,s:setTplReceiptShowBarcode}].map(t=>(
-                                <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                  <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                  <Switch checked={t.v} onCheckedChange={t.s} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>)}
-
-                  {/* ── Tax Invoice ── */}
-                  {templateSubTab==='invoice' && (<>
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#1E293B] leading-none">Tax Invoice</h4>
-                          <p className="text-[11px] text-gray-400 mt-0.5">VAT-compliant customer invoice</p>
-                        </div>
-                      </div>
-                      <PaperSizePicker value={tplInvoicePaper} onChange={setTplInvoicePaper} />
-                    </div>
-                    <div className="flex min-h-[420px]">
-                      <div className={`shrink-0 bg-[#F7F7FA] border-r border-gray-100 flex flex-col gap-3 p-5 transition-all ${tplInvoicePaper==='A4'?'w-[560px]':tplInvoicePaper==='80mm'?'w-[280px]':'w-[250px]'}`}>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{tplInvoicePaper} Preview</span>
-                        {tplInvoicePaper==='A4'
-                          ? <A4LivePreview category="Sales Invoice" companyName={tplOutletName} trn={tplOutletTrn} address={tplOutletAddress} phone={tplOutletPhone} footerNote={tplInvoiceFooter} scale={0.655}
-                              toggles={{ showLogo:tplInvoiceShowLogo, showCompanyDetails:tplInvoiceShowCompanyDetails, showTrn:tplInvoiceShowTrn, showCustomerDetails:tplInvoiceShowCustomerDetails, showTerms:tplInvoiceShowTerms, showNotes:tplInvoiceShowNotes, showBankDetails:tplInvoiceShowBankDetails, showQRCode:tplInvoiceShowQRCode, showStamp:tplInvoiceShowStamp, showSignature:tplInvoiceShowSignature, showGrandTotalBanner:tplInvoiceShowGrandTotalBanner, colItemCode:tplInvoiceColItemCode, colItemImage:tplInvoiceColItemImage, colBarcode:tplInvoiceColBarcode, colBatchNo:tplInvoiceColBatchNo, colDiscount:tplInvoiceColDiscount, colVatPct:tplInvoiceColVatPct, colVatAmt:tplInvoiceColVatAmt, logoDataUrl:tplLogoDataUrl, stampDataUrl:tplStampDataUrl }} />
-                          : <ThermalMock paperSize={tplInvoicePaper} lines={[tplInvoiceHeader||'TAX INVOICE',tplOutletName,`TRN: ${tplOutletTrn}`,tplOutletAddress,'─────────────','INV: SI-POS-000001','22 Jun 2026','Cust: Fatima Hassan','─────────────','Samsung A55 x1 . AED 1,380','VAT 5% ............. AED 69','─────────────','TOTAL: AED 1,449.00','─────────────',tplInvoiceFooter]} />
-                        }
-                        <button onClick={()=>printHtml(tplInvoicePaper==='A4'
-                          ? buildDocumentPreviewHtml('Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:tplInvoiceFooter})
-                          : buildThermalPrintHtml(tplInvoicePaper,{companyName:tplOutletName,trn:tplOutletTrn,header:tplInvoiceHeader,footer:tplInvoiceFooter,showTrn:true})
-                        )} className="flex items-center gap-1.5 text-xs font-bold text-[#b8920e] bg-[#F5C742]/10 hover:bg-[#F5C742]/20 border border-[#F5C742]/30 rounded-lg px-3 py-1.5 transition-colors self-start mt-auto">
-                          <Printer className="h-3 w-3" />Test Print
-                        </button>
-                      </div>
-                      <div className="flex-1 p-6 space-y-5 overflow-y-auto max-h-[560px]">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Header Title</label>
-                            <input value={tplInvoiceHeader} onChange={e=>setTplInvoiceHeader(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Footer Note / Terms</label>
-                            <input value={tplInvoiceFooter} onChange={e=>setTplInvoiceFooter(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                        </div>
-                        {tplInvoicePaper === 'A4' ? (
-                          <div className="space-y-4">
-                            {[
-                              {label:'Company Header', items:[{l:'Show Logo',v:tplInvoiceShowLogo,s:setTplInvoiceShowLogo},{l:'Show Company Name & Address',v:tplInvoiceShowCompanyDetails,s:setTplInvoiceShowCompanyDetails},{l:'Show TRN',v:tplInvoiceShowTrn,s:setTplInvoiceShowTrn}]},
-                              {label:'Customer',       items:[{l:'Show Customer Details (Bill To)',v:tplInvoiceShowCustomerDetails,s:setTplInvoiceShowCustomerDetails}]},
-                              {label:'Items Table',    items:[{l:'Item Code',v:tplInvoiceColItemCode,s:setTplInvoiceColItemCode},{l:'Item Image',v:tplInvoiceColItemImage,s:setTplInvoiceColItemImage},{l:'Barcode Column',v:tplInvoiceColBarcode,s:setTplInvoiceColBarcode},{l:'Batch Number',v:tplInvoiceColBatchNo,s:setTplInvoiceColBatchNo},{l:'Discount Column',v:tplInvoiceColDiscount,s:setTplInvoiceColDiscount},{l:'VAT % Column',v:tplInvoiceColVatPct,s:setTplInvoiceColVatPct},{l:'VAT Amount Column',v:tplInvoiceColVatAmt,s:setTplInvoiceColVatAmt}]},
-                              {label:'Footer & Summary',items:[{l:'Show Grand Total Banner',v:tplInvoiceShowGrandTotalBanner,s:setTplInvoiceShowGrandTotalBanner},{l:'Show Terms & Conditions',v:tplInvoiceShowTerms,s:setTplInvoiceShowTerms},{l:'Show Notes',v:tplInvoiceShowNotes,s:setTplInvoiceShowNotes},{l:'Show Bank Details',v:tplInvoiceShowBankDetails,s:setTplInvoiceShowBankDetails},{l:'Show QR Code',v:tplInvoiceShowQRCode,s:setTplInvoiceShowQRCode},{l:'Show Stamp',v:tplInvoiceShowStamp,s:setTplInvoiceShowStamp},{l:'Show Authorized Signature',v:tplInvoiceShowSignature,s:setTplInvoiceShowSignature}]},
-                            ].map(group=>(
-                              <div key={group.label}>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">{group.label}</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {group.items.map(t=>(
-                                    <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                      <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                      <Switch checked={t.v} onCheckedChange={t.s} />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Display Options</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{l:'Show Logo',v:tplInvoiceShowLogo,s:setTplInvoiceShowLogo},{l:'Show TRN',v:tplInvoiceShowTrn,s:setTplInvoiceShowTrn},{l:'Show Stamp',v:tplInvoiceShowStamp,s:setTplInvoiceShowStamp},{l:'Show Barcode / QR',v:tplInvoiceShowQRCode,s:setTplInvoiceShowQRCode}].map(t=>(
-                                <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                  <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                  <Switch checked={t.v} onCheckedChange={t.s} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>)}
-
-                  {/* ── Return / Credit Note ── */}
-                  {templateSubTab==='return' && (<>
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><RotateCcw className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#1E293B] leading-none">Return / Credit Note</h4>
-                          <p className="text-[11px] text-gray-400 mt-0.5">Refund and credit note document</p>
-                        </div>
-                      </div>
-                      <PaperSizePicker value={tplReturnPaper} onChange={setTplReturnPaper} />
-                    </div>
-                    <div className="flex min-h-[420px]">
-                      <div className={`shrink-0 bg-[#F7F7FA] border-r border-gray-100 flex flex-col gap-3 p-5 transition-all ${tplReturnPaper==='A4'?'w-[560px]':tplReturnPaper==='80mm'?'w-[280px]':'w-[250px]'}`}>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{tplReturnPaper} Preview</span>
-                        {tplReturnPaper==='A4'
-                          ? <A4LivePreview category="Sales Return" companyName={tplOutletName} trn={tplOutletTrn} address={tplOutletAddress} phone={tplOutletPhone} footerNote={tplReturnFooter} scale={0.655}
-                              toggles={{ showLogo:tplReturnShowLogo, showCompanyDetails:tplReturnShowCompanyDetails, showTrn:tplReturnShowTrn, showCustomerDetails:tplReturnShowCustomerDetails, showTerms:tplReturnShowTerms, showNotes:tplReturnShowNotes, showBankDetails:false, showQRCode:tplReturnShowQRCode, showStamp:tplReturnShowStamp, showSignature:tplReturnShowSignature, showGrandTotalBanner:tplReturnShowGrandTotalBanner, colItemCode:tplReturnColItemCode, colBatchNo:tplReturnColBatchNo, colDiscount:tplReturnColDiscount, colVatPct:tplReturnColVatPct, colVatAmt:tplReturnColVatAmt, logoDataUrl:tplLogoDataUrl, stampDataUrl:tplStampDataUrl }} />
-                          : <ThermalMock paperSize={tplReturnPaper} lines={[tplReturnHeader||'SALES RETURN',tplOutletName,'─────────────','Return: SR-POS-000042','Orig: SI-POS-000108','22 Jun 2026','Cust: Fatima Hassan','─────────────','Samsung A55 x1 -AED 1,380','VAT Rev ......... -AED 69','─────────────','REFUND: AED 1,449.00','─────────────',tplReturnFooter]} />
-                        }
-                        <button onClick={()=>printHtml(tplReturnPaper==='A4'
-                          ? buildDocumentPreviewHtml('Sales Return',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:tplReturnFooter})
-                          : buildThermalPrintHtml(tplReturnPaper,{companyName:tplOutletName,trn:tplOutletTrn,header:tplReturnHeader,footer:tplReturnFooter,showTrn:true})
-                        )} className="flex items-center gap-1.5 text-xs font-bold text-[#b8920e] bg-[#F5C742]/10 hover:bg-[#F5C742]/20 border border-[#F5C742]/30 rounded-lg px-3 py-1.5 transition-colors self-start mt-auto">
-                          <Printer className="h-3 w-3" />Test Print
-                        </button>
-                      </div>
-                      <div className="flex-1 p-6 space-y-5 overflow-y-auto max-h-[560px]">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Header Title</label>
-                            <input value={tplReturnHeader} onChange={e=>setTplReturnHeader(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Footer Note</label>
-                            <input value={tplReturnFooter} onChange={e=>setTplReturnFooter(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
-                          </div>
-                        </div>
-                        {tplReturnPaper === 'A4' ? (
-                          <div className="space-y-4">
-                            {[
-                              {label:'Company Header', items:[{l:'Show Logo',v:tplReturnShowLogo,s:setTplReturnShowLogo},{l:'Show Company Name & Address',v:tplReturnShowCompanyDetails,s:setTplReturnShowCompanyDetails},{l:'Show TRN',v:tplReturnShowTrn,s:setTplReturnShowTrn}]},
-                              {label:'Customer',       items:[{l:'Show Customer Details (Bill To)',v:tplReturnShowCustomerDetails,s:setTplReturnShowCustomerDetails}]},
-                              {label:'Items Table',    items:[{l:'Item Code',v:tplReturnColItemCode,s:setTplReturnColItemCode},{l:'Batch Number',v:tplReturnColBatchNo,s:setTplReturnColBatchNo},{l:'Discount Column',v:tplReturnColDiscount,s:setTplReturnColDiscount},{l:'VAT % Column',v:tplReturnColVatPct,s:setTplReturnColVatPct},{l:'VAT Amount Column',v:tplReturnColVatAmt,s:setTplReturnColVatAmt}]},
-                              {label:'Footer & Summary',items:[{l:'Show Grand Total Banner',v:tplReturnShowGrandTotalBanner,s:setTplReturnShowGrandTotalBanner},{l:'Show Terms & Conditions',v:tplReturnShowTerms,s:setTplReturnShowTerms},{l:'Show Notes',v:tplReturnShowNotes,s:setTplReturnShowNotes},{l:'Show QR Code',v:tplReturnShowQRCode,s:setTplReturnShowQRCode},{l:'Show Stamp',v:tplReturnShowStamp,s:setTplReturnShowStamp},{l:'Show Authorized Signature',v:tplReturnShowSignature,s:setTplReturnShowSignature}]},
-                            ].map(group=>(
-                              <div key={group.label}>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">{group.label}</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {group.items.map(t=>(
-                                    <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                      <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                      <Switch checked={t.v} onCheckedChange={t.s} />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Display Options</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{l:'Show Logo',v:tplReturnShowLogo,s:setTplReturnShowLogo},{l:'Show TRN',v:tplReturnShowTrn,s:setTplReturnShowTrn},{l:'Show Stamp',v:tplReturnShowStamp,s:setTplReturnShowStamp}].map(t=>(
-                                <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                  <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                  <Switch checked={t.v} onCheckedChange={t.s} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>)}
-
-                  {/* ── Service Job Card ── */}
-                  {templateSubTab==='jobcard' && (<>
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Wrench className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#1E293B] leading-none">Service Job Card</h4>
-                          <p className="text-[11px] text-gray-400 mt-0.5">Repair and service tracking document</p>
-                        </div>
-                      </div>
-                      <PaperSizePicker value={tplJobCardPaper} onChange={setTplJobCardPaper} />
-                    </div>
-                    <div className="flex min-h-[420px]">
-                      <div className={`shrink-0 bg-[#F7F7FA] border-r border-gray-100 flex flex-col gap-3 p-5 transition-all ${tplJobCardPaper==='A4'?'w-[560px]':tplJobCardPaper==='80mm'?'w-[280px]':'w-[250px]'}`}>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{tplJobCardPaper} Preview</span>
-                        {tplJobCardPaper==='A4'
-                          ? <ServiceJobA4Preview companyName={tplOutletName} trn={tplOutletTrn} address={tplOutletAddress} phone={tplOutletPhone} footerNote={tplJobCardFooter} scale={0.655} />
-                          : <ThermalMock paperSize={tplJobCardPaper} lines={['SERVICE JOB CARD',tplOutletName,'─────────────','Job: SRV-000028','22 Jun 2026','Tech: Mohammed Ali','─────────────','Cust: Fatima Hassan','Item: Samsung A55','S/N: SNSA55-20260312','Problem: Display issue','Warranty: Under Warranty','─────────────','Cust. Signature: _____','─────────────',tplJobCardFooter]} />
-                        }
-                        <button onClick={()=>printHtml(tplJobCardPaper==='A4'
-                          ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:tplJobCardFooter})
-                          : buildThermalPrintHtml(tplJobCardPaper,{companyName:tplOutletName,trn:tplOutletTrn,header:'SERVICE JOB CARD',footer:tplJobCardFooter,showTrn:true})
-                        )} className="flex items-center gap-1.5 text-xs font-bold text-[#b8920e] bg-[#F5C742]/10 hover:bg-[#F5C742]/20 border border-[#F5C742]/30 rounded-lg px-3 py-1.5 transition-colors self-start mt-auto">
-                          <Printer className="h-3 w-3" />Test Print
-                        </button>
-                      </div>
-                      <div className="flex-1 p-6 space-y-5 overflow-y-auto max-h-[560px]">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Terms / Footer</label>
-                          <textarea value={tplJobCardFooter} onChange={e=>setTplJobCardFooter(e.target.value)} rows={3} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" />
-                        </div>
-                        {tplJobCardPaper === 'A4' ? (
-                          <div className="space-y-4">
-                            {[
-                              {label:'Company Header', items:[{l:'Show Logo',v:tplJobCardShowLogo,s:setTplJobCardShowLogo},{l:'Show Company Name & Address',v:tplJobCardShowCompanyDetails,s:setTplJobCardShowCompanyDetails},{l:'Show TRN',v:tplJobCardShowTrn,s:setTplJobCardShowTrn}]},
-                              {label:'Customer',       items:[{l:'Show Customer Details',v:tplJobCardShowCustomerDetails,s:setTplJobCardShowCustomerDetails}]},
-                              {label:'Job Details',    items:[{l:'Serial Number',v:tplJobCardShowSerialNumber,s:setTplJobCardShowSerialNumber},{l:'Warranty Status',v:tplJobCardShowWarranty,s:setTplJobCardShowWarranty},{l:'Assigned Technician',v:tplJobCardShowTechnician,s:setTplJobCardShowTechnician},{l:'Expected Completion Date',v:tplJobCardShowExpectedDate,s:setTplJobCardShowExpectedDate}]},
-                              {label:'Footer',         items:[{l:'Show Terms & Conditions',v:tplJobCardShowTerms,s:setTplJobCardShowTerms},{l:'Customer Signature Line',v:tplJobCardShowCustomerSignature,s:setTplJobCardShowCustomerSignature},{l:'Show Stamp',v:tplJobCardShowStamp,s:setTplJobCardShowStamp}]},
-                            ].map(group=>(
-                              <div key={group.label}>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">{group.label}</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {group.items.map(t=>(
-                                    <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                      <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                      <Switch checked={t.v} onCheckedChange={t.s} />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Display Options</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{l:'Show Logo',v:tplJobCardShowLogo,s:setTplJobCardShowLogo},{l:'Show TRN',v:tplJobCardShowTrn,s:setTplJobCardShowTrn},{l:'Show Stamp',v:tplJobCardShowStamp,s:setTplJobCardShowStamp}].map(t=>(
-                                <div key={t.l} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                                  <span className="text-sm text-[#1E293B]">{t.l}</span>
-                                  <Switch checked={t.v} onCheckedChange={t.s} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>)}
-
+                  ))}
                 </div>
               </div>
+            );
 
-            </div>
-          )}
+            const handleFullPreview = () => {
+              let html;
+              if (cfg.paper === 'A4') {
+                html = templateSubTab === 'jobcard'
+                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
+                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
+                      showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
+                      showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
+                      showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
+                      colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
+                      colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
+                      logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+                    });
+              } else if (templateSubTab === 'jobcard') {
+                const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
+                html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
+              } else {
+                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return'});
+              }
+              const w = window.open('','_blank');
+              w && w.document.write(html);
+            };
+
+            const handleTestPrint = () => {
+              const toggles = {
+                showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
+                showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
+                showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
+                colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
+                colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
+                logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+              };
+              if (cfg.paper === 'A4') {
+                const html = templateSubTab === 'jobcard'
+                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
+                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},toggles);
+                printHtml(html);
+              } else if (templateSubTab === 'jobcard') {
+                const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
+                printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
+              } else {
+                printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return'}));
+              }
+            };
+
+            const handleResetDefault = () => {
+              setTplReceiptPaper('80mm'); setTplReceiptHeader(''); setTplReceiptFooter('');
+              setTplReceiptShowLogo(true); setTplReceiptShowTrn(true); setTplReceiptShowCompanyDetails(true);
+              setTplReceiptShowCustomerDetails(true); setTplReceiptShowGrandTotalBanner(true);
+              setTplReceiptColVatAmt(true); setTplReceiptColDiscount(true); setTplReceiptShowQRCode(true);
+              setTplReceiptShowNotes(true); setTplReceiptShowBankDetails(true); setTplReceiptShowTerms(true);
+              setTplReceiptShowStamp(false); setTplReceiptShowBarcode(false);
+            };
+
+            return (
+              <div>
+                {/* ── Template type tab bar ── */}
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-5 p-1.5 flex gap-1">
+                  {templateTabs.map(t => (
+                    <button key={t.id} onClick={() => setTemplateSubTab(t.id)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${templateSubTab===t.id ? 'bg-[#F5C742]/15 text-[#1E293B] border border-[#F5C742]/40' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+                      <span className={templateSubTab===t.id?'text-[#b8920e]':'text-gray-400'}>{t.icon}</span>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* ── Two-column: Settings (left) + Live Preview (right) ── */}
+                <div className="flex gap-5 items-start">
+
+                  {/* ── Left: all settings ── */}
+                  <div className="flex-1 min-w-0 space-y-4">
+
+                    {/* Branch / Outlet Info */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Users className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                        <div>
+                          <h3 className="text-sm font-bold text-[#1E293B] leading-none">Branch / Outlet Info</h3>
+                          <p className="text-[11px] text-gray-400 mt-0.5">printed on all templates</p>
+                        </div>
+                      </div>
+                      <div className="p-5 space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Branch Name</label>
+                            <input value={tplOutletName} onChange={e=>setTplOutletName(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">TRN</label>
+                            <input value={tplOutletTrn} onChange={e=>setTplOutletTrn(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Phone</label>
+                          <input value={tplOutletPhone} onChange={e=>setTplOutletPhone(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Address (multi-line)</label>
+                          <textarea value={tplOutletAddress} onChange={e=>setTplOutletAddress(e.target.value)} rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Header Customization */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Settings className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                        <h3 className="text-sm font-bold text-[#1E293B]">Header Customization</h3>
+                      </div>
+                      <div className="p-5 space-y-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Company / Branch Logo</label>
+                          <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 flex items-center gap-3 hover:border-[#F5C742]/50 transition-colors cursor-pointer group" onClick={()=>document.getElementById('tpl-logo-upload')?.click()}>
+                            <input id="tpl-logo-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplLogoDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
+                            {tplLogoDataUrl
+                              ? <><img src={tplLogoDataUrl} alt="Logo" className="h-10 w-10 object-contain rounded-lg" /><span className="text-sm text-[#1E293B] font-medium">Logo uploaded</span><button type="button" onClick={e=>{e.stopPropagation();setTplLogoDataUrl(null);}} className="ml-auto text-xs text-red-400 hover:text-red-600 font-semibold">Remove</button></>
+                              : <><div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300"><Users className="h-5 w-5" /></div><span className="text-sm text-gray-400">Upload Logo (PNG, JPG — recommended square)</span></>
+                            }
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Paper Size</label>
+                          <PaperSizePicker value={cfg.paper} onChange={cfg.setPaper} />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Custom Text (multi-line)</label>
+                          <textarea value={cfg.header} onChange={e=>cfg.setHeader(e.target.value)} rows={2} placeholder="e.g. Thank you for dining with us!" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" readOnly={templateSubTab==='jobcard'} />
+                          <p className="text-[10px] text-gray-400 mt-1">Supports: branch name, address, phone, TRN, cashier, table/order ref — use branch info section above for those.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Customization */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                        <h3 className="text-sm font-bold text-[#1E293B]">Footer Customization</h3>
+                      </div>
+                      <div className="p-5 space-y-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Footer Custom Text (multi-line)</label>
+                          <textarea value={cfg.footer} onChange={e=>cfg.setFooter(e.target.value)} rows={3} placeholder="e.g. Visit us again soon&#10;www.billbull.ae | @billbull" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" />
+                          <p className="text-[10px] text-gray-400 mt-1">Supports: thank you message, return policy, offer, website, support number.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* QR Code / Social Image */}
+                    {templateSubTab !== 'jobcard' && (
+                      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                          <h3 className="text-sm font-bold text-[#1E293B]">QR Code / Social Image</h3>
+                        </div>
+                        <div className="p-5 space-y-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">QR / Image</label>
+                            {tplStampDataUrl ? (
+                              <div className="flex items-center gap-3 border border-[#F5C742]/50 bg-[#F5C742]/5 rounded-xl px-4 py-3">
+                                <img src={tplStampDataUrl} alt="QR" className="h-10 w-10 object-contain rounded" />
+                                <span className="text-sm text-[#1E293B] font-medium flex-1">Upload QR Code or Promo Image (PNG, JPG) uploaded</span>
+                                <button type="button" onClick={()=>setTplStampDataUrl(null)} className="text-xs text-red-400 hover:text-red-600 font-semibold flex items-center gap-1"><X className="h-3 w-3" />Remove</button>
+                              </div>
+                            ) : (
+                              <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 flex items-center gap-3 hover:border-[#F5C742]/50 transition-colors cursor-pointer" onClick={()=>document.getElementById('tpl-qr-upload')?.click()}>
+                                <input id="tpl-qr-upload" type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setTplStampDataUrl(ev.target.result);r.readAsDataURL(f);}e.target.value='';}} />
+                                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300"><FileText className="h-5 w-5" /></div>
+                                <span className="text-sm text-gray-400">Upload QR Code or Promo Image (PNG, JPG)</span>
+                              </div>
+                            )}
+                            <p className="text-[10px] text-gray-400 mt-1.5">Use for: Google Review QR, WhatsApp QR, Instagram QR, website QR, or promotional image.</p>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">QR / Image Position</label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[['before','Before Footer Text'],['after','After Footer Text']].map(([val,lbl])=>(
+                                <button key={val} type="button"
+                                  onClick={()=>cfg.setQrPlacement?.(val)}
+                                  className={`py-2.5 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${((cfg.qrPlacement||'before')===val) ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
+                                  {lbl}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Show / Hide Fields */}
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-[#F5C742]/20 flex items-center justify-center"><Eye className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                        <h3 className="text-sm font-bold text-[#1E293B]">Show / Hide Fields</h3>
+                      </div>
+                      <div className="p-5 space-y-5">
+                        {templateSubTab === 'jobcard' ? (<>
+                          {fieldToggleSection('HEADER', [
+                            ['Show Logo', cfg.showLogo, cfg.setShowLogo],
+                            ['Show Company Name & Address', cfg.showCompanyDetails, cfg.setShowCompanyDetails],
+                            ['Show TRN', cfg.showTrn, cfg.setShowTrn],
+                          ])}
+                          {fieldToggleSection('CUSTOMER', [
+                            ['Show Customer Details', cfg.showCustomerDetails, cfg.setShowCustomerDetails],
+                          ])}
+                          {fieldToggleSection('JOB DETAILS', [
+                            ['Serial Number', cfg.showSerialNumber, cfg.setShowSerialNumber],
+                            ['Warranty Status', cfg.showWarranty, cfg.setShowWarranty],
+                            ['Assigned Technician', cfg.showTechnician, cfg.setShowTechnician],
+                            ['Expected Completion Date', cfg.showExpectedDate, cfg.setShowExpectedDate],
+                          ])}
+                          {fieldToggleSection('FOOTER', [
+                            ['Customer Signature Line', cfg.showCustomerSignature, cfg.setShowCustomerSignature],
+                            ['Show Footer Custom Text', cfg.showFooterText, cfg.setShowFooterText],
+                            ['Show Stamp', cfg.showStamp, cfg.setShowStamp],
+                          ])}
+                        </>) : (<>
+                          {fieldToggleSection('HEADER', [
+                            ['Show Logo', cfg.showLogo, cfg.setShowLogo],
+                            ['Show Company Name & Address', cfg.showCompanyDetails, cfg.setShowCompanyDetails],
+                            ['Show TRN', cfg.showTrn, cfg.setShowTrn],
+                            ...(cfg.paper !== 'A4' ? [] : [['Show Stamp / Seal', cfg.showStamp, cfg.setShowStamp]]),
+                          ])}
+                          {cfg.paper !== 'A4' && fieldToggleSection('TRANSACTION', [
+                            ['Show Service Charge', cfg.showServiceCharge, cfg.setShowServiceCharge],
+                            ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary],
+                            ['Show Payment Details (Cash / Change / Mode)', cfg.showPaymentDetails, cfg.setShowPaymentDetails],
+                          ])}
+                          {cfg.paper !== 'A4' && fieldToggleSection('AFTER PAYMENT', [
+                            ['Show QR / Social Image', cfg.showQRCode, cfg.setShowQRCode],
+                          ])}
+                          {cfg.paper === 'A4' && fieldToggleSection('DOCUMENT SECTIONS', [
+                            ['Show Grand Total Highlight', cfg.showServiceCharge, cfg.setShowServiceCharge],
+                            ['Show QR / Stamp', cfg.showQRCode, cfg.setShowQRCode],
+                            ['Show Bank Details', cfg.showCreditBalance, cfg.setShowCreditBalance],
+                            ['Show Notes / Terms', cfg.showLoyaltyPoints, cfg.setShowLoyaltyPoints],
+                          ])}
+                          {fieldToggleSection('CUSTOMER DETAILS', [
+                            ['Show Customer Details (Name, Mobile, Email, TRN, Address)', cfg.showCustomerDetails, cfg.setShowCustomerDetails],
+                            ...(cfg.paper !== 'A4' ? [
+                              ['Show Loyalty Points (Earned / Used / Remaining)', cfg.showLoyaltyPoints, cfg.setShowLoyaltyPoints],
+                              ['Show Customer Credit Balance', cfg.showCreditBalance, cfg.setShowCreditBalance],
+                            ] : []),
+                          ])}
+                          {fieldToggleSection('FOOTER', [
+                            ['Show Footer Custom Text', cfg.showFooterText, cfg.setShowFooterText],
+                          ])}
+                          {cfg.paper === 'A4' && fieldToggleSection('COLUMNS (A4 only)', [
+                            ['Item Code', cfg.colItemCode, cfg.setColItemCode],
+                            ['Item Image', cfg.colItemImage, cfg.setColItemImage],
+                            ['Barcode', cfg.colBarcode, cfg.setColBarcode],
+                            ['Batch Number', cfg.colBatchNo, cfg.setColBatchNo],
+                            ['Discount', cfg.colDiscount, cfg.setColDiscount],
+                            ['VAT %', cfg.colVatPct, cfg.setColVatPct],
+                            ['VAT Amount', cfg.colVatAmt, cfg.setColVatAmt],
+                          ])}
+                        </>)}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* ── Right: sticky live preview ── */}
+                  <div className="shrink-0 w-[360px] sticky top-6">
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      {/* Preview header */}
+                      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-green-400" />
+                          <span className="text-sm font-bold text-[#1E293B]">Live Preview</span>
+                        </div>
+                        <span className="text-[11px] font-semibold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-lg">
+                          {cfg.paper === 'A4' ? 'A4 document' : `${cfg.paper} thermal`}
+                        </span>
+                      </div>
+
+                      {/* Preview body */}
+                      <div className="p-4 bg-[#F7F7FA] overflow-y-auto flex flex-col gap-4" style={{ maxHeight: 900 }}>
+                        {cfg.paper === 'A4'
+                          ? <A4LivePreview
+                              category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
+                              companyName={tplOutletName} trn={tplOutletTrn}
+                              address={tplOutletAddress} phone={tplOutletPhone}
+                              footerNote={cfg.footer} scale={0.42}
+                              toggles={{
+                                showLogo: cfg.showLogo, showCompanyDetails: cfg.showCompanyDetails,
+                                showTrn: cfg.showTrn, showCustomerDetails: cfg.showCustomerDetails,
+                                showTerms: cfg.showFooterText, showNotes: cfg.showLoyaltyPoints,
+                                showBankDetails: cfg.showCreditBalance, showQRCode: cfg.showQRCode,
+                                showStamp: cfg.showStamp, showSignature: false,
+                                showGrandTotalBanner: cfg.showServiceCharge,
+                                colItemCode: cfg.colItemCode, colItemImage: cfg.colItemImage,
+                                colBarcode: cfg.colBarcode, colBatchNo: cfg.colBatchNo,
+                                colDiscount: cfg.colDiscount, colVatPct: cfg.colVatPct, colVatAmt: cfg.colVatAmt,
+                                logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl,
+                              }}
+                            />
+                          : <ThermalMock
+                              paperSize={cfg.paper}
+                              templateType={templateSubTab}
+                              outletName={tplOutletName}
+                              outletAddress={tplOutletAddress}
+                              outletPhone={tplOutletPhone}
+                              outletTrn={tplOutletTrn}
+                              logoDataUrl={tplLogoDataUrl}
+                              stampDataUrl={tplStampDataUrl}
+                              headerText={cfg.header}
+                              footerText={cfg.footer}
+                              showLogo={cfg.showLogo}
+                              showTrn={cfg.showTrn}
+                              showCompanyDetails={cfg.showCompanyDetails}
+                              showServiceCharge={cfg.showServiceCharge}
+                              showVatSummary={cfg.showVatSummary}
+                              showPaymentDetails={cfg.showPaymentDetails}
+                              showQRCode={cfg.showQRCode}
+                              showCustomerDetails={cfg.showCustomerDetails}
+                              showLoyaltyPoints={cfg.showLoyaltyPoints}
+                              showCreditBalance={cfg.showCreditBalance}
+                              showFooterText={cfg.showFooterText}
+                              showSerialNumber={cfg.showSerialNumber}
+                              showWarranty={cfg.showWarranty}
+                              showTechnician={cfg.showTechnician}
+                              showExpectedDate={cfg.showExpectedDate}
+                              showCustomerSignature={cfg.showCustomerSignature}
+                            />
+                        }
+                      </div>
+
+                      {/* Preview footer buttons */}
+                      <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+                        <button onClick={handleFullPreview}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-xl py-2.5 hover:bg-gray-50 transition-colors">
+                          <Eye className="h-3.5 w-3.5" />Full Preview
+                        </button>
+                        <button onClick={handleTestPrint}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-700 border border-gray-200 rounded-xl py-2.5 hover:bg-gray-50 transition-colors">
+                          <Printer className="h-3.5 w-3.5" />Test Print
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* ── Bottom action bar ── */}
+                <div className="flex items-center justify-between mt-6 pt-5 border-t border-gray-200">
+                  <button type="button" onClick={handleResetDefault}
+                    className="flex items-center gap-2 text-sm font-semibold text-gray-500 border border-gray-200 rounded-xl px-5 py-2.5 hover:bg-gray-50 transition-colors">
+                    <RotateCcw className="h-4 w-4" />Reset to Default
+                  </button>
+                  <button disabled={settingsSaving} onClick={async()=>{
+                    setSettingsSaving(true);
+                    try {
+                      const tplConfig = JSON.stringify({
+                        outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
+                        logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+                        receiptHeader:tplReceiptHeader,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+                        receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
+                        receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
+                        receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
+                        receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
+                        invoiceHeader:tplInvoiceHeader,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+                        invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
+                        invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
+                        invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
+                        invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
+                        invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
+                        invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
+                        returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
+                        returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
+                        returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
+                        returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
+                        returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,
+                        jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
+                        jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
+                        jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
+                        jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
+                        jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
+                      });
+                      const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
+                      setPosSettings(saved);
+                      setSettingsSavedFlash(true);
+                      setTimeout(()=>setSettingsSavedFlash(false), 2000);
+                    } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
+                  }}
+                    className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl transition-colors">
+                    <CheckCircle className="h-4 w-4" />{settingsSaving ? 'Saving…' : 'Save Templates'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ══ TERMINALS ══ */}
-          {consoleTab === 'terminals' && (
-            <div className="space-y-6">
-              {/* Header row */}
+          {consoleTab === 'terminals' && (() => {
+            const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
+            const activeCount = terminalList.filter(t => t.status === 'ACTIVE').length;
+            const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
+            const inactiveCount = terminalList.filter(t => t.status === 'INACTIVE').length;
+            const slotUsed = terminalList.length;
+            const slotPct = Math.min(100, Math.round((slotUsed / maxSlots) * 100));
+            const slotNearFull = slotUsed >= maxSlots - 1;
+
+            const promoteMainPos = async (terminalId) => {
+              try {
+                const updated = await setMainPosTerminal(terminalId);
+                setTerminalList(prev => prev.map(x => ({
+                  ...x,
+                  isMainPos: x.terminalId === terminalId,
+                })));
+              } catch (e) {
+                console.warn('Set main POS failed', e);
+              }
+            };
+
+            const cycleStatus = async (t) => {
+              // ACTIVE → INACTIVE → BLOCKED → ACTIVE
+              const next = t.status === 'ACTIVE' ? 'INACTIVE' : t.status === 'INACTIVE' ? 'BLOCKED' : 'ACTIVE';
+              try {
+                const updated = await setTerminalStatus(t.terminalId, next);
+                setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? updated : x));
+              } catch (e) {
+                console.warn('Status change failed', e);
+              }
+            };
+
+            const formatLastSeen = (ts) => {
+              if (!ts) return null;
+              const d = new Date(ts);
+              const now = new Date();
+              const diffMs = now - d;
+              const diffMin = Math.floor(diffMs / 60000);
+              if (diffMin < 2) return 'Just now';
+              if (diffMin < 60) return `${diffMin}m ago`;
+              const diffH = Math.floor(diffMin / 60);
+              if (diffH < 24) return `${diffH}h ago`;
+              return d.toLocaleDateString();
+            };
+
+            const parseDeviceInfo = (info) => {
+              if (!info) return null;
+              // deviceInfo is typically a User-Agent string
+              if (info.includes('Chrome')) return 'Chrome';
+              if (info.includes('Firefox')) return 'Firefox';
+              if (info.includes('Safari') && !info.includes('Chrome')) return 'Safari';
+              if (info.includes('Edge')) return 'Edge';
+              return info.length > 30 ? info.substring(0, 28) + '…' : info;
+            };
+
+            const statusConfig = {
+              ACTIVE:   { label: 'Active',   dot: 'bg-green-500', badge: 'bg-green-50 text-green-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> },
+              INACTIVE: { label: 'Inactive', dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> },
+              BLOCKED:  { label: 'Blocked',  dot: 'bg-red-500',   badge: 'bg-red-50 text-red-600',      icon: <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> },
+            };
+
+            return (
+            <div className="space-y-5">
+
+              {/* ── Header row ── */}
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-bold text-[#1E293B]">Terminal & Counter Management</h2>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Rename terminals, set counter names, and block unused terminals for this branch.
+                    Rename terminals, set counter names, manage status, and designate your main POS.
                   </p>
                 </div>
                 <button
@@ -970,50 +1199,91 @@ const POSConsole = React.memo((props) => {
                 </button>
               </div>
 
-              {/* Info banner — explain how terminals are created */}
-              <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-5 py-4 text-sm text-blue-700">
+              {/* ── Stats bar ── */}
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'Total', value: terminalList.length, sub: `of ${maxSlots} slots`, color: 'text-[#1E293B]', bg: 'bg-white' },
+                  { label: 'Active',   value: activeCount,   sub: 'online & ready',   color: 'text-green-700', bg: 'bg-green-50' },
+                  { label: 'Inactive', value: inactiveCount, sub: 'temporarily off',   color: 'text-amber-700', bg: 'bg-amber-50' },
+                  { label: 'Blocked',  value: blockedCount,  sub: 'access denied',     color: 'text-red-600',   bg: 'bg-red-50'   },
+                ].map(s => (
+                  <div key={s.label} className={`${s.bg} border border-gray-100 rounded-2xl px-4 py-3 shadow-sm`}>
+                    <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                    <p className="text-[11px] font-bold text-gray-500 mt-0.5">{s.label}</p>
+                    <p className="text-[10px] text-gray-400">{s.sub}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Slot usage bar ── */}
+              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-[#1E293B]">Terminal Slots</span>
+                  <span className={`text-xs font-bold ${slotNearFull ? 'text-red-500' : 'text-gray-500'}`}>
+                    {slotUsed} / {maxSlots} used{slotNearFull && slotUsed < maxSlots ? ' — almost full' : slotUsed >= maxSlots ? ' — at capacity' : ''}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${slotUsed >= maxSlots ? 'bg-red-500' : slotNearFull ? 'bg-amber-400' : 'bg-[#F5C742]'}`}
+                    style={{ width: `${slotPct}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">
+                  Each browser/device that opens POS is auto-registered. Blocked terminals still occupy a slot.
+                </p>
+              </div>
+
+              {/* ── Info banner ── */}
+              <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-5 py-3.5 text-sm text-blue-700">
                 <Info className="h-4 w-4 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold">How terminals are registered: </span>
                   Each browser/device that opens POS Sales is auto-registered as a terminal using a device fingerprint.
-                  Use this panel to give each terminal a meaningful name and counter number, or block terminals that are no longer in use.
+                  Use this panel to rename terminals, assign counters, set the Main POS, or block terminals no longer in use.
                 </div>
               </div>
 
-              {/* Current terminal highlight */}
+              {/* ── Current terminal highlight ── */}
               {currentTerminal && (
                 <div className="flex items-center gap-3 bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl px-5 py-3">
-                  <div className="w-2 h-2 rounded-full bg-[#F5C742] animate-pulse" />
+                  <Monitor className="h-4 w-4 text-[#b8920e] shrink-0" />
                   <span className="text-sm text-[#7a6000] font-semibold">
                     This device is registered as&nbsp;
                     <span className="font-black text-[#1E293B]">{currentTerminal.terminalName || currentTerminal.terminalId}</span>
-                    &nbsp;— Counter:&nbsp;
+                    &nbsp;·&nbsp;Counter:&nbsp;
                     <span className="font-black text-[#1E293B]">{currentTerminal.counterName || '—'}</span>
+                    &nbsp;·&nbsp;
+                    <span className="font-mono text-[10px] text-[#b8920e]">{currentTerminal.terminalId}</span>
                   </span>
                 </div>
               )}
 
-              {/* Terminal list */}
+              {/* ── Terminal list ── */}
               {terminalsLoading ? (
                 <div className="space-y-3">
                   {[1,2,3].map(i => (
                     <div key={i} className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-4 animate-pulse">
                       <div className="w-12 h-12 rounded-xl bg-gray-100 shrink-0" />
                       <div className="flex-1 space-y-2">
-                        <div className="h-3 w-40 bg-gray-100 rounded" />
-                        <div className="h-2.5 w-24 bg-gray-100 rounded" />
+                        <div className="h-3 w-48 bg-gray-100 rounded" />
+                        <div className="h-2.5 w-32 bg-gray-100 rounded" />
+                        <div className="h-2 w-56 bg-gray-50 rounded" />
                       </div>
+                      <div className="w-20 h-6 bg-gray-100 rounded-full shrink-0" />
                     </div>
                   ))}
                 </div>
               ) : terminalList.length === 0 ? (
                 <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-14 text-center">
-                  <Hash className="h-10 w-10 text-gray-200 mx-auto mb-3" />
-                  <p className="text-gray-400 font-semibold">No terminals loaded</p>
-                  <p className="text-xs text-gray-300 mt-1">Click Refresh to load terminals for this branch.</p>
+                  <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-4">
+                    <Hash className="h-8 w-8 text-gray-200" />
+                  </div>
+                  <p className="text-gray-500 font-bold">No terminals loaded</p>
+                  <p className="text-xs text-gray-300 mt-1">Click Refresh to load terminals registered for this branch.</p>
                   <button
                     onClick={loadTerminals}
-                    className="mt-4 text-sm font-semibold text-[#327F74] border border-[#327F74]/30 px-4 py-2 rounded-xl hover:bg-[#327F74]/5 transition-colors"
+                    className="mt-4 text-sm font-semibold text-[#327F74] border border-[#327F74]/30 px-5 py-2 rounded-xl hover:bg-[#327F74]/5 transition-colors"
                   >
                     Load Terminals
                   </button>
@@ -1023,97 +1293,169 @@ const POSConsole = React.memo((props) => {
                   {terminalList.map(t => {
                     const isEditing = editingTerminalId === t.terminalId;
                     const isThisDevice = currentTerminal?.terminalId === t.terminalId;
-                    const isBlocked = t.status === 'BLOCKED';
+                    const sc = statusConfig[t.status] || statusConfig.ACTIVE;
+                    const browserLabel = parseDeviceInfo(t.deviceInfo);
+                    const lastSeenLabel = formatLastSeen(t.lastSeenAt);
+                    const isRecentlyActive = t.lastSeenAt && (new Date() - new Date(t.lastSeenAt)) < 5 * 60 * 1000;
 
                     return (
                       <div
                         key={t.terminalId}
                         className={`bg-white rounded-2xl border shadow-sm transition-all ${
-                          isThisDevice ? 'border-[#F5C742]/60 ring-1 ring-[#F5C742]/30' :
-                          isBlocked    ? 'border-gray-100 opacity-60' : 'border-gray-200'
+                          isThisDevice          ? 'border-[#F5C742]/60 ring-1 ring-[#F5C742]/30' :
+                          t.status === 'BLOCKED'  ? 'border-red-100 opacity-70' :
+                          t.status === 'INACTIVE' ? 'border-gray-100 opacity-80' : 'border-gray-200'
                         }`}
                       >
-                        {/* View mode */}
+                        {/* ── View mode ── */}
                         {!isEditing && (
-                          <div className="flex items-center gap-4 px-5 py-4">
-                            {/* Icon */}
-                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                              isBlocked ? 'bg-gray-100 text-gray-400' : 'bg-[#F5C742]/15 text-[#b8920e]'
-                            }`}>
-                              <Hash className="h-5 w-5" />
-                            </div>
+                          <div className="px-5 py-4">
+                            <div className="flex items-start gap-4">
 
-                            {/* Info */}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-bold text-[#1E293B]">
-                                  {t.terminalName || t.terminalId}
-                                </span>
-                                <span className="text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-lg">
-                                  {t.terminalId}
-                                </span>
-                                {isThisDevice && (
-                                  <span className="text-[10px] font-black bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                                    This device
-                                  </span>
-                                )}
-                                {t.isMainPos && (
-                                  <span className="text-[10px] font-bold bg-[#327F74]/10 text-[#327F74] px-2 py-0.5 rounded-full">
-                                    Main POS
-                                  </span>
-                                )}
+                              {/* Terminal icon */}
+                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                                t.status === 'BLOCKED'  ? 'bg-red-50 text-red-400' :
+                                t.status === 'INACTIVE' ? 'bg-gray-100 text-gray-400' :
+                                t.isMainPos             ? 'bg-[#F5C742] text-[#7a4f00]' :
+                                                          'bg-[#F5C742]/15 text-[#b8920e]'
+                              }`}>
+                                {t.isMainPos ? <Star className="h-5 w-5 fill-current" /> : <Monitor className="h-5 w-5" />}
                               </div>
-                              <div className="flex items-center gap-4 mt-1 text-xs text-gray-400 flex-wrap">
-                                <span>Counter: <strong className="text-gray-600">{t.counterName || '—'}</strong></span>
-                                <span>Registered by: <strong className="text-gray-600">{t.registeredBy || '—'}</strong></span>
-                                {t.lastSeenAt && (
-                                  <span>Last seen: <strong className="text-gray-600">{new Date(t.lastSeenAt).toLocaleString()}</strong></span>
-                                )}
+
+                              {/* Main info */}
+                              <div className="flex-1 min-w-0">
+                                {/* Name row */}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-black text-[#1E293B]">
+                                    {t.terminalName || t.terminalId}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-gray-400 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-lg">
+                                    {t.terminalId}
+                                  </span>
+                                  {isThisDevice && (
+                                    <span className="text-[10px] font-black bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                      This device
+                                    </span>
+                                  )}
+                                  {t.isMainPos && (
+                                    <span className="text-[10px] font-bold bg-[#327F74]/10 text-[#327F74] px-2 py-0.5 rounded-full flex items-center gap-1">
+                                      <Star className="h-2.5 w-2.5 fill-current" /> Main POS
+                                    </span>
+                                  )}
+                                  {isRecentlyActive && t.status === 'ACTIVE' && !isThisDevice && (
+                                    <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" /> Online
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Meta row */}
+                                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                                    <Hash className="h-3 w-3 text-gray-300" />
+                                    <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                  </span>
+                                  {t.registeredBy && (
+                                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                                      <Users className="h-3 w-3 text-gray-300" />
+                                      {t.registeredBy}
+                                    </span>
+                                  )}
+                                  {browserLabel && (
+                                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                                      <Cpu className="h-3 w-3 text-gray-300" />
+                                      {browserLabel}
+                                    </span>
+                                  )}
+                                  {lastSeenLabel && (
+                                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                                      <Clock className="h-3 w-3 text-gray-300" />
+                                      {lastSeenLabel}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Status badge */}
-                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 ${
-                              isBlocked
-                                ? 'bg-red-50 text-red-600'
-                                : 'bg-green-50 text-green-700'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${isBlocked ? 'bg-red-500' : 'bg-green-500'}`} />
-                              {isBlocked ? 'Blocked' : 'Active'}
-                            </span>
+                              {/* Right side: status + actions */}
+                              <div className="flex flex-col items-end gap-2 shrink-0">
+                                {/* Status badge */}
+                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${sc.badge}`}>
+                                  {sc.icon}{sc.label}
+                                </span>
 
-                            {/* Actions */}
-                            <div className="flex items-center gap-2 shrink-0">
-                              <button
-                                onClick={() => startEdit(t)}
-                                className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
-                              >
-                                <Wrench className="h-3.5 w-3.5" /> Rename
-                              </button>
-                              <button
-                                onClick={() => toggleTerminalStatus(t)}
-                                className={`flex items-center gap-1.5 text-xs font-semibold border px-3 py-1.5 rounded-lg transition-colors ${
-                                  isBlocked
-                                    ? 'text-green-700 border-green-200 hover:bg-green-50'
-                                    : 'text-red-600 border-red-200 hover:bg-red-50'
-                                }`}
-                              >
-                                {isBlocked ? <><Unlock className="h-3.5 w-3.5" /> Unblock</> : <><Lock className="h-3.5 w-3.5" /> Block</>}
-                              </button>
+                                {/* Action buttons */}
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => startEdit(t)}
+                                    className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
+                                  >
+                                    <Wrench className="h-3.5 w-3.5" /> Rename
+                                  </button>
+
+                                  {/* Cycle status button */}
+                                  {t.status === 'ACTIVE' && (
+                                    <button
+                                      onClick={() => cycleStatus(t)}
+                                      className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                      <Lock className="h-3.5 w-3.5" /> Deactivate
+                                    </button>
+                                  )}
+                                  {t.status === 'INACTIVE' && (
+                                    <>
+                                      <button
+                                        onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
+                                      >
+                                        <Unlock className="h-3.5 w-3.5" /> Activate
+                                      </button>
+                                      <button
+                                        onClick={() => setTerminalStatus(t.terminalId, 'BLOCKED').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                                      >
+                                        <AlertTriangle className="h-3.5 w-3.5" /> Block
+                                      </button>
+                                    </>
+                                  )}
+                                  {t.status === 'BLOCKED' && (
+                                    <button
+                                      onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
+                                      className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                      <Unlock className="h-3.5 w-3.5" /> Unblock
+                                    </button>
+                                  )}
+
+                                  {/* Set as Main POS */}
+                                  {!t.isMainPos && t.status === 'ACTIVE' && (
+                                    <button
+                                      onClick={() => promoteMainPos(t.terminalId)}
+                                      className="flex items-center gap-1.5 text-xs font-semibold text-[#b8920e] border border-[#F5C742]/50 hover:bg-[#F5C742]/10 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                      <Star className="h-3.5 w-3.5" /> Set Main
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         )}
 
-                        {/* Edit mode */}
+                        {/* ── Edit mode ── */}
                         {isEditing && (
                           <div className="px-5 py-4 space-y-4">
-                            <p className="text-sm font-bold text-[#1E293B] flex items-center gap-2">
-                              <Wrench className="h-4 w-4 text-[#F5C742]" />
-                              Rename Terminal — <span className="font-mono text-gray-400 font-normal">{t.terminalId}</span>
-                            </p>
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-[#F5C742]/20 flex items-center justify-center">
+                                <Wrench className="h-4 w-4 text-[#b8920e]" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-[#1E293B] leading-none">Edit Terminal</p>
+                                <p className="text-[10px] font-mono text-gray-400 mt-0.5">{t.terminalId}</p>
+                              </div>
+                            </div>
                             <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-gray-600">Terminal Name</label>
+                                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Terminal Name</label>
                                 <input
                                   type="text"
                                   value={editTerminalName}
@@ -1123,7 +1465,7 @@ const POSConsole = React.memo((props) => {
                                 />
                               </div>
                               <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-gray-600">Counter Name</label>
+                                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Counter Name</label>
                                 <input
                                   type="text"
                                   value={editCounterName}
@@ -1140,7 +1482,7 @@ const POSConsole = React.memo((props) => {
                                 className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-5 py-2 rounded-xl transition-colors disabled:opacity-50"
                               >
                                 <CheckCircle className="h-4 w-4" />
-                                {terminalSaving ? 'Saving…' : 'Save'}
+                                {terminalSaving ? 'Saving…' : 'Save Changes'}
                               </button>
                               <button
                                 onClick={cancelEdit}
@@ -1157,23 +1499,19 @@ const POSConsole = React.memo((props) => {
                 </div>
               )}
 
-              {/* Summary footer */}
-              {terminalList.length > 0 && (
-                <div className="flex items-center gap-6 text-xs text-gray-400 pt-2">
-                  <span>{terminalList.length} terminal{terminalList.length !== 1 ? 's' : ''} total</span>
-                  <span className="text-green-600 font-semibold">
-                    {terminalList.filter(t => t.status === 'ACTIVE').length} active
-                  </span>
-                  <span className="text-red-500 font-semibold">
-                    {terminalList.filter(t => t.status === 'BLOCKED').length} blocked
-                  </span>
-                  <span className="text-[#b8920e] font-semibold">
-                    {terminalList.filter(t => t.isMainPos).length} main POS
-                  </span>
+              {/* ── Summary footer ── */}
+              {terminalList.length > 0 && !terminalsLoading && (
+                <div className="flex items-center gap-6 text-xs text-gray-400 pt-1 px-1">
+                  <span className="font-semibold text-[#1E293B]">{terminalList.length} terminal{terminalList.length !== 1 ? 's' : ''}</span>
+                  <span className="text-green-600 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />{activeCount} active</span>
+                  {inactiveCount > 0 && <span className="text-amber-600 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />{inactiveCount} inactive</span>}
+                  {blockedCount > 0 && <span className="text-red-500 font-semibold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />{blockedCount} blocked</span>}
+                  <span className="text-[#b8920e] font-semibold flex items-center gap-1"><Star className="h-3 w-3 fill-current" />{terminalList.filter(t => t.isMainPos).length} main POS</span>
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
         </div>
       </div>

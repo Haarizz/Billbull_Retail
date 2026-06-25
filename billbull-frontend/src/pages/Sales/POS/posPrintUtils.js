@@ -16,9 +16,11 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
   const t = toggles;
   const salesDesignerSettings = {
     showLogo:              t.showLogo             !== false,
+    showCompanyName:       t.showCompanyDetails    !== false,
     showCompanyAddress:    t.showCompanyDetails    !== false,
     showTRN:               t.showTrn               !== false,
     showCustomerDetails:   t.showCustomerDetails   !== false,
+    showBillTo:            t.showCustomerDetails   !== false,
     showTerms:             t.showTerms             !== false && !!footerNote,
     showNotes:             t.showNotes             !== false,
     showBankDetails:       !!t.showBankDetails,
@@ -33,6 +35,13 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     showSubtotal:          true,
     showVATTotal:          true,
     showGrandTotal:        true,
+    colProductImage:       !!t.colItemImage,
+    colBarcode:            !!t.colBarcode,
+    colBatchNumber:        t.colBatchNo      !== false,
+    colDiscount:           t.colDiscount     !== false,
+    colVAT:                t.colVatPct       !== false,
+    colVATAmount:          t.colVatAmt       !== false,
+    colItemCode:           t.colItemCode     !== false,
     primaryColor:          '#F5C742',
     accentColor:           '#F5C742',
     logoUrl:               t.logoDataUrl  || undefined,
@@ -42,7 +51,6 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
   };
   const columns = JSON.stringify({
     productId:      t.colItemCode     !== false,
-    image:          !!t.colItemImage,
     description:    true,
     qty:            true,
     unitPrice:      true,
@@ -154,7 +162,27 @@ export const buildZatcaTlvBase64 = (sellerName, trn, isoTimestamp, totalWithVat,
   return btoa(String.fromCharCode(...bytes));
 };
 
-export const buildThermalReceiptHtml = (paperSize, invoice, { companyName, trn, header, footer, showTrn, isReprint = false, zatcaQrDataUrl = null }) => {
+export const buildThermalReceiptHtml = (paperSize, invoice, {
+  companyName, trn, header, footer,
+  showTrn = true, isReprint = false, documentTitle = null,
+  zatcaQrDataUrl = null, logoDataUrl = null, footerLogoDataUrl = null,
+  stampDataUrl = null,
+  showLogo = true, showCompanyDetails = true, showCompanyAddress = true,
+  showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  showQRCode = true, showCustomerDetails = true,
+  showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
+  outletAddress = '', outletPhone = '',
+  cashGiven = null, changeAmount = null,
+  cashierName = '', terminalId = '', counterName = '',
+  customerPhone = null, customerEmail = null,
+  creditPreviousBalance = null, creditInvoiceCredit = null,
+  creditAmountPaid = null, creditUpdatedBalance = null,
+  currency = 'AED',
+  // QR/stamp/footer-image placement relative to the footer text: 'before' | 'after' (§4).
+  qrPlacement = 'before',
+}) => {
+  // Configured currency code/symbol shown before amounts (§6).
+  const cur = currency || 'AED';
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -162,45 +190,164 @@ export const buildThermalReceiptHtml = (paperSize, invoice, { companyName, trn, 
     const v = parseFloat(n) || 0;
     return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
+  // Collapse a multi-line / comma address into one continuous line (§1).
+  const oneLineAddress = (addr) => String(addr || '')
+    .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
   const items = (invoice.items || []).filter(it => !it.voided);
   const subTotal = invoice.subTotal || 0;
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
+  // Total discount = sum of line discounts + bill-level discount (§3A).
+  const discountTotal = parseFloat(
+    invoice.discountTotal != null ? invoice.discountTotal
+      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
+  ) || 0;
   const payMode = invoice.paymentMode || '';
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
-  const customer = invoice.customerName || 'Walk-in Customer';
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  const customerName = invoice.customerName || 'Walk-in Customer';
+  const isWalkIn = !invoice.customerName || invoice.customerName === 'Walk-in Customer';
+  // Cashier = logged-in user (§2A); falls back to audit createdBy. NOT the counter name.
+  const cashier = cashierName || invoice.createdBy || '';
+  const terminal = terminalId || invoice.posTerminalId || '';
+  const counter = counterName || invoice.posCounterName || '';
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 @page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
 body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
-.row{display:flex;justify-content:space-between}
-</style></head><body>
-<div class="c b" style="font-size:13px">${esc(companyName)}</div>
-${showTrn ? `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>` : ''}
-${header ? `<div class="c" style="font-size:9px;margin:3px 0">${esc(header)}</div>` : ''}
-${isReprint ? '<div class="c b" style="font-size:9px;margin:2px 0">*** COPY / REPRINT ***</div>' : ''}
-<div class="d"></div>
-<div>INV: ${esc(invoice.invoiceNumber || '')}</div>
-<div>${esc(invDate)}${invTime ? '  ' + esc(invTime) : ''}</div>
-<div>Cust: ${esc(customer)}</div>
-${payMode ? `<div>Pay: ${esc(payMode)}</div>` : ''}
-<div class="d"></div>
-${items.map(it => {
-  const qty = it.quantity || 0;
-  const price = it.unitPrice || it.price || 0;
-  const total = it.netAmount || it.lineTotal || (qty * price);
-  const batch = it.batchNumber || it.pinnedBatchNumber || '';
-  return `<div class="row"><span>${esc(it.itemName || it.productName || '')} x${qty}</span><span>AED ${fmt(total)}</span></div>${batch ? `<div style="font-size:9px;color:#555;padding-left:2px">Batch: ${esc(batch)}</div>` : ''}`;
-}).join('')}
-<div class="d"></div>
-<div class="row"><span>Subtotal</span><span>AED ${fmt(subTotal)}</span></div>
-<div class="row"><span>VAT</span><span>AED ${fmt(taxTotal)}</span></div>
-<div class="row b" style="font-size:13px"><span>TOTAL</span><span>AED ${fmt(grandTotal)}</span></div>
-<div class="d"></div>
-${zatcaQrDataUrl ? `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>` : ''}
-${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>` : ''}
-</body></html>`;
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+.s{font-size:9px;text-transform:uppercase;color:#555;margin:3px 0 1px;letter-spacing:.08em}
+</style></head><body>`;
+
+  // ── Header (§1): logo, title, company name, single-line address, phone, TRN ──
+  if (showLogo && logoDataUrl) {
+    html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  }
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle || 'TAX INVOICE')}</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  if (showCompanyDetails && showCompanyAddress) {
+    const addrLine = oneLineAddress(outletAddress);
+    if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+    if (outletPhone) html += `<div class="c" style="font-size:9px">Tel: ${esc(outletPhone)}</div>`;
+  }
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+  if (isReprint) html += `<div class="c b" style="font-size:9px;margin:2px 0">*** COPY / REPRINT ***</div>`;
+
+  // ── Invoice info (§2): Invoice No, Date, Cashier, Terminal ID, Counter ──
+  html += D;
+  html += `<div class="row"><span class="lbl">Invoice No:</span><span class="num">${esc(invoice.invoiceNumber || '')}</span></div>`;
+  html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(invDate)}${invTime ? '  ' + esc(invTime) : ''}</span></div>`;
+  if (cashier) html += `<div class="row"><span class="lbl">Cashier:</span><span class="val">${esc(cashier)}</span></div>`;
+  if (terminal) html += `<div class="row"><span class="lbl">Terminal ID:</span><span class="num">${esc(terminal)}</span></div>`;
+  if (counter) html += `<div class="row"><span class="lbl">Counter:</span><span class="num">${esc(counter)}</span></div>`;
+  html += D;
+
+  // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
+  // row 2 so unit price is always visible (was: qty×name + total only). ──
+  items.forEach(it => {
+    const qty = it.quantity || 0;
+    const unit = parseFloat(it.unitPrice || it.price || 0);
+    const total = it.netAmount || it.lineTotal || (qty * unit);
+    const batch = it.batchNumber || it.pinnedBatchNumber || '';
+    const serial = it.serialNumber || '';
+    const desc = it.description || '';
+    const sku = it.sku || it.itemCode || '';
+    // Row 1: quantity × product name (name wraps if long).
+    html += `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(it.itemName || it.productName || '')}</span></div>`;
+    // Row 2: unit price → line total, right-aligned and aligned with the total column.
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
+    if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
+    if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
+    else if (batch) html += `<div style="font-size:9px;color:#555;padding-left:8px">Batch: ${esc(batch)}</div>`;
+  });
+  html += D;
+
+  // ── Totals (§3): Subtotal, Discount (if any), VAT (no hardcoded %), TOTAL ──
+  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
+  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
+  if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  html += D;
+  html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
+  html += D;
+
+  // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
+  if (showPaymentDetails) {
+    if (payMode) html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="val">${esc(payMode)}</span></div>`;
+    if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
+    if (payMode || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
+  }
+
+  // ── QR / Stamp / footer image (§4+§5) ──
+  // Build the block once; placement (before/after footer text) is applied later
+  // via qrPlacement. Stamp uploaded → show stamp ONLY and hide QR; else real QR.
+  let qrStampHtml = '';
+  if (stampDataUrl) {
+    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain;display:block;margin:0 auto" alt="Stamp" /></div>`;
+    if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
+  } else if (showQRCode && zatcaQrDataUrl) {
+    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
+    if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
+  } else if (footerLogoDataUrl) {
+    qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    qrStampHtml += D;
+  }
+  // 'before' (default): QR/stamp renders here, ahead of customer/credit/footer.
+  if (qrPlacement !== 'after') html += qrStampHtml;
+
+  // ── Customer (§6): label fixed-width, name/email wrap gracefully within width ──
+  if (showCustomerDetails && !isWalkIn) {
+    const custPhone = customerPhone || invoice.customerPhone || '';
+    const custEmail = customerEmail || invoice.customerEmail || '';
+    html += `<div class="s">CUSTOMER</div>`;
+    html += `<div class="row"><span class="lbl">Name:</span><span class="val">${esc(customerName)}</span></div>`;
+    if (custPhone) html += `<div class="row"><span class="lbl">Mobile:</span><span class="num">${esc(custPhone)}</span></div>`;
+    if (custEmail) html += `<div class="row"><span class="lbl">Email:</span><span class="val">${esc(custEmail)}</span></div>`;
+    html += D;
+  }
+
+  if (showLoyaltyPoints && invoice.loyaltyPointsEarned != null) {
+    html += `<div class="s">LOYALTY POINTS</div>`;
+    if (invoice.loyaltyPointsEarned) html += `<div class="row"><span class="lbl">Points Earned:</span><span class="num">+ ${invoice.loyaltyPointsEarned} pts</span></div>`;
+    if (invoice.loyaltyPointsUsed) html += `<div class="row"><span class="lbl">Points Used:</span><span class="num">${invoice.loyaltyPointsUsed} pts</span></div>`;
+    if (invoice.loyaltyBalance != null) html += `<div class="row"><span class="lbl">Remaining Balance:</span><span class="num">${invoice.loyaltyBalance} pts</span></div>`;
+    html += D;
+  }
+
+  // ── Credit account (§7): mandatory 4-field structure when a credit account exists ──
+  if (showCreditBalance && creditPreviousBalance != null) {
+    const invCredit  = creditInvoiceCredit != null ? creditInvoiceCredit : 0;
+    const amtPaid    = creditAmountPaid    != null ? creditAmountPaid    : grandTotal;
+    const updatedBal = creditUpdatedBalance != null
+      ? creditUpdatedBalance
+      : (parseFloat(creditPreviousBalance) + parseFloat(invCredit));
+    html += `<div class="s">CREDIT ACCOUNT</div>`;
+    html += `<div class="row"><span class="lbl">Previous Balance:</span><span class="num">${cur} ${fmt(creditPreviousBalance)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Invoice Credit:</span><span class="num">${cur} ${fmt(invCredit)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Amount Paid:</span><span class="num">${cur} ${fmt(amtPaid)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Updated Balance:</span><span class="num">${cur} ${fmt(updatedBal)}</span></div>`;
+    html += D;
+  }
+
+  if (showFooterText && footer) {
+    html += `<div class="c" style="font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
+  }
+
+  // 'after': QR/stamp renders below the footer text.
+  if (qrPlacement === 'after') { html += D; html += qrStampHtml; }
+
+  html += '</body></html>';
+  return html;
 };
 
 export const buildLayawayReceiptHtml = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
@@ -255,6 +402,42 @@ ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</
 </body></html>`;
 };
 
+export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const jobDate = job.createdAt
+    ? new Date(job.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between}
+</style></head><body>
+<div class="c b" style="font-size:13px">${esc(companyName)}</div>
+${showTrn ? `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>` : ''}
+<div class="d"></div>
+<div class="c b" style="font-size:11px">SERVICE JOB CARD</div>
+<div class="d"></div>
+<div>Job: ${esc(job.jobNumber || '')}</div>
+<div>${esc(jobDate)}</div>
+${job.technicianName ? `<div>Tech: ${esc(job.technicianName)}</div>` : ''}
+<div class="d"></div>
+<div>Cust: ${esc(job.customerName || '')}</div>
+${job.customerPhone ? `<div>Tel: ${esc(job.customerPhone)}</div>` : ''}
+<div>Item: ${esc(job.deviceName || job.itemName || '')}</div>
+${job.serialNumber ? `<div>S/N: ${esc(job.serialNumber)}</div>` : ''}
+${job.warranty ? `<div>Warranty: ${esc(job.warranty)}</div>` : ''}
+<div class="d"></div>
+${job.problemDescription ? `<div style="font-size:9px">Problem: ${esc(job.problemDescription)}</div>` : ''}
+${job.expectedDate ? `<div style="font-size:9px">Expected: ${esc(job.expectedDate)}</div>` : ''}
+<div class="d"></div>
+<div style="font-size:9px">Cust. Signature: _________________</div>
+${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>` : ''}
+</body></html>`;
+};
+
 export const buildServiceJobA4Html = ({ companyName, trn, address, phone, footerNote }) => {
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const abbr = n => esc(n || 'BB').substring(0, 2).toUpperCase();
@@ -299,6 +482,124 @@ ${footerNote ? `<div class="fn">${esc(footerNote)}</div>` : ''}
 </body></html>`;
 };
 
+// Generates a full-featured thermal receipt HTML that mirrors ThermalMock, respecting all toggles.
+// Used by Full Preview and Test Print so they always match the live preview.
+export const buildThermalSampleHtml = (paperSize, {
+  companyName, trn, header, footer,
+  showLogo = true, showTrn = true, showCompanyDetails = true,
+  showServiceCharge = true, showVatSummary = true, showPaymentDetails = true,
+  showQRCode = true, showCustomerDetails = true, showLoyaltyPoints = true,
+  showCreditBalance = true, showFooterText = true,
+  logoDataUrl = null, stampDataUrl = null,
+  isReturn = false,
+}) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const D = `<div style="border-top:1px dashed #000;margin:4px 0"></div>`;
+  const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#555;margin:4px 0 2px">${t}</div>`;
+  const invNo = isReturn ? 'SR-28-042' : 'DI-28-042';
+  const total = isReturn ? 'AED -1,449.00' : 'AED 102.80';
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 2px}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+</style></head><body>`;
+
+  const srow = (l, r, bold) => `<div class="row"${bold?' style="font-weight:bold"':''}><span class="lbl">${esc(l)}</span><span class="val">${esc(r)}</span></div>`;
+
+  if (showLogo) {
+    html += logoDataUrl
+      ? `<div style="text-align:center;margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`
+      : `<div style="text-align:center;margin:4px 0 6px"><div style="width:52px;height:52px;border-radius:50%;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">Logo</div></div>`;
+  }
+  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">TAX INVOICE</div>`;
+  if (header) html += `<div style="text-align:center;font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div style="text-align:center;font-size:13px;font-weight:bold">${esc(companyName || 'Branch Name')}</div>`;
+  if (showCompanyDetails) {
+    html += `<div style="text-align:center;font-size:9px">Shop 12, Dubai Mall, Downtown Dubai, UAE</div>`;
+    html += `<div style="text-align:center;font-size:9px">Tel: +971 4 123 4567</div>`;
+  }
+  if (showTrn) html += `<div style="text-align:center;font-size:9px">TRN: ${esc(trn || '100123456700003')}</div>`;
+  html += D;
+  html += srow('Invoice No:', invNo);
+  html += srow('Date:', '24-Jun-2026 03:15 PM');
+  html += srow('Cashier:', 'Hari K');
+  html += srow('Terminal ID:', 'POS-01');
+  html += srow('Counter:', 'Counter-01');
+  html += D;
+  // Item rows mirror the live receipt (§5): "Qty x Name" then "@ unit  =  total".
+  const itemRow = (qty, name, unit, total, note) => {
+    let h = `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(name)}</span></div>`;
+    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
+    if (note) h += `<div style="font-size:9px;padding-left:8px;color:#555">${esc(note)}</div>`;
+    return h;
+  };
+  if (isReturn) {
+    html += itemRow(1, 'Samsung A55', '1,380.00', '-1,380.00', 'VAT Reversal  -69.00');
+  } else {
+    html += itemRow(1, 'Margherita Pizza', '45.00', '45.00', 'Extra cheese, No olives');
+    html += itemRow(2, 'Coke', '8.00', '16.00');
+    html += itemRow(1, 'Caesar Salad', '28.00', '28.00');
+  }
+  html += D;
+  html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');
+  if (!isReturn)         html += srow('Discount:', 'AED 0.00');
+  if (showServiceCharge) html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
+  if (showVatSummary)    html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
+  html += D;
+  html += `<div class="row" style="font-weight:bold;font-size:13px"><span>TOTAL:</span><span>${total}</span></div>`;
+  html += D;
+  if (showPaymentDetails && !isReturn) {
+    html += srow('Payment Mode:', 'Cash');
+    html += srow('Cash Received:', 'AED 150.00');
+    html += srow('Change Returned:', 'AED 47.20');
+    html += D;
+  }
+  if (isReturn) {
+    html += srow('Refund Method:', 'Cash');
+    html += D;
+  }
+  // §5 stamp-replaces-QR: a stamp image hides the QR; otherwise the QR is shown.
+  if (stampDataUrl) {
+    html += `<div style="text-align:center;margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain" alt="Stamp" /></div>`;
+    html += D;
+  } else if (showQRCode) {
+    html += `<div style="text-align:center;margin:6px 0"><div style="width:80px;height:80px;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">QR Code</div><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
+    html += D;
+  }
+  if (showCustomerDetails) {
+    html += sec('CUSTOMER');
+    html += srow('Name:', 'Sarah Johnson');
+    html += srow('Mobile:', '+971 50 123 4567');
+    html += srow('Email:', 'sarah@email.com');
+    html += D;
+  }
+  if (showLoyaltyPoints) {
+    html += sec('LOYALTY POINTS');
+    html += srow('Points Earned:', '+ 10 pts');
+    html += srow('Points Used:', '0 pts');
+    html += srow('Remaining Balance:', '1,250 pts');
+    html += D;
+  }
+  if (showCreditBalance) {
+    html += sec('CREDIT ACCOUNT');
+    html += srow('Previous Balance:', 'AED 245.50');
+    html += srow('Invoice Credit:', 'AED 0.00');
+    html += srow('Amount Paid:', 'AED 102.80');
+    html += srow('Updated Balance:', 'AED 245.50');
+    html += D;
+  }
+  if (showFooterText && footer) {
+    html += `<div style="text-align:center;font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
+  }
+  html += '</body></html>';
+  return html;
+};
+
 export const buildPosPrintData = (full, footerNote = '') => ({
   title: 'TAX INVOICE',
   docNo: full.invoiceNumber || '',
@@ -339,7 +640,7 @@ export const buildPosPrintData = (full, footerNote = '') => ({
   },
 });
 
-export const buildPosA4Template = (footerNote = '', opts = {}) => {
+export const buildPosA4Template = (footerNote = '', opts = {}, category = 'Sales Invoice') => {
   const ds = {
     showLogo:             opts.showLogo             !== false,
     showCompanyName:      opts.showCompanyDetails   !== false,
@@ -365,7 +666,7 @@ export const buildPosA4Template = (footerNote = '', opts = {}) => {
     accentColor:  '#F5C742',
   };
   return {
-    category: 'Sales Invoice',
+    category,
     paperSize: 'A4',
     orientation: 'Portrait',
     termsContent: footerNote,

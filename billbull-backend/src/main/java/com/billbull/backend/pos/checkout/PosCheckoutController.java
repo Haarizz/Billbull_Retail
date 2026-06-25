@@ -3,6 +3,7 @@ package com.billbull.backend.pos.checkout;
 import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.product.ProductService;
 import com.billbull.backend.inventory.serial.SerialMaster;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
@@ -55,6 +56,7 @@ public class PosCheckoutController {
     private final ProductRepository productRepository;
     private final ProductPricingRepository pricingRepository;
     private final RolePermissionService permissionService;
+    private final ProductService productService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -62,7 +64,8 @@ public class PosCheckoutController {
                                   SerialMasterRepository serialMasterRepository,
                                   ProductRepository productRepository,
                                   ProductPricingRepository pricingRepository,
-                                  RolePermissionService permissionService) {
+                                  RolePermissionService permissionService,
+                                  ProductService productService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -73,6 +76,7 @@ public class PosCheckoutController {
         this.productRepository = productRepository;
         this.pricingRepository = pricingRepository;
         this.permissionService = permissionService;
+        this.productService = productService;
     }
 
     @PostMapping
@@ -91,6 +95,8 @@ public class PosCheckoutController {
 
         // Step 1: save builds the invoice (number, totals, items) as DRAFT.
         // amountPaid is zero at this point — status/side-effects are deferred.
+        // save() also defaults the branch warehouse onto every stock line that
+        // arrived without one, so the auto-DN posting in Step 2 has a location.
         SalesInvoice saved = invoiceService.save(invoice);
 
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
@@ -104,11 +110,24 @@ public class PosCheckoutController {
         // Step 2: transition status while the invoice is still DRAFT so that
         // doUpdateStatus() fires: FEFO/batch reservation, auto-DN generation,
         // stock deduction, and the GL invoice-posting journal all happen here.
+        // save() runs in its own committed transaction, so if posting throws
+        // (e.g. the branch truly has no resolvable warehouse, or a batch shortfall)
+        // the DRAFT invoice would otherwise be left stranded with Paid=0. Roll the
+        // DRAFT back ourselves and surface the real cause to the cashier instead.
         SalesInvoiceStatus intendedStatus =
                 (paymentAmount >= invoiceTotal - 0.001 && invoiceTotal > 0) ? SalesInvoiceStatus.PAID
               : (paymentAmount > 0)                                           ? SalesInvoiceStatus.PARTIALLY_PAID
               :                                                                  SalesInvoiceStatus.CONFIRMED;
-        invoiceService.updateStatus(saved.getId(), intendedStatus);
+        try {
+            invoiceService.updateStatus(saved.getId(), intendedStatus);
+        } catch (RuntimeException ex) {
+            try {
+                invoiceService.delete(saved.getId());
+            } catch (RuntimeException cleanupEx) {
+                // Best-effort cleanup — don't mask the original posting failure.
+            }
+            throw ex;
+        }
 
         // Step 3: record payment — creates Payment row(s) + Receipt Voucher(s) + GL.
         // Split into per-leg rows when both cash and card amounts are provided: each leg
@@ -164,6 +183,13 @@ public class PosCheckoutController {
         }
 
         // §4.1 Receipt archival: generate ZATCA QR at checkout time and store on the invoice.
+        // CRITICAL: persist via a single-column UPDATE (invoiceService.archiveReceiptQr →
+        // repo.updatePosReceiptQr), NOT invoiceRepository.save(saved). `saved` is the
+        // detached DRAFT snapshot built in Step 1 (amountPaid=null, status=DRAFT,
+        // deliveryStatus=PENDING). Steps 2 & 3 already committed PAID/posted state and the
+        // auto-DN/stock/GL in their own transactions; merging the stale entity back here
+        // would revert all of that — the exact "invoice stays DRAFT, Paid=0 after a
+        // successful payment" defect. A targeted UPDATE touches only posReceiptQr.
         try {
             String sellerName = saved.getBranchName();
             String trn = null;
@@ -179,10 +205,26 @@ public class PosCheckoutController {
             LocalDateTime invoiceAt = saved.getInvoiceDate() != null
                     ? saved.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
             String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
-            saved.setPosReceiptQr(qr);
-            invoiceRepository.save(saved);
+            invoiceService.archiveReceiptQr(saved.getId(), qr);
         } catch (Exception e) {
             // Non-blocking — QR archival failure must not roll back the checkout.
+        }
+
+        // Update sales stats (last_sold_at + total_quantity_sold) for each non-voided line
+        if (request.getItems() != null && !request.getItems().isEmpty()) {
+            try {
+                java.util.Map<String, Integer> codeToQty = new java.util.LinkedHashMap<>();
+                for (PosCheckoutRequest.PosCheckoutItem item : request.getItems()) {
+                    if (Boolean.TRUE.equals(item.getVoided())) continue;
+                    String code = item.getItemCode();
+                    if (code == null || code.isBlank()) continue;
+                    int qty = item.getQuantity() != null ? item.getQuantity() : 1;
+                    codeToQty.merge(code, qty, Integer::sum);
+                }
+                productService.recordSaleStats(codeToQty);
+            } catch (Exception ignored) {
+                // Non-blocking — stats update must never roll back the checkout
+            }
         }
 
         // Audit: completed checkout + any voided lines

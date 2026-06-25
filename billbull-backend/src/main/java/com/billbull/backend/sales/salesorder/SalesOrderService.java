@@ -382,13 +382,51 @@ public class SalesOrderService {
         java.time.YearMonth month = java.time.YearMonth.now();
         java.time.LocalDate monthStart = month.atDay(1);
         java.time.LocalDate monthEnd = month.atEndOfMonth();
+        List<SalesOrder> scopedOrders = branchAccessService.filterExactBranchScopedByBranch(
+                orderRepo.findAll(),
+                SalesOrder::getBranch);
+
+        long todayOrders = scopedOrders.stream()
+                .filter(order -> order.getOrderDate() != null && order.getOrderDate().isEqual(today))
+                .count();
+        long thisMonthOrders = scopedOrders.stream()
+                .filter(order -> order.getOrderDate() != null
+                        && !order.getOrderDate().isBefore(monthStart)
+                        && !order.getOrderDate().isAfter(monthEnd))
+                .count();
+        double thisMonthValue = scopedOrders.stream()
+                .filter(order -> order.getOrderDate() != null
+                        && !order.getOrderDate().isBefore(monthStart)
+                        && !order.getOrderDate().isAfter(monthEnd))
+                .filter(order -> order.getStatus() != SalesOrderStatus.DRAFT)
+                .map(SalesOrder::getOrderTotal)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        long confirmedOrders = scopedOrders.stream()
+                .filter(order -> order.getOrderDate() != null
+                        && !order.getOrderDate().isBefore(monthStart)
+                        && !order.getOrderDate().isAfter(monthEnd))
+                .filter(order -> order.getStatus() == SalesOrderStatus.CONFIRMED)
+                .count();
+        double outstandingBalance = scopedOrders.stream()
+                .filter(order -> order.getStatus() == SalesOrderStatus.CONFIRMED
+                        || order.getStatus() == SalesOrderStatus.PARTIALLY_PAID
+                        || order.getStatus() == SalesOrderStatus.FULLY_PAID)
+                .map(order -> {
+                    BigDecimal total = order.getOrderTotal() != null ? order.getOrderTotal() : BigDecimal.ZERO;
+                    BigDecimal advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : BigDecimal.ZERO;
+                    return total.subtract(advance);
+                })
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
 
         Map<String, Object> stats = new HashMap<>();
-        stats.put("todayOrders", orderRepo.countBetween(today, today));
-        stats.put("thisMonthOrders", orderRepo.countBetween(monthStart, monthEnd));
-        stats.put("thisMonthValue", orderRepo.sumOrderTotalBetween(monthStart, monthEnd));
-        stats.put("confirmedOrders", orderRepo.countConfirmedBetween(monthStart, monthEnd));
-        stats.put("outstandingBalance", orderRepo.sumOutstandingBalance());
+        stats.put("todayOrders", todayOrders);
+        stats.put("thisMonthOrders", thisMonthOrders);
+        stats.put("thisMonthValue", thisMonthValue);
+        stats.put("confirmedOrders", confirmedOrders);
+        stats.put("outstandingBalance", outstandingBalance);
         return stats;
     }
 

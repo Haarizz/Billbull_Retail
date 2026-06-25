@@ -196,6 +196,17 @@ public class Product extends BaseEntity {
     public SubDepartment getSubDepartment() { return subDepartment; }
     public void setSubDepartment(SubDepartment subDepartment) { this.subDepartment = subDepartment; }
 
+    @Column(name = "last_sold_at")
+    private LocalDateTime lastSoldAt;
+
+    @Column(name = "total_quantity_sold", nullable = false)
+    private long totalQuantitySold = 0L;
+
+    public LocalDateTime getLastSoldAt() { return lastSoldAt; }
+    public void setLastSoldAt(LocalDateTime lastSoldAt) { this.lastSoldAt = lastSoldAt; }
+    public long getTotalQuantitySold() { return totalQuantitySold; }
+    public void setTotalQuantitySold(long totalQuantitySold) { this.totalQuantitySold = totalQuantitySold; }
+
     @OneToOne(mappedBy = "product", cascade = CascadeType.ALL)
     private ProductPricing pricing;
 

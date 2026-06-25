@@ -149,9 +149,13 @@ const SalesReturn = () => {
 
    // Refetch when the global Branch Selector changes the active branch.
    useEffect(() => {
-      const handler = () => fetchReturns();
+      const handler = () => {
+         fetchStats();
+         fetchReturns();
+      };
       window.addEventListener('billbull:branch-changed', handler);
       return () => window.removeEventListener('billbull:branch-changed', handler);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
    }, []);
 
    useEffect(() => {

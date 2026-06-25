@@ -103,6 +103,11 @@ export const setTerminalStatus = async (terminalId, status) => {
   return res.data;
 };
 
+export const setMainPosTerminal = async (terminalId) => {
+  const res = await api.put(`${BASE}/terminals/${terminalId}/set-main`);
+  return res.data;
+};
+
 export const getPosZReport = async (branchId, date) => {
   const res = await api.get(`${BASE}/sessions/z-report`, {
     params: { branchId, date: date || new Date().toISOString().slice(0, 10) },

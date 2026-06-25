@@ -243,15 +243,41 @@ public class PaymentService {
         YearMonth currentMonth = YearMonth.now();
         LocalDate monthStart = currentMonth.atDay(1);
         LocalDate monthEnd = currentMonth.atEndOfMonth();
+        List<Payment> scopedPayments = branchAccessService.filterExactBranchScopedByBranch(
+                paymentRepository.findAll(),
+                Payment::getBranch);
 
-        Double todayReceived = paymentRepository.getTotalReceivedForDate(today);
-        Double monthReceived = paymentRepository.getTotalReceivedBetweenDates(monthStart, monthEnd);
-        Double pendingAmount = paymentRepository.getTotalPendingAmount();
-        long totalTransactions = paymentRepository.count();
+        double todayReceived = scopedPayments.stream()
+                .filter(payment -> payment.getPaymentType() == PaymentType.RECEIVED)
+                .filter(payment -> payment.getPaymentDate() != null && payment.getPaymentDate().isEqual(today))
+                .map(Payment::getAmount)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        double monthReceived = scopedPayments.stream()
+                .filter(payment -> payment.getPaymentType() == PaymentType.RECEIVED)
+                .filter(payment -> payment.getPaymentDate() != null
+                        && !payment.getPaymentDate().isBefore(monthStart)
+                        && !payment.getPaymentDate().isAfter(monthEnd))
+                .map(Payment::getAmount)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        double pendingAmount = scopedPayments.stream()
+                .filter(payment -> payment.getStatus() == PaymentStatus.PENDING
+                        || payment.getStatus() == PaymentStatus.PARTIAL)
+                .map(payment -> {
+                    BigDecimal invoiceBalance = payment.getInvoiceBalance() != null ? payment.getInvoiceBalance() : BigDecimal.ZERO;
+                    BigDecimal amount = payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO;
+                    return invoiceBalance.subtract(amount);
+                })
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        long totalTransactions = scopedPayments.size();
 
-        stats.put("todayReceived", todayReceived != null ? todayReceived : 0.0);
-        stats.put("thisMonthReceived", monthReceived != null ? monthReceived : 0.0);
-        stats.put("pendingAmount", pendingAmount != null ? pendingAmount : 0.0);
+        stats.put("todayReceived", todayReceived);
+        stats.put("thisMonthReceived", monthReceived);
+        stats.put("pendingAmount", pendingAmount);
         stats.put("totalTransactions", totalTransactions);
 
         return stats;

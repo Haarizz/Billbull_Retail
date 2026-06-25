@@ -1,39 +1,318 @@
+/*
+ * ThermalMock defines small, purely-presentational sub-components (Divider, Row,
+ * SectionLabel) inside its render. They are stateless and prop-driven and close
+ * over per-render font sizes (fs/fsS), so the usual "state resets on re-creation"
+ * concern behind react-hooks/static-components does not apply here. This is a
+ * static designer preview with no internal state, so the rule is disabled for
+ * this file rather than threading fs/fsS through ~50 call sites.
+ */
+/* eslint-disable react-hooks/static-components */
 import React, { useMemo } from 'react';
 import { Upload } from 'lucide-react';
 import { buildDocumentPreviewHtml, buildServiceJobA4Html, stripForPreview } from './posPrintUtils';
 
-export const ThermalMock = ({ paperSize = '80mm', lines = [] }) => (
-  <div
-    className="mx-auto border border-dashed border-gray-300 rounded-xl p-3 bg-white font-mono text-center space-y-0.5 shadow-sm"
-    style={{ width: paperSize === '58mm' ? 190 : 240 }}
-  >
-    {lines.map((l, i) => (
-      <p
-        key={i}
-        className={`text-[9px] leading-tight ${
-          i === 0
-            ? 'font-black text-gray-800'
-            : l.startsWith('─')
-              ? 'text-gray-300'
-              : l.startsWith('TOTAL') || l.startsWith('REFUND') || l.startsWith('JOB')
-                ? 'font-black text-gray-800'
-                : 'text-gray-500'
-        }`}
-      >
-        {l}
-      </p>
-    ))}
-  </div>
-);
+// Rich thermal receipt preview that mirrors the actual print output exactly
+export const ThermalMock = ({
+  paperSize = '80mm',
+  outletName = 'Main Branch',
+  outletAddress = 'Building 23, Marina Plaza\nDubai Marina, Dubai\nUnited Arab Emirates',
+  outletPhone = '+971 4 123 4567',
+  outletTrn = '100123456700003',
+  logoDataUrl = null,
+  stampDataUrl = null,
+  headerText = 'Thank you for dining with us!',
+  footerText = 'Visit us again soon\nwww.billbull.ae | @billbull',
+  showLogo = true,
+  showTrn = true,
+  showCompanyDetails = true,
+  showServiceCharge = true,
+  showVatSummary = true,
+  showPaymentDetails = true,
+  showQRCode = true,
+  showCustomerDetails = true,
+  showLoyaltyPoints = true,
+  showCreditBalance = true,
+  showFooterText = true,
+  templateType = 'receipt',
+  // job card specific toggles
+  showSerialNumber = true,
+  showWarranty = true,
+  showTechnician = true,
+  showExpectedDate = true,
+  showCustomerSignature = true,
+}) => {
+  const is58 = paperSize === '58mm';
+  const fs = is58 ? 11 : 12;        // base font size
+  const fsS = is58 ? 10 : 11;       // small font size
+  const fsH = is58 ? 13 : 14;       // heading font size
+  const isReturn = templateType === 'return';
+  const isJobCard = templateType === 'jobcard';
+
+  const mono = { fontFamily: "'Courier New', Courier, monospace" };
+
+  // §1: collapse the multi-line / comma address into one continuous line.
+  const addrLine = (outletAddress || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+
+  const Divider = () => (
+    <div style={{ borderTop: '1.5px dashed #d1d5db', margin: '10px 0', width: '100%' }} />
+  );
+
+  // Left label + right value row. `item` rows keep the long left text flexible
+  // (line items); label rows keep the label fixed and let the right value wrap.
+  const Row = ({ left, right, bold, small, teal, item }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6, marginBottom: 3, ...mono }}>
+      <span style={{
+        fontSize: small ? fsS : fs,
+        color: teal ? '#0d9488' : bold ? '#111827' : '#4b5563',
+        fontWeight: bold ? '700' : '400',
+        fontStyle: small ? 'italic' : 'normal',
+        flex: item ? 1 : '0 0 auto',
+        whiteSpace: item ? 'normal' : 'nowrap',
+        lineHeight: 1.45,
+      }}>{left}</span>
+      {right !== undefined && (
+        <span style={{
+          fontSize: small ? fsS : fs,
+          color: bold ? '#111827' : '#4b5563',
+          fontWeight: bold ? '700' : '400',
+          flex: 1,
+          textAlign: 'right',
+          wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
+          lineHeight: 1.45,
+        }}>{right}</span>
+      )}
+    </div>
+  );
+
+  // Section label (CUSTOMER, LOYALTY POINTS, etc.)
+  const SectionLabel = ({ children }) => (
+    <div style={{ fontSize: fsS, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, fontWeight: '600', ...mono }}>{children}</div>
+  );
+
+  return (
+    <div style={{
+      width: '100%',
+      maxWidth: is58 ? 260 : 330,
+      margin: '0 auto',
+      background: '#ffffff',
+      border: '1px solid #e5e7eb',
+      borderRadius: 12,
+      padding: is58 ? '20px 16px 18px' : '24px 20px 20px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+      ...mono,
+    }}>
+
+      {/* ── Logo ── */}
+      {showLogo && (
+        <div style={{ textAlign: 'center', marginBottom: 12 }}>
+          {logoDataUrl
+            ? <img src={logoDataUrl} alt="Logo" style={{ height: 64, maxWidth: '80%', objectFit: 'contain', borderRadius: 8, display: 'block', margin: '0 auto' }} />
+            : (
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%',
+                background: '#f3f4f6', border: '1px solid #e5e7eb',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto',
+              }}>
+                <span style={{ fontSize: fsS, color: '#9ca3af' }}>Logo</span>
+              </div>
+            )
+          }
+        </div>
+      )}
+
+      {/* ── TAX INVOICE label (receipt/return only) ── */}
+      {!isJobCard && (
+        <div style={{ textAlign: 'center', fontSize: fs, fontWeight: '700', color: '#111827', marginBottom: 4 }}>
+          {isReturn ? 'CREDIT NOTE' : 'TAX INVOICE'}
+        </div>
+      )}
+
+      {/* ── Header text ── */}
+      {headerText && (
+        <div style={{ textAlign: 'center', fontSize: fs, color: '#374151', marginBottom: 4, lineHeight: 1.5 }}>
+          {headerText}
+        </div>
+      )}
+
+      {/* ── Company details — single-line address (§1) ── */}
+      <div style={{ textAlign: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: fsH, fontWeight: '700', color: '#111827', marginBottom: 4 }}>{outletName || 'Branch Name'}</div>
+        {showCompanyDetails && addrLine && <div style={{ fontSize: fsS, color: '#0d9488', lineHeight: 1.5 }}>{addrLine}</div>}
+        {showCompanyDetails && outletPhone && <div style={{ fontSize: fsS, color: '#0d9488', lineHeight: 1.5 }}>Tel: {outletPhone}</div>}
+        {showTrn && outletTrn && <div style={{ fontSize: fsS, color: '#0d9488', lineHeight: 1.5 }}>TRN: {outletTrn}</div>}
+      </div>
+
+      <Divider />
+
+      {isJobCard ? (
+        <>
+          <Row left="Job No:" right="SRV-000028" />
+          <Row left="Date:" right="22 Jun 2026" />
+          {showTechnician && <Row left="Technician:" right="Mohammed Ali" />}
+          <Divider />
+          {showCustomerDetails && (
+            <>
+              <Row left="Customer:" right="Fatima Hassan" />
+              <Row left="Phone:" right="+971 50 123 4567" small />
+              <Divider />
+            </>
+          )}
+          <Row left="Item:" right="Samsung A55" />
+          {showSerialNumber && <Row left="Serial No:" right="SNSA55-20260312" />}
+          {showWarranty && <Row left="Warranty:" right="Under Warranty" small />}
+          <Row left="Problem:" right="Display issue" small />
+          {showExpectedDate && <Row left="Expected:" right="29 Jun 2026" small />}
+          <Divider />
+          {showCustomerSignature && (
+            <div style={{ fontSize: fsS, color: '#4b5563', marginTop: 6, ...mono }}>
+              Cust. Signature: ___________________
+            </div>
+          )}
+          {showFooterText && footerText && (
+            <div style={{ textAlign: 'center', fontSize: fsS, color: '#0d9488', marginTop: 8, whiteSpace: 'pre-line', lineHeight: 1.6 }}>{footerText}</div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* ── Transaction header (§2): Cashier, Terminal ID, Counter ── */}
+          <Row left="Invoice No:" right={isReturn ? 'SR-28-042' : 'DI-28-042'} />
+          <Row left="Date:" right="24-Jun-2026 03:15 PM" />
+          <Row left="Cashier:" right="Hari K" />
+          <Row left="Terminal ID:" right="POS-01" />
+          <Row left="Counter:" right="Counter-01" />
+          <Divider />
+
+          {/* ── Line items ── */}
+          {isReturn ? (
+            <>
+              <Row left="1x Samsung A55" right="-1,380.00" item />
+              <Row left="  VAT Reversal" right="-69.00" small teal item />
+            </>
+          ) : (
+            <>
+              <Row left="1x Margherita Pizza" right="45.00" item />
+              <Row left="  Extra cheese, No olives" small teal item />
+              <Row left="2x Coke" right="16.00" item />
+              <Row left="1x Caesar Salad" right="28.00" item />
+            </>
+          )}
+          <Divider />
+
+          {/* ── Totals (§3): Discount row + dynamic VAT label (no hardcoded %) ── */}
+          <Row left="Subtotal:" right={isReturn ? '-1,380.00' : 'AED 89.00'} />
+          {!isReturn && <Row left="Discount:" right="AED 0.00" />}
+          {showServiceCharge && <Row left="Service Charge:" right={isReturn ? '-138.00' : 'AED 8.90'} />}
+          {showVatSummary && <Row left="VAT:" right={isReturn ? '-69.00' : 'AED 4.90'} />}
+          <Divider />
+
+          {/* ── TOTAL — large bold row ── */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '6px 0 6px', ...mono }}>
+            <span style={{ fontSize: is58 ? 15 : 17, fontWeight: '800', color: '#111827' }}>TOTAL:</span>
+            <span style={{ fontSize: is58 ? 15 : 17, fontWeight: '800', color: '#111827' }}>{isReturn ? 'AED -1,449.00' : 'AED 102.80'}</span>
+          </div>
+          <Divider />
+
+          {/* ── Payment details (§4): mode, cash received, change ── */}
+          {showPaymentDetails && !isReturn && (
+            <>
+              <Row left="Payment Mode:" right="Cash" />
+              <Row left="Cash Received:" right="AED 150.00" />
+              <Row left="Change Returned:" right="AED 47.20" />
+              <Divider />
+            </>
+          )}
+          {isReturn && (
+            <>
+              <Row left="Refund Method:" right="Cash" />
+              <Divider />
+            </>
+          )}
+
+          {/* ── QR / Stamp (§5): stamp uploaded → show stamp ONLY, hide QR ── */}
+          {stampDataUrl ? (
+            <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
+              <img src={stampDataUrl} alt="Stamp" style={{ height: 90, maxWidth: '70%', objectFit: 'contain', margin: '0 auto', borderRadius: 6 }} />
+            </div>
+          ) : showQRCode && (
+            <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
+              <div style={{
+                width: 90, height: 90,
+                border: '1px solid #e5e7eb', borderRadius: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto', background: '#f9fafb',
+              }}>
+                <span style={{ fontSize: fsS, color: '#9ca3af' }}>QR Code</span>
+              </div>
+              <div style={{ fontSize: fsS - 1, color: '#9ca3af', marginTop: 2 }}>Scan to verify</div>
+            </div>
+          )}
+
+          {/* ── Customer details ── */}
+          {showCustomerDetails && (
+            <>
+              <Divider />
+              <SectionLabel>Customer</SectionLabel>
+              <Row left="Name:" right="Sarah Johnson" />
+              <Row left="Mobile:" right="+971 50 123 4567" />
+              <Row left="Email:" right="sarah@email.com" />
+            </>
+          )}
+
+          {/* ── Loyalty Points ── */}
+          {showLoyaltyPoints && (
+            <>
+              <Divider />
+              <SectionLabel>Loyalty Points</SectionLabel>
+              <Row left="Points Earned:" right="+ 10 pts" />
+              <Row left="Points Used:" right="0 pts" />
+              <Row left="Remaining Balance:" right="1,250 pts" />
+            </>
+          )}
+
+          {/* ── Credit Account ── */}
+          {showCreditBalance && (
+            <>
+              <Divider />
+              <SectionLabel>Credit Account</SectionLabel>
+              <Row left="Previous Balance:" right="AED 245.50" />
+              <Row left="Invoice Credit:" right="AED 0.00" />
+              <Row left="Amount Paid:" right="AED 102.80" />
+              <Row left="Updated Balance:" right="AED 245.50" />
+            </>
+          )}
+
+          {/* ── Footer text ── */}
+          {showFooterText && footerText && (
+            <>
+              <Divider />
+              <div style={{ textAlign: 'center', fontSize: fsS, color: '#0d9488', marginTop: 6, whiteSpace: 'pre-line', lineHeight: 1.7 }}>{footerText}</div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 export const useA4BlobUrl = (html) => {
   const [url, setUrl] = React.useState('');
   React.useEffect(() => {
-    if (!html) return;
+    if (!html) {
+      setUrl('');
+      return;
+    }
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     setUrl(blobUrl);
-    return () => URL.revokeObjectURL(blobUrl);
+    // Revoke on a macrotask well after React's commit + paint cycle. A delay
+    // of 0ms can fire within the same animation frame in some browsers, racing
+    // the iframe teardown. 100ms gives React ample headroom to finish removing
+    // the iframe DOM node before the blob URL is freed.
+    return () => {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+    };
   }, [html]);
   return url;
 };

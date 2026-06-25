@@ -113,4 +113,20 @@ public class PosTerminalService {
         terminal.setStatus(status);
         return repo.save(terminal);
     }
+
+    @Transactional
+    public PosTerminal setMainPos(String terminalId) {
+        PosTerminal target = repo.findByTerminalId(terminalId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
+        // Clear main flag from all terminals in this branch, then set on target
+        repo.findByBranchIdOrderByTerminalIdAsc(target.getBranchId())
+                .forEach(t -> {
+                    if (Boolean.TRUE.equals(t.getIsMainPos())) {
+                        t.setIsMainPos(false);
+                        repo.save(t);
+                    }
+                });
+        target.setIsMainPos(true);
+        return repo.save(target);
+    }
 }

@@ -193,8 +193,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return findTopDepartments(startDate, endDate, null);
         }
 
-        @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
-        List<SalesInvoice> findRecentForDashboard(Pageable pageable);
+        @Query("SELECT si FROM SalesInvoice si WHERE (:branchId IS NULL OR si.branchId = :branchId) ORDER BY si.id DESC")
+        List<SalesInvoice> findRecentForDashboard(@Param("branchId") Long branchId, Pageable pageable);
 
         @Query("SELECT CAST(COALESCE(SUM(si.taxTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
@@ -363,6 +363,22 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         List<SalesInvoice> findByBranchIdAndPosSessionIdIn(Long branchId, java.util.Collection<Long> sessionIds);
 
+        /**
+         * X/Z-Report loader: a session's invoices WITH their line items fetched in a
+         * single query. The report service streams items for tax/discount/qty sums and
+         * for the per-line void detail; without this fetch each invoice triggers a
+         * separate lazy SELECT for its items (N+1) — the report's main scalability risk.
+         */
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                + "WHERE i.posSessionId = :sessionId")
+        List<SalesInvoice> findByPosSessionIdWithItems(@Param("sessionId") Long sessionId);
+
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                + "WHERE i.branchId = :branchId AND i.posSessionId IN :sessionIds")
+        List<SalesInvoice> findByBranchIdAndPosSessionIdInWithItems(
+                @Param("branchId") Long branchId,
+                @Param("sessionIds") java.util.Collection<Long> sessionIds);
+
         /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
         @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         java.math.BigDecimal sumGlobalOutstandingBalance();
@@ -424,10 +440,21 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                 @Param("dateTo") LocalDate dateTo,
                 @Param("branchId") Long branchId);
 
-        @Query("SELECT s FROM SalesInvoice s WHERE s.salesChannel = 'POS' " +
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items WHERE s.salesChannel = 'POS' " +
                "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
                "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
                "ORDER BY s.createdAt DESC")
         List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);
+
+        /**
+         * Persist ONLY the archived ZATCA receipt QR for an invoice, as a single-column
+         * UPDATE. POS checkout posts status/payment/delivery side-effects in their own
+         * committed transactions before the QR is generated; re-saving a stale in-memory
+         * invoice entity here would merge those columns back to their pre-payment snapshot
+         * (the DRAFT/Paid=0/PENDING bug). A targeted update touches nothing else.
+         */
+        @org.springframework.data.jpa.repository.Modifying
+        @Query("UPDATE SalesInvoice s SET s.posReceiptQr = :qr WHERE s.id = :id")
+        void updatePosReceiptQr(@Param("id") Long id, @Param("qr") String qr);
 }
