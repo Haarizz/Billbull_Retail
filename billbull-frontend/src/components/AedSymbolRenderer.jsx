@@ -150,7 +150,15 @@ const isReactManagedTextNode = (textNode) => {
   // still safe to process.
   const parent = textNode.parentElement;
   if (!parent) return false;
-  return Object.keys(parent).some((k) => k.startsWith('__reactFiber'));
+  if (Object.getOwnPropertyNames(parent).some((k) => k.startsWith('__react'))) {
+    return true;
+  }
+  for (let k in parent) {
+    if (k.startsWith('__react')) {
+      return true;
+    }
+  }
+  return Object.keys(parent).some((k) => k.startsWith('__react'));
 };
 
 const replaceTextNode = (node, currencyConfig) => {
@@ -187,8 +195,6 @@ const processNode = (node, currencyConfig) => {
   if (!hasAedToken(node.textContent || '')) {
     return;
   }
-
-  node.normalize();
 
   const textNodes = [];
   const walker = document.createTreeWalker(

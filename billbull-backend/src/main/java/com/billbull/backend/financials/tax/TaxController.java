@@ -38,7 +38,6 @@ public class TaxController {
      */
     @GetMapping("/active-vat-rate")
     public java.util.Map<String, Object> getActiveVatRate() {
-        modulePermissionService.requireCanView(MODULE);
         return taxService.getActiveVatRate()
                 .<java.util.Map<String, Object>>map(rate -> java.util.Map.of("rate", rate))
                 .orElseGet(() -> {

@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.inventory.batch.BatchMaster;
 import com.billbull.backend.inventory.batch.BatchMasterRepository;
+import com.billbull.backend.inventory.batch.BatchStatus;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductAggregateResponse;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -66,9 +67,21 @@ public class PosSearchService {
         }
 
         // 2. Exact batch number → product + pin the scanned batch unit.
+        //    Inventory integrity: in this system one batch number == one physical
+        //    unit (quantity=1). A batch may only be sold while AVAILABLE. If it is
+        //    RESERVED (held for a layaway/another open sale) or CONSUMED/SOLD, it
+        //    has no available quantity left — block the add rather than letting POS
+        //    oversell stock the warehouse view already shows as unavailable.
         Optional<BatchMaster> batch = batchMasterRepository.findFirstByBatchNumberIgnoreCase(q);
         if (batch.isPresent()) {
             BatchMaster bm = batch.get();
+            BatchStatus status = bm.getStatus();
+            if (status != null && status != BatchStatus.AVAILABLE) {
+                String reason = status == BatchStatus.RESERVED
+                        ? "Batch " + bm.getBatchNumber() + " is already reserved — no available quantity remaining."
+                        : "Batch " + bm.getBatchNumber() + " has already been sold/consumed — no available quantity remaining.";
+                return PosResolveResponse.blocked(reason);
+            }
             ProductAggregateResponse product = loadActiveProduct(bm.getProductId());
             if (product != null) {
                 return PosResolveResponse.product(product, bm.getBatchNumber());

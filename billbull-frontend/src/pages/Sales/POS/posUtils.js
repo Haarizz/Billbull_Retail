@@ -19,6 +19,11 @@ export const mapPosProductListItem = (d = {}) => ({
   productType: d.productType || '',
   salesTax: toNumber(d.salesTax, 5),
   defaultDiscount: toNumber(d.maxDiscount ?? d.defaultDiscount, 0),
+  // Inventory control flags — drive POS one-batch-one-unit enforcement.
+  // The /api/products/list and /api/pos/resolve payloads both carry these.
+  isBatch: Boolean(d.isBatch),
+  isSerial: Boolean(d.isSerial),
+  fefoEnabled: Boolean(d.fefoEnabled),
 });
 
 export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
@@ -41,6 +46,9 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     productType: product.productType,
     salesTax: entry.tax?.salesTax || product.tax?.salesTax,
     maxDiscount: product.maxDiscount,
+    isBatch: product.isBatch,
+    isSerial: product.isSerial,
+    fefoEnabled: product.fefoEnabled,
   });
 };
 
@@ -50,6 +58,15 @@ export const mapPosCustomer = (customer = {}) => ({
   name: customer.name || customer.customerName || customer.fullName || 'Unnamed Customer',
   phone: customer.phone || customer.mobile || customer.mobileNo || '',
   email: customer.email || '',
+  // Default delivery address: prefer the customer's saved shipping address,
+  // then billing address, then any single address field. Used to pre-fill the
+  // POS delivery dialog (cashier can still override).
+  address: customer.defaultShippingAddress
+    || customer.billingAddress
+    || customer.address
+    || customer.shippingAddress
+    || customer.city
+    || '',
   balance: toNumber(customer.currentBalance ?? customer.balance ?? 0),
   membershipId: customer.membershipId || customer.code || customer.customerCode || '',
   tier: customer.priceList || customer.groupType || customer.group || '',

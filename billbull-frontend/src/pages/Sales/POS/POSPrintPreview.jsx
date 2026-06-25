@@ -299,11 +299,20 @@ export const ThermalMock = ({
 export const useA4BlobUrl = (html) => {
   const [url, setUrl] = React.useState('');
   React.useEffect(() => {
-    if (!html) return;
+    if (!html) {
+      setUrl('');
+      return;
+    }
     const blob = new Blob([html], { type: 'text/html' });
     const blobUrl = URL.createObjectURL(blob);
     setUrl(blobUrl);
-    return () => URL.revokeObjectURL(blobUrl);
+    // Revoke on a macrotask well after React's commit + paint cycle. A delay
+    // of 0ms can fire within the same animation frame in some browsers, racing
+    // the iframe teardown. 100ms gives React ample headroom to finish removing
+    // the iframe DOM node before the blob URL is freed.
+    return () => {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+    };
   }, [html]);
   return url;
 };
