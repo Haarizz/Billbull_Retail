@@ -3,6 +3,7 @@ package com.billbull.backend.pos.session;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -21,10 +22,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.pos.audit.PosAuditLogRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.pos.terminal.PosTerminalRepository;
+import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -55,14 +59,23 @@ class PosSessionServiceTest {
     @Mock private PostingEngineService postingEngine;
     @Mock private PosSettingsRepository posSettingsRepository;
     @Mock private PosAuditService auditService;
+    @Mock private PaymentRepository paymentRepository;
+    @Mock private PosAuditLogRepository auditLogRepository;
+    @Mock private PosTerminalRepository terminalRepository;
 
     private PosSessionService service;
 
     @BeforeEach
     void setUp() {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
-                postingEngine, posSettingsRepository, auditService);
+                postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
+                terminalRepository);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Default: no tender / audit rows unless a test stubs them.
+        lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
+        lenient().when(paymentRepository.findTenderForInvoices(any())).thenReturn(List.of());
+        lenient().when(auditLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
+        lenient().when(terminalRepository.findByTerminalId(any())).thenReturn(java.util.Optional.empty());
     }
 
     // ---------------------------------------------------------------------
@@ -130,7 +143,7 @@ class PosSessionServiceTest {
 
     @Test
     void recordInvoiceClassifiesCashSale() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(105.0, "Cash"));
 
@@ -140,12 +153,13 @@ class PosSessionServiceTest {
                 eq(bd("105.0")),  // cashDelta
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(BigDecimal.ZERO),  // creditDelta
-                eq(BigDecimal.ZERO)); // mixedDelta
+                eq(BigDecimal.ZERO),  // mixedDelta
+                eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceClassifiesMixedWhenCashAndCard() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(200.0, "Cash + Card"));
 
@@ -155,12 +169,13 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),  // cashDelta
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(BigDecimal.ZERO),  // creditDelta
-                eq(bd("200.0")));     // mixedDelta
+                eq(bd("200.0")),      // mixedDelta
+                eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceClassifiesCreditSale() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(75.0, "Credit"));
 
@@ -170,12 +185,13 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),  // cashDelta
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(bd("75.0")),       // creditDelta
-                eq(BigDecimal.ZERO)); // mixedDelta
+                eq(BigDecimal.ZERO),  // mixedDelta
+                eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceUnknownModeFallsBackToCash() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(33.0, "Voucher"));
 
@@ -185,19 +201,20 @@ class PosSessionServiceTest {
                 eq(bd("33.0")),       // falls back to cashDelta
                 eq(BigDecimal.ZERO),
                 eq(BigDecimal.ZERO),
-                eq(BigDecimal.ZERO));
+                eq(BigDecimal.ZERO),
+                eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceAccumulatesAcrossInvoices() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(100.25, "Cash"));
         service.recordInvoiceOnSession(1L, invoice(50.50, "Cash"));
 
         // Two separate atomic increments — each fires one UPDATE.
         verify(repo, org.mockito.Mockito.times(2))
-                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any());
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
@@ -205,7 +222,7 @@ class PosSessionServiceTest {
         // Null sessionId — no DB call should be made.
         service.recordInvoiceOnSession(null, invoice(100.0, "Cash"));
         verify(repo, org.mockito.Mockito.never())
-                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any());
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt());
     }
 
     // ---------------------------------------------------------------------
@@ -222,17 +239,22 @@ class PosSessionServiceTest {
         session.getCashMovements().add(cashMovement("DROP_IN", bd("40")));
         session.getCashMovements().add(cashMovement("DROP_OUT", bd("10")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
-        when(invoiceRepo.findByPosSessionId(1L)).thenReturn(List.of(invoiceWithTax(500.0, 25.0)));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(500.0, 25.0)));
+        // Expected cash now derives from ACTUAL cash tender collected, not the session
+        // counter — stub 300 of cash tender for this session's invoice.
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("300"), 1L }));
 
         Map<String, Object> result = service.getXReport(1L);
         Map<String, Object> summary = (Map<String, Object>) result.get("summary");
 
-        // expectedCash = opening(100) + cashSales(300) + net(40-10=30) = 430
+        // expectedCash = opening(100) + cashTender(300) + net(40-10=30) = 430
         assertMoney("430", (BigDecimal) summary.get("expectedCash"));
+        assertMoney("300", (BigDecimal) summary.get("cashSales"));
         assertMoney("40", (BigDecimal) summary.get("cashDropIn"));
         assertMoney("10", (BigDecimal) summary.get("cashDropOut"));
         assertMoney("25", (BigDecimal) summary.get("totalTax"));
-        // salesAmountExTax = max(0, 500 - 25) = 475
+        // salesAmountExTax = max(0, 500 - 25) = 475 (invoice total, net of voids)
         assertMoney("475", (BigDecimal) summary.get("salesAmountExTax"));
     }
 
@@ -243,7 +265,7 @@ class PosSessionServiceTest {
         session.setTotalSales(bd("10"));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         // tax greater than total sales (degenerate, but the clamp must hold)
-        when(invoiceRepo.findByPosSessionId(1L)).thenReturn(List.of(invoiceWithTax(10.0, 30.0)));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(10.0, 30.0)));
 
         Map<String, Object> result = service.getXReport(1L);
         Map<String, Object> summary = (Map<String, Object>) result.get("summary");
@@ -271,14 +293,17 @@ class PosSessionServiceTest {
 
         when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
                 .thenReturn(List.of(s1, s2));
-        when(invoiceRepo.findByBranchIdAndPosSessionIdIn(anyLong(), any()))
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 10.0), invoiceWithTax(100.0, 5.0)));
+        // totalSales now sums invoice rows (net of voids); cashSales is actual tender.
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 2L }));
 
         Map<String, Object> result = service.getZReport(7L, LocalDate.now());
         Map<String, Object> summary = (Map<String, Object>) result.get("summary");
 
-        assertMoney("300", (BigDecimal) summary.get("totalSales"));   // 200 + 100
-        assertMoney("200", (BigDecimal) summary.get("cashSales"));     // 120 + 80
+        assertMoney("300", (BigDecimal) summary.get("totalSales"));   // 200 + 100 (invoices)
+        assertMoney("200", (BigDecimal) summary.get("cashSales"));     // actual cash tender
         assertEquals(3, summary.get("invoiceCount"));                  // 2 + 1
         assertEquals(2, summary.get("sessionCount"));
         assertMoney("15", (BigDecimal) summary.get("totalTax"));       // 10 + 5
@@ -326,6 +351,9 @@ class PosSessionServiceTest {
 
     private SalesInvoice invoiceWithTax(double total, double tax) {
         SalesInvoice inv = new SalesInvoice();
+        // A non-blank invoice number is required for tender aggregation to run
+        // (aggregateTender skips invoices without a number).
+        inv.setInvoiceNumber("INV-" + System.nanoTime());
         inv.setInvoiceTotal(BigDecimal.valueOf(total));
         inv.setTaxTotal(BigDecimal.valueOf(tax));
         inv.setBillDiscountAmount(BigDecimal.ZERO);

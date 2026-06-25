@@ -20,8 +20,9 @@ const POSConsole = React.memo((props) => {
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature, 
     tplInvoiceHeader, tplInvoiceFooter, tplInvoicePaper, 
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature, 
-    tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, 
-    tplInvoiceColItemCode, tplInvoiceColItemImage, tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt, 
+    tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
+    tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
+    tplInvoiceColItemCode, tplInvoiceColItemImage, tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
     tplReturnHeader, tplReturnFooter, tplReturnPaper, 
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails, 
     tplReturnColItemCode, tplReturnColBatchNo, tplReturnColDiscount, tplReturnColVatPct, tplReturnColVatAmt, 
@@ -170,7 +171,7 @@ const POSConsole = React.memo((props) => {
                       invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                       invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                       invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
-                      invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,
+                      invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
                       invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
                       invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
                       returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,
@@ -605,6 +606,7 @@ const POSConsole = React.memo((props) => {
                 showVatSummary: tplReceiptColVatAmt, setShowVatSummary: setTplReceiptColVatAmt,
                 showPaymentDetails: tplReceiptColDiscount, setShowPaymentDetails: setTplReceiptColDiscount,
                 showQRCode: tplReceiptShowQRCode, setShowQRCode: setTplReceiptShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
                 showLoyaltyPoints: tplReceiptShowNotes, setShowLoyaltyPoints: setTplReceiptShowNotes,
                 showCreditBalance: tplReceiptShowBankDetails, setShowCreditBalance: setTplReceiptShowBankDetails,
                 showFooterText: tplReceiptShowTerms, setShowFooterText: setTplReceiptShowTerms,
@@ -630,6 +632,7 @@ const POSConsole = React.memo((props) => {
                 showVatSummary: tplInvoiceColVatAmt, setShowVatSummary: setTplInvoiceColVatAmt,
                 showPaymentDetails: tplInvoiceColDiscount, setShowPaymentDetails: setTplInvoiceColDiscount,
                 showQRCode: tplInvoiceShowQRCode, setShowQRCode: setTplInvoiceShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
                 showLoyaltyPoints: tplInvoiceShowNotes, setShowLoyaltyPoints: setTplInvoiceShowNotes,
                 showCreditBalance: tplInvoiceShowBankDetails, setShowCreditBalance: setTplInvoiceShowBankDetails,
                 showFooterText: tplInvoiceShowTerms, setShowFooterText: setTplInvoiceShowTerms,
@@ -655,6 +658,7 @@ const POSConsole = React.memo((props) => {
                 showVatSummary: tplReturnColVatAmt, setShowVatSummary: setTplReturnColVatAmt,
                 showPaymentDetails: tplReturnColDiscount, setShowPaymentDetails: setTplReturnColDiscount,
                 showQRCode: tplReturnShowQRCode, setShowQRCode: setTplReturnShowQRCode,
+                qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
                 showLoyaltyPoints: tplReturnShowNotes, setShowLoyaltyPoints: setTplReturnShowNotes,
                 showCreditBalance: false, setShowCreditBalance: ()=>{},
                 showFooterText: tplReturnShowTerms, setShowFooterText: setTplReturnShowTerms,
@@ -899,8 +903,8 @@ const POSConsole = React.memo((props) => {
                             <div className="grid grid-cols-2 gap-2">
                               {[['before','Before Footer Text'],['after','After Footer Text']].map(([val,lbl])=>(
                                 <button key={val} type="button"
-                                  onClick={()=>cfg.setShowBarcode(val==='after')}
-                                  className={`py-2.5 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${((val==='after'&&cfg.showBarcode)||(val==='before'&&!cfg.showBarcode)) ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
+                                  onClick={()=>cfg.setQrPlacement?.(val)}
+                                  className={`py-2.5 px-4 rounded-xl border-2 text-sm font-semibold transition-all ${((cfg.qrPlacement||'before')===val) ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
                                   {lbl}
                                 </button>
                               ))}
@@ -1086,7 +1090,7 @@ const POSConsole = React.memo((props) => {
                         invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                         invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                         invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
-                        invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,
+                        invoiceShowBankDetails:tplInvoiceShowBankDetails,invoiceShowQRCode:tplInvoiceShowQRCode,invoiceQrPlacement:tplInvoiceQrPlacement,
                         invoiceColItemCode:tplInvoiceColItemCode,invoiceColItemImage:tplInvoiceColItemImage,invoiceColBarcode:tplInvoiceColBarcode,
                         invoiceColBatchNo:tplInvoiceColBatchNo,invoiceColDiscount:tplInvoiceColDiscount,invoiceColVatPct:tplInvoiceColVatPct,invoiceColVatAmt:tplInvoiceColVatAmt,
                         returnHeader:tplReturnHeader,returnFooter:tplReturnFooter,returnPaper:tplReturnPaper,

@@ -18,8 +18,7 @@ const escapeHtml = (value) =>
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
-const AED_TOKEN_PATTERN = /(^|[^A-Za-z0-9_])AED(?=$|[^A-Za-z0-9_])/gi;
-const AMOUNT_BEFORE_AED_PATTERN = /([+-]?\d[\d,]*(?:\.\d+)?)(\s+)AED(?=$|[^A-Za-z0-9_])/gi;
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const renderCurrencySymbolHtml = (companyProfile = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(companyProfile);
@@ -30,13 +29,24 @@ const renderCurrencySymbolHtml = (companyProfile = {}) => {
     return escapeHtml(currencyConfig.label);
 };
 
+// Rewrites currency-code tokens in a string to the configured symbol/image.
+// The configured currency code (e.g. AED, USD, EUR) is the primary token; "AED"
+// is always also matched so legacy view-models that still emit literal "AED"
+// pick up the active currency. For AED this yields the dirham symbol image; for
+// any other currency it yields that currency's narrow symbol ($, €, ₹, …).
 const renderTextWithCurrencySymbols = (value, companyProfile = {}) => {
     const currencySymbolHtml = renderCurrencySymbolHtml(companyProfile);
+    const config = resolveCurrencyDisplayConfig(companyProfile);
+    const codes = Array.from(new Set([config.currency, 'AED'].filter(Boolean)));
+    const codeAlt = codes.map(escapeRegExp).join('|');
+    const tokenPattern = new RegExp(`(^|[^A-Za-z0-9_])(?:${codeAlt})(?=$|[^A-Za-z0-9_])`, 'gi');
+    const amountBeforePattern = new RegExp(
+        `([+-]?\\d[\\d,]*(?:\\.\\d+)?)(\\s+)(?:${codeAlt})(?=$|[^A-Za-z0-9_])`, 'gi');
 
     return (
         escapeHtml(value)
-            .replace(AMOUNT_BEFORE_AED_PATTERN, `${currencySymbolHtml} $1`)
-            .replace(AED_TOKEN_PATTERN, `$1${currencySymbolHtml}`)
+            .replace(amountBeforePattern, `${currencySymbolHtml} $1`)
+            .replace(tokenPattern, `$1${currencySymbolHtml}`)
     );
 };
 
@@ -200,6 +210,7 @@ const reportA4Styles = `
        @page) get the same whitespace. A small @page margin keeps the browser's
        own header/footer off the page in the print path. */
     @page { size: A4 portrait; margin: 8mm; }
+    @page { @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #94a3b8; } }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
     body {
@@ -501,6 +512,10 @@ const renderReportSectionHtml = (rawSection, companyProfile) => {
 
 export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta = {}) => {
     const generatedAt = new Date().toLocaleString();
+    // Landscape support: swap the @page size only (margins/page-number rule unchanged).
+    const a4Styles = meta.orientation === 'landscape'
+        ? reportA4Styles.replace('size: A4 portrait;', 'size: A4 landscape;')
+        : reportA4Styles;
     const companyName = escapeHtml(companyProfile.companyName || companyProfile.name || 'BillBull ERP');
     const address = escapeHtml(companyProfile.address || '');
     const email = escapeHtml(companyProfile.email || '');
@@ -545,7 +560,7 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
 <head>
     <meta charset="UTF-8" />
     <title>${reportTitle}</title>
-    <style>${reportA4Styles}</style>
+    <style>${a4Styles}</style>
 </head>
 <body>
   <div class="page-pad">
@@ -578,6 +593,147 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
     </div>
   </div>
 </body>
+</html>`;
+};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Thermal (58mm / 80mm) X/Z report renderer.
+//
+// Consumes the SAME view-model as generateReportA4Html:
+//   { reportTitle, note?, kpis?: [{label,value,hint?}],
+//     sections: [{ title?, cols:[...], rows:[[...]], footer?:[...] }] }
+// so preview / print / PDF all render identical data — only layout differs.
+//
+// Monospace, fixed character width (58mm≈32ch, 80mm≈48ch). Each section becomes a
+// label/value block: the first column is the row label, the LAST column is the
+// right-aligned amount, and any middle column (e.g. a count) is appended to the
+// label in parentheses. This keeps wide A4 tables legible on a narrow roll with
+// no clipped values and no horizontal overflow.
+// ──────────────────────────────────────────────────────────────────────────
+
+const THERMAL_WIDTHS = { '58mm': 32, '80mm': 48 };
+
+const padThermalRow = (left, right, width) => {
+    const l = String(left ?? '');
+    const r = String(right ?? '');
+    if (!r) return l.length > width ? l.slice(0, width) : l;
+    const space = width - r.length;
+    if (l.length >= space) {
+        // Wrap the label across lines, keep the value on the first line's tail.
+        const head = l.slice(0, Math.max(0, space - 1));
+        return `${head} ${r}`;
+    }
+    return l + ' '.repeat(space - l.length) + r;
+};
+
+const centerThermal = (text, width) => {
+    const t = String(text ?? '');
+    if (t.length >= width) return t.slice(0, width);
+    const pad = Math.floor((width - t.length) / 2);
+    return ' '.repeat(pad) + t;
+};
+
+export const generateReportThermalHtml = (viewModel = {}, companyProfile = {}, meta = {}) => {
+    const paper = meta.paper === '58mm' ? '58mm' : '80mm';
+    const width = THERMAL_WIDTHS[paper];
+    const widthMm = paper === '58mm' ? 58 : 80;
+    const sep = '='.repeat(width);
+    const dash = '-'.repeat(width);
+
+    const companyName = companyProfile.companyName || companyProfile.name || 'BillBull ERP';
+    const branch = companyProfile.branchName || (meta.branch && meta.branch !== 'All' ? meta.branch : '');
+    const trn = companyProfile.trn || '';
+    const reportTitle = viewModel.reportTitle || meta.reportTitle || 'POS Report';
+    const sections = Array.isArray(viewModel.sections) ? viewModel.sections : [];
+    const kpis = Array.isArray(viewModel.kpis) ? viewModel.kpis : [];
+
+    const lines = [];
+    lines.push(centerThermal(companyName.toUpperCase(), width));
+    if (branch) lines.push(centerThermal(branch, width));
+    if (trn) lines.push(centerThermal(`TRN: ${trn}`, width));
+    lines.push(sep);
+    lines.push(centerThermal(reportTitle.toUpperCase(), width));
+    lines.push(sep);
+    if (viewModel.note) {
+        // Note is "Label: value | Label: value …" — split onto its own lines.
+        String(viewModel.note).split('|').map(s => s.trim()).filter(Boolean)
+            .forEach(part => lines.push(part.length > width ? part.slice(0, width) : part));
+        lines.push(dash);
+    }
+
+    // KPI block as label/value pairs.
+    if (kpis.length) {
+        kpis.forEach(k => lines.push(padThermalRow(k.label, k.value, width)));
+        lines.push(dash);
+    }
+
+    sections.forEach(section => {
+        if (section.title) {
+            lines.push('');
+            lines.push(String(section.title).toUpperCase().slice(0, width));
+        }
+        const rows = Array.isArray(section.rows) ? section.rows : [];
+        rows.forEach(row => {
+            const cells = Array.isArray(row) ? row : [row];
+            if (cells.length <= 1) { lines.push(String(cells[0] ?? '').slice(0, width)); return; }
+            const label = cells[0];
+            const value = cells[cells.length - 1];
+            const middle = cells.slice(1, -1).filter(c => c !== '' && c != null);
+            const fullLabel = middle.length ? `${label} (${middle.join('/')})` : label;
+            lines.push(padThermalRow(fullLabel, value, width));
+        });
+        if (Array.isArray(section.footer) && section.footer.length) {
+            const f = section.footer;
+            const label = f[0];
+            const value = f[f.length - 1];
+            const middle = f.slice(1, -1).filter(c => c !== '' && c != null);
+            const fullLabel = middle.length ? `${label} (${middle.join('/')})` : label;
+            lines.push(dash);
+            lines.push(padThermalRow(fullLabel, value, width));
+        }
+    });
+
+    lines.push(sep);
+    lines.push(centerThermal(`Generated ${new Date().toLocaleString()}`, width));
+    if (meta.user) lines.push(centerThermal(`By: ${meta.user}`, width));
+    lines.push(centerThermal('*** END OF REPORT ***', width));
+    lines.push('');
+
+    const body = lines
+        .map(l => renderTextWithCurrencySymbols(normaliseReportMoney(l), companyProfile))
+        .join('\n');
+
+    const fontPx = paper === '58mm' ? 11 : 12;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>${escapeHtml(reportTitle)}</title>
+    <style>
+        @page { size: ${widthMm}mm auto; margin: 0; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; background: #fff; }
+        body {
+            width: ${widthMm}mm;
+            font-family: 'Courier New', 'Consolas', monospace;
+            font-size: ${fontPx}px;
+            line-height: 1.35;
+            color: #000;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        pre {
+            margin: 0;
+            padding: 2mm;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+        }
+    </style>
+</head>
+<body><pre>${body}</pre></body>
 </html>`;
 };
 

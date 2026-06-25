@@ -33,7 +33,7 @@ import {
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { printHtml, generateReportA4Html, downloadPdfViaServer } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, downloadPdfViaServer } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import {
@@ -130,7 +130,7 @@ import {
 } from 'recharts';
 
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
-import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED } from './POS/POSCurrency';
+import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
 import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct } from './POS/posUtils';
 import {
@@ -144,6 +144,7 @@ import {
 } from './POS/POSPrintPreview';
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
+import { useCompany } from '../../context/CompanyContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
@@ -151,6 +152,13 @@ import POSTouchScreen from './POS/POSTouchScreen';
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 
 export default function POSSales() {
+  const { company } = useCompany();
+  // Active currency CODE from the company profile (falls back to AED). Report
+  // view-models emit this code as the money token; the print engine
+  // (renderTextWithCurrencySymbols) rewrites it to the configured symbol/image.
+  const activeCurrency = company?.currency || 'AED';
+  // Sync the on-screen currency renderers (POSCurrency) with the company profile.
+  useEffect(() => { setActiveCurrency(activeCurrency); }, [activeCurrency]);
   const [currentView, setCurrentView] = useState('dashboard');
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => {
     const d = new Date(); d.setDate(1);
@@ -369,6 +377,8 @@ export default function POSSales() {
   const [reprintError, setReprintError] = useState(null);
   const [reprintPrinting, setReprintPrinting] = useState(false);
   const [reprintPrintMode, setReprintPrintMode] = useState('thermal');
+  // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
+  const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
   const [showCouponsDialog, setShowCouponsDialog] = useState(false);
   const [couponCode, setCouponCode] = useState('');
@@ -534,6 +544,8 @@ export default function POSSales() {
   const [tplInvoiceShowBankDetails, setTplInvoiceShowBankDetails] = useState(false);
   const [tplInvoiceShowQRCode, setTplInvoiceShowQRCode] = useState(false);
   const [tplInvoiceShowStamp, setTplInvoiceShowStamp] = useState(false);
+  // QR / stamp / footer-image placement on the receipt: 'before' | 'after' the footer text.
+  const [tplInvoiceQrPlacement, setTplInvoiceQrPlacement] = useState('before');
   const [tplInvoiceShowSignature, setTplInvoiceShowSignature] = useState(false);
   const [tplInvoiceShowGrandTotalBanner, setTplInvoiceShowGrandTotalBanner] = useState(true);
   const [tplInvoiceColItemCode, setTplInvoiceColItemCode] = useState(true);
@@ -922,6 +934,7 @@ export default function POSSales() {
               if (tpl.invoiceShowNotes != null) setTplInvoiceShowNotes(tpl.invoiceShowNotes);
               if (tpl.invoiceShowBankDetails != null) setTplInvoiceShowBankDetails(tpl.invoiceShowBankDetails);
               if (tpl.invoiceShowQRCode != null) setTplInvoiceShowQRCode(tpl.invoiceShowQRCode);
+              if (tpl.invoiceQrPlacement != null) setTplInvoiceQrPlacement(tpl.invoiceQrPlacement);
               if (tpl.invoiceColItemCode != null) setTplInvoiceColItemCode(tpl.invoiceColItemCode);
               if (tpl.invoiceColItemImage != null) setTplInvoiceColItemImage(tpl.invoiceColItemImage);
               if (tpl.invoiceColBarcode != null) setTplInvoiceColBarcode(tpl.invoiceColBarcode);
@@ -1158,7 +1171,7 @@ export default function POSSales() {
   }, [favouriteProductIds, favouriteTogglePending, selectedCategory]);
 
   const formatCurrency = (amount) => <CurrencyAmount amount={amount} />;
-  const formatCurrencyStr = (amount) => `AED ${Number(amount || 0).toFixed(2)}`;
+  const formatCurrencyStr = (amount) => `${activeCurrency} ${Number(amount || 0).toFixed(2)}`;
 
   const calculateDenominationTotal = (denom) => {
     return Object.entries(denom).reduce((total, [note, count]) => {
@@ -1190,6 +1203,11 @@ export default function POSSales() {
 
   const handleCloseSession = async () => {
     if (currentSession) {
+      if (currentSession.status === 'CLOSED') {
+        setShowCloseSessionDialog(false);
+        setCurrentView('x-report');
+        return;
+      }
       try {
         if (currentSession.id && typeof currentSession.id === 'number') {
           const closingTotal = calculateDenominationTotal(closingDenominations);
@@ -2176,7 +2194,7 @@ export default function POSSales() {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
           }
           openCashDrawer('RECEIPT_PRINT');
-          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, customerPhone: custRec?.phone, customerEmail: custRec?.email, creditPreviousBalance: creditPrevBal }));
+          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, customerPhone: custRec?.phone, customerEmail: custRec?.email, creditPreviousBalance: creditPrevBal, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
         }
       }
     } catch (err) {
@@ -3272,7 +3290,8 @@ export default function POSSales() {
     trn: tplOutletTrn || '',
     address: tplOutletAddress || '',
     phone: tplOutletPhone || '',
-    currency: 'AED',
+    currency: company?.currency || 'AED',
+    currencySymbol: company?.currencySymbol || '',
   });
 
   // ── Z-Report: build A4 view-model for print/PDF ───────────────────────────
@@ -3292,13 +3311,19 @@ export default function POSSales() {
     const sessionCount = zSummary.sessionCount   ?? zSessions.length;
     const openingCash  = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
     const expectedCash = openingCash + cashSalesV;
-    const fmt = (n) => `AED ${Number(n).toFixed(2)}`;
+    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
     const zId = zSessions[0]?.id;
     const reportNo = zId ? `ZR-${String(zId).padStart(9,'0')}` : `ZR-${zReportDate?.replace(/-/g,'')}-001`;
 
     const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
     const creditTotal    = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
     const invNums        = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
+    // Detailed void/removal + per-cashier collection from the backend.
+    const postedVoids    = Array.isArray(zReportData?.voids) ? zReportData.voids : [];
+    const cartRemovals   = Array.isArray(zReportData?.cartRemovals) ? zReportData.cartRemovals : [];
+    const cashierRows    = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
+    const totalPaidV     = Number(zSummary.totalPaid ?? totalSalesV);
+    const voidAmountV    = Number(zSummary.voidAmount ?? 0);
 
     return {
       reportTitle: 'Z-Report / End-of-Day Closing Report',
@@ -3383,6 +3408,46 @@ export default function POSSales() {
           footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
         },
         {
+          // Per-cashier collection attribution (by who took payment) — supports
+          // multi-cashier operation within a single session.
+          title: '10a. Cashier Collection Attribution', type: 'table',
+          cols: ['Cashier', 'Collected'],
+          rows: cashierRows.length
+            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
+            : [['—', fmt(0)]],
+          footer: ['Total Collected', fmt(totalPaidV)],
+        },
+        {
+          title: '10b. Voided Items (Posted then Voided)', type: 'table',
+          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
+          rows: postedVoids.length
+            ? postedVoids.map(v => [
+                v.invoiceNumber || '—',
+                `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
+                String(v.quantity ?? 0),
+                fmt(Number(v.unitPrice ?? 0)),
+                fmt(Number(v.lineTotal ?? 0)),
+                v.voidReason || '—',
+                v.voidedBy || '—',
+                v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+              ])
+            : [['—', 'No voided items', '', '', '', '', '', '']],
+          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
+        },
+        {
+          title: '10c. Removed From Cart (Never Posted)', type: 'table',
+          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
+          rows: cartRemovals.length
+            ? cartRemovals.map(r => [
+                r.itemCode || '—',
+                r.description || '—',
+                r.voidedBy || '—',
+                r.terminalId || '—',
+                r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+              ])
+            : [['—', 'No cart removals', '', '', '']],
+        },
+        {
           title: '11. Customer Credit Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
@@ -3401,7 +3466,7 @@ export default function POSSales() {
           rows: [
             ['Total Net Sales Inc. VAT',    fmt(totalSalesV)],
             ['Total Discount',              fmt(discountV)],
-            ['Total Collection',            fmt(totalSalesV)],
+            ['Total Collection',            fmt(totalPaidV)],
             ['Opening Cash / Float',        fmt(openingCash)],
             ['Expected Cash in Drawer',     fmt(expectedCash)],
             ['Cash Sales',                  fmt(cashSalesV)],
@@ -3468,7 +3533,7 @@ export default function POSSales() {
     const xSummary  = xReportData?.summary  || {};
     const xInvoices = xReportData?.invoices || [];
     const sess = xReportData?.session || currentSession;
-    const fmt = (n) => `AED ${Number(n).toFixed(2)}`;
+    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
     const openingCashVal  = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
     const cashSalesV      = Number(xSummary.cashSales    ?? 0);
     const cardSalesV      = Number(xSummary.cardSales    ?? 0);
@@ -3490,10 +3555,18 @@ export default function POSSales() {
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
 
     const cardInvoices   = xInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('card'));
-    const refundTotal    = Number(sess?.totalRefunds ?? 0);
+    const refundTotal    = Number(xSummary.totalRefunds ?? sess?.totalRefunds ?? 0);
     const netCardSettle  = Math.max(0, cardSalesV - refundTotal);
-    const itemsSoldCount = xInvoices.reduce((s, inv) => s + (inv.items?.length || 0), 0);
-    const totalVoids     = sess?.totalVoids ?? 0;
+    const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
+    // Detailed void/removal data from the backend audit trail + persisted voided lines.
+    const postedVoids    = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
+    const cartRemovals   = Array.isArray(xReportData?.cartRemovals) ? xReportData.cartRemovals : [];
+    const cashierRows    = Array.isArray(xReportData?.cashiers) ? xReportData.cashiers : [];
+    const totalVoids     = Number(xSummary.voidItemCount ?? sess?.totalVoids ?? 0);
+    const totalPaidV     = Number(xSummary.totalPaid ?? totalSalesV);
+    const voidAmountV    = Number(xSummary.voidAmount ?? 0);
+    const sessInfo       = xReportData?.sessionInfo || {};
+    const fmtTs          = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '—';
 
     return {
       reportTitle: 'X-Report / Session Close Report',
@@ -3508,6 +3581,21 @@ export default function POSSales() {
         { label: 'Cash Variance',      value: fmt(Math.abs(cashVariance)), hint: varStatus },
       ],
       sections: [
+        {
+          title: '0. Session Information', type: 'table',
+          cols: ['Field', 'Value'],
+          rows: [
+            ['Session No.',  sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6,'0')}`],
+            ['Branch',       sessInfo.branch || sess?.branchName || '—'],
+            ['Terminal',     sessInfo.terminalId || sess?.terminalId || '—'],
+            ['Counter',      sessInfo.counter || sess?.counterName || '—'],
+            ['Device',       `${sessInfo.device || '—'}${sessInfo.deviceInfo ? ` (${sessInfo.deviceInfo})` : ''}`],
+            ['Shift',        sessInfo.shift || '—'],
+            ['Cashier',      sessInfo.cashier || sess?.openedBy || '—'],
+            ['Opened At',    fmtTs(sessInfo.openedAt || sess?.openedAt)],
+            ['Closed At',    fmtTs(sessInfo.closedAt || sess?.closedAt)],
+          ],
+        },
         {
           title: '1. Denomination Count', type: 'table',
           cols: ['Denomination', 'Quantity', 'Total Amount'],
@@ -3535,7 +3623,8 @@ export default function POSSales() {
             ['Card',   String(xSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
             ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
           ],
-          footer: ['Total', String(invoiceCount), fmt(totalSalesV)],
+          // Total Collected = actual tender taken, not invoice value.
+          footer: ['Total Collected', String(invoiceCount), fmt(totalPaidV)],
         },
         {
           title: '4. Card / Bank Settlement Summary', type: 'table',
@@ -3582,9 +3671,47 @@ export default function POSSales() {
           rows: [['Total Items Sold', String(itemsSoldCount || xSummary.totalItemsSold || 0), fmt(totalSalesV)]],
         },
         {
-          title: '10. Void / Cancelled Items', type: 'table',
-          cols: ['Description', 'Count'],
-          rows: [['Voided / Cancelled', String(totalVoids)]],
+          // Posted-then-voided: lines rung up on a posted invoice, then voided.
+          // Full audit detail from sales_invoice_items (reason / by / when / serial).
+          title: '10. Voided Items (Posted then Voided)', type: 'table',
+          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
+          rows: postedVoids.length
+            ? postedVoids.map(v => [
+                v.invoiceNumber || '—',
+                `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
+                String(v.quantity ?? 0),
+                fmt(Number(v.unitPrice ?? 0)),
+                fmt(Number(v.lineTotal ?? 0)),
+                v.voidReason || '—',
+                v.voidedBy || '—',
+                v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+              ])
+            : [['—', 'No voided items', '', '', '', '', '', '']],
+          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
+        },
+        {
+          // Removed-from-cart: ITEM_VOIDED audit entries with no posted line —
+          // removed before the sale was ever posted. Never mixed with posted voids.
+          title: '11. Removed From Cart (Never Posted)', type: 'table',
+          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
+          rows: cartRemovals.length
+            ? cartRemovals.map(r => [
+                r.itemCode || '—',
+                r.description || '—',
+                r.voidedBy || '—',
+                r.terminalId || '—',
+                r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+              ])
+            : [['—', 'No cart removals', '', '', '']],
+        },
+        {
+          // Per-cashier collection attribution — supports multi-cashier sessions.
+          title: '12. Cashier Attribution', type: 'table',
+          cols: ['Cashier', 'Collected'],
+          rows: cashierRows.length
+            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
+            : [[sess?.openedBy || '—', fmt(totalPaidV)]],
+          footer: ['Total Collected', fmt(totalPaidV)],
         },
       ],
     };
@@ -3650,11 +3777,21 @@ export default function POSSales() {
   };
 
   // ── Report print/export handlers ──────────────────────────────────────────
+  // Single rendering dispatch: one view-model, renderer chosen by reportPrintMode.
+  // A4 → enterprise template; 80mm/58mm → thermal template. Preview, print and PDF
+  // all flow through here so every output shows identical data.
+  const renderReportHtml = (vm, cp, meta) => {
+    if (reportPrintMode === '80mm' || reportPrintMode === '58mm') {
+      return generateReportThermalHtml(vm, cp, { ...meta, paper: reportPrintMode });
+    }
+    return generateReportA4Html(vm, cp, meta);
+  };
+
   const handleZReportPrint = () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const vm  = buildZReportViewModel();
     const cp  = reportCompanyProfile();
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
     printHtml(html);
   };
 
@@ -3662,7 +3799,7 @@ export default function POSSales() {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const vm  = buildZReportViewModel();
     const cp  = reportCompanyProfile();
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
@@ -3671,6 +3808,7 @@ export default function POSSales() {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const vm  = buildZReportViewModel();
     const cp  = reportCompanyProfile();
+    // PDF export always uses the A4 template (a thermal roll PDF is not useful here).
     const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
     const filename = `Z-Report_${zReportDate || new Date().toISOString().slice(0,10)}`;
     try { await downloadPdfViaServer(html, filename); } catch {
@@ -3686,7 +3824,7 @@ export default function POSSales() {
       { header: 'Section',     key: 'Section',      width: 22 },
       { header: 'Description', key: 'Description',  width: 32 },
       { header: 'Count',       key: 'Count',        width: 12 },
-      { header: 'Amount (AED)',key: 'Amount',        width: 18 },
+      { header: `Amount (${activeCurrency})`,key: 'Amount',        width: 18 },
     ];
     const cp = reportCompanyProfile();
     await exportToExcel(rows, cols, `Z-Report_${zReportDate || new Date().toISOString().slice(0,10)}`, {
@@ -3701,7 +3839,7 @@ export default function POSSales() {
     const vm  = buildXReportViewModel();
     const cp  = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     printHtml(html);
   };
 
@@ -3709,7 +3847,7 @@ export default function POSSales() {
     const vm  = buildXReportViewModel();
     const cp  = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
@@ -3718,6 +3856,7 @@ export default function POSSales() {
     const vm  = buildXReportViewModel();
     const cp  = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
+    // PDF export always uses the A4 template.
     const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     const filename = `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6,'0')}` : new Date().toISOString().slice(0,10)}`;
     try { await downloadPdfViaServer(html, filename); } catch {
@@ -3732,7 +3871,7 @@ export default function POSSales() {
       { header: 'Section',     key: 'Section',      width: 22 },
       { header: 'Description', key: 'Description',  width: 32 },
       { header: 'Count',       key: 'Count',        width: 16 },
-      { header: 'Amount (AED)',key: 'Amount',        width: 18 },
+      { header: `Amount (${activeCurrency})`,key: 'Amount',        width: 18 },
     ];
     const cp   = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
@@ -3875,6 +4014,11 @@ export default function POSSales() {
             <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
+              <option value="a4">A4</option>
+              <option value="80mm">Thermal 80mm</option>
+              <option value="58mm">Thermal 58mm</option>
+            </select>
             <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
             <button onClick={handleZReportPrint} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
             <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
@@ -4208,6 +4352,11 @@ export default function POSSales() {
             <p className="text-xs text-gray-500 mt-0.5">Close the current POS session, verify cash drawer balance, enter denomination count, and generate the session closing report.</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-gray-300 text-gray-600 text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
+              <option value="a4">A4</option>
+              <option value="80mm">Thermal 80mm</option>
+              <option value="58mm">Thermal 58mm</option>
+            </select>
             <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
             <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
             <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
@@ -4718,9 +4867,9 @@ export default function POSSales() {
           <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
           <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
           {!isBalanced && actualCash > 0 ? (
-            <button onClick={() => setShowCloseSessionDialog(true)} className="bg-amber-500 hover:bg-amber-600 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
           ) : (
-            <button onClick={() => setShowCloseSessionDialog(true)} className="border border-[#327F74]/40 text-[#327F74] text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
           )}
           <button
             onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }}
@@ -4748,6 +4897,7 @@ export default function POSSales() {
     tplInvoiceHeader, setTplInvoiceHeader, tplInvoiceFooter, setTplInvoiceFooter, tplInvoicePaper, setTplInvoicePaper,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
+    tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
     tplInvoiceColItemCode, tplInvoiceColItemImage, tplInvoiceColBarcode, setTplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
     tplReturnHeader, setTplReturnHeader, tplReturnFooter, setTplReturnFooter, tplReturnPaper, setTplReturnPaper,
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails,
@@ -5260,7 +5410,7 @@ export default function POSSales() {
                           if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
                             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
                           }
-                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: qrDataUrl, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: cashierDisplayName, terminalId: full.posTerminalId || currentTerminal?.terminalId, counterName: full.posCounterName || currentTerminal?.counterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalPrint }));
+                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: qrDataUrl, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: cashierDisplayName, terminalId: full.posTerminalId || currentTerminal?.terminalId, counterName: full.posCounterName || currentTerminal?.counterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalPrint, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
                         }
                       } catch (err) { console.warn('POS print error', err); }
                     }}
@@ -6072,7 +6222,7 @@ export default function POSSales() {
                   if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
                     try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
                   }
-                  printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalLR }));
+                  printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalLR, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
                 }
                 setShowLastReceiptDialog(false);
               } catch (err) { console.warn('Last receipt reprint error', err); }
@@ -7467,7 +7617,7 @@ export default function POSSales() {
                 const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
                 printHtml(generateDocumentPrintHtml(returnA4Template, returnA4Data, returnA4Options));
               } else {
-                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms }));
+                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
               }
             }
             setShowReturn(false); setReturnStep(1); setReturnInvoiceQuery(''); setReturnCustomerMobile('');
