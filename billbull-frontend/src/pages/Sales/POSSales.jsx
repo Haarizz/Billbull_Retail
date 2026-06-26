@@ -152,6 +152,10 @@ import { getPosPrinters } from '../../api/posPrinterApi';
 import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
+const buildPosScannerStorageKey = (branchId, terminalId) => {
+  if (!branchId && !terminalId) return null;
+  return `billbull:pos:scanner:${branchId ?? 'branch'}:${terminalId || 'shared'}`;
+};
 
 export default function POSSales() {
   const { company } = useCompany();
@@ -533,6 +537,17 @@ export default function POSSales() {
   const [terminalSaving, setTerminalSaving] = useState(false);
   const [printerConfigs, setPrinterConfigs] = useState([]);
   const [printersLoading, setPrintersLoading] = useState(false);
+  const [scannerConfig, setScannerConfig] = useState({
+    enabled: false,
+    deviceCode: '',
+    deviceName: '',
+    connectionType: 'USB',
+    inputMode: 'KEYBOARD_WEDGE',
+    status: 'ACTIVE',
+    autoFocusOnPOS: true,
+    notes: '',
+  });
+  const [scannerConfigSavedFlash, setScannerConfigSavedFlash] = useState(false);
   const [consoleDevices, setConsoleDevices] = useState([
     { id: 'd1', type: 'Receipt Printer', name: 'Epson TM-T82III',        port: 'USB',          status: 'Online' },
     { id: 'd2', type: 'Barcode Scanner', name: 'Honeywell Voyager 1202g', port: 'USB',          status: 'Online' },
@@ -544,6 +559,16 @@ export default function POSSales() {
   const [newDevName, setNewDevName] = useState('');
   const [newDevPort, setNewDevPort] = useState('USB');
   const [newDevIp, setNewDevIp] = useState('');
+  const createDefaultScannerConfig = useCallback(() => ({
+    enabled: false,
+    deviceCode: currentTerminal?.terminalId ? `${currentTerminal.terminalId}-SCAN-01` : '',
+    deviceName: currentTerminal?.terminalName ? `${currentTerminal.terminalName} Scanner` : '',
+    connectionType: 'USB',
+    inputMode: 'KEYBOARD_WEDGE',
+    status: 'ACTIVE',
+    autoFocusOnPOS: true,
+    notes: '',
+  }), [currentTerminal?.terminalId, currentTerminal?.terminalName]);
   const [tplReceiptHeader, setTplReceiptHeader] = useState('Thank you for shopping with us!');
   const [tplReceiptFooter, setTplReceiptFooter] = useState('Returns accepted within 7 days with receipt.');
   const [tplReceiptPaper, setTplReceiptPaper] = useState('80mm');
@@ -1989,6 +2014,63 @@ export default function POSSales() {
   useEffect(() => {
     loadPrinterConfigs();
   }, [loadPrinterConfigs]);
+
+  const scannerStorageKey = useMemo(() => buildPosScannerStorageKey(
+    currentTerminal?.branchId ?? null,
+    currentTerminal?.terminalId ?? null,
+  ), [currentTerminal?.branchId, currentTerminal?.terminalId]);
+
+  useEffect(() => {
+    const fallback = createDefaultScannerConfig();
+    if (!scannerStorageKey) {
+      setScannerConfig(fallback);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(scannerStorageKey);
+      if (!raw) {
+        setScannerConfig(fallback);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      setScannerConfig({
+        ...fallback,
+        ...(parsed && typeof parsed === 'object' ? parsed : {}),
+      });
+    } catch (err) {
+      console.warn('Failed to load scanner config', err);
+      setScannerConfig(fallback);
+    }
+  }, [createDefaultScannerConfig, scannerStorageKey]);
+
+  const saveScannerConfig = useCallback((nextConfig) => {
+    const fallback = createDefaultScannerConfig();
+    const payload = {
+      ...fallback,
+      ...(nextConfig && typeof nextConfig === 'object' ? nextConfig : {}),
+      branchId: currentTerminal?.branchId ?? null,
+      branchName: currentTerminal?.branchName ?? '',
+      terminalId: currentTerminal?.terminalId ?? null,
+      terminalName: currentTerminal?.terminalName ?? '',
+      counterName: currentTerminal?.counterName ?? '',
+      savedAt: new Date().toISOString(),
+    };
+    setScannerConfig(payload);
+    if (scannerStorageKey) {
+      localStorage.setItem(scannerStorageKey, JSON.stringify(payload));
+    }
+    setScannerConfigSavedFlash(true);
+    window.setTimeout(() => setScannerConfigSavedFlash(false), 1600);
+    return payload;
+  }, [
+    createDefaultScannerConfig,
+    currentTerminal?.branchId,
+    currentTerminal?.branchName,
+    currentTerminal?.counterName,
+    currentTerminal?.terminalId,
+    currentTerminal?.terminalName,
+    scannerStorageKey,
+  ]);
 
   const buildThermalReceiptArtifacts = useCallback(async ({
     full,
@@ -5094,6 +5176,7 @@ export default function POSSales() {
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
+    scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
@@ -5270,6 +5353,7 @@ export default function POSSales() {
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading,
