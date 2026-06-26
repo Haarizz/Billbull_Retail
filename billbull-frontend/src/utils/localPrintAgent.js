@@ -1,0 +1,208 @@
+import { printZplBatch } from "./zebraZpl";
+
+const PRINT_AGENT_BASES = [
+  "http://127.0.0.1:19777",
+  "http://localhost:19777",
+];
+
+let resolvedAgentBase = null;
+
+const isBlank = (value) => value == null || String(value).trim() === "";
+
+const normalizeStatusFromMessage = (message = "") => {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("not found")) return "NOT_FOUND";
+  if (text.includes("driver")) return "DRIVER_ERROR";
+  if (text.includes("offline")) return "OFFLINE";
+  return "UNKNOWN";
+};
+
+const agentFetch = async (path, init = {}) => {
+  const base = await resolvePrintAgentBase();
+  if (!base) {
+    throw new Error("Print agent not reachable. Start the BillBull POS print agent on this workstation.");
+  }
+  const response = await fetch(`${base}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `Print agent error (${response.status})`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+};
+
+export const resolvePrintAgentBase = async () => {
+  if (resolvedAgentBase) return resolvedAgentBase;
+  for (const base of PRINT_AGENT_BASES) {
+    try {
+      const resp = await fetch(`${base}/health`);
+      if (resp.ok) {
+        resolvedAgentBase = base;
+        return base;
+      }
+    } catch {
+      // Keep probing candidates.
+    }
+  }
+  return null;
+};
+
+export const listPrintAgentPrinters = async () => {
+  const data = await agentFetch("/printers");
+  return Array.isArray(data?.printers) ? data.printers : [];
+};
+
+export const testPrintAgentPrinter = async ({
+  printerName,
+  text,
+  title,
+  paperWidthMm,
+  connectionType,
+  ipAddress,
+  portNumber,
+  deviceIdentifier,
+}) => {
+  return agentFetch("/test-print", {
+    method: "POST",
+    body: JSON.stringify({ printerName, text, title, paperWidthMm, connectionType, ipAddress, portNumber, deviceIdentifier }),
+  });
+};
+
+export const printReceiptThroughAgent = async ({
+  printerName,
+  text,
+  title,
+  paperWidthMm,
+  connectionType,
+  ipAddress,
+  portNumber,
+  deviceIdentifier,
+}) => {
+  return agentFetch("/print/receipt", {
+    method: "POST",
+    body: JSON.stringify({ printerName, text, title, paperWidthMm, connectionType, ipAddress, portNumber, deviceIdentifier }),
+  });
+};
+
+export const testConfiguredPrinter = async (printer, { testText, labelPayload } = {}) => {
+  if (!printer) {
+    throw new Error("Printer configuration is missing.");
+  }
+  if (printer.connectionType === "ZEBRA_BROWSER_PRINT") {
+    const labels = Array.isArray(labelPayload) && labelPayload.length
+      ? labelPayload
+      : [{
+          company: printer.branchName || "BillBull",
+          productName: "BillBull Printer Test",
+          code: printer.deviceCode || printer.deviceName || "BB-TEST",
+          productBarcode: printer.deviceCode || "BB-TEST",
+          price: "TEST",
+        }];
+    await printZplBatch(labels, printer.deviceIdentifier || printer.systemPrinterName || null);
+    return { ok: true, message: "Test label sent to Zebra printer." };
+  }
+  return testPrintAgentPrinter({
+    printerName: printer.systemPrinterName,
+    text: testText,
+    title: "BillBull POS Printer Test",
+    paperWidthMm: paperWidthToMm(printer.paperSize),
+    connectionType: printer.connectionType,
+    ipAddress: printer.ipAddress,
+    portNumber: printer.portNumber,
+    deviceIdentifier: printer.deviceIdentifier,
+  });
+};
+
+export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title }) => {
+  if (!printer) {
+    throw new Error("Printer configuration is missing.");
+  }
+  if (printer.connectionType === "NETWORK_IP") {
+    if (isBlank(printer.ipAddress) || !printer.portNumber) {
+      throw new Error("Configured network printer does not have an IP address and port.");
+    }
+  } else if (isBlank(printer.systemPrinterName)) {
+    throw new Error("Configured printer does not have a system printer name.");
+  }
+  return printReceiptThroughAgent({
+    printerName: printer.systemPrinterName,
+    text: receiptText,
+    title: title || "BillBull POS Receipt",
+    paperWidthMm: paperWidthToMm(printer.paperSize),
+    connectionType: printer.connectionType,
+    ipAddress: printer.ipAddress,
+    portNumber: printer.portNumber,
+    deviceIdentifier: printer.deviceIdentifier,
+  });
+};
+
+export const runtimeStatusFromPrintError = (error) => {
+  const message = error?.message || "Print failed.";
+  return {
+    runtimeStatus: normalizeStatusFromMessage(message),
+    lastTestResult: message,
+  };
+};
+
+export const runtimeStatusFromPrintSuccess = (message = "Printer test completed successfully.") => ({
+  runtimeStatus: "ONLINE",
+  lastTestResult: message,
+});
+
+export const resolvePrinterForContext = (printers, {
+  deviceType = "RECEIPT_PRINTER",
+  branchId = null,
+  terminalId = null,
+} = {}) => {
+  const all = Array.isArray(printers) ? printers : [];
+  const normalizedTerminalId = isBlank(terminalId) ? null : String(terminalId).trim().toUpperCase();
+
+  const candidates = all.filter((printer) => {
+    if (!printer || printer.status !== "ACTIVE") return false;
+    if (deviceType && printer.deviceType !== deviceType) return false;
+    if (branchId != null && printer.branchId != null && Number(printer.branchId) !== Number(branchId)) return false;
+    return true;
+  });
+
+  const scoped = (printer) => {
+    const printerTerminal = isBlank(printer.terminalId) ? null : String(printer.terminalId).trim().toUpperCase();
+    return {
+      printer,
+      exactTerminal: normalizedTerminalId && printerTerminal === normalizedTerminalId,
+      branchScope: !printerTerminal,
+    };
+  };
+
+  const ranked = candidates
+    .map(scoped)
+    .sort((a, b) => {
+      if (Number(Boolean(b.exactTerminal && b.printer.defaultPrinter)) !== Number(Boolean(a.exactTerminal && a.printer.defaultPrinter))) {
+        return Number(Boolean(b.exactTerminal && b.printer.defaultPrinter)) - Number(Boolean(a.exactTerminal && a.printer.defaultPrinter));
+      }
+      if (Number(Boolean(b.exactTerminal)) !== Number(Boolean(a.exactTerminal))) {
+        return Number(Boolean(b.exactTerminal)) - Number(Boolean(a.exactTerminal));
+      }
+      if (Number(Boolean(b.branchScope && b.printer.defaultPrinter)) !== Number(Boolean(a.branchScope && a.printer.defaultPrinter))) {
+        return Number(Boolean(b.branchScope && b.printer.defaultPrinter)) - Number(Boolean(a.branchScope && a.printer.defaultPrinter));
+      }
+      if (Number(Boolean(b.printer.defaultPrinter)) !== Number(Boolean(a.printer.defaultPrinter))) {
+        return Number(Boolean(b.printer.defaultPrinter)) - Number(Boolean(a.printer.defaultPrinter));
+      }
+      return String(a.printer.deviceName || "").localeCompare(String(b.printer.deviceName || ""));
+    });
+
+  return ranked[0]?.printer || null;
+};
+
+export const paperWidthToMm = (paperSize) => {
+  const normalized = String(paperSize || "").toLowerCase();
+  if (normalized.includes("58")) return 58;
+  if (normalized.includes("80")) return 80;
+  return 80;
+};

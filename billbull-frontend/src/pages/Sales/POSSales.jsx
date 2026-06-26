@@ -135,7 +135,7 @@ import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_T
 import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct } from './POS/posUtils';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml,
-  buildPosPrintData, buildPosA4Template,
+  buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
 } from './POS/posPrintUtils';
 import {
@@ -148,8 +148,14 @@ import { useCompany } from '../../context/CompanyContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
+import { getPosPrinters } from '../../api/posPrinterApi';
+import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
+const buildPosScannerStorageKey = (branchId, terminalId) => {
+  if (!branchId && !terminalId) return null;
+  return `billbull:pos:scanner:${branchId ?? 'branch'}:${terminalId || 'shared'}`;
+};
 
 export default function POSSales() {
   const { company } = useCompany();
@@ -529,6 +535,19 @@ export default function POSSales() {
   const [editTerminalName, setEditTerminalName] = useState('');
   const [editCounterName, setEditCounterName] = useState('');
   const [terminalSaving, setTerminalSaving] = useState(false);
+  const [printerConfigs, setPrinterConfigs] = useState([]);
+  const [printersLoading, setPrintersLoading] = useState(false);
+  const [scannerConfig, setScannerConfig] = useState({
+    enabled: false,
+    deviceCode: '',
+    deviceName: '',
+    connectionType: 'USB',
+    inputMode: 'KEYBOARD_WEDGE',
+    status: 'ACTIVE',
+    autoFocusOnPOS: true,
+    notes: '',
+  });
+  const [scannerConfigSavedFlash, setScannerConfigSavedFlash] = useState(false);
   const [consoleDevices, setConsoleDevices] = useState([
     { id: 'd1', type: 'Receipt Printer', name: 'Epson TM-T82III',        port: 'USB',          status: 'Online' },
     { id: 'd2', type: 'Barcode Scanner', name: 'Honeywell Voyager 1202g', port: 'USB',          status: 'Online' },
@@ -540,6 +559,16 @@ export default function POSSales() {
   const [newDevName, setNewDevName] = useState('');
   const [newDevPort, setNewDevPort] = useState('USB');
   const [newDevIp, setNewDevIp] = useState('');
+  const createDefaultScannerConfig = useCallback(() => ({
+    enabled: false,
+    deviceCode: currentTerminal?.terminalId ? `${currentTerminal.terminalId}-SCAN-01` : '',
+    deviceName: currentTerminal?.terminalName ? `${currentTerminal.terminalName} Scanner` : '',
+    connectionType: 'USB',
+    inputMode: 'KEYBOARD_WEDGE',
+    status: 'ACTIVE',
+    autoFocusOnPOS: true,
+    notes: '',
+  }), [currentTerminal?.terminalId, currentTerminal?.terminalName]);
   const [tplReceiptHeader, setTplReceiptHeader] = useState('Thank you for shopping with us!');
   const [tplReceiptFooter, setTplReceiptFooter] = useState('Returns accepted within 7 days with receipt.');
   const [tplReceiptPaper, setTplReceiptPaper] = useState('80mm');
@@ -1961,6 +1990,191 @@ export default function POSSales() {
     return out;
   }, [cartViewDetailed, posSettings]);
 
+  const loadPrinterConfigs = useCallback(async (branchIdOverride = null) => {
+    const fallbackBranchId = sessionStorage.getItem('activeBranchId');
+    const branchId = branchIdOverride
+      ?? currentTerminal?.branchId
+      ?? (fallbackBranchId && fallbackBranchId !== 'ALL' ? Number(fallbackBranchId) : null);
+    if (!branchId) {
+      setPrinterConfigs([]);
+      return;
+    }
+    setPrintersLoading(true);
+    try {
+      const data = await getPosPrinters({ branchId });
+      setPrinterConfigs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('Failed to load POS printers', err);
+      setPrinterConfigs([]);
+    } finally {
+      setPrintersLoading(false);
+    }
+  }, [currentTerminal?.branchId]);
+
+  useEffect(() => {
+    loadPrinterConfigs();
+  }, [loadPrinterConfigs]);
+
+  const scannerStorageKey = useMemo(() => buildPosScannerStorageKey(
+    currentTerminal?.branchId ?? null,
+    currentTerminal?.terminalId ?? null,
+  ), [currentTerminal?.branchId, currentTerminal?.terminalId]);
+
+  useEffect(() => {
+    const fallback = createDefaultScannerConfig();
+    if (!scannerStorageKey) {
+      setScannerConfig(fallback);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(scannerStorageKey);
+      if (!raw) {
+        setScannerConfig(fallback);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      setScannerConfig({
+        ...fallback,
+        ...(parsed && typeof parsed === 'object' ? parsed : {}),
+      });
+    } catch (err) {
+      console.warn('Failed to load scanner config', err);
+      setScannerConfig(fallback);
+    }
+  }, [createDefaultScannerConfig, scannerStorageKey]);
+
+  const saveScannerConfig = useCallback((nextConfig) => {
+    const fallback = createDefaultScannerConfig();
+    const payload = {
+      ...fallback,
+      ...(nextConfig && typeof nextConfig === 'object' ? nextConfig : {}),
+      branchId: currentTerminal?.branchId ?? null,
+      branchName: currentTerminal?.branchName ?? '',
+      terminalId: currentTerminal?.terminalId ?? null,
+      terminalName: currentTerminal?.terminalName ?? '',
+      counterName: currentTerminal?.counterName ?? '',
+      savedAt: new Date().toISOString(),
+    };
+    setScannerConfig(payload);
+    if (scannerStorageKey) {
+      localStorage.setItem(scannerStorageKey, JSON.stringify(payload));
+    }
+    setScannerConfigSavedFlash(true);
+    window.setTimeout(() => setScannerConfigSavedFlash(false), 1600);
+    return payload;
+  }, [
+    createDefaultScannerConfig,
+    currentTerminal?.branchId,
+    currentTerminal?.branchName,
+    currentTerminal?.counterName,
+    currentTerminal?.terminalId,
+    currentTerminal?.terminalName,
+    scannerStorageKey,
+  ]);
+
+  const buildThermalReceiptArtifacts = useCallback(async ({
+    full,
+    isReprint = false,
+    cashGiven = null,
+    changeAmount = null,
+    customerPhone = null,
+    customerEmail = null,
+    creditPreviousBalance = null,
+    cashierNameOverride = null,
+  }) => {
+    const tlv = buildZatcaTlvBase64(
+      tplOutletName,
+      tplOutletTrn,
+      full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(),
+      full.invoiceTotal,
+      full.taxTotal
+    );
+    const qrDataUrl = tplInvoiceShowQRCode
+      ? await QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 })
+      : null;
+    const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
+      companyName: tplOutletName,
+      trn: tplOutletTrn,
+      header: tplInvoiceHeader,
+      footer: tplInvoiceFooter,
+      showTrn: tplInvoiceShowTrn,
+      isReprint,
+      zatcaQrDataUrl: qrDataUrl,
+      logoDataUrl: tplLogoDataUrl,
+      stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null,
+      showLogo: tplInvoiceShowLogo,
+      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      outletAddress: tplOutletAddress,
+      outletPhone: tplOutletPhone,
+      showServiceCharge: tplInvoiceShowGrandTotalBanner,
+      showVatSummary: tplInvoiceColVatAmt,
+      showPaymentDetails: tplInvoiceColDiscount,
+      showQRCode: tplInvoiceShowQRCode,
+      showCustomerDetails: tplInvoiceShowCustomerDetails,
+      showLoyaltyPoints: tplInvoiceShowNotes,
+      showCreditBalance: tplInvoiceShowBankDetails,
+      showFooterText: tplInvoiceShowTerms,
+      cashierName: cashierNameOverride || cashierDisplayName,
+      terminalId: full.posTerminalId || currentTerminal?.terminalId,
+      counterName: full.posCounterName || currentTerminal?.counterName,
+      cashGiven,
+      changeAmount,
+      customerPhone,
+      customerEmail,
+      creditPreviousBalance,
+      currency: activeCurrency,
+      qrPlacement: tplInvoiceQrPlacement,
+    });
+    const text = buildThermalReceiptText(tplInvoicePaper, full, {
+      companyName: tplOutletName,
+      trn: tplOutletTrn,
+      header: tplInvoiceHeader,
+      footer: tplInvoiceFooter,
+      showTrn: tplInvoiceShowTrn,
+      cashierName: cashierNameOverride || cashierDisplayName,
+      terminalId: full.posTerminalId || currentTerminal?.terminalId,
+      counterName: full.posCounterName || currentTerminal?.counterName,
+      cashGiven,
+      changeAmount,
+      customerPhone,
+      customerEmail,
+      currency: activeCurrency,
+    });
+    return { html, text };
+  }, [
+    activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
+    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoicePaper,
+    tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
+    tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
+    tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
+    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
+  ]);
+
+  const printThermalReceiptWithConfiguredPrinter = useCallback(async ({
+    full,
+    html,
+    text,
+    title = 'BillBull POS Receipt',
+  }) => {
+    const printer = resolvePrinterForContext(printerConfigs, {
+      deviceType: 'RECEIPT_PRINTER',
+      branchId: full.branchId || currentTerminal?.branchId || null,
+      terminalId: full.posTerminalId || currentTerminal?.terminalId || null,
+    });
+    if (!printer) {
+      printHtml(html);
+      return { mode: 'browser-fallback', printer: null };
+    }
+    try {
+      await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title });
+      return { mode: 'agent', printer };
+    } catch (err) {
+      console.warn('Configured printer failed, falling back to browser print', err);
+      printHtml(html);
+      return { mode: 'browser-fallback', printer, error: err };
+    }
+  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
+
   const processPayment = async () => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
     setCheckoutLoading(true);
@@ -2062,6 +2276,27 @@ export default function POSSales() {
           : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum
           : effectiveDueAmt,
       };
+
+      if (tplInvoicePaper !== 'A4') {
+        try {
+          const { html, text } = await buildThermalReceiptArtifacts({
+            full: savedInvoice,
+            cashGiven: paid.paidAmount,
+            changeAmount: changeDue,
+            customerPhone: customer?.phone,
+            customerEmail: customer?.email,
+          });
+          await printThermalReceiptWithConfiguredPrinter({
+            full: savedInvoice,
+            html,
+            text,
+            title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
+          });
+          openCashDrawer('RECEIPT_PRINT');
+        } catch (autoPrintErr) {
+          console.warn('Automatic receipt print failed', autoPrintErr);
+        }
+      }
 
       // If this checkout settled a layaway, stamp it converted (releases its
       // reservations; the sale above re-reserved its own batches). Best-effort —
@@ -2201,16 +2436,27 @@ export default function POSSales() {
             printHtml(html);
           }
         } else {
-          const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
-          const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
           const custRec = customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode);
           const isWalkIn = !full.customerName || full.customerName === 'Walk-in Customer';
           let creditPrevBal = null;
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
           }
+          const { html, text } = await buildThermalReceiptArtifacts({
+            full,
+            isReprint: true,
+            customerPhone: custRec?.phone,
+            customerEmail: custRec?.email,
+            creditPreviousBalance: creditPrevBal,
+            cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
+          });
           openCashDrawer('RECEIPT_PRINT');
-          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, customerPhone: custRec?.phone, customerEmail: custRec?.email, creditPreviousBalance: creditPrevBal, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+          await printThermalReceiptWithConfiguredPrinter({
+            full,
+            html,
+            text,
+            title: `Reprint ${full.invoiceNumber || reprintSelectedInvoice || ''}`.trim(),
+          });
         }
       }
     } catch (err) {
@@ -4929,6 +5175,8 @@ export default function POSSales() {
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
+    printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
+    scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
@@ -5105,6 +5353,7 @@ export default function POSSales() {
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading,
@@ -5591,14 +5840,25 @@ export default function POSSales() {
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
-                          const tlv = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
-                          const qrDataUrl = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 }) : null;
                           const isWalkInPrint = !full.customerName || full.customerName === 'Walk-in Customer';
                           let creditPrevBalPrint = null;
                           if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
                             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
                           }
-                          printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: qrDataUrl, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: cashierDisplayName, terminalId: full.posTerminalId || currentTerminal?.terminalId, counterName: full.posCounterName || currentTerminal?.counterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalPrint, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+                          const { html, text } = await buildThermalReceiptArtifacts({
+                            full,
+                            cashGiven: lastPaidInvoice?.paidAmount,
+                            changeAmount: lastPaidInvoice?.changeAmount,
+                            customerPhone: lastPaidInvoice?.customer?.phone,
+                            customerEmail: lastPaidInvoice?.customer?.email,
+                            creditPreviousBalance: creditPrevBalPrint,
+                          });
+                          await printThermalReceiptWithConfiguredPrinter({
+                            full,
+                            html,
+                            text,
+                            title: `Receipt ${full.invoiceNumber || ''}`.trim(),
+                          });
                         }
                       } catch (err) { console.warn('POS print error', err); }
                     }}
@@ -6403,14 +6663,27 @@ export default function POSSales() {
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                   printHtml(generateDocumentPrintHtml(template, data, options));
                 } else {
-                  const tlvR = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(), full.invoiceTotal, full.taxTotal);
-                  const qrDataUrlR = tplInvoiceShowQRCode ? await QRCode.toDataURL(tlvR, { errorCorrectionLevel: 'M', width: 160 }) : null;
                   const isWalkInLR = !full.customerName || full.customerName === 'Walk-in Customer';
                   let creditPrevBalLR = null;
                   if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
                     try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
                   }
-                  printHtml(buildThermalReceiptHtml(tplInvoicePaper, full, { companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter, showTrn: tplInvoiceShowTrn, isReprint: true, zatcaQrDataUrl: qrDataUrlR, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null, showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner, showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: tplInvoiceShowQRCode, showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes, showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms, cashierName: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName, terminalId: full.posTerminalId, counterName: full.posCounterName, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: creditPrevBalLR, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+                  const { html, text } = await buildThermalReceiptArtifacts({
+                    full,
+                    isReprint: true,
+                    cashGiven: lastPaidInvoice?.paidAmount,
+                    changeAmount: lastPaidInvoice?.changeAmount,
+                    customerPhone: lastPaidInvoice?.customer?.phone,
+                    customerEmail: lastPaidInvoice?.customer?.email,
+                    creditPreviousBalance: creditPrevBalLR,
+                    cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
+                  });
+                  await printThermalReceiptWithConfiguredPrinter({
+                    full,
+                    html,
+                    text,
+                    title: `Reprint ${full.invoiceNumber || ''}`.trim(),
+                  });
                 }
                 setShowLastReceiptDialog(false);
               } catch (err) { console.warn('Last receipt reprint error', err); }

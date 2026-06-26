@@ -354,6 +354,130 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   return html;
 };
 
+const buildFixedWidthLine = (left, right, width) => {
+  const l = String(left || '');
+  const r = String(right || '');
+  if (!r) return l.slice(0, width);
+  const room = Math.max(1, width - r.length - 1);
+  const leftTrimmed = l.length > room ? `${l.slice(0, Math.max(0, room - 1))}…` : l;
+  return `${leftTrimmed}${' '.repeat(Math.max(1, width - leftTrimmed.length - r.length))}${r}`;
+};
+
+export const buildThermalReceiptText = (paperSize, invoice, {
+  companyName, trn, header, footer,
+  showTrn = true,
+  cashierName = '',
+  terminalId = '',
+  counterName = '',
+  cashGiven = null,
+  changeAmount = null,
+  currency = 'AED',
+  customerPhone = null,
+  customerEmail = null,
+} = {}) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const fmt = (n) => {
+    const v = parseFloat(n) || 0;
+    return `${currency} ${v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+
+  pushCentered(companyName || 'BillBull');
+  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+  if (header) pushCentered(header);
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Invoice', invoice.invoiceNumber || invoice.id || '', width));
+  if (invoice.invoiceDate) {
+    const dt = new Date(invoice.invoiceDate);
+    lines.push(buildFixedWidthLine('Date', dt.toLocaleString('en-GB'), width));
+  }
+  if (cashierName) lines.push(buildFixedWidthLine('Cashier', cashierName, width));
+  if (terminalId) lines.push(buildFixedWidthLine('Terminal', terminalId, width));
+  if (counterName) lines.push(buildFixedWidthLine('Counter', counterName, width));
+  lines.push(hr);
+  lines.push(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
+  if (customerPhone) lines.push(`Mobile: ${customerPhone}`);
+  if (customerEmail) lines.push(`Email: ${customerEmail}`);
+  lines.push(hr);
+
+  (invoice.items || []).forEach((item) => {
+    if (item.voided || item.isVoided) return;
+    const qty = item.quantity || 0;
+    const name = item.itemName || item.productName || item.name || 'Item';
+    const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
+    const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    lines.push(`${qty}x ${name}`.slice(0, width));
+    lines.push(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    const serial = item.serialNumber || '';
+    const batch = item.batchNumber || item.pinnedBatchNumber || '';
+    if (serial) lines.push(`S/N: ${serial}`.slice(0, width));
+    else if (batch) lines.push(`Batch: ${batch}`.slice(0, width));
+  });
+
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Subtotal', fmt(invoice.subTotal), width));
+  if (parseFloat(invoice.discountTotal || 0) > 0) {
+    lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
+  }
+  lines.push(buildFixedWidthLine('VAT', fmt(invoice.taxTotal), width));
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('TOTAL', fmt(invoice.invoiceTotal), width));
+  if (cashGiven != null && parseFloat(cashGiven) > 0) {
+    lines.push(buildFixedWidthLine('Cash Received', fmt(cashGiven), width));
+  }
+  if (changeAmount != null && parseFloat(changeAmount) > 0) {
+    lines.push(buildFixedWidthLine('Change Returned', fmt(changeAmount), width));
+  }
+  lines.push(hr);
+  if (footer) pushCentered(footer);
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
+};
+
+export const buildThermalTestReceiptText = ({
+  companyName = 'BillBull',
+  branchName = '',
+  terminalId = '',
+  counterName = '',
+  printerName = '',
+  paperSize = '80mm',
+  currency = 'AED',
+} = {}) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+  pushCentered(companyName);
+  pushCentered('POS PRINTER TEST');
+  lines.push(hr);
+  if (branchName) lines.push(`Branch: ${branchName}`.slice(0, width));
+  if (terminalId) lines.push(`Terminal: ${terminalId}`.slice(0, width));
+  if (counterName) lines.push(`Counter: ${counterName}`.slice(0, width));
+  if (printerName) lines.push(`Printer: ${printerName}`.slice(0, width));
+  lines.push(`Paper: ${paperSize}`.slice(0, width));
+  lines.push(`Currency: ${currency}`.slice(0, width));
+  lines.push(hr);
+  pushCentered(new Date().toLocaleString('en-GB'));
+  pushCentered('If you can read this,');
+  pushCentered('the configured printer is working.');
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
+};
+
 export const buildLayawayReceiptHtml = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';

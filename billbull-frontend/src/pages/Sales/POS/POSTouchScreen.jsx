@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
@@ -24,6 +24,7 @@ const POSTouchScreen = React.memo((props) => {
     // search / barcode
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    scannerConfig,
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
@@ -70,6 +71,84 @@ const POSTouchScreen = React.memo((props) => {
   } = props;
 
   const [animatingHearts, setAnimatingHearts] = useState(new Set());
+  const scannerBufferRef = useRef('');
+  const scannerTimerRef = useRef(null);
+  const scannerReady = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE' && scannerConfig?.inputMode === 'KEYBOARD_WEDGE';
+
+  useEffect(() => {
+    if (!scannerReady || !scannerConfig?.autoFocusOnPOS) return undefined;
+    if (posActionMode === 'qty' || posActionMode === 'discount') return undefined;
+    const timer = window.setTimeout(() => {
+      barcodeInputRef?.current?.focus?.();
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [
+    barcodeInputRef,
+    currentInvoice.items.length,
+    lastScannedItem?.barcode,
+    posActionMode,
+    scannerConfig?.autoFocusOnPOS,
+    scannerReady,
+  ]);
+
+  useEffect(() => {
+    if (!scannerReady) return undefined;
+
+    const resetScannerBuffer = () => {
+      scannerBufferRef.current = '';
+      if (scannerTimerRef.current) {
+        window.clearTimeout(scannerTimerRef.current);
+        scannerTimerRef.current = null;
+      }
+    };
+
+    const scheduleScannerReset = () => {
+      if (scannerTimerRef.current) {
+        window.clearTimeout(scannerTimerRef.current);
+      }
+      scannerTimerRef.current = window.setTimeout(() => {
+        scannerBufferRef.current = '';
+        scannerTimerRef.current = null;
+      }, 250);
+    };
+
+    const isTextEntryTarget = (target) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    };
+
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (posActionMode === 'qty' || posActionMode === 'discount') return;
+
+      const activeTarget = event.target;
+      const barcodeTarget = barcodeInputRef?.current || null;
+      const allowWedgeCapture = activeTarget === barcodeTarget || !isTextEntryTarget(activeTarget);
+      if (!allowWedgeCapture) return;
+
+      if (event.key === 'Enter') {
+        const scannedValue = scannerBufferRef.current.trim();
+        if (!scannedValue) return;
+        event.preventDefault();
+        resetScannerBuffer();
+        setBarcodeInput(scannedValue);
+        handleBarcodeScan(scannedValue);
+        return;
+      }
+
+      if (event.key.length !== 1) return;
+      scannerBufferRef.current += event.key;
+      scheduleScannerReset();
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      resetScannerBuffer();
+    };
+  }, [barcodeInputRef, handleBarcodeScan, posActionMode, scannerReady, setBarcodeInput]);
+
   const handleHeartClick = useCallback((e, productId) => {
     e.stopPropagation();
     if (!toggleFavourite) return;
@@ -272,8 +351,70 @@ const POSTouchScreen = React.memo((props) => {
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
           <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
 
-            {/* Last scanned item panel */}
-            <div className="border-b border-[#327F74]/20 flex-shrink-0 min-h-[220px] flex flex-col justify-center bg-white">
+            {/* Barcode input */}
+            <div className="bg-[#F5C742] px-4 py-3 flex-shrink-0 border-b border-[#327F74]/30">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-white/80 mb-2">
+                {posActionMode === 'qty' ? 'Enter Quantity' : posActionMode === 'discount' ? 'Enter Discount' : 'Barcode / Loyalty Card'}
+              </p>
+              {scannerReady && (
+                <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-300" />
+                  Scanner Ready
+                </div>
+              )}
+              <div className="relative">
+                <input
+                  ref={barcodeInputRef}
+                  type="text"
+                  value={barcodeInput}
+                  onChange={e => setBarcodeInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      if (posActionMode === 'qty' && selectedFocusItemId) {
+                        const qty = parseInt(barcodeInput, 10);
+                        if (qty > 0) updateQuantity(selectedFocusItemId, qty);
+                        resetFocusMode();
+                      } else if (posActionMode === 'discount' && selectedFocusItemId) {
+                        const val = parseFloat(barcodeInput) || 0;
+                        if (discountInputType === 'percent') {
+                          updateDiscount(selectedFocusItemId, Math.min(val, 100));
+                        } else {
+                          const item = currentInvoice.items.find(i => i.id === selectedFocusItemId);
+                          if (item) {
+                            const pct = Math.min((val / (item.price * item.quantity)) * 100, 100);
+                            updateDiscount(selectedFocusItemId, pct);
+                          }
+                        }
+                        resetFocusMode();
+                      } else {
+                        handleBarcodeScan(barcodeInput);
+                      }
+                    }
+                  }}
+                  placeholder="Scan  or  3 × BARCODE  for qty…"
+                  className="w-full bg-white/20 border border-white/30 text-white placeholder-white/50 rounded-xl px-4 py-3 text-sm font-mono focus:outline-none focus:border-white focus:bg-white/30 pr-20"
+                  autoFocus
+                />
+                <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-white hover:bg-[#F5C742]/10 text-[#F5C742] text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                  ADD
+                </button>
+              </div>
+              {barcodeScanFeedback && (
+                <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
+                  barcodeScanFeedback.type === 'success' ? 'bg-green-500/20 text-white' :
+                  barcodeScanFeedback.type === 'customer' ? 'bg-blue-500/20 text-white' : 'bg-red-500/20 text-white'
+                }`}>
+                  {barcodeScanFeedback.type === 'success' && <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />}
+                  {barcodeScanFeedback.type === 'customer' && <User className="h-3.5 w-3.5 flex-shrink-0" />}
+                  {barcodeScanFeedback.type === 'error' && <XCircle className="h-3.5 w-3.5 flex-shrink-0" />}
+                  {barcodeScanFeedback.message}
+                </div>
+              )}
+            </div>
+
+            {/* Last scanned item — single item only */}
+            <div className="px-4 py-3 border-b border-[#327F74]/20 flex-shrink-0 bg-[#F5C742]/10 min-h-[88px] flex items-center">
               {lastScannedItem ? (
                 (() => {
                   const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
