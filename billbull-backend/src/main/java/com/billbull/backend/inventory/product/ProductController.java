@@ -119,9 +119,10 @@ public class ProductController {
             @RequestParam(defaultValue = "") String search,
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) Long departmentId,
-            @RequestParam(required = false) Long brandId) {
+            @RequestParam(required = false) Long brandId,
+            @RequestParam(required = false) Boolean availableInPos) {
         modulePermissionService.requireCanView("inventory");
-        return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId));
+        return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId, availableInPos));
     }
 
     // -------------------------------------------------

@@ -1062,7 +1062,8 @@ export default function POSSales() {
           signal,
           null,
           Number.isFinite(departmentId) ? departmentId : null,
-          null
+          null,
+          true
         );
       }
 
@@ -1109,7 +1110,7 @@ export default function POSSales() {
           const fallbackProducts = await getProducts();
           if (signal?.aborted) return;
           const fallbackMapped = Array.isArray(fallbackProducts)
-            ? fallbackProducts.map(product => mapPosProductAggregateItem(product))
+            ? fallbackProducts.map(product => mapPosProductAggregateItem(product)).filter(p => p.availableInPos !== false)
             : [];
 
           fallbackMapped.forEach(product => cachePosProduct(productCacheRef.current, product));
@@ -2507,6 +2508,11 @@ export default function POSSales() {
     // one-batch-one-unit rule is enforced rather than silently merging quantity.
     const cached = productCacheRef.current.get(value.toLowerCase());
     if (cached && !cached.isBatch && !cached.isSerial) {
+      if (cached.availableInPos === false) {
+        showFeedback('error', 'This product is disabled for POS sales.');
+        clearInputs();
+        return;
+      }
       const res = addToInvoice(cached, qty);
       if (res && res.ok === false) {
         showFeedback('error', res.reason || 'Could not add this item.');
@@ -5309,6 +5315,7 @@ export default function POSSales() {
           isBatch: quickProductForm.isBatch,
           isSerial: quickProductForm.isSerial,
           isDiscountAllowed: quickProductForm.isDiscountAllowed,
+          availableInPos: true,
           detailedDesc: quickProductForm.description,
           brand: { id: 1 }
         },
@@ -7443,7 +7450,7 @@ export default function POSSales() {
               return;
             }
             // Fallback: name/keyword search via product list
-            const searchData = await getProductsList(0, 1, q);
+            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true);
             if (Array.isArray(searchData?.content) && searchData.content.length > 0) {
               setPriceCheckResult(mapPosProductListItem(searchData.content[0]));
               return;

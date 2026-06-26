@@ -351,70 +351,8 @@ const POSTouchScreen = React.memo((props) => {
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
           <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
 
-            {/* Barcode input */}
-            <div className="bg-[#F5C742] px-4 py-3 flex-shrink-0 border-b border-[#327F74]/30">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/80 mb-2">
-                {posActionMode === 'qty' ? 'Enter Quantity' : posActionMode === 'discount' ? 'Enter Discount' : 'Barcode / Loyalty Card'}
-              </p>
-              {scannerReady && (
-                <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-300" />
-                  Scanner Ready
-                </div>
-              )}
-              <div className="relative">
-                <input
-                  ref={barcodeInputRef}
-                  type="text"
-                  value={barcodeInput}
-                  onChange={e => setBarcodeInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      if (posActionMode === 'qty' && selectedFocusItemId) {
-                        const qty = parseInt(barcodeInput, 10);
-                        if (qty > 0) updateQuantity(selectedFocusItemId, qty);
-                        resetFocusMode();
-                      } else if (posActionMode === 'discount' && selectedFocusItemId) {
-                        const val = parseFloat(barcodeInput) || 0;
-                        if (discountInputType === 'percent') {
-                          updateDiscount(selectedFocusItemId, Math.min(val, 100));
-                        } else {
-                          const item = currentInvoice.items.find(i => i.id === selectedFocusItemId);
-                          if (item) {
-                            const pct = Math.min((val / (item.price * item.quantity)) * 100, 100);
-                            updateDiscount(selectedFocusItemId, pct);
-                          }
-                        }
-                        resetFocusMode();
-                      } else {
-                        handleBarcodeScan(barcodeInput);
-                      }
-                    }
-                  }}
-                  placeholder="Scan  or  3 × BARCODE  for qty…"
-                  className="w-full bg-white/20 border border-white/30 text-white placeholder-white/50 rounded-xl px-4 py-3 text-sm font-mono focus:outline-none focus:border-white focus:bg-white/30 pr-20"
-                  autoFocus
-                />
-                <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-white hover:bg-[#F5C742]/10 text-[#F5C742] text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm">
-                  ADD
-                </button>
-              </div>
-              {barcodeScanFeedback && (
-                <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
-                  barcodeScanFeedback.type === 'success' ? 'bg-green-500/20 text-white' :
-                  barcodeScanFeedback.type === 'customer' ? 'bg-blue-500/20 text-white' : 'bg-red-500/20 text-white'
-                }`}>
-                  {barcodeScanFeedback.type === 'success' && <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />}
-                  {barcodeScanFeedback.type === 'customer' && <User className="h-3.5 w-3.5 flex-shrink-0" />}
-                  {barcodeScanFeedback.type === 'error' && <XCircle className="h-3.5 w-3.5 flex-shrink-0" />}
-                  {barcodeScanFeedback.message}
-                </div>
-              )}
-            </div>
-
-            {/* Last scanned item — single item only */}
-            <div className="px-4 py-3 border-b border-[#327F74]/20 flex-shrink-0 bg-[#F5C742]/10 min-h-[88px] flex items-center">
+            {/* Last scanned item panel */}
+            <div className="border-b border-[#327F74]/20 flex-shrink-0 min-h-[220px] flex flex-col justify-center bg-white">
               {lastScannedItem ? (
                 (() => {
                   const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
@@ -522,8 +460,14 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
 
-              {/* Input Box */}
+              {/* Input Box & Scanner Status */}
               <div className="mb-3">
+                {scannerReady && (
+                  <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-green-700 border border-green-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                    Scanner Ready
+                  </div>
+                )}
                 <div className="border-2 border-[#F5C742] rounded-xl px-3 py-2 bg-white shadow-sm flex items-center justify-between">
                   <input
                     ref={barcodeInputRef}
@@ -663,6 +607,7 @@ const POSTouchScreen = React.memo((props) => {
               <div className="flex-1 overflow-y-auto p-3">
                 {(() => {
                   const allBtns = [
+                    { id: 'quick-add-product', label: 'Quick Add Product', icon: <Plus className="h-5 w-5" />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowQuickProductModal(true) },
                     { id: 'add-qty',    label: 'Add Qty',      icon: <Plus className="h-5 w-5" />,        color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${posActionMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`,     action: () => { setPosActionMode(m => m === 'qty' ? 'none' : 'qty'); setBarcodeInput(''); setSelectedFocusItemId(null); } },
                     { id: 'remove',     label: 'Remove Item',  icon: <Trash2 className="h-5 w-5" />,      color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',          action: () => { const last = currentInvoice.items[0]; if (last) guardedRemoveFromInvoice(last.id); } },
                     { id: 'discount',   label: 'Discount',     icon: <Percent className="h-5 w-5" />,     color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${posActionMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => { setPosActionMode(m => m === 'discount' ? 'none' : 'discount'); setBarcodeInput(''); setSelectedFocusItemId(null); setDiscountInputType('percent'); } },
