@@ -12,9 +12,9 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite } from '../../api/productsApi';
+import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
-import { getAllCustomers, createCustomer } from '../../api/customerledgerApi';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
@@ -140,7 +140,7 @@ import {
 } from './POS/posPrintUtils';
 import {
   ThermalMock, useA4BlobUrl, A4PreviewFrame, A4LivePreview,
-  ServiceJobA4Preview, PaperSizePicker, ImageUploadBox, A4ScaledPreview,
+  ServiceJobA4Preview, PaperSizePicker, ImageUploadBox, A4ScaledPreview, ThermalScaledPreview,
 } from './POS/POSPrintPreview';
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
@@ -240,6 +240,32 @@ export default function POSSales() {
   const [deliveryNewName, setDeliveryNewName] = useState('');
   const [deliveryNewMobile, setDeliveryNewMobile] = useState('');
   const [deliveryNewEmail, setDeliveryNewEmail] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
+  
+  // Quick Customer Creation Modal State
+  const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
+  const [quickCustomerForm, setQuickCustomerForm] = useState({
+    name: '', mobile: '', email: '', trn: '', customerType: 'Retail', companyName: '', deliveryAddress: '', deliveryNote: '',
+    isCreditCustomer: false, creditLimit: '', openingBalance: '', status: 'Active',
+    city: '', country: '', vatDetails: '', notes: '', alternateContact: '', payTerms: 'Cash', expandMoreDetails: false
+  });
+  const [quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning] = useState(null);
+  const [quickCustomerLoading, setQuickCustomerLoading] = useState(false);
+  const [quickCustomerError, setQuickCustomerError] = useState(null);
+
+  // Quick Product Creation Modal State
+  const [showQuickProductModal, setShowQuickProductModal] = useState(false);
+  const [quickProductForm, setQuickProductForm] = useState({
+    name: '', code: '', barcode: '', salesPrice: '', costPrice: '', purchasePrice: '', category: '', brand: '',
+    uom: 'Pcs', tax: '5%', openingStock: '', lowStockAlert: '', status: 'Active',
+    sku: '', hsnSac: '', description: '', supplier: '', isBatch: false, isSerial: false, trackInventory: true, allowNegativeStock: false, isDiscountAllowed: true, expandMoreDetails: false
+  });
+  const [quickProductDuplicateWarning, setQuickProductDuplicateWarning] = useState(null);
+  const [quickProductLoading, setQuickProductLoading] = useState(false);
+  const [quickProductError, setQuickProductError] = useState(null);
+
   // Delivery settle modal
   const [showDeliverySettleModal, setShowDeliverySettleModal] = useState(false);
   const [deliverySettleSearch, setDeliverySettleSearch] = useState('');
@@ -648,108 +674,71 @@ export default function POSSales() {
     [customerOptions, selectedCustomer]
   );
 
-  const checkoutA4Html = useMemo(() => {
-    // Settlement in flight: keep the last-rendered preview so clearInvoice() can't
-    // collapse the iframe src while the phase switch unmounts it (removeChild race).
+  const checkoutThermalHtml = useMemo(() => {
     if (checkoutSettling) return checkoutPreviewFreezeRef.current;
     if (!currentInvoice) return '';
     try {
       const now = new Date();
       const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
-      const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
-      // Stamp-else-QR: a stamp is shown only when enabled AND an image exists;
-      // the QR is shown only when enabled AND no stamp is taking that slot — so
-      // the preview matches the print's "stamp if uploaded, else QR" behaviour.
       const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
-      const template = buildPosA4Template(tplInvoiceFooter, {
-        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
-        showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails,
-        showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes,
-        showBankDetails: tplInvoiceShowBankDetails, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
-        showStamp: stampAvailable, showQRCode: showQrInPreview, showSignature: tplInvoiceShowSignature,
-        colItemCode: tplInvoiceColItemCode, colBatchNo: tplInvoiceColBatchNo,
-        colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
-      });
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
-      const data = {
-        title: 'TAX INVOICE',
-        docNo: invoiceNo,
-        date: dateStr,
-        customer: {
-          name: customer?.name || 'Walk-in Customer',
-          address: customer?.address || '',
-          phone: customer?.phone || '',
-          email: customer?.email || '',
-          trn: customer?.trn || '',
-        },
-        // Voided lines are KEPT on the preview (struck-through + VOID badge) so the
-        // checkout preview matches the cart exactly. The renderer styles them; the
-        // totals below already exclude voided lines (currentInvoice is recalculated
-        // without them), so they don't affect the financial figures.
-        items: (currentInvoice.items || []).map(it => {
-          // Use the real product code, never the composite cart-line id (pinned
-          // batch/serial lines have ids like "<productId>::<batch>").
-          const lineCode = it.code || it.productId || it.id || '';
-          const lineTax = toNumber(it.taxRate, 5);
-          return {
-            code: lineCode,
-            name: it.name || '',
-            desc: it.description || '',
-            qty: it.quantity || 0,
-            price: it.price || 0,
-            disc: it.discount || 0,
-            tax: lineTax,
-            // VAT on the discounted line net at the line's own rate.
-            taxAmt: parseFloat(((it.total || 0) * lineTax / (100 + lineTax)).toFixed(2)),
-            total: it.total || 0,
-            batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
-            serialNumber: it.serialNumber || '',
-            voided: !!it.isVoided,
-          };
-        }),
-        totals: {
-          subTotal: currentInvoice.subtotal || 0,
-          tax: currentInvoice.tax || 0,
-          grandTotal: currentInvoice.total || 0,
-          discountAmount: currentInvoice.totalDiscount || 0,
-          billDiscountAmount: 0,
-        },
-        meta: {
-          notes: tplInvoiceFooter,
-          location: tplOutletName,
-          salesPerson: '',
-        },
+
+      const mockInvoice = {
+        invoiceNumber: invoiceNo,
+        invoiceDate: now.toISOString(),
+        createdAt: now.toISOString(),
+        customerName: customer?.name || 'Walk-in Customer',
+        customerPhone: customer?.phone || '',
+        customerEmail: customer?.email || '',
+        posTerminalId: currentTerminal?.terminalId || '',
+        posCounterName: currentTerminal?.counterName || '',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
+        subTotal: currentInvoice.subtotal || 0,
+        taxTotal: currentInvoice.tax || 0,
+        invoiceTotal: currentInvoice.total || 0,
+        discountTotal: currentInvoice.totalDiscount || 0,
+        items: (currentInvoice.items || []).map(it => ({
+          itemCode: it.code || it.productId || it.id || '',
+          itemName: it.name || '',
+          description: it.description || '',
+          quantity: it.quantity || 0,
+          unitPrice: it.price || 0,
+          netAmount: it.total || 0,
+          batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+          serialNumber: it.serialNumber || '',
+          voided: !!it.isVoided,
+        })),
       };
-      const options = {
-        companyProfile: {
-          companyName: tplOutletName, trn: tplOutletTrn,
-          address: tplOutletAddress, phone: tplOutletPhone,
-          currency: 'AED', logoUrl: tplLogoDataUrl || undefined,
-          // Stamp must be passed here too — the renderer gates the stamp on both
-          // the template flag AND company.showStampInPrint + a stampUrl.
-          stampUrl: stampAvailable ? (tplStampDataUrl || undefined) : undefined,
-          showStampInPrint: stampAvailable,
-        },
-        // ZATCA QR for the preview (stamp-else-QR). Async-generated into state.
-        qrCodeDataUrl: showQrInPreview ? (checkoutPreviewQrDataUrl || null) : null,
-      };
-      const html = generateDocumentPrintHtml(template, data, options);
-      // Remember the last good render so a settlement can freeze on it.
+
+      const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+        companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
+        showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
+        logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
+        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
+        outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner,
+        showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: showQrInPreview,
+        showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes,
+        showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
+        cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
+        currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement
+      });
+
       checkoutPreviewFreezeRef.current = html;
       return html;
     } catch (e) {
-      console.warn('Checkout A4 preview failed:', e);
+      console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
   }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
-      tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
+      checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
+      tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
       tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
-      tplInvoiceShowStamp, tplInvoiceShowQRCode, tplInvoiceShowSignature, tplStampDataUrl, checkoutPreviewQrDataUrl,
-      tplInvoiceColItemCode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt]);
+      tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
+      tplInvoiceColDiscount, tplInvoiceQrPlacement]);
 
-  const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutA4Html);
+  const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
   // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
@@ -800,7 +789,7 @@ export default function POSSales() {
     const query = customerSearchQuery.trim().toLowerCase();
     const list = query
       ? customerOptions.filter(c =>
-          [c.name, c.code, c.membershipId, c.phone]
+          [c.name, c.code, c.membershipId, c.phone, c.mobile, c.email, c.trn]
             .filter(Boolean)
             .some(value => String(value).toLowerCase().includes(query))
         )
@@ -813,7 +802,7 @@ export default function POSSales() {
     const list = customerOptions.filter(c => c.id !== WALK_IN_CUSTOMER.id);
     if (!query) return list.slice(0, 30);
     return list.filter(c =>
-      [c.name, c.code, c.membershipId, c.phone]
+      [c.name, c.code, c.membershipId, c.phone, c.mobile, c.email, c.trn]
         .filter(Boolean)
         .some(value => String(value).toLowerCase().includes(query))
     ).slice(0, 30);
@@ -843,32 +832,27 @@ export default function POSSales() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadPosCustomers = useCallback(async () => {
     setPosCustomersLoading(true);
     setPosCustomersError('');
-    getAllCustomers()
-      .then(data => {
-        if (cancelled) return;
-        const mapped = Array.isArray(data)
-          ? data.map(mapPosCustomer).filter(c => c.id && c.id !== WALK_IN_CUSTOMER.id)
-          : [];
-        setPosCustomers(mapped);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        console.error('Failed to load POS customers', error);
-        setPosCustomers([]);
-        setPosCustomersError('Customers could not be loaded.');
-      })
-      .finally(() => {
-        if (!cancelled) setPosCustomersLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const data = await getAllCustomers();
+      const mapped = Array.isArray(data)
+        ? data.map(mapPosCustomer).filter(c => c.id && c.id !== WALK_IN_CUSTOMER.id)
+        : [];
+      setPosCustomers(mapped);
+    } catch (error) {
+      console.error('Failed to load POS customers', error);
+      setPosCustomers([]);
+      setPosCustomersError('Customers could not be loaded.');
+    } finally {
+      setPosCustomersLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadPosCustomers();
+  }, [loadPosCustomers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1222,6 +1206,7 @@ export default function POSSales() {
       }
       setShowCloseSessionDialog(false);
       setCurrentView('x-report');
+      syncPosData();
     }
   };
 
@@ -1634,7 +1619,7 @@ export default function POSSales() {
     if (currentInvoice.items.length === 0 || !deliveryAddress) return;
     setDeliveryOutLoading(true);
     try {
-      const customer = deliveryModalTab === 'existing' && deliveryCustomerId
+      const customer = deliveryCustomerId
         ? customerOptions.find(c => String(c.id) === String(deliveryCustomerId)) || { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' }
         : { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' };
 
@@ -1654,7 +1639,12 @@ export default function POSSales() {
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
         shippingAddress: deliveryAddress,
         driverName: deliveryDriver || null,
-        deliveryNotes: deliveryNotes || null,
+        deliveryNotes: [
+          deliveryDate ? `Date: ${deliveryDate}` : '',
+          deliveryTimeSlot ? `Slot: ${deliveryTimeSlot}` : '',
+          deliveryInstructions ? `Instructions: ${deliveryInstructions}` : '',
+          deliveryNotes ? `Notes: ${deliveryNotes}` : ''
+        ].filter(Boolean).join(' | ') || null,
         deliveryCharge: toNumber(deliveryCharge, 0) || null,
         items: cartItemsToPayload(currentInvoice.items),
       };
@@ -1663,6 +1653,7 @@ export default function POSSales() {
       setShowDeliveryModal(false);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
+      syncPosData();
       setDeliveryAddress('');
       setDeliveryNotes('');
       setDeliveryDriver('');
@@ -1671,13 +1662,16 @@ export default function POSSales() {
       setDeliveryNewName('');
       setDeliveryNewMobile('');
       setDeliveryNewEmail('');
+      setDeliveryDate('');
+      setDeliveryTimeSlot('');
+      setDeliveryInstructions('');
     } catch (err) {
       console.error('Out for delivery failed', err);
       alert(err?.response?.data?.message || 'Failed to create delivery order. Please try again.');
     } finally {
       setDeliveryOutLoading(false);
     }
-  }, [currentInvoice, deliveryAddress, deliveryModalTab, deliveryCustomerId, deliveryDriver,
+  }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
       deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
       currentTerminal, cartItemsToPayload, clearInvoice]);
 
@@ -1711,6 +1705,23 @@ export default function POSSales() {
 
   useEffect(() => { loadHeldSales(); }, [loadHeldSales]);
 
+  const syncPosData = useCallback(async () => {
+    if (productCacheRef.current) {
+      productCacheRef.current.clear();
+    }
+    const controller = new AbortController();
+    try {
+      await Promise.allSettled([
+        loadPosCustomers(),
+        loadPosProducts(0, false, controller.signal),
+        (currentSession?.status === 'active' || currentSession?.status === 'OPEN') ? loadXReport() : Promise.resolve(),
+        loadHeldSales(),
+      ]);
+    } catch (err) {
+      console.warn('POS data sync encountered an error:', err);
+    }
+  }, [loadPosCustomers, loadPosProducts, loadXReport, loadHeldSales, currentSession?.status]);
+
   const holdInvoice = async () => {
     if (currentInvoice.items.length === 0 || holdBusy) return;
     if (!sessionId) { alert('Open a POS session before holding a bill.'); return; }
@@ -1729,6 +1740,7 @@ export default function POSSales() {
       });
       clearInvoice();
       await loadHeldSales();
+      syncPosData();
     } catch (err) {
       alert(err?.response?.data?.message || 'Failed to hold the bill.');
     } finally {
@@ -1744,6 +1756,7 @@ export default function POSSales() {
         setCurrentInvoice(recalculateInvoice(cart.items || []));
       }
       await loadHeldSales();
+      syncPosData();
     } catch (err) {
       alert(err?.response?.data?.message || 'Failed to recall the held bill.');
     }
@@ -1830,6 +1843,7 @@ export default function POSSales() {
         } catch { /* print is best-effort */ }
       }
       clearInvoice();
+      syncPosData();
       setShowSaveLayaway(false);
       setSaveLayawayDeposit('');
       setSaveLayawayRemarks('');
@@ -1896,6 +1910,7 @@ export default function POSSales() {
       await cancelLayaway(layawayId);
       if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
       await loadLayaways();
+      syncPosData();
     } catch (err) {
       const status = err?.response?.status;
       alert(status === 403
@@ -1954,7 +1969,7 @@ export default function POSSales() {
     // clearInvoice()/phase-switch below can't tear the live iframe src out from
     // under React (the removeChild crash). Snapshot the latest html into the ref
     // in case the memo hasn't run yet this render.
-    if (checkoutA4Html) checkoutPreviewFreezeRef.current = checkoutA4Html;
+    if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;
     setCheckoutSettling(true);
     try {
       const grandTotal = currentInvoice.total;
@@ -2067,6 +2082,7 @@ export default function POSSales() {
       setLastPaidInvoice(paid);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
+      syncPosData();
       setReceivedAmount('');
       setTenderedAmount('');
       setSelectedCardType('');
@@ -3292,6 +3308,10 @@ export default function POSSales() {
     phone: tplOutletPhone || '',
     currency: company?.currency || 'AED',
     currencySymbol: company?.currencySymbol || '',
+    logoUrl: tplLogoDataUrl || undefined,
+    stampUrl: (tplInvoiceShowStamp && tplStampDataUrl) ? tplStampDataUrl : undefined,
+    showStampInPrint: tplInvoiceShowStamp && !!tplStampDataUrl,
+    showLogo: tplInvoiceShowLogo,
   });
 
   // ── Z-Report: build A4 view-model for print/PDF ───────────────────────────
@@ -4917,7 +4937,167 @@ export default function POSSales() {
     editingTerminalId, terminalsLoading, terminalSaving,
   };
 
+  const openQuickCustomerModal = useCallback((searchValue = '') => {
+    const str = (searchValue || '').trim();
+    let name = '';
+    let mobile = '';
+    let email = '';
+    let trn = '';
+
+    if (str) {
+      if (str.includes('@')) {
+        email = str;
+      } else if (/^\d{15}$/.test(str) && str.startsWith('100')) {
+        trn = str;
+      } else if (/^(\+?\d{1,4}[\s-]?)?\d{7,10}$/.test(str)) {
+        mobile = str;
+      } else {
+        const parts = str.split(/\s+/);
+        const nameParts = [];
+        parts.forEach(p => {
+          if (p.includes('@')) email = p;
+          else if (/^\d{15}$/.test(p) && p.startsWith('100')) trn = p;
+          else if (/^(\+?\d{1,4}[\s-]?)?\d{7,10}$/.test(p)) mobile = p;
+          else nameParts.push(p);
+        });
+        name = nameParts.join(' ');
+      }
+    }
+
+    setQuickCustomerForm({
+      name, mobile, email, trn,
+      customerType: 'Retail', companyName: '', deliveryAddress: '', deliveryNote: '',
+      isCreditCustomer: false, creditLimit: '', openingBalance: '', status: 'Active',
+      city: '', country: '', vatDetails: '', notes: '', alternateContact: '', payTerms: 'Cash',
+      expandMoreDetails: false
+    });
+    setQuickCustomerDuplicateWarning(null);
+    setQuickCustomerError(null);
+    setShowQuickCustomerModal(true);
+  }, []);
+
+  const handleSaveQuickCustomer = useCallback(async (overrideDuplicate = false) => {
+    try {
+      setQuickCustomerLoading(true);
+      setQuickCustomerError(null);
+
+      if (!overrideDuplicate) {
+        const duplicates = await validateDuplicateCustomer({
+          name: quickCustomerForm.name,
+          mobile: quickCustomerForm.mobile,
+          email: quickCustomerForm.email,
+          trn: quickCustomerForm.trn
+        });
+        if (duplicates && duplicates.length > 0) {
+          setQuickCustomerDuplicateWarning(duplicates);
+          setQuickCustomerLoading(false);
+          return;
+        }
+      }
+
+      const payload = {
+        name: quickCustomerForm.name || 'Unnamed Customer',
+        mobile: quickCustomerForm.mobile,
+        email: quickCustomerForm.email,
+        trn: quickCustomerForm.trn,
+        groupType: quickCustomerForm.customerType,
+        payTerms: quickCustomerForm.payTerms,
+        status: quickCustomerForm.status,
+        city: quickCustomerForm.city,
+        country: quickCustomerForm.country,
+        notes: quickCustomerForm.notes,
+        billingAddress: quickCustomerForm.deliveryAddress,
+        creditStatus: quickCustomerForm.isCreditCustomer ? 'ALLOWED' : 'NONE',
+        creditLimitAmount: quickCustomerForm.creditLimit ? parseFloat(quickCustomerForm.creditLimit) : 0,
+        balance: quickCustomerForm.openingBalance ? parseFloat(quickCustomerForm.openingBalance) : 0
+      };
+
+      const newCust = await createCustomer(payload);
+      await loadPosCustomers();
+      setSelectedCustomer(newCust.id);
+      if (showDeliveryModal) {
+        setDeliveryCustomerId(String(newCust.id));
+        if (newCust.billingAddress || newCust.address) {
+          setDeliveryAddress(newCust.billingAddress || newCust.address);
+        }
+      }
+      setShowQuickCustomerModal(false);
+      showFeedback('Customer created and selected successfully!', 'success');
+    } catch (err) {
+      setQuickCustomerError(err.response?.data?.message || err.message || 'Failed to create customer');
+    } finally {
+      setQuickCustomerLoading(false);
+    }
+  }, [quickCustomerForm, loadPosCustomers, setSelectedCustomer, showDeliveryModal, setDeliveryCustomerId, setDeliveryAddress, showFeedback]);
+
+  const handleSaveQuickProduct = useCallback(async (overrideDuplicate = false) => {
+    try {
+      setQuickProductLoading(true);
+      setQuickProductError(null);
+
+      if (!overrideDuplicate) {
+        const duplicates = await validateDuplicateProduct({
+          name: quickProductForm.name,
+          code: quickProductForm.code,
+          sku: quickProductForm.sku,
+          barcode: quickProductForm.barcode
+        });
+        if (duplicates && duplicates.length > 0) {
+          setQuickProductDuplicateWarning(duplicates);
+          setQuickProductLoading(false);
+          return;
+        }
+      }
+
+      const formData = new FormData();
+      const productReq = {
+        product: {
+          name: quickProductForm.name || 'Unnamed Product',
+          code: quickProductForm.code || `PRD-${Date.now().toString().slice(-6)}`,
+          sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
+          category: quickProductForm.category || 'General',
+          status: quickProductForm.status === 'Active' ? 'ACTIVE' : 'DRAFT',
+          productType: 'GOODS',
+          isBatch: quickProductForm.isBatch,
+          isSerial: quickProductForm.isSerial,
+          isDiscountAllowed: quickProductForm.isDiscountAllowed,
+          detailedDesc: quickProductForm.description,
+          brand: { id: 1 }
+        },
+        pricing: {
+          retailPrice: parseFloat(quickProductForm.salesPrice) || 0,
+          cost: parseFloat(quickProductForm.costPrice) || 0,
+          purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
+        },
+        inventory: {
+          openingStock: parseFloat(quickProductForm.openingStock) || 0,
+          minStock: parseFloat(quickProductForm.lowStockAlert) || 0,
+          trackInventory: quickProductForm.trackInventory,
+          allowNegativeStock: quickProductForm.allowNegativeStock
+        }
+      };
+
+      formData.append('data', JSON.stringify(productReq));
+
+      const newProdRes = await createProduct(formData);
+      await loadPosProducts(0, false);
+
+      if (newProdRes && newProdRes.product) {
+        addToInvoice(newProdRes.product);
+        showFeedback('Product created and added to cart successfully!', 'success');
+      }
+
+      setShowQuickProductModal(false);
+    } catch (err) {
+      setQuickProductError(err.response?.data?.message || err.message || 'Failed to create product');
+    } finally {
+      setQuickProductLoading(false);
+    }
+  }, [quickProductForm, loadPosProducts, addToInvoice, showFeedback]);
+
   const touchScreenProps = {
+    showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
+    showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
     setCurrentView, currentSession, sessionId,
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
@@ -4977,7 +5157,7 @@ export default function POSSales() {
       {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} />}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
 
       {/* Start Session Dialog */}
@@ -5339,27 +5519,35 @@ export default function POSSales() {
                   <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest mb-1">Payment Complete</p>
                   <p className="text-white font-black text-lg">{lastPaidInvoice.id}</p>
                 </div>
-                {/* Change back */}
+                {/* Main focal point: Total Paid */}
                 <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/30 px-6 py-4 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Change Back</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Amount Paid</p>
                   <p className="text-4xl font-black text-[#1E293B]">
-                    <DirhamSymbol /> {(lastPaidInvoice.changeAmount || 0).toFixed(2)}
+                    <DirhamSymbol /> {(lastPaidInvoice.paidAmount || lastPaidInvoice.total || 0).toFixed(2)}
                   </p>
-                  {(lastPaidInvoice.changeAmount || 0) === 0 && (
-                    <p className="text-[10px] text-gray-400 mt-1">Exact amount — no change</p>
-                  )}
+                  <p className="text-[10px] text-gray-500 mt-1 font-semibold">Successfully settled via {lastPaidInvoice.paymentMode || 'Cash'}</p>
                 </div>
+                {/* Change Due alert (only if change is > 0) */}
+                {(lastPaidInvoice.changeAmount || 0) > 0 && (
+                  <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Change Due</span>
+                    <span className="text-lg font-black text-emerald-700">
+                      <DirhamSymbol /> {(lastPaidInvoice.changeAmount || 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
                 {/* Summary */}
                 <div className="px-6 py-4 space-y-2.5">
                   {[
                     ['Sale Amount', formatCurrencyStr(lastPaidInvoice.total)],
                     ...(lastPaidInvoice.depositAmount > 0 ? [['Deposit Applied', `−${formatCurrencyStr(lastPaidInvoice.depositAmount)}`]] : []),
                     ['Paid Amount', formatCurrencyStr(lastPaidInvoice.paidAmount || 0)],
+                    ['Change Returned', formatCurrencyStr(lastPaidInvoice.changeAmount || 0)],
                     ['Pay Mode', lastPaidInvoice.paymentMode],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between items-center text-sm">
                       <span className="text-gray-500">{label}</span>
-                      <span className={`font-bold ${label === 'Deposit Applied' ? 'text-[#327F74]' : 'text-[#1E293B]'}`}>{value}</span>
+                      <span className={`font-bold ${label === 'Deposit Applied' ? 'text-[#327F74]' : label === 'Change Returned' && (lastPaidInvoice.changeAmount || 0) > 0 ? 'text-emerald-600' : 'text-[#1E293B]'}`}>{value}</span>
                     </div>
                   ))}
                   {/* Share */}
@@ -5481,9 +5669,9 @@ export default function POSSales() {
           <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
 
             {/* ══ LEFT: Invoice Preview ════════════════════════════════ */}
-            <div className="w-[42%] flex flex-col bg-white border-r-4 border-[#F5C742]">
+            <div className="w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
               {checkoutPreviewBlobUrl ? (
-                <A4ScaledPreview src={checkoutPreviewBlobUrl} fillWidth />
+                <ThermalScaledPreview src={checkoutPreviewBlobUrl} />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
                   <ShoppingCart className="h-10 w-10 mb-2" />
@@ -6672,6 +6860,7 @@ export default function POSSales() {
                 };
                 await saveSalesOrder(payload);
                 clearInvoice();
+                syncPosData();
                 setShowSaveOrderDialog(false);
                 setOrderNotes('');
                 showFeedback('success', `Order ${soNumber} saved`);
@@ -7620,6 +7809,7 @@ export default function POSSales() {
                 printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
               }
             }
+            syncPosData();
             setShowReturn(false); setReturnStep(1); setReturnInvoiceQuery(''); setReturnCustomerMobile('');
             setReturnDateFrom(''); setReturnInvoiceFound(null); setReturnableItems([]);
             setReturnSelectedItems({}); setReturnReasons({}); setReturnItemConditions({});
@@ -8949,87 +9139,108 @@ export default function POSSales() {
               </button>
             </div>
 
-            {/* Customer tab switcher */}
-            <div className="flex border-b border-gray-200">
-              <button type="button" onClick={() => setDeliveryModalTab('existing')}
-                className={`flex-1 py-3 text-sm font-semibold transition-colors ${deliveryModalTab === 'existing' ? 'border-b-2 border-[#327F74] text-[#327F74]' : 'text-gray-400 hover:text-gray-600'}`}>
-                Select Existing Customer
-              </button>
-              <button type="button" onClick={() => setDeliveryModalTab('new')}
-                className={`flex-1 py-3 text-sm font-semibold transition-colors ${deliveryModalTab === 'new' ? 'border-b-2 border-[#327F74] text-[#327F74]' : 'text-gray-400 hover:text-gray-600'}`}>
-                + Create New Customer
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 max-h-[55vh] overflow-y-auto">
-              {deliveryModalTab === 'existing' ? (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Select Customer</label>
-                  <select
-                    value={deliveryCustomerId}
-                    onChange={e => {
-                      const id = e.target.value;
-                      setDeliveryCustomerId(id);
-                      if (id) {
-                        const c = customerOptions.find(x => String(x.id) === String(id));
-                        if (c?.address) setDeliveryAddress(prev => prev?.trim() ? prev : c.address);
-                      }
-                    }}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]"
-                  >
-                    <option value="">— Select customer —</option>
-                    {customerOptions
-                      .filter(c => c.id !== WALK_IN_CUSTOMER.id)
-                      .map(c => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}{c.phone ? ` · ${c.phone}` : ''}
-                        </option>
-                      ))}
-                  </select>
-                  {deliveryCustomerId && (() => {
-                    const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
-                    if (!c) return null;
-                    return (
-                      <div className="border border-[#327F74]/30 rounded-xl px-3 py-2.5 bg-[#f0faf8]">
-                        <p className="text-sm font-semibold text-gray-800">{c.name}</p>
+            <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
+              {/* Unified Smart Customer Search */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Customer / Recipient <span className="text-red-500">*</span></label>
+                {deliveryCustomerId ? (() => {
+                  const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
+                  if (!c) return null;
+                  return (
+                    <div className="border border-[#327F74]/30 rounded-xl px-4 py-3 bg-[#f0faf8] flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-800">{c.name}</p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          {c.phone || ''}
+                          {c.phone || c.mobile || ''} {c.email ? `· ${c.email}` : ''}
                           {c.tier ? <span className="ml-2 text-[#327F74] font-medium">· {c.tier}</span> : null}
                         </p>
                       </div>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Full Name <span className="text-red-500">*</span></label>
-                    <input type="text" value={deliveryNewName} onChange={e => setDeliveryNewName(e.target.value)}
-                      placeholder="Customer full name"
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Mobile <span className="text-red-500">*</span></label>
-                      <input type="tel" value={deliveryNewMobile} onChange={e => setDeliveryNewMobile(e.target.value)}
-                        placeholder="+971 50 000 0000"
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); }}
+                        className="text-xs text-[#327F74] hover:underline font-bold px-2 py-1 bg-white rounded-lg border border-[#327F74]/20 shadow-sm">
+                        Change
+                      </button>
                     </div>
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Email</label>
-                      <input type="email" value={deliveryNewEmail} onChange={e => setDeliveryNewEmail(e.target.value)}
-                        placeholder="email@example.com"
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
+                  );
+                })() : (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <input autoFocus type="text" placeholder="Search by Name, Mobile, Email, TRN..." value={deliveryCustomerSearch}
+                        onChange={e => setDeliveryCustomerSearch(e.target.value)}
+                        className="w-full pl-10 pr-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#327F74]" />
+                    </div>
+                    <div className="max-h-40 overflow-y-auto border border-gray-100 rounded-xl bg-white shadow-inner divide-y divide-gray-100">
+                      {customerOptions
+                        .filter(c => c.id !== WALK_IN_CUSTOMER.id)
+                        .filter(c => {
+                          const q = (deliveryCustomerSearch || '').toLowerCase();
+                          if (!q) return true;
+                          return (c.name || '').toLowerCase().includes(q) ||
+                                 (c.phone || '').toLowerCase().includes(q) ||
+                                 (c.mobile || '').toLowerCase().includes(q) ||
+                                 (c.email || '').toLowerCase().includes(q) ||
+                                 (c.trn || '').toLowerCase().includes(q);
+                        })
+                        .slice(0, 5)
+                        .map(c => (
+                          <button key={c.id} type="button"
+                            onClick={() => {
+                              setDeliveryCustomerId(String(c.id));
+                              if (c.address || c.billingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.billingAddress));
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left transition-colors">
+                            <div className="w-8 h-8 rounded-full bg-[#327F74]/10 text-[#327F74] flex items-center justify-center font-bold text-xs">
+                              {c.name.charAt(0)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
+                              <p className="text-xs text-gray-500 truncate">{c.phone || c.mobile || ''} {c.email ? `· ${c.email}` : ''}</p>
+                            </div>
+                          </button>
+                        ))}
+                      <div className="p-2 bg-slate-50">
+                        <button type="button" onClick={() => openQuickCustomerModal(deliveryCustomerSearch)}
+                          className="w-full py-2.5 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+                          <Plus className="h-4 w-4 text-emerald-600" />
+                          Create New Customer: "{deliveryCustomerSearch || 'Enter details'}"
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
                 <textarea rows={3} value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)}
                   placeholder="Building, street, area, city..."
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none" />
+              </div>
+
+              {/* Delivery Schedule (Date & Time Slot) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date</label>
+                  <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Time Slot</label>
+                  <select value={deliveryTimeSlot} onChange={e => setDeliveryTimeSlot(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white">
+                    <option value="">— Select slot —</option>
+                    <option value="Morning (9 AM - 1 PM)">Morning (9 AM - 1 PM)</option>
+                    <option value="Afternoon (1 PM - 5 PM)">Afternoon (1 PM - 5 PM)</option>
+                    <option value="Evening (5 PM - 9 PM)">Evening (5 PM - 9 PM)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Special Delivery Instructions</label>
+                <input type="text" value={deliveryInstructions} onChange={e => setDeliveryInstructions(e.target.value)}
+                  placeholder="e.g. Call before arriving, leave at door..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -9076,7 +9287,7 @@ export default function POSSales() {
                 Cancel
               </button>
               <button type="button"
-                disabled={deliveryOutLoading || !deliveryAddress || currentInvoice.items.length === 0 || (deliveryModalTab === 'new' && (!deliveryNewName || !deliveryNewMobile))}
+                disabled={deliveryOutLoading || !deliveryAddress || currentInvoice.items.length === 0 || !deliveryCustomerId}
                 onClick={handleOutForDelivery}
                 className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
                 <Truck className="h-4 w-4" />
@@ -9124,6 +9335,7 @@ export default function POSSales() {
             setDeliverySettleMixCash('');
             setDeliverySettleMixCard('');
             await loadDeliveryOrders();
+            syncPosData();
           } catch (err) {
             console.error('Delivery settle failed', err);
             alert(err?.response?.data?.message || 'Failed to finalize delivery. Please try again.');

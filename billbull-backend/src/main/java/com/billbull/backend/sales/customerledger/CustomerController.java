@@ -56,6 +56,18 @@ public class CustomerController {
         return ResponseEntity.ok(service.search(q).stream().limit(size).toList());
     }
 
+    @GetMapping("/validate-duplicate")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<Customer>> validateDuplicate(
+            @RequestParam(defaultValue = "") String name,
+            @RequestParam(defaultValue = "") String mobile,
+            @RequestParam(defaultValue = "") String email,
+            @RequestParam(defaultValue = "") String trn) {
+        modulePermissionService.requireCanView(MODULE);
+        return ResponseEntity.ok(service.validateDuplicate(name, mobile, email, trn));
+    }
+
+
     @GetMapping("/next-code")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {
