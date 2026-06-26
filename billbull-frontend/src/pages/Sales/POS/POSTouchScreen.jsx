@@ -348,7 +348,7 @@ const POSTouchScreen = React.memo((props) => {
             </div>
           </div>
 
-          {/* ══ COL 2: Barcode Scan + Last Item + Keypad + Total ═ */}
+          {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
           <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
 
             {/* Barcode input */}
@@ -416,31 +416,85 @@ const POSTouchScreen = React.memo((props) => {
             {/* Last scanned item — single item only */}
             <div className="px-4 py-3 border-b border-[#327F74]/20 flex-shrink-0 bg-[#F5C742]/10 min-h-[88px] flex items-center">
               {lastScannedItem ? (
-                <div className="flex items-center gap-3 w-full">
-                  <div className="w-10 h-10 rounded-xl bg-[#F5C742] flex items-center justify-center flex-shrink-0 shadow-sm">
-                    <CheckCircle className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-[#1E293B] leading-tight truncate">{lastScannedItem.name}</p>
-                    {lastScannedItem.nameAr && <p className="text-[11px] text-gray-400 leading-tight truncate" dir="rtl">{lastScannedItem.nameAr}</p>}
-                    <p className="text-[10px] font-mono text-[#F5C742] mt-0.5">{lastScannedItem.barcode}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-base font-black text-[#F5C742]">{formatCurrency(lastScannedItem.total)}</p>
-                    <p className="text-xs text-gray-400">×{lastScannedItem.qty}</p>
-                  </div>
-                </div>
+                (() => {
+                  const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
+                  const matchingProduct = posProducts.find(p => p.barcode === lastScannedItem.barcode || p.code === lastScannedItem.barcode || p.id === lastScannedItem.barcode || p.name === lastScannedItem.name);
+                  const qty = lastScannedItem.qty || 1;
+                  const unitPrice = cartItem?.price || matchingProduct?.price || (lastScannedItem.total / qty);
+                  const discountPct = cartItem?.discount || matchingProduct?.defaultDiscount || 0;
+                  const taxRate = cartItem?.taxRate ?? matchingProduct?.salesTax ?? 5;
+                  const discountedUnitPrice = unitPrice * (1 - discountPct / 100);
+                  const netPrice = discountedUnitPrice / (1 + taxRate / 100);
+                  const vatAmount = discountedUnitPrice - netPrice;
+                  const stockQty = matchingProduct?.stock ?? 25;
+
+                  return (
+                    <div className="bg-[#1E293B] p-5 flex-1 flex flex-col justify-between text-white">
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-[#F5C742]">Last Scanned Item</span>
+                          <span className="text-[10px] font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{lastScannedItem.name} added</span>
+                        </div>
+                        <div className="flex items-start gap-3 mb-4">
+                          <div className="w-12 h-12 rounded-2xl bg-[#F5C742]/10 border border-[#F5C742]/30 flex items-center justify-center flex-shrink-0 text-[#F5C742]">
+                            <Package className="h-6 w-6" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-base font-bold text-white leading-tight truncate">{lastScannedItem.name}</p>
+                                <p className="text-[11px] font-mono text-[#F5C742] mt-1">{lastScannedItem.barcode}</p>
+                                {lastScannedItem.nameAr && <p className="text-xs text-gray-400 mt-1 truncate" dir="rtl">{lastScannedItem.nameAr}</p>}
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Line Total</p>
+                                <p className="text-xl font-black text-[#F5C742] mt-0.5">{formatCurrency(lastScannedItem.total)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 border-t border-slate-700/60 pt-4">
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Qty</p>
+                          <p className="text-sm font-bold text-white mt-1">x{qty}</p>
+                        </div>
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Unit Price</p>
+                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(unitPrice)}</p>
+                        </div>
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Discount</p>
+                          <p className="text-sm font-bold text-white mt-1">{discountPct}%</p>
+                        </div>
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">VAT ({taxRate}%)</p>
+                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(vatAmount)}</p>
+                        </div>
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Net Price</p>
+                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(netPrice)}</p>
+                        </div>
+                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Stock</p>
+                          <p className="text-sm font-bold text-white mt-1">{stockQty} units</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
               ) : (
-                <div className="flex items-center gap-3 text-gray-300 w-full">
-                  <div className="w-10 h-10 rounded-xl border-2 border-dashed border-[#327F74]/30 flex items-center justify-center">
-                    <Clock className="h-4 w-4 text-[#F5C742]/70" />
+                <div className="flex-1 flex flex-col items-center justify-center p-6 bg-white text-center">
+                  <div className="w-14 h-14 rounded-2xl border-2 border-dashed border-[#327F74]/30 flex items-center justify-center mb-3 bg-[#327F74]/5">
+                    <Clock className="h-6 w-6 text-[#327F74]/50" />
                   </div>
-                  <p className="text-xs text-gray-400">Last scanned item appears here</p>
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#327F74] mb-1">Last Scanned Item</p>
+                  <p className="text-xs text-gray-400">Scan a barcode to see item details</p>
                 </div>
               )}
             </div>
 
-            {/* Numpad — larger */}
+            {/* Numpad + Barcode Input */}
             <div className="flex-1 flex flex-col justify-between p-4 bg-white">
               {posActionMode !== 'none' && (
                 <div className="mb-3 rounded-xl bg-[#F5C742]/10 border border-[#327F74]/30 px-3 py-2">
@@ -467,10 +521,60 @@ const POSTouchScreen = React.memo((props) => {
                   <button type="button" onClick={resetFocusMode} className="mt-1.5 text-[10px] text-gray-400 hover:text-red-400 underline">Cancel</button>
                 </div>
               )}
-              {/* Display */}
-              <div className="bg-[#F5C742]/10 border-2 border-[#327F74]/30 rounded-xl px-4 py-3 mb-3 text-right font-mono text-2xl text-[#1E293B] min-h-[56px] flex items-center justify-end overflow-hidden">
-                <span className="truncate">{barcodeInput || <span className="text-gray-300 text-base font-sans">scan or enter qty×barcode</span>}</span>
+
+              {/* Input Box */}
+              <div className="mb-3">
+                <div className="border-2 border-[#F5C742] rounded-xl px-3 py-2 bg-white shadow-sm flex items-center justify-between">
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    value={barcodeInput}
+                    onChange={e => setBarcodeInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        if (posActionMode === 'qty' && selectedFocusItemId) {
+                          const qty = parseInt(barcodeInput, 10);
+                          if (qty > 0) updateQuantity(selectedFocusItemId, qty);
+                          resetFocusMode();
+                        } else if (posActionMode === 'discount' && selectedFocusItemId) {
+                          const val = parseFloat(barcodeInput) || 0;
+                          if (discountInputType === 'percent') {
+                            updateDiscount(selectedFocusItemId, Math.min(val, 100));
+                          } else {
+                            const item = currentInvoice.items.find(i => i.id === selectedFocusItemId);
+                            if (item) {
+                              const pct = Math.min((val / (item.price * item.quantity)) * 100, 100);
+                              updateDiscount(selectedFocusItemId, pct);
+                            }
+                          }
+                          resetFocusMode();
+                        } else {
+                          handleBarcodeScan(barcodeInput);
+                        }
+                      }
+                    }}
+                    placeholder="Scan barcode or enter 3*CODE.."
+                    className="w-full bg-transparent text-[#1E293B] placeholder-gray-300 px-1 text-sm font-mono focus:outline-none"
+                    autoFocus
+                  />
+                  <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
+                    className="bg-[#F5C742] hover:opacity-90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm flex-shrink-0 ml-2">
+                    ADD
+                  </button>
+                </div>
+                {barcodeScanFeedback && (
+                  <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
+                    barcodeScanFeedback.type === 'success' ? 'bg-green-500/20 text-green-700' :
+                    barcodeScanFeedback.type === 'customer' ? 'bg-blue-500/20 text-blue-700' : 'bg-red-500/20 text-red-700'
+                  }`}>
+                    {barcodeScanFeedback.type === 'success' && <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />}
+                    {barcodeScanFeedback.type === 'customer' && <User className="h-3.5 w-3.5 flex-shrink-0" />}
+                    {barcodeScanFeedback.type === 'error' && <XCircle className="h-3.5 w-3.5 flex-shrink-0" />}
+                    {barcodeScanFeedback.message}
+                  </div>
+                )}
               </div>
+
               <div className="grid grid-cols-3 gap-2 flex-1">
                 {['7','8','9','4','5','6','1','2','3'].map(k => (
                   <button key={k} type="button" onClick={() => setBarcodeInput(prev => prev + k)}
@@ -479,7 +583,7 @@ const POSTouchScreen = React.memo((props) => {
                   </button>
                 ))}
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '*')}
-                  className="text-xl font-bold text-[#F5C742] bg-[#F5C742]/10 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border-2 border-[#327F74]/30 hover:border-[#F5C742] transition-all shadow-sm">
+                  className="text-xl font-bold text-[#F5C742] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                   ×
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '0')}
@@ -487,7 +591,8 @@ const POSTouchScreen = React.memo((props) => {
                   0
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev.slice(0, -1))}
-                  className="text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm">⌫
+                  className="text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm flex items-center justify-center">
+                  ⌫
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
