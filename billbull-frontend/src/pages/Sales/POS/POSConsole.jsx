@@ -35,6 +35,7 @@ const POSConsole = React.memo((props) => {
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton, 
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
+    scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
@@ -106,6 +107,7 @@ const POSConsole = React.memo((props) => {
       if (Number.isNaN(parsed.getTime())) return null;
       return parsed.toLocaleString();
     };
+    const scannerEnabled = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE';
 
     useEffect(() => {
       if (consoleTab !== 'devices') return;
@@ -693,6 +695,80 @@ const POSConsole = React.memo((props) => {
                   <RefreshCw className={`h-4 w-4 ${agentLoading ? 'animate-spin' : ''}`} />
                   {agentLoading ? 'Checking…' : 'Load Workstation Printers'}
                 </button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-[#1E293B]">Barcode Scanner</h3>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${scannerEnabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {scannerEnabled ? 'Ready' : 'Not Ready'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Simple POS scanner mode for USB or Bluetooth keyboard-wedge scanners. Scans are read through the POS barcode field.
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Assignment: {currentTerminal?.branchName || 'Current branch'}{currentTerminal?.terminalId ? ` · ${currentTerminal?.terminalName || currentTerminal?.terminalId}` : ''}
+                    </p>
+                  </div>
+                  {scannerConfigSavedFlash && <span className="text-xs font-semibold text-green-600">Saved</span>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Device Code</label>
+                    <input value={scannerConfig?.deviceCode || ''} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), deviceCode: e.target.value }))} placeholder="e.g. POS-SCAN-01" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Device Name</label>
+                    <input value={scannerConfig?.deviceName || ''} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), deviceName: e.target.value }))} placeholder="e.g. Honeywell USB Scanner" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Connection Type</label>
+                    <select value={scannerConfig?.connectionType || 'USB'} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), connectionType: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                      <option value="USB">USB</option>
+                      <option value="BLUETOOTH">Bluetooth</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Input Mode</label>
+                    <select value={scannerConfig?.inputMode || 'KEYBOARD_WEDGE'} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), inputMode: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                      <option value="KEYBOARD_WEDGE">Keyboard Wedge</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Status</label>
+                    <select value={scannerConfig?.status || 'ACTIVE'} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), status: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                      <option value="ACTIVE">Active</option>
+                      <option value="INACTIVE">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center gap-5">
+                    <label className="flex items-center gap-2 text-sm font-medium text-[#1E293B]">
+                      <input type="checkbox" checked={Boolean(scannerConfig?.enabled)} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), enabled: e.target.checked }))} />
+                      Enable scanner
+                    </label>
+                    <label className="flex items-center gap-2 text-sm font-medium text-[#1E293B]">
+                      <input type="checkbox" checked={Boolean(scannerConfig?.autoFocusOnPOS)} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), autoFocusOnPOS: e.target.checked }))} />
+                      Keep POS scan box focused
+                    </label>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Notes</label>
+                    <textarea value={scannerConfig?.notes || ''} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), notes: e.target.value }))} placeholder="Optional notes for scanner assignment or setup" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] min-h-[78px]" />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between mt-4">
+                  <p className="text-xs text-gray-400">
+                    For standard USB scanners, configure the scanner itself with an Enter suffix so each scan submits automatically.
+                  </p>
+                  <button type="button" onClick={()=>saveScannerConfig?.(scannerConfig)} className="shrink-0 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                    Save Scanner
+                  </button>
+                </div>
               </div>
 
               {agentPrinters.length > 0 && (
