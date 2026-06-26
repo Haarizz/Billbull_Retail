@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2, Heart } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
@@ -64,6 +64,9 @@ const POSTouchScreen = React.memo((props) => {
     formatCurrency, showFeedback, sessionId,
     // favourites
     favouriteProductIds = new Set(), toggleFavourite,
+    // quick creation modals
+    showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
+    showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
   } = props;
 
   const [animatingHearts, setAnimatingHearts] = useState(new Set());
@@ -145,7 +148,7 @@ const POSTouchScreen = React.memo((props) => {
                   <div className="p-2 border-b border-[#327F74]/10">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                      <input autoFocus type="text" placeholder="Search customer..." value={customerSearchQuery}
+                      <input autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
                         onChange={e => setCustomerSearchQuery(e.target.value)}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-[#327F74]/30 rounded focus:outline-none focus:border-[#327F74]" />
                     </div>
@@ -170,6 +173,13 @@ const POSTouchScreen = React.memo((props) => {
                         {posCustomersError || 'No customers found'}
                       </div>
                     )}
+                    <div className="p-2 bg-slate-50 border-t border-[#327F74]/10">
+                      <button type="button" onClick={() => { setShowCustomerDropdown(false); openQuickCustomerModal(customerSearchQuery); }}
+                        className="w-full py-2 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                        <Plus className="h-3.5 w-3.5 text-emerald-600" />
+                        Create New Customer: "{customerSearchQuery || 'Enter details'}"
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -649,7 +659,7 @@ const POSTouchScreen = React.memo((props) => {
                 <div className="p-2 border-b border-gray-100">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                    <input autoFocus type="text" placeholder="Search customer..." value={customerSearchQuery}
+                    <input autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
                       onChange={e => setCustomerSearchQuery(e.target.value)}
                       className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded focus:outline-none focus:border-[#F5C742]" />
                   </div>
@@ -674,6 +684,13 @@ const POSTouchScreen = React.memo((props) => {
                       {posCustomersError || 'No customers found'}
                     </div>
                   )}
+                  <div className="p-2 bg-slate-50 border-t border-gray-100">
+                    <button type="button" onClick={() => { setShowCustomerDropdown(false); openQuickCustomerModal(customerSearchQuery); }}
+                      className="w-full py-2 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                      <Plus className="h-3.5 w-3.5 text-emerald-600" />
+                      Create New Customer: "{customerSearchQuery || 'Enter details'}"
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1161,6 +1178,7 @@ const POSTouchScreen = React.memo((props) => {
                     if (classicNumpadMode !== mode) setSelectedFocusItemId(null);
                   };
                   const allBtns = [
+                    { id:'quick-add-product', label:'Quick Add Product', icon:<Plus className="h-4 w-4"/>, color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowQuickProductModal(true) },
                     { id:'add-qty',    label:'Add Qty',      icon:<Plus className="h-4 w-4"/>,        color:`bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode==='qty'?'ring-2 ring-[#F5C742] bg-blue-100':''}`,     action:()=>openNumpad('qty') },
                     { id:'discount',   label:'Disc %',       icon:<Percent className="h-4 w-4"/>,     color:`bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode==='discount'?'ring-2 ring-[#F5C742]':''}`, action:()=>openNumpad('discount') },
                     { id:'price',      label:'Price',        icon:<Tag className="h-4 w-4"/>,         color:`bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode==='price'?'ring-2 ring-[#F5C742] bg-purple-100':''}`, action:()=>openNumpad('price') },
@@ -1276,6 +1294,369 @@ const POSTouchScreen = React.memo((props) => {
         </div>
 
       </div>
+      )}
+
+      {/* ══ QUICK CUSTOMER CREATION MODAL ══════════════════════════════════════ */}
+      {showQuickCustomerModal && quickCustomerForm && (
+        <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="bg-[#F5C742] px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-white/30 flex items-center justify-center text-[#1E293B]">
+                  <User className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black tracking-wide text-[#1E293B]">Quick Create & Auto-Assign Customer</h2>
+                  <p className="text-xs text-[#1E293B]/70 mt-0.5">Instantly add and select customer for this transaction</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowQuickCustomerModal(false)} className="text-[#1E293B]/70 hover:text-[#1E293B] transition-colors">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Duplicate Warning */}
+              {quickCustomerDuplicateWarning && quickCustomerDuplicateWarning.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-900 shadow-inner space-y-3">
+                  <div className="flex items-center gap-2.5 text-amber-800">
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+                    <h3 className="text-sm font-bold">Potential Duplicate Customers Detected!</h3>
+                  </div>
+                  <p className="text-xs text-amber-800/90">
+                    We found existing customers matching the phone, email, or TRN you entered:
+                  </p>
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {quickCustomerDuplicateWarning.map(dup => (
+                      <div key={dup.id} className="bg-white border border-amber-200/80 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">{dup.name}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Mobile: {dup.mobile || dup.phone || 'N/A'} {dup.email ? `| Email: ${dup.email}` : ''} {dup.trn ? `| TRN: ${dup.trn}` : ''}
+                          </p>
+                        </div>
+                        <button type="button"
+                          onClick={() => {
+                            setSelectedCustomer(dup.id);
+                            setShowQuickCustomerModal(false);
+                            if (showFeedback) showFeedback('Selected existing customer!', 'success');
+                          }}
+                          className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs rounded-lg transition-colors shadow-sm">
+                          Use Existing
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-amber-700 italic pt-1 border-t border-amber-200/60">
+                    Or, if this is a distinct customer, you can proceed to create a new record below.
+                  </p>
+                </div>
+              )}
+
+              {quickCustomerError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                  <span>{quickCustomerError}</span>
+                </div>
+              )}
+
+              {/* Form Fields */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Full Name <span className="text-red-500">*</span></label>
+                  <input type="text" value={quickCustomerForm.name || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, name: e.target.value })}
+                    placeholder="Enter customer full name"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Mobile / Phone <span className="text-red-500">*</span></label>
+                  <input type="tel" value={quickCustomerForm.mobile || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, mobile: e.target.value })}
+                    placeholder="+971 50 000 0000"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Email Address</label>
+                  <input type="email" value={quickCustomerForm.email || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, email: e.target.value })}
+                    placeholder="email@example.com"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Tax Registration No. (TRN)</label>
+                  <input type="text" value={quickCustomerForm.trn || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, trn: e.target.value })}
+                    placeholder="15-digit TRN"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Customer Group / Type</label>
+                  <select value={quickCustomerForm.customerType || 'Retail'}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, customerType: e.target.value })}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white">
+                    <option value="Retail">Retail</option>
+                    <option value="Wholesale">Wholesale</option>
+                    <option value="Corporate">Corporate</option>
+                    <option value="VIP">VIP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">City</label>
+                  <input type="text" value={quickCustomerForm.city || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, city: e.target.value })}
+                    placeholder="e.g. Dubai"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Country</label>
+                  <input type="text" value={quickCustomerForm.country || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, country: e.target.value })}
+                    placeholder="e.g. United Arab Emirates"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Billing / Delivery Address</label>
+                  <textarea rows={2} value={quickCustomerForm.deliveryAddress || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, deliveryAddress: e.target.value })}
+                    placeholder="Full street address..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white resize-none" />
+                </div>
+                <div className="col-span-2 border-t border-gray-100 pt-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={quickCustomerForm.isCreditCustomer || false}
+                      onChange={e => setQuickCustomerForm({ ...quickCustomerForm, isCreditCustomer: e.target.checked })}
+                      className="w-4 h-4 text-[#e6b838] border-gray-300 rounded focus:ring-[#F5C742]" />
+                    <span className="text-sm font-bold text-gray-800">Enable Credit Facility for this Customer</span>
+                  </label>
+                </div>
+                {quickCustomerForm.isCreditCustomer && (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Credit Limit (AED)</label>
+                      <input type="number" min="0" step="0.01" value={quickCustomerForm.creditLimit || ''}
+                        onChange={e => setQuickCustomerForm({ ...quickCustomerForm, creditLimit: e.target.value })}
+                        placeholder="0.00"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Opening Balance (AED)</label>
+                      <input type="number" step="0.01" value={quickCustomerForm.openingBalance || ''}
+                        onChange={e => setQuickCustomerForm({ ...quickCustomerForm, openingBalance: e.target.value })}
+                        placeholder="0.00"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                    </div>
+                  </>
+                )}
+                <div className="col-span-2">
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Internal Notes</label>
+                  <input type="text" value={quickCustomerForm.notes || ''}
+                    onChange={e => setQuickCustomerForm({ ...quickCustomerForm, notes: e.target.value })}
+                    placeholder="Cashier remarks, preferences..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex gap-3">
+              <button type="button" onClick={() => setShowQuickCustomerModal(false)}
+                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-100 transition-colors">
+                Cancel
+              </button>
+              <button type="button"
+                disabled={quickCustomerLoading || !quickCustomerForm.name || !quickCustomerForm.mobile}
+                onClick={() => handleSaveQuickCustomer(!!(quickCustomerDuplicateWarning && quickCustomerDuplicateWarning.length > 0))}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  quickCustomerDuplicateWarning && quickCustomerDuplicateWarning.length > 0
+                    ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20 text-white'
+                    : 'bg-[#F5C742] hover:bg-[#e6b838] shadow-[#F5C742]/30 text-[#1E293B]'
+                }`}>
+                {quickCustomerLoading ? 'Saving...' : (quickCustomerDuplicateWarning && quickCustomerDuplicateWarning.length > 0 ? 'Create New Record Anyway' : 'Save & Auto-Select')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ QUICK PRODUCT CREATION MODAL ══════════════════════════════════════ */}
+      {showQuickProductModal && quickProductForm && (
+        <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="bg-[#F5C742] px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-white/30 flex items-center justify-center text-[#1E293B]">
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black tracking-wide text-[#1E293B]">Quick Create & Auto-Add Product</h2>
+                  <p className="text-xs text-[#1E293B]/70 mt-0.5">Instantly add product to inventory and current cart</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowQuickProductModal(false)} className="text-[#1E293B]/70 hover:text-[#1E293B] transition-colors">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Duplicate Warning */}
+              {quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-900 shadow-inner space-y-3">
+                  <div className="flex items-center gap-2.5 text-amber-800">
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+                    <h3 className="text-sm font-bold">Potential Duplicate Products Detected!</h3>
+                  </div>
+                  <p className="text-xs text-amber-800/90">
+                    We found existing products matching the name, code, or barcode you entered:
+                  </p>
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {quickProductDuplicateWarning.map(dup => (
+                      <div key={dup.id} className="bg-white border border-amber-200/80 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">{dup.name}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Code: {dup.code || 'N/A'} {dup.barcode ? `| Barcode: ${dup.barcode}` : ''} | Price: {formatCurrency ? formatCurrency(dup.sellingPrice) : dup.sellingPrice}
+                          </p>
+                        </div>
+                        <button type="button"
+                          onClick={() => {
+                            addToInvoice(dup);
+                            setShowQuickProductModal(false);
+                            if (showFeedback) showFeedback('Added existing product to cart!', 'success');
+                          }}
+                          className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs rounded-lg transition-colors shadow-sm">
+                          Add Existing to Cart
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-amber-700 italic pt-1 border-t border-amber-200/60">
+                    Or, if this is a distinct product variant, you can proceed to create a new item below.
+                  </p>
+                </div>
+              )}
+
+              {quickProductError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-xs font-bold flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                  <span>{quickProductError}</span>
+                </div>
+              )}
+
+              {/* Form Fields */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Product Name <span className="text-red-500">*</span></label>
+                  <input type="text" value={quickProductForm.name || ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, name: e.target.value })}
+                    placeholder="Enter item name"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Item Code / SKU <span className="text-red-500">*</span></label>
+                  <input type="text" value={quickProductForm.code || ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, code: e.target.value })}
+                    placeholder="e.g. PRD-001"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Barcode (EAN/UPC)</label>
+                  <input type="text" value={quickProductForm.barcode || ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, barcode: e.target.value })}
+                    placeholder="Scan or type barcode"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Category</label>
+                  <select value={quickProductForm.category || 'General'}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, category: e.target.value })}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white">
+                    {productCategories && productCategories.length > 0 ? (
+                      productCategories.map(cat => (
+                        <option key={cat.id || cat.name || cat} value={cat.name || cat}>
+                          {cat.name || cat}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="General">General</option>
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Selling Price (AED) <span className="text-red-500">*</span></label>
+                  <input type="number" min="0" step="0.01" value={quickProductForm.sellingPrice || ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, sellingPrice: e.target.value })}
+                    placeholder="0.00"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Purchase Cost (AED)</label>
+                  <input type="number" min="0" step="0.01" value={quickProductForm.purchasePrice || ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, purchasePrice: e.target.value })}
+                    placeholder="0.00"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Tax Rate (%)</label>
+                  <select value={quickProductForm.taxRate ?? 5}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, taxRate: parseFloat(e.target.value) })}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white">
+                    <option value={5}>5% VAT</option>
+                    <option value={0}>0% (Exempt / Zero-rated)</option>
+                  </select>
+                </div>
+                <div className="col-span-2 border-t border-gray-100 pt-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={quickProductForm.trackInventory || false}
+                      onChange={e => setQuickProductForm({ ...quickProductForm, trackInventory: e.target.checked })}
+                      className="w-4 h-4 text-[#e6b838] border-gray-300 rounded focus:ring-[#F5C742]" />
+                    <span className="text-sm font-bold text-gray-800">Track Inventory / Stock Levels</span>
+                  </label>
+                </div>
+                {quickProductForm.trackInventory && (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Initial Stock Quantity</label>
+                      <input type="number" value={quickProductForm.initialStock || ''}
+                        onChange={e => setQuickProductForm({ ...quickProductForm, initialStock: e.target.value })}
+                        placeholder="0"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Low Stock Alert Quantity</label>
+                      <input type="number" value={quickProductForm.alertQuantity || ''}
+                        onChange={e => setQuickProductForm({ ...quickProductForm, alertQuantity: e.target.value })}
+                        placeholder="5"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex gap-3">
+              <button type="button" onClick={() => setShowQuickProductModal(false)}
+                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-100 transition-colors">
+                Cancel
+              </button>
+              <button type="button"
+                disabled={quickProductLoading || !quickProductForm.name || !quickProductForm.code || !quickProductForm.sellingPrice}
+                onClick={() => handleSaveQuickProduct(!!(quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0))}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0
+                    ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20 text-white'
+                    : 'bg-[#F5C742] hover:bg-[#e6b838] shadow-[#F5C742]/30 text-[#1E293B]'
+                }`}>
+                {quickProductLoading ? 'Saving...' : (quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0 ? 'Create New Product Anyway' : 'Save & Add to Cart')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
 );

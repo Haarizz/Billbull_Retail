@@ -127,7 +127,19 @@ public class CustomerService {
     @Transactional(readOnly = true)
     public List<Customer> search(String q) {
         if (q == null || q.isBlank()) return List.of();
-        return repository.findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(q, q);
+        return repository.searchAllFields(q);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Customer> validateDuplicate(String name, String mobile, String email, String trn) {
+        String n = name != null ? name.trim() : "";
+        String m = mobile != null ? mobile.trim() : "";
+        String e = email != null ? email.trim() : "";
+        String t = trn != null ? trn.trim() : "";
+        if (n.isEmpty() && m.isEmpty() && e.isEmpty() && t.isEmpty()) {
+            return List.of();
+        }
+        return repository.findPotentialDuplicates(n, m, e, t);
     }
 
     // =========================

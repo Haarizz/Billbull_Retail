@@ -54,6 +54,12 @@ export const searchExactProducts = async (search = "", signal = undefined) => {
   return res.data;
 };
 
+export const validateDuplicateProduct = async ({ name = "", code = "", sku = "", barcode = "" }) => {
+  const res = await api.get("/api/products/validate-duplicate", { params: { name, code, sku, barcode } });
+  return res.data;
+};
+
+
 // --------------------
 // LOOKUP BY BARCODE (exact match against product_barcodes table)
 // --------------------

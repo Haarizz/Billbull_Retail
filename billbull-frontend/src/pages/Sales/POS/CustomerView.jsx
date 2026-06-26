@@ -23,7 +23,7 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData }) => {
   const [custTab, setCustTab]             = React.useState('list');
   const [custSearch, setCustSearch]       = React.useState('');
   const [custBalanceFilter, setCustBalanceFilter] = React.useState('all');
@@ -87,12 +87,13 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setReceiptAmount('');
       setReceiptMethod('');
       setReceiptRef('');
+      if (typeof syncPosData === 'function') syncPosData();
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record payment.');
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptRef, customerOptions]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptRef, customerOptions, syncPosData]);
 
   const handleReceiveAdvance = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === advanceCust);
@@ -120,12 +121,13 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setAdvAmount('');
       setAdvMethod('');
       setAdvNotes('');
+      if (typeof syncPosData === 'function') syncPosData();
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record advance.');
     } finally {
       setAdvBusy(false);
     }
-  }, [advanceCust, advAmount, advMethod, advNotes, customerOptions]);
+  }, [advanceCust, advAmount, advMethod, advNotes, customerOptions, syncPosData]);
 
   const handleViewStatement = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === statementCust);

@@ -143,6 +143,18 @@ public class ProductController {
         return ResponseEntity.ok(service.searchProducts(q));
     }
 
+    @GetMapping("/validate-duplicate")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<ProductAggregateResponse>> validateDuplicate(
+            @RequestParam(defaultValue = "") String name,
+            @RequestParam(defaultValue = "") String code,
+            @RequestParam(defaultValue = "") String sku,
+            @RequestParam(defaultValue = "") String barcode) {
+        modulePermissionService.requireCanView("inventory");
+        return ResponseEntity.ok(service.validateDuplicate(name, code, sku, barcode));
+    }
+
+
     @GetMapping("/by-barcode")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<ProductAggregateResponse>> getByBarcode(@RequestParam String barcode) {

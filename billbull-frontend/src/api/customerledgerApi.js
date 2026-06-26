@@ -19,6 +19,17 @@ export const getCustomerById = async (id) => {
   return res.data;
 };
 
+export const searchCustomersAllFields = async (q) => {
+  const res = await api.get(`${BASE_URL}/search`, { params: { q, size: 20 } });
+  return res.data;
+};
+
+export const validateDuplicateCustomer = async ({ name = "", mobile = "", email = "", trn = "" }) => {
+  const res = await api.get(`${BASE_URL}/validate-duplicate`, { params: { name, mobile, email, trn } });
+  return res.data;
+};
+
+
 // ✅ CREATE or UPDATE customer (DB SAVE)
 export const createCustomer = async (payload) => {
   const res = await api.post(BASE_URL, payload);
