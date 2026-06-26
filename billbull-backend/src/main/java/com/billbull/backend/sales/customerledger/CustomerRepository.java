@@ -11,6 +11,25 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     boolean existsByCode(String code);
     java.util.Optional<Customer> findByCode(String code);
 
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Customer c WHERE " +
+        "LOWER(c.name) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+        "LOWER(c.code) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+        "c.mobile LIKE CONCAT('%', :q, '%') OR " +
+        "LOWER(c.email) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+        "c.trn LIKE CONCAT('%', :q, '%')")
+    List<Customer> searchAllFields(@org.springframework.data.repository.query.Param("q") String q);
+
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Customer c WHERE " +
+        "(:name <> '' AND LOWER(c.name) = LOWER(:name)) OR " +
+        "(:mobile <> '' AND c.mobile = :mobile) OR " +
+        "(:email <> '' AND LOWER(c.email) = LOWER(:email)) OR " +
+        "(:trn <> '' AND c.trn = :trn)")
+    List<Customer> findPotentialDuplicates(@org.springframework.data.repository.query.Param("name") String name,
+                                           @org.springframework.data.repository.query.Param("mobile") String mobile,
+                                           @org.springframework.data.repository.query.Param("email") String email,
+                                           @org.springframework.data.repository.query.Param("trn") String trn);
+
+
     /**
      * Exact (case-insensitive) lookup used by the POS unified search resolver.
      * The same query value is matched against code, mobile, phone and email so a

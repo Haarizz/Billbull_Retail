@@ -25,6 +25,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         Optional<Product> findByCodeAndIsActiveTrue(String code);
 
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND (" +
+            "(:name <> '' AND LOWER(p.name) = LOWER(:name)) OR " +
+            "(:code <> '' AND LOWER(p.code) = LOWER(:code)) OR " +
+            "(:sku <> '' AND LOWER(p.sku) = LOWER(:sku)) OR " +
+            "(:barcode <> '' AND EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND pb.barcode = :barcode)))")
+        List<Product> findPotentialDuplicates(@org.springframework.data.repository.query.Param("name") String name,
+                                              @org.springframework.data.repository.query.Param("code") String code,
+                                              @org.springframework.data.repository.query.Param("sku") String sku,
+                                              @org.springframework.data.repository.query.Param("barcode") String barcode);
+
+
         /** Exact (case-insensitive) code/SKU lookup for the POS unified search resolver. */
         Optional<Product> findFirstByCodeIgnoreCaseAndIsActiveTrue(String code);
 

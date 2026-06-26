@@ -317,6 +317,20 @@ public class ProductService {
         return buildResponse(savedProduct);
     }
 
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public List<ProductAggregateResponse> validateDuplicate(String name, String code, String sku, String barcode) {
+        String n = name != null ? name.trim() : "";
+        String c = code != null ? code.trim() : "";
+        String s = sku != null ? sku.trim() : "";
+        String b = barcode != null ? barcode.trim() : "";
+        if (n.isEmpty() && c.isEmpty() && s.isEmpty() && b.isEmpty()) {
+            return List.of();
+        }
+        return productRepo.findPotentialDuplicates(n, c, s, b).stream()
+                .map(this::buildResponse)
+                .toList();
+    }
+
     // ==================================================
     // 4. UPDATE PRODUCT
     // ==================================================

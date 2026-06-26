@@ -451,3 +451,13 @@ export function A4ScaledPreview({ src, fillWidth = false }) {
     </div>
   );
 }
+
+export function ThermalScaledPreview({ src }) {
+  return (
+    <div className="flex-1 flex justify-center bg-[#f0f2f5] p-6 overflow-y-auto">
+      <div className="w-[340px] bg-white shadow-2xl p-4 rounded-xl border border-gray-200 shrink-0 flex flex-col" style={{ minHeight: '500px' }}>
+        <iframe src={src} style={{ width: '100%', flex: 1, border: 'none', display: 'block', height: '100%', minHeight: '600px' }} title="Thermal Receipt Preview" />
+      </div>
+    </div>
+  );
+}

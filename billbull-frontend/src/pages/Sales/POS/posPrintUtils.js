@@ -193,7 +193,7 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   // Collapse a multi-line / comma address into one continuous line (§1).
   const oneLineAddress = (addr) => String(addr || '')
     .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
-  const items = (invoice.items || []).filter(it => !it.voided);
+  const items = invoice.items || [];
   const subTotal = invoice.subTotal || 0;
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
@@ -251,15 +251,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
   // row 2 so unit price is always visible (was: qty×name + total only). ──
   items.forEach(it => {
+    const isVoid = !!it.voided || !!it.isVoided;
     const qty = it.quantity || 0;
     const unit = parseFloat(it.unitPrice || it.price || 0);
-    const total = it.netAmount || it.lineTotal || (qty * unit);
+    const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
     const desc = it.description || '';
     const sku = it.sku || it.itemCode || '';
+    const nameDisplay = `${qty}x ${esc(it.itemName || it.productName || it.name || '')}${isVoid ? ' [VOID]' : ''}`;
+    const nameStyle = isVoid ? 'text-align:left; text-decoration:line-through; color:#888;' : 'text-align:left;';
+
     // Row 1: quantity × product name (name wraps if long).
-    html += `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(it.itemName || it.productName || '')}</span></div>`;
+    html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
     // Row 2: unit price → line total, right-aligned and aligned with the total column.
     html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
     if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
