@@ -38,9 +38,13 @@ public class ProductPricing extends BaseEntity {
 
     /** Default discount % applied automatically when this product is added to a POS cart. 0 = no default discount. */
     private BigDecimal defaultDiscount;
+    /** Product reward/loyalty points imported from legacy product masters. */
+    private BigDecimal loyaltyPoints;
 
 	public BigDecimal getDefaultDiscount() { return defaultDiscount; }
 	public void setDefaultDiscount(BigDecimal defaultDiscount) { this.defaultDiscount = defaultDiscount; }
+	public BigDecimal getLoyaltyPoints() { return loyaltyPoints; }
+	public void setLoyaltyPoints(BigDecimal loyaltyPoints) { this.loyaltyPoints = loyaltyPoints; }
 
 	public Product getProduct() {
 		return product;
