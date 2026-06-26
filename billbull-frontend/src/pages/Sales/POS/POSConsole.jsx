@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu } from 'lucide-react';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
 import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
-import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml } from './posPrintUtils';
+import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
+import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
+import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 
 const POSConsole = React.memo((props) => {
   const { 
@@ -32,7 +34,7 @@ const POSConsole = React.memo((props) => {
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms, 
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton, 
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
-    consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp, 
+    printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
@@ -54,8 +56,190 @@ const POSConsole = React.memo((props) => {
       { id:'z-report',label:'Z-Report' },{ id:'serial-batch',label:'Serial/Batch Check' },{ id:'reprint',label:'Reprint' },
       { id:'lock-pos',label:'Lock POS' },{ id:'close-session',label:'Close Session' },
     ];
-    const devTypes = ['Receipt Printer','Kitchen Printer','Label Printer','Barcode Scanner','Cash Drawer','Card Terminal','Customer Display'];
-    const portTypes = ['USB','COM Port','Network / IP','Bluetooth','Serial'];
+    const printerTypeOptions = [
+      { value: 'RECEIPT_PRINTER', label: 'Receipt Printer' },
+      { value: 'KITCHEN_PRINTER', label: 'Kitchen Printer' },
+      { value: 'LABEL_PRINTER', label: 'Label Printer' },
+    ];
+    const connectionOptions = [
+      { value: 'WINDOWS_QUEUE', label: 'Windows Queue' },
+      { value: 'USB', label: 'USB' },
+      { value: 'NETWORK_IP', label: 'Network / IP' },
+      { value: 'BLUETOOTH', label: 'Bluetooth' },
+      { value: 'ZEBRA_BROWSER_PRINT', label: 'Zebra Browser Print' },
+    ];
+    const paperSizeOptions = ['58mm', '80mm', '100x150mm'];
+    const printTemplateOptions = ['Receipt', 'Kitchen', 'Label'];
+
+    const createInitialPrinterForm = (type = 'RECEIPT_PRINTER') => ({
+      deviceType: type,
+      deviceCode: '',
+      deviceName: '',
+      modelName: '',
+      connectionType: type === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : 'WINDOWS_QUEUE',
+      systemPrinterName: '',
+      deviceIdentifier: '',
+      ipAddress: '',
+      portNumber: type === 'LABEL_PRINTER' ? '' : '9100',
+      paperSize: type === 'LABEL_PRINTER' ? '100x150mm' : '80mm',
+      printTemplate: type === 'KITCHEN_PRINTER' ? 'Kitchen' : type === 'LABEL_PRINTER' ? 'Label' : 'Receipt',
+      defaultPrinter: type !== 'KITCHEN_PRINTER',
+      status: 'ACTIVE',
+      assignToCurrentTerminal: Boolean(currentTerminal?.terminalId),
+      notes: '',
+    });
+
+    const [printerDialogOpen, setPrinterDialogOpen] = useState(false);
+    const [editingPrinter, setEditingPrinter] = useState(null);
+    const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
+    const [printerSaving, setPrinterSaving] = useState(false);
+    const [printerBusyId, setPrinterBusyId] = useState(null);
+    const [agentPrinters, setAgentPrinters] = useState([]);
+    const [agentLoading, setAgentLoading] = useState(false);
+    const [agentError, setAgentError] = useState('');
+
+    const printerTypeLabel = (value) => printerTypeOptions.find((t) => t.value === value)?.label || value;
+    const connectionLabel = (value) => connectionOptions.find((t) => t.value === value)?.label || value;
+    const formatPrinterTimestamp = (value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed.toLocaleString();
+    };
+
+    useEffect(() => {
+      if (consoleTab !== 'devices') return;
+      loadPrinterConfigs?.();
+    }, [consoleTab, loadPrinterConfigs, currentTerminal?.branchId]);
+
+    const refreshAgentPrinters = async () => {
+      setAgentLoading(true);
+      setAgentError('');
+      try {
+        const data = await listPrintAgentPrinters();
+        setAgentPrinters(Array.isArray(data) ? data : []);
+      } catch (err) {
+        setAgentPrinters([]);
+        setAgentError(err?.message || 'Print agent unavailable.');
+      } finally {
+        setAgentLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      if (consoleTab === 'devices') {
+        refreshAgentPrinters();
+      }
+    }, [consoleTab]);
+
+    const openPrinterDialog = (type = 'RECEIPT_PRINTER') => {
+      setEditingPrinter(null);
+      setPrinterForm(createInitialPrinterForm(type));
+      setPrinterDialogOpen(true);
+    };
+
+    const editPrinter = (printer) => {
+      setEditingPrinter(printer);
+      setPrinterForm({
+        deviceType: printer.deviceType || 'RECEIPT_PRINTER',
+        deviceCode: printer.deviceCode || '',
+        deviceName: printer.deviceName || '',
+        modelName: printer.modelName || '',
+        connectionType: printer.connectionType || 'WINDOWS_QUEUE',
+        systemPrinterName: printer.systemPrinterName || '',
+        deviceIdentifier: printer.deviceIdentifier || '',
+        ipAddress: printer.ipAddress || '',
+        portNumber: printer.portNumber == null ? '' : String(printer.portNumber),
+        paperSize: printer.paperSize || '80mm',
+        printTemplate: printer.printTemplate || 'Receipt',
+        defaultPrinter: Boolean(printer.defaultPrinter),
+        status: printer.status || 'ACTIVE',
+        assignToCurrentTerminal: Boolean(printer.terminalId),
+        notes: printer.notes || '',
+      });
+      setPrinterDialogOpen(true);
+    };
+
+    const savePrinter = async () => {
+      const branchId = currentTerminal?.branchId;
+      if (!branchId) return;
+      setPrinterSaving(true);
+      try {
+        const payload = {
+          deviceCode: printerForm.deviceCode,
+          deviceType: printerForm.deviceType,
+          deviceName: printerForm.deviceName,
+          modelName: printerForm.modelName,
+          branchId,
+          branchName: currentTerminal?.branchName || '',
+          terminalId: printerForm.assignToCurrentTerminal ? (currentTerminal?.terminalId || null) : null,
+          terminalName: printerForm.assignToCurrentTerminal ? (currentTerminal?.terminalName || currentTerminal?.terminalId || null) : null,
+          counterName: printerForm.assignToCurrentTerminal ? (currentTerminal?.counterName || null) : null,
+          connectionType: printerForm.connectionType,
+          systemPrinterName: printerForm.systemPrinterName,
+          deviceIdentifier: printerForm.deviceIdentifier,
+          ipAddress: printerForm.ipAddress || null,
+          portNumber: printerForm.portNumber ? Number(printerForm.portNumber) : null,
+          paperSize: printerForm.paperSize,
+          printTemplate: printerForm.printTemplate,
+          defaultPrinter: Boolean(printerForm.defaultPrinter),
+          status: printerForm.status,
+          notes: printerForm.notes,
+        };
+        const saved = editingPrinter
+          ? await updatePosPrinter(editingPrinter.id, payload)
+          : await createPosPrinter(payload);
+        setPrinterConfigs((prev) => {
+          const list = Array.isArray(prev) ? prev.filter((item) => item.id !== saved.id) : [];
+          return [...list, saved].sort((a, b) => String(a.deviceName || '').localeCompare(String(b.deviceName || '')));
+        });
+        setPrinterDialogOpen(false);
+        setEditingPrinter(null);
+      } catch (err) {
+        window.alert(err?.response?.data?.message || err?.message || 'Failed to save printer.');
+      } finally {
+        setPrinterSaving(false);
+      }
+    };
+
+    const handlePrinterTest = async (printer) => {
+      setPrinterBusyId(printer.id);
+      try {
+        const result = await testConfiguredPrinter(printer, {
+          testText: buildThermalTestReceiptText({
+            companyName: currentTerminal?.branchName || 'BillBull',
+            branchName: currentTerminal?.branchName || '',
+            terminalId: currentTerminal?.terminalId || '',
+            counterName: currentTerminal?.counterName || '',
+            printerName: printer.systemPrinterName || printer.deviceName,
+            paperSize: printer.paperSize || '80mm',
+          }),
+        });
+        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(result?.message || 'Printer test sent successfully.'));
+        setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
+      } catch (err) {
+        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintError(err)).catch(() => null);
+        if (updated) {
+          setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
+        }
+        window.alert(err?.message || 'Printer test failed.');
+      } finally {
+        setPrinterBusyId(null);
+      }
+    };
+
+    const handlePrinterDecommission = async (printer) => {
+      if (!window.confirm(`Decommission printer "${printer.deviceName}"?`)) return;
+      setPrinterBusyId(printer.id);
+      try {
+        await decommissionPosPrinter(printer.id);
+        setPrinterConfigs((prev) => prev.filter((item) => item.id !== printer.id));
+      } catch (err) {
+        window.alert(err?.response?.data?.message || err?.message || 'Failed to decommission printer.');
+      } finally {
+        setPrinterBusyId(null);
+      }
+    };
 
     const tabs = [
       { id:'layout',    label:'Manage Layouts', icon:<LayoutGrid className="h-4 w-4" /> },
@@ -485,17 +669,107 @@ const POSConsole = React.memo((props) => {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-base font-bold text-[#1E293B]">Connected Devices</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Manage printers, scanners, cash drawers and card terminals.</p>
+                  <h2 className="text-base font-bold text-[#1E293B]">POS Printer Configuration</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">Configure receipt, kitchen, and label printers for this branch and terminal.</p>
                 </div>
-                <button onClick={()=>setShowAddDevice(true)}
+                <button onClick={()=>openPrinterDialog('RECEIPT_PRINTER')}
                   className="flex items-center gap-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
-                  <Plus className="h-4 w-4" />Add Device
+                  <Plus className="h-4 w-4" />Add Printer
                 </button>
               </div>
 
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-[#1E293B]">Local Print Agent</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Use the workstation agent to detect installed printers and send test jobs directly.</p>
+                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError}</p>}
+                </div>
+                <button
+                  type="button"
+                  onClick={refreshAgentPrinters}
+                  disabled={agentLoading}
+                  className="shrink-0 flex items-center gap-2 border border-gray-200 text-gray-700 text-sm font-semibold px-3 py-2 rounded-xl hover:bg-gray-50 disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-4 w-4 ${agentLoading ? 'animate-spin' : ''}`} />
+                  {agentLoading ? 'Checking…' : 'Load Workstation Printers'}
+                </button>
+              </div>
+
+              {agentPrinters.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Detected On This Workstation</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {agentPrinters.map((printer) => (
+                      <div key={`${printer.name}-${printer.portName || ''}`} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                        <p className="text-sm font-semibold text-[#1E293B]">{printer.name}</p>
+                        <p className="text-xs text-gray-500">{printer.driverName || 'Driver unknown'}{printer.portName ? ` · ${printer.portName}` : ''}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
-                {consoleDevices.map(dev=>{
+                {(Array.isArray(printerConfigs) ? printerConfigs : []).map(printer=>{
+                  const printerIcon = {
+                    RECEIPT_PRINTER:<Printer className="h-5 w-5" />,
+                    KITCHEN_PRINTER:<Printer className="h-5 w-5" />,
+                    LABEL_PRINTER:<Package className="h-5 w-5" />,
+                  };
+                  const runtimeOnline = printer.runtimeStatus === 'ONLINE';
+                  return (
+                    <div key={`cfg-${printer.id}`} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${runtimeOnline ? 'bg-[#F5C742]/15 text-[#b8920e]' : 'bg-gray-100 text-gray-400'}`}>
+                        {printerIcon[printer.deviceType]||<Printer className="h-5 w-5" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-bold text-[#1E293B]">{printer.deviceName}</p>
+                          {printer.defaultPrinter && <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Default</span>}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {printerTypeLabel(printer.deviceType)} · {connectionLabel(printer.connectionType)}
+                          {printer.systemPrinterName ? ` · ${printer.systemPrinterName}` : ''}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Branch: {printer.branchName || currentTerminal?.branchName || 'Current branch'}
+                          {printer.terminalId ? ` · Terminal: ${printer.terminalName || printer.terminalId}` : ' · Branch default'}
+                          {printer.counterName ? ` · Counter: ${printer.counterName}` : ''}
+                        </p>
+                        {printer.lastTestResult && <p className="text-xs text-gray-500 mt-1 truncate">{printer.lastTestResult}</p>}
+                        {formatPrinterTimestamp(printer.lastTestedAt) && (
+                          <p className="text-xs text-gray-400 mt-1">Last tested: {formatPrinterTimestamp(printer.lastTestedAt)}</p>
+                        )}
+                      </div>
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${printer.status==='ACTIVE' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${printer.status==='ACTIVE' ? 'bg-blue-500' : 'bg-gray-400'}`}/>{printer.status}
+                      </span>
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${runtimeOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${runtimeOnline ? 'bg-green-500' : 'bg-red-500'}`}/>{printer.runtimeStatus || 'UNKNOWN'}
+                      </span>
+                      <button type="button" onClick={()=>editPrinter(printer)} className="text-xs border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-semibold transition-colors">Edit</button>
+                      <button type="button" onClick={()=>handlePrinterTest(printer)} disabled={printerBusyId === printer.id || printer.status !== 'ACTIVE'} className="text-xs border border-[#F5C742]/50 text-[#b8920e] px-3 py-1.5 rounded-lg hover:bg-[#F5C742]/10 font-semibold transition-colors disabled:opacity-60">
+                        {printerBusyId === printer.id ? 'Testing…' : 'Test'}
+                      </button>
+                      <button type="button" onClick={()=>handlePrinterDecommission(printer)} className="text-xs border border-red-200 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50 font-semibold transition-colors">
+                        Decommission
+                      </button>
+                    </div>
+                  );
+                })}
+                {!printersLoading && (!printerConfigs || printerConfigs.length===0) && (
+                  <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-12 text-center">
+                    <Printer className="h-10 w-10 text-gray-200 mx-auto mb-3" />
+                    <p className="text-gray-400 font-medium">No printers configured</p>
+                    <p className="text-xs text-gray-300 mt-1">Add a receipt, kitchen, or label printer to get started.</p>
+                  </div>
+                )}
+                {printersLoading && (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-sm text-gray-500">
+                    Loading printer configuration…
+                  </div>
+                )}
+                {false && consoleDevices.map(dev=>{
                   const devIcon = {
                     'Receipt Printer':<Printer className="h-5 w-5" />,'Kitchen Printer':<Printer className="h-5 w-5" />,
                     'Label Printer':<Printer className="h-5 w-5" />,'Barcode Scanner':<Search className="h-5 w-5" />,
@@ -519,7 +793,7 @@ const POSConsole = React.memo((props) => {
                     </div>
                   );
                 })}
-                {consoleDevices.length===0 && (
+                {false && consoleDevices.length===0 && (
                   <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-12 text-center">
                     <Printer className="h-10 w-10 text-gray-200 mx-auto mb-3" />
                     <p className="text-gray-400 font-medium">No devices configured</p>
@@ -528,8 +802,125 @@ const POSConsole = React.memo((props) => {
                 )}
               </div>
 
-              {/* Quick-add cards */}
               <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Quick Add</p>
+                <div className="grid grid-cols-3 gap-3">
+                  {printerTypeOptions.map(({ value, label })=>(
+                    <button key={value} type="button" onClick={()=>openPrinterDialog(value)}
+                      className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 p-4 text-center flex flex-col items-center gap-2 transition-all hover:bg-[#F5C742]/5">
+                      <div className="w-10 h-10 rounded-xl bg-[#F5C742]/10 flex items-center justify-center text-[#b8920e]">
+                        {value === 'LABEL_PRINTER' ? <Package className="h-5 w-5" /> : <Printer className="h-5 w-5" />}
+                      </div>
+                      <p className="text-xs font-semibold text-gray-600">{label}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {printerDialogOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
+                    <div className="flex items-center justify-between mb-5">
+                      <div>
+                        <h3 className="text-base font-bold text-[#1E293B]">{editingPrinter ? 'Edit Printer' : 'Add Printer'}</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">Store printer configuration in BillBull and test it through the local print agent.</p>
+                      </div>
+                      <button onClick={()=>setPrinterDialogOpen(false)}><X className="h-5 w-5 text-gray-400" /></button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Printer Type</label>
+                        <select value={printerForm.deviceType} onChange={e=>setPrinterForm(f => ({ ...f, deviceType: e.target.value, connectionType: e.target.value === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : (f.connectionType === 'ZEBRA_BROWSER_PRINT' ? 'WINDOWS_QUEUE' : f.connectionType), printTemplate: e.target.value === 'KITCHEN_PRINTER' ? 'Kitchen' : e.target.value === 'LABEL_PRINTER' ? 'Label' : 'Receipt', paperSize: e.target.value === 'LABEL_PRINTER' ? '100x150mm' : (f.paperSize === '100x150mm' ? '80mm' : f.paperSize) }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                          {printerTypeOptions.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Device Code</label>
+                        <input value={printerForm.deviceCode} onChange={e=>setPrinterForm(f => ({ ...f, deviceCode: e.target.value }))} placeholder="e.g. POS-REC-01" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Device Name</label>
+                        <input value={printerForm.deviceName} onChange={e=>setPrinterForm(f => ({ ...f, deviceName: e.target.value }))} placeholder="e.g. Epson TM-T82III Front Counter" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Model</label>
+                        <input value={printerForm.modelName} onChange={e=>setPrinterForm(f => ({ ...f, modelName: e.target.value }))} placeholder="e.g. Epson TM-T82III" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Connection Type</label>
+                        <select value={printerForm.connectionType} onChange={e=>setPrinterForm(f => ({ ...f, connectionType: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                          {connectionOptions.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">System Printer Name</label>
+                        <input value={printerForm.systemPrinterName} onChange={e=>setPrinterForm(f => ({ ...f, systemPrinterName: e.target.value }))} placeholder="Installed printer / Zebra device name" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" list="bb-agent-printers" />
+                        <datalist id="bb-agent-printers">
+                          {agentPrinters.map((printer) => <option key={printer.name} value={printer.name} />)}
+                        </datalist>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Device Identifier</label>
+                        <input value={printerForm.deviceIdentifier} onChange={e=>setPrinterForm(f => ({ ...f, deviceIdentifier: e.target.value }))} placeholder="Optional hardware or Browser Print identifier" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                      </div>
+                      {printerForm.connectionType === 'NETWORK_IP' && (
+                        <>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase">IP Address</label>
+                            <input value={printerForm.ipAddress} onChange={e=>setPrinterForm(f => ({ ...f, ipAddress: e.target.value }))} placeholder="192.168.1.50" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase">Port</label>
+                            <input value={printerForm.portNumber} onChange={e=>setPrinterForm(f => ({ ...f, portNumber: e.target.value }))} placeholder="9100" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
+                          </div>
+                        </>
+                      )}
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Paper Size</label>
+                        <select value={printerForm.paperSize} onChange={e=>setPrinterForm(f => ({ ...f, paperSize: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                          {paperSizeOptions.map(size => <option key={size} value={size}>{size}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Print Template</label>
+                        <select value={printerForm.printTemplate} onChange={e=>setPrinterForm(f => ({ ...f, printTemplate: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                          {printTemplateOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-span-2 grid grid-cols-3 gap-4 bg-gray-50 rounded-xl p-4">
+                        <label className="flex items-center gap-2 text-sm font-medium text-[#1E293B]">
+                          <input type="checkbox" checked={printerForm.assignToCurrentTerminal} onChange={e=>setPrinterForm(f => ({ ...f, assignToCurrentTerminal: e.target.checked }))} />
+                          Assign to current terminal
+                        </label>
+                        <label className="flex items-center gap-2 text-sm font-medium text-[#1E293B]">
+                          <input type="checkbox" checked={printerForm.defaultPrinter} onChange={e=>setPrinterForm(f => ({ ...f, defaultPrinter: e.target.checked }))} />
+                          Default printer
+                        </label>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Status</label>
+                          <select value={printerForm.status} onChange={e=>setPrinterForm(f => ({ ...f, status: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]">
+                            <option value="ACTIVE">Active</option>
+                            <option value="INACTIVE">Inactive</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Notes</label>
+                        <textarea value={printerForm.notes} onChange={e=>setPrinterForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes for setup or assignment" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] min-h-[88px]" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-5">
+                      <button onClick={()=>setPrinterDialogOpen(false)} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50">Cancel</button>
+                      <button onClick={savePrinter} disabled={printerSaving} className="flex-1 py-2.5 rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
+                        <Plus className="h-4 w-4" />{printerSaving ? 'Saving…' : editingPrinter ? 'Save Changes' : 'Add Printer'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick-add cards */}
+              {false && <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Quick Add</p>
                 <div className="grid grid-cols-4 gap-3">
                   {[['Receipt Printer',<Printer className="h-5 w-5"/>],['Barcode Scanner',<Search className="h-5 w-5"/>],['Cash Drawer',<Wallet className="h-5 w-5"/>],['Card Terminal',<CreditCard className="h-5 w-5"/>]].map(([label,icon])=>(
@@ -540,10 +931,10 @@ const POSConsole = React.memo((props) => {
                     </button>
                   ))}
                 </div>
-              </div>
+              </div>}
 
               {/* Add Device dialog */}
-              {showAddDevice && (
+              {false && showAddDevice && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
                   <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
                     <div className="flex items-center justify-between mb-5">
