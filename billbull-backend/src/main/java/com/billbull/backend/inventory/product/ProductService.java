@@ -198,6 +198,8 @@ public class ProductService {
             effective.setOnlinePrice(base.getOnlinePrice());
             effective.setMarkup(base.getMarkup());
             effective.setGp(base.getGp());
+            effective.setDefaultDiscount(base.getDefaultDiscount());
+            effective.setLoyaltyPoints(base.getLoyaltyPoints());
         }
         if (branchPrice != null) {
             effective.setCost(firstNonNull(branchPrice.getCost(), effective.getCost()));
@@ -407,6 +409,9 @@ public class ProductService {
             pricing.setMarkup(reqPricing.getMarkup());
             pricing.setGp(reqPricing.getGp());
             pricing.setDefaultDiscount(reqPricing.getDefaultDiscount());
+            if (reqPricing.getLoyaltyPoints() != null) {
+                pricing.setLoyaltyPoints(reqPricing.getLoyaltyPoints());
+            }
 
             pricingRepo.save(pricing);
         }

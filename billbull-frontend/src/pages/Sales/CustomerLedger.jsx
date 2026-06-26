@@ -24,6 +24,7 @@ import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
+import { usePermissions } from '../../context/PermissionContext';
 import {
     getCountryOptions,
     getCurrencyOptions,
@@ -2780,6 +2781,7 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 const CustomerLedger = () => {
     const { company } = useCompany();
     const { activeBranch } = useBranch();
+    const { canCreate, canEdit } = usePermissions();
     const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [customerToEdit, setCustomerToEdit] = useState(null);
@@ -2796,6 +2798,10 @@ const CustomerLedger = () => {
     const [customers, setCustomers] = useState([]);
     const customerImportInputRef = useRef(null);
     const [isImportingCustomers, setIsImportingCustomers] = useState(false);
+    const canImportCustomers = canCreate('sales.customer')
+        || canEdit('sales.customer')
+        || canCreate('sales')
+        || canEdit('sales');
 
     // Fetch Customers on Mount and when active branch changes (BBQA52-024)
     useEffect(() => {
@@ -3191,13 +3197,15 @@ const CustomerLedger = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                            <input
-                                ref={customerImportInputRef}
-                                type="file"
-                                accept=".xlsx,.xls"
-                                className="hidden"
-                                onChange={handleCustomerImport}
-                            />
+                            {canImportCustomers && (
+                                <input
+                                    ref={customerImportInputRef}
+                                    type="file"
+                                    accept=".xlsx,.xls"
+                                    className="hidden"
+                                    onChange={handleCustomerImport}
+                                />
+                            )}
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
                                     withExportSerialNumbers(filteredCustomers),
@@ -3220,14 +3228,16 @@ const CustomerLedger = () => {
                                 )}
                                 onPrint={handlePrintCustomerList}
                             />
-                            <button
-                                onClick={() => customerImportInputRef.current?.click()}
-                                disabled={isImportingCustomers}
-                                className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                            >
-                                {isImportingCustomers ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
-                                {isImportingCustomers ? 'Importing...' : 'Import'}
-                            </button>
+                            {canImportCustomers && (
+                                <button
+                                    onClick={() => customerImportInputRef.current?.click()}
+                                    disabled={isImportingCustomers}
+                                    className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                    {isImportingCustomers ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+                                    {isImportingCustomers ? 'Importing...' : 'Import'}
+                                </button>
+                            )}
                             <button
                                 onClick={() => setIsAddModalOpen(true)}
                                 className="flex items-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"

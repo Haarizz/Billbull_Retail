@@ -192,6 +192,7 @@ public class ProductImportService {
 
     private String importProducts(InputStream inputStream, ImportJobStatus job) {
         ImportCounters counters = new ImportCounters();
+        Set<String> seenBarcodes = new HashSet<>();
         Unit fallbackUnit = getOrCreateUnit("PCS", null);
         Set<String> exactRowSignatures = new HashSet<>();
         Set<String> reservedCodes = new HashSet<>();
@@ -225,9 +226,11 @@ public class ProductImportService {
                         "model no.", "model", "model number", "item model");
                 Integer skuIdx = findContentIndex(headerMap, "sku");
                 Integer itemIdx = findContentIndex(headerMap, "item");
-                Integer codeIdx = findContentIndex(headerMap, "item code", "code", "product code", "sku");
+                Integer codeIdx = findContentIndex(headerMap, "item code", "code", "product code", "sku",
+                        "prdid", "product id", "prod id");
                 Integer nameIdx = findContentIndex(headerMap, "item name", "product name", "name", "product",
-                        "item", "description", "product description", "item description");
+                        "item", "description", "product description", "item description",
+                        "prdname");
                 Integer descIdx = findContentIndex(headerMap, "description", "product description",
                         "item description", "short description", "detailed description");
                 if (itemIdx != null) {
@@ -236,21 +239,57 @@ public class ProductImportService {
                 if (nameIdx == null) {
                     nameIdx = descIdx;
                 }
+                Integer localNameIdx = findContentIndex(headerMap, "local name", "arabic name", "alternate name");
+                Integer productTypeIdx = findContentIndex(headerMap, "type", "product type");
+                Integer statusIdx = findContentIndex(headerMap, "status");
                 Integer picIdx = findContentIndex(headerMap, "picture", "image", "photo", "img", "item photo");
                 Integer barcodeIdx = findContentIndex(headerMap, "barcode", "bar code", "ean", "upc");
                 Integer unitIdx = findContentIndex(headerMap, "unit code", "unit", "uom");
-                Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept",
-                        "manufacture", "manufacturer");
+                Integer manufactureIdx = findContentIndex(headerMap, "manufacture", "manufacturer",
+                        "manufacturer name");
+                Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept", "category",
+                        "product group", "item group", "group",
+                        "productcategory", "product category", "prd category");
                 Integer costIdx = findContentIndex(headerMap, "cost", "purchase cost", "purchasecost",
-                        "landing cost", "landingcost");
+                        "cost price");
                 Integer lastSupCostIdx = findContentIndex(headerMap, "last sup cost", "last supplier cost",
-                        "landing cost");
+                        "landing cost", "landingcost");
                 Integer priceInclTaxIdx = findContentIndex(headerMap, "price incl tax", "price including tax",
-                        "retail price", "selling price", "sales rate", "salesrate");
+                        "retail price", "selling price", "sales rate", "salesrate",
+                        "prdrate", "rate", "price");
                 Integer costInclTaxIdx = findContentIndex(headerMap, "cost incl tax", "cost including tax", "nlc");
+                Integer costMethodIdx = findContentIndex(headerMap, "cost method");
+                Integer costInclusiveIdx = findContentIndex(headerMap, "cost inclusive", "cost inclusive?",
+                        "is cost inclusive");
+                Integer wholesalePriceIdx = findContentIndex(headerMap, "wholesale price", "wholesale");
+                Integer minPriceIdx = findContentIndex(headerMap, "min price", "minimum price");
+                Integer maxPriceIdx = findContentIndex(headerMap, "max price", "maximum price");
+                Integer onlinePriceIdx = findContentIndex(headerMap, "online price", "web price");
+                Integer defaultDiscountIdx = findContentIndex(headerMap, "default discount", "default discount %",
+                        "discount");
                 Integer inactiveIdx = findContentIndex(headerMap, "inactive", "in active");
                 Integer markupIdx = findContentIndex(headerMap, "markup");
                 Integer gpIdx = findContentIndex(headerMap, "gross profit", "gp");
+                Integer purchaseTaxIdx = findContentIndex(headerMap, "purchase tax", "purchase tax %");
+                Integer salesTaxIdx = findContentIndex(headerMap, "sales tax", "sales tax %", "vat", "vat %");
+                Integer taxCategoryIdx = findContentIndex(headerMap, "tax category");
+                Integer hsnIdx = findContentIndex(headerMap, "hsn code", "hsn", "tax code");
+                Integer reorderLevelIdx = findContentIndex(headerMap, "reorder level", "reorderlevel",
+                        "reorder point");
+                Integer reorderQtyIdx = findContentIndex(headerMap, "reorder qty", "reorder quantity");
+                Integer safetyStockIdx = findContentIndex(headerMap, "safety stock");
+                Integer minStockIdx = findContentIndex(headerMap, "min stock", "minimum stock");
+                Integer maxStockIdx = findContentIndex(headerMap, "max stock", "maximum stock");
+                Integer pointIdx = findContentIndex(headerMap, "point", "points", "loyalty point",
+                        "loyalty points", "reward point", "reward points");
+                Integer serialIdx = findContentIndex(headerMap, "serial tracking", "serial tracking?", "is serial");
+                Integer batchIdx = findContentIndex(headerMap, "batch tracking", "batch tracking?", "is batch");
+                Integer weighingIdx = findContentIndex(headerMap, "weighing scale item", "weighing scale item?",
+                        "is weighing");
+                Integer discountAllowedIdx = findContentIndex(headerMap, "discount allowed",
+                        "discount allowed?", "is discount allowed");
+                Integer maxDiscountIdx = findContentIndex(headerMap, "max discount", "maximum discount");
+                Integer availableInPosIdx = findContentIndex(headerMap, "available in pos", "available in pos?");
                 Integer catIdx = findContentIndex(headerMap, "catalogue no", "catalogue code", "cat no", "cat code",
                         "catalog no", "catalog code");
                 Integer brandColIdx = findContentIndex(headerMap, "brand", "brand name", "make");
@@ -266,11 +305,25 @@ public class ProductImportService {
                     codeIdx = barcodeIdx;
                     modelIdx = barcodeIdx;
                 }
-                final boolean albadarFormat = (codeIdx != null && codeIdx.equals(barcodeIdx) && brandColIdx == null);
+                final boolean isBarcodeOnlyCode = (codeIdx != null && codeIdx.equals(barcodeIdx));
+                final boolean albadarFormat = isBarcodeOnlyCode && brandColIdx == null;
+                final boolean royalToolsFormat = isBarcodeOnlyCode && manufactureIdx != null;
+                final boolean hasCarriedForwardGroup = albadarFormat || royalToolsFormat;
+                final boolean leRoyalFormat = albadarFormat
+                        && nameIdx != null
+                        && manufactureIdx != null
+                        && priceInclTaxIdx != null
+                        && costIdx != null;
+                if (brandColIdx == null && manufactureIdx != null) {
+                    brandColIdx = manufactureIdx;
+                }
+                if (leRoyalFormat) {
+                    deptIdx = null;
+                }
 
                 // Some legacy Nest/Fitgenix files swapped SKU and Item. Decide from
                 // row values so normal files with SKU=code and Item=name stay intact.
-                final boolean skuItemFormat = !albadarFormat && skuIdx != null && itemIdx != null;
+                final boolean skuItemFormat = !hasCarriedForwardGroup && skuIdx != null && itemIdx != null;
                 final boolean swapSkuAndItem = skuItemFormat
                         && shouldUseItemColumnAsCode(sheet, headerRowNum, skuIdx, itemIdx);
                 if (swapSkuAndItem) {
@@ -283,11 +336,13 @@ public class ProductImportService {
                     }
                 }
 
-                String fallbackBrandName = "Sheet".equalsIgnoreCase(sheetName) ? "General" : sheetName;
+                String fallbackBrandName = sheetName != null && sheetName.toLowerCase().startsWith("sheet")
+                        ? "General"
+                        : sheetName;
                 Brand fallbackBrand = getOrCreateBrand(fallbackBrandName);
                 Map<Integer, PictureData> rowImageMap = buildRowImageMap(sheet);
-                // Albadar format: track the group name from column A (carry forward when blank)
-                String lastGroupBrandName = null;
+                // Legacy report formats use column A as a carried-forward group/category.
+                String lastGroupName = null;
 
                 for (int r = headerRowNum + 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
@@ -303,28 +358,47 @@ public class ProductImportService {
                             continue;
                         }
 
-                        // Albadar format: column A holds the group/brand name (only filled on first row of group)
-                        if (albadarFormat) {
+                        // Legacy report format: column A holds a group/category, filled once per group.
+                        if (hasCarriedForwardGroup) {
                             String groupCell = cell(row, 0);
                             if (!isBlank(groupCell)) {
-                                lastGroupBrandName = groupCell;
+                                lastGroupName = groupCell;
                             }
                         }
 
                         String valModel = cell(row, modelIdx);
                         String valCode = cell(row, codeIdx);
+                        if (valCode != null && headerMap.containsKey("prdid") && codeIdx != null && codeIdx.equals(headerMap.get("prdid"))) {
+                            if (!valCode.startsWith("GIFT-")) {
+                                valCode = "GIFT-" + valCode;
+                            }
+                        }
                         String valName = cell(row, nameIdx);
+                        String valLocalName = cell(row, localNameIdx);
                         String valDesc = cell(row, descIdx);
+                        String valProductType = cell(row, productTypeIdx);
                         String valPic = cell(row, picIdx);
                         String valBarcode = cell(row, barcodeIdx);
+                        if (!isBlank(valBarcode)) {
+                            if (!seenBarcodes.add(valBarcode.trim())) {
+                                counters.skippedCount++;
+                                counters.identicalDuplicateSkippedCount++; // To indicate they were skipped due to duplication
+                                continue;
+                            }
+                        }
                         String valUnit = cell(row, unitIdx);
                         String valDept = cell(row, deptIdx);
+                        String valGroup = hasCarriedForwardGroup ? lastGroupName : cell(row, deptIdx);
                         String valInactive = cell(row, inactiveIdx);
+                        String valStatus = cell(row, statusIdx);
                         String valCat = cell(row, catIdx);
                         String valBrandCol = cell(row, brandColIdx);
-                        // Albadar: use carried-forward group name as brand when no explicit brand column
-                        if (albadarFormat && isBlank(valBrandCol)) {
-                            valBrandCol = lastGroupBrandName;
+                        if (leRoyalFormat && isBlank(valDept)) {
+                            valDept = valGroup;
+                        }
+                        // Older Albadar files used the carried-forward group as brand.
+                        if (albadarFormat && !leRoyalFormat && isBlank(valBrandCol)) {
+                            valBrandCol = lastGroupName;
                         }
                         if (!isBlank(valCode) && !isBlank(valName) && shouldSwapCodeAndNameForRow(valCode, valName)) {
                             String tmpSwap = valCode;
@@ -348,17 +422,39 @@ public class ProductImportService {
                         BigDecimal lastSupCost = parseDecimal(cell(row, lastSupCostIdx));
                         BigDecimal priceInclTax = parseDecimal(cell(row, priceInclTaxIdx));
                         BigDecimal costInclTax = parseDecimal(cell(row, costInclTaxIdx));
+                        BigDecimal wholesalePrice = parseDecimal(cell(row, wholesalePriceIdx));
+                        BigDecimal minPrice = parseDecimal(cell(row, minPriceIdx));
+                        BigDecimal maxPrice = parseDecimal(cell(row, maxPriceIdx));
+                        BigDecimal onlinePrice = parseDecimal(cell(row, onlinePriceIdx));
+                        BigDecimal defaultDiscount = parseDecimal(cell(row, defaultDiscountIdx));
                         BigDecimal markup = parseDecimal(cell(row, markupIdx));
                         BigDecimal gp = parseDecimal(cell(row, gpIdx));
+                        BigDecimal purchaseTax = parseDecimal(cell(row, purchaseTaxIdx));
+                        BigDecimal salesTax = parseDecimal(cell(row, salesTaxIdx));
+                        BigDecimal loyaltyPoints = parseDecimal(cell(row, pointIdx));
+                        Integer reorderLevel = parseInteger(cell(row, reorderLevelIdx));
+                        Integer reorderQty = parseInteger(cell(row, reorderQtyIdx));
+                        Integer safetyStock = parseInteger(cell(row, safetyStockIdx));
+                        Integer minStock = parseInteger(cell(row, minStockIdx));
+                        Integer maxStock = parseInteger(cell(row, maxStockIdx));
+                        Integer maxDiscount = parseInteger(cell(row, maxDiscountIdx));
+                        String valTaxCategory = cell(row, taxCategoryIdx);
+                        String valHsn = cell(row, hsnIdx);
                         String barcodeValue = firstNonBlank(valBarcode, baseCode);
+                        String categoryName = firstNonBlank(valDept, valGroup);
+                        BigDecimal landingCost = firstNonNullDecimal(lastSupCost, cost);
+                        BigDecimal productCost = firstNonNullDecimal(cost, landingCost);
+                        BigDecimal netLandedCost = firstNonNullDecimal(costInclTax, landingCost);
 
                         Product product = null;
                         boolean isUpdate = false;
 
                         Optional<Product> existingByBarcode = findProductByBarcode(barcodeValue);
                         if (existingByBarcode.isPresent()
-                                && productMatchesRow(existingByBarcode.get(), finalName, barcodeValue, cost,
-                                        lastSupCost, priceInclTax, costInclTax, markup, gp)) {
+                                && productMatchesRow(existingByBarcode.get(), finalName, barcodeValue, productCost,
+                                        landingCost, priceInclTax, netLandedCost, markup, gp, wholesalePrice,
+                                        minPrice, maxPrice, onlinePrice, defaultDiscount, loyaltyPoints,
+                                        reorderLevel, valUnit, categoryName, valBrandCol)) {
                             attachImageIfAbsent(existingByBarcode.get(), rowImageMap.get(r), valPic);
                             counters.skippedCount++;
                             continue;
@@ -370,8 +466,10 @@ public class ProductImportService {
                             isUpdate = true;
                         } else if (repeatedCodeInCurrentFile) {
                             if (existingByCode.isPresent()
-                                    && productMatchesRow(existingByCode.get(), finalName, barcodeValue, cost,
-                                            lastSupCost, priceInclTax, costInclTax, markup, gp)) {
+                                    && productMatchesRow(existingByCode.get(), finalName, barcodeValue, productCost,
+                                            landingCost, priceInclTax, netLandedCost, markup, gp, wholesalePrice,
+                                            minPrice, maxPrice, onlinePrice, defaultDiscount, loyaltyPoints,
+                                            reorderLevel, valUnit, categoryName, valBrandCol)) {
                                 attachImageIfAbsent(existingByCode.get(), rowImageMap.get(r), valPic);
                                 counters.skippedCount++;
                                 continue;
@@ -386,6 +484,9 @@ public class ProductImportService {
 
                         reservedCodes.add(product.getCode());
                         product.setName(finalName);
+                        if (!isBlank(valLocalName)) {
+                            product.setLocalName(limit(valLocalName, 255));
+                        }
                         product.setSku(limit(firstNonBlank(valCode, valModel, baseCode), 100));
                         if (!isBlank(valDesc)) {
                             product.setShortDesc(limit(valDesc, 300));
@@ -393,11 +494,31 @@ public class ProductImportService {
                         }
                         product.setBrand(!isBlank(valBrandCol) ? getOrCreateBrand(valBrandCol) : fallbackBrand);
                         product.setActive(true);
-                        product.setStatus(isChecked(valInactive) ? ProductStatus.DRAFT : ProductStatus.ACTIVE);
-                        product.setProductType(ProductType.STOCK);
+                        product.setStatus(parseStatus(valStatus, valInactive));
+                        product.setProductType(parseProductType(valProductType));
+                        if (serialIdx != null) {
+                            product.setSerial(isChecked(cell(row, serialIdx)));
+                        }
+                        if (batchIdx != null) {
+                            product.setBatch(isChecked(cell(row, batchIdx)));
+                        }
+                        if (weighingIdx != null) {
+                            product.setWeighing(isChecked(cell(row, weighingIdx)));
+                        }
+                        if (discountAllowedIdx != null) {
+                            product.setDiscountAllowed(isChecked(cell(row, discountAllowedIdx)));
+                        } else if (product.getId() == null) {
+                            product.setDiscountAllowed(true);
+                        }
+                        if (maxDiscount != null) {
+                            product.setMaxDiscount(maxDiscount);
+                        }
+                        if (availableInPosIdx != null) {
+                            product.setAvailableInPos(isChecked(cell(row, availableInPosIdx)));
+                        }
 
-                        if (!isBlank(valDept)) {
-                            Department department = getOrCreateDepartment(valDept);
+                        if (!isBlank(categoryName)) {
+                            Department department = getOrCreateDepartment(categoryName);
                             product.setDepartment(department);
                             product.setCategory(department.getName());
                         } else if (isBlank(product.getCategory())) {
@@ -405,13 +526,36 @@ public class ProductImportService {
                         }
 
                         ProductPricing pricing = product.getPricing() != null ? product.getPricing() : new ProductPricing();
-                        pricing.setCost(defaultZero(cost));
-                        pricing.setLandingCost(defaultZero(lastSupCost));
-                        pricing.setNlc(defaultZero(costInclTax));
+                        pricing.setCost(defaultZero(productCost));
+                        pricing.setLandingCost(defaultZero(landingCost));
+                        pricing.setNlc(defaultZero(netLandedCost));
+                        if (costMethodIdx != null || product.getId() == null) {
+                            pricing.setCostMethod(parseCostMethod(cell(row, costMethodIdx)));
+                        }
                         pricing.setRetailPrice(defaultZero(priceInclTax));
+                        if (wholesalePriceIdx != null || product.getId() == null) {
+                            pricing.setWholesalePrice(defaultZero(wholesalePrice));
+                        }
+                        if (minPriceIdx != null || product.getId() == null) {
+                            pricing.setMinPrice(defaultZero(minPrice));
+                        }
+                        if (maxPriceIdx != null || product.getId() == null) {
+                            pricing.setMaxPrice(defaultZero(maxPrice));
+                        }
+                        if (onlinePriceIdx != null || product.getId() == null) {
+                            pricing.setOnlinePrice(defaultZero(onlinePrice));
+                        }
                         pricing.setMarkup(defaultZero(markup));
                         pricing.setGp(defaultZero(gp));
-                        pricing.setCostInclusive(costInclTax != null && costInclTax.compareTo(BigDecimal.ZERO) > 0);
+                        if (defaultDiscountIdx != null || product.getId() == null) {
+                            pricing.setDefaultDiscount(defaultZero(defaultDiscount));
+                        }
+                        if (pointIdx != null || product.getId() == null) {
+                            pricing.setLoyaltyPoints(defaultZero(loyaltyPoints));
+                        }
+                        pricing.setCostInclusive(costInclusiveIdx != null
+                                ? isChecked(cell(row, costInclusiveIdx))
+                                : costInclTax != null && costInclTax.compareTo(BigDecimal.ZERO) > 0);
                         product.setPricing(pricing);
 
                         Unit rowUnit = getOrCreateUnit(valUnit, fallbackUnit);
@@ -419,17 +563,34 @@ public class ProductImportService {
                                 ? product.getInventory()
                                 : new ProductInventoryPolicy();
                         inventory.setDefaultUnit(rowUnit);
+                        inventory.setReorderUnit(rowUnit);
+                        if (reorderLevelIdx != null || product.getId() == null) {
+                            inventory.setReorderLevel(defaultZero(reorderLevel));
+                        }
+                        if (reorderQtyIdx != null || product.getId() == null) {
+                            inventory.setReorderQty(defaultZero(reorderQty));
+                        }
+                        if (safetyStockIdx != null || product.getId() == null) {
+                            inventory.setSafetyStock(defaultZero(safetyStock));
+                        }
+                        if (minStockIdx != null || product.getId() == null) {
+                            inventory.setMinStock(defaultZero(minStock));
+                        }
+                        if (maxStockIdx != null || product.getId() == null) {
+                            inventory.setMaxStock(defaultZero(maxStock));
+                        }
                         product.setInventory(inventory);
 
                         ProductTax tax = product.getTax() != null ? product.getTax() : new ProductTax();
-                        tax.setTaxCategory("Standard");
-                        tax.setPurchaseTax(new BigDecimal("5"));
-                        tax.setSalesTax(new BigDecimal("5"));
+                        tax.setTaxCategory(firstNonBlank(valTaxCategory, "Standard"));
+                        tax.setPurchaseTax(defaultZero(firstNonNullDecimal(purchaseTax, new BigDecimal("5"))));
+                        tax.setSalesTax(defaultZero(firstNonNullDecimal(salesTax, new BigDecimal("5"))));
+                        tax.setHsnCode(firstNonBlank(valHsn, tax.getHsnCode()));
                         product.setTax(tax);
 
                         Product savedProduct = productRepo.save(product);
 
-                        ProductPacking packing = upsertDefaultPacking(savedProduct, rowUnit, cost, priceInclTax);
+                        ProductPacking packing = upsertDefaultPacking(savedProduct, rowUnit, productCost, priceInclTax);
                         upsertBarcode(savedProduct, packing, barcodeValue, repeatedCodeInCurrentFile);
                         attachImageIfPresent(savedProduct, rowImageMap.get(r), valPic);
 
@@ -516,7 +677,8 @@ public class ProductImportService {
                 continue;
             }
             Map<String, Integer> headerMap = buildHeaderMap(row);
-            Integer foundCodeIdx = findContentIndex(headerMap, "item code", "code", "product code");
+            Integer foundCodeIdx = findContentIndex(headerMap, "item code", "code", "product code",
+                    "prdid", "product id", "prod id");
             Integer foundModelIdx = findContentIndex(headerMap, "supplier model no", "supplier model", "model no",
                     "model no.", "model", "model number", "item model");
             if (foundCodeIdx != null || foundModelIdx != null) {
@@ -525,7 +687,8 @@ public class ProductImportService {
             // Albadar format: no code/model column, but has product name + barcode columns
             Integer foundBarcodeIdx = findContentIndex(headerMap, "barcode", "bar code", "ean", "upc");
             Integer foundNameIdx = findContentIndex(headerMap, "item name", "description", "product description",
-                    "product name", "name", "item description", "product");
+                    "product name", "name", "item description", "product",
+                    "prdname");
             if (foundBarcodeIdx != null && foundNameIdx != null) {
                 return r;
             }
@@ -546,7 +709,11 @@ public class ProductImportService {
             return map;
         }
         for (Cell cell : row) {
-            String val = getCellValue(cell).trim().toLowerCase();
+            String rawValue = getCellValue(cell);
+            if (rawValue == null) {
+                continue;
+            }
+            String val = rawValue.trim().toLowerCase();
             if (val.isBlank()) {
                 continue;
             }
@@ -643,21 +810,52 @@ public class ProductImportService {
     }
 
     private boolean productMatchesRow(Product product, String name, String barcodeValue, BigDecimal cost,
-            BigDecimal lastSupCost, BigDecimal priceInclTax, BigDecimal costInclTax, BigDecimal markup, BigDecimal gp) {
+            BigDecimal landingCost, BigDecimal retailPrice, BigDecimal nlc, BigDecimal markup, BigDecimal gp,
+            BigDecimal wholesalePrice, BigDecimal minPrice, BigDecimal maxPrice, BigDecimal onlinePrice,
+            BigDecimal defaultDiscount, BigDecimal loyaltyPoints, Integer reorderLevel, String unitName,
+            String categoryName, String brandName) {
         if (product == null) {
             return false;
         }
         if (!equalsText(product.getName(), name)) {
             return false;
         }
+        if (!isBlank(brandName) && (product.getBrand() == null || !equalsText(product.getBrand().getName(), brandName))) {
+            return false;
+        }
+        if (!isBlank(categoryName)) {
+            String productCategory = product.getDepartment() != null ? product.getDepartment().getName() : product.getCategory();
+            if (!equalsText(productCategory, categoryName)) {
+                return false;
+            }
+        }
+        ProductInventoryPolicy inventory = product.getInventory();
+        if (inventory != null) {
+            if (reorderLevel != null && !equalsInteger(inventory.getReorderLevel(), reorderLevel)) {
+                return false;
+            }
+            if (!isBlank(unitName) && inventory.getDefaultUnit() != null
+                    && !equalsText(inventory.getDefaultUnit().getName(), unitName)
+                    && !equalsText(inventory.getDefaultUnit().getSymbol(), unitName)) {
+                return false;
+            }
+        }
         ProductPricing pricing = product.getPricing();
         if (pricing != null) {
             if (!equalsDecimal(pricing.getCost(), defaultZero(cost))
-                    || !equalsDecimal(pricing.getLandingCost(), defaultZero(lastSupCost))
-                    || !equalsDecimal(pricing.getRetailPrice(), defaultZero(priceInclTax))
-                    || !equalsDecimal(pricing.getNlc(), defaultZero(costInclTax))
+                    || !equalsDecimal(pricing.getLandingCost(), defaultZero(landingCost))
+                    || !equalsDecimal(pricing.getRetailPrice(), defaultZero(retailPrice))
+                    || !equalsDecimal(pricing.getNlc(), defaultZero(nlc))
                     || !equalsDecimal(pricing.getMarkup(), defaultZero(markup))
                     || !equalsDecimal(pricing.getGp(), defaultZero(gp))) {
+                return false;
+            }
+            if (!equalsDecimalIfProvided(pricing.getWholesalePrice(), wholesalePrice)
+                    || !equalsDecimalIfProvided(pricing.getMinPrice(), minPrice)
+                    || !equalsDecimalIfProvided(pricing.getMaxPrice(), maxPrice)
+                    || !equalsDecimalIfProvided(pricing.getOnlinePrice(), onlinePrice)
+                    || !equalsDecimalIfProvided(pricing.getDefaultDiscount(), defaultDiscount)
+                    || !equalsDecimalIfProvided(pricing.getLoyaltyPoints(), loyaltyPoints)) {
                 return false;
             }
         }
@@ -914,18 +1112,92 @@ public class ProductImportService {
         return new BigDecimal(cleaned);
     }
 
+    private Integer parseInteger(String value) {
+        BigDecimal decimal = parseDecimal(value);
+        return decimal == null ? null : decimal.intValue();
+    }
+
+    private ProductStatus parseStatus(String statusValue, String inactiveValue) {
+        String normalized = firstNonBlank(statusValue, inactiveValue);
+        if (isBlank(normalized)) {
+            return ProductStatus.ACTIVE;
+        }
+        String text = normalized.trim().toLowerCase();
+        if (isChecked(text) || text.equals("inactive") || text.equals("draft") || text.equals("disabled")) {
+            return ProductStatus.DRAFT;
+        }
+        return ProductStatus.ACTIVE;
+    }
+
+    private ProductType parseProductType(String value) {
+        if (isBlank(value)) {
+            return ProductType.STOCK;
+        }
+        String normalized = normalizeEnumName(value);
+        if (normalized.equals("SERVICE") || normalized.equals("SERVICES")) {
+            return ProductType.SERVICE;
+        }
+        return ProductType.STOCK;
+    }
+
+    private CostMethod parseCostMethod(String value) {
+        if (isBlank(value)) {
+            return null;
+        }
+        String normalized = normalizeEnumName(value);
+        if (normalized.equals("WEIGHTEDAVERAGE") || normalized.equals("AVERAGE")) {
+            return CostMethod.WEIGHTED_AVERAGE;
+        }
+        if (normalized.equals("LASTPURCHASE") || normalized.equals("LASTPURCHASECOST")) {
+            return CostMethod.LAST_PURCHASE_COST;
+        }
+        try {
+            return CostMethod.valueOf(normalized);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private String normalizeEnumName(String value) {
+        return value == null ? "" : value.trim().replaceAll("[^A-Za-z0-9]+", "_").replaceAll("^_|_$", "").toUpperCase();
+    }
+
     private boolean equalsText(String left, String right) {
         String leftValue = left == null ? "" : left.trim();
         String rightValue = right == null ? "" : right.trim();
         return leftValue.equalsIgnoreCase(rightValue);
     }
 
+    private boolean equalsInteger(Integer left, Integer right) {
+        return defaultZero(left).equals(defaultZero(right));
+    }
+
     private boolean equalsDecimal(BigDecimal left, BigDecimal right) {
         return defaultZero(left).compareTo(defaultZero(right)) == 0;
     }
 
+    private boolean equalsDecimalIfProvided(BigDecimal existing, BigDecimal imported) {
+        return imported == null || equalsDecimal(existing, imported);
+    }
+
     private BigDecimal defaultZero(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private Integer defaultZero(Integer value) {
+        return value != null ? value : 0;
+    }
+
+    private BigDecimal firstNonNullDecimal(BigDecimal... values) {
+        if (values == null) {
+            return null;
+        }
+        for (BigDecimal value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String firstNonBlank(String... values) {

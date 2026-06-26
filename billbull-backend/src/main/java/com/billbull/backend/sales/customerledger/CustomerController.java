@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,6 +20,7 @@ import java.util.List;
 public class CustomerController {
 
     private static final String MODULE = "sales";
+    private static final String CUSTOMER_MODULE = "sales.customer";
 
     @Autowired
     private CustomerService service;
@@ -78,7 +80,7 @@ public class CustomerController {
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> importCustomers(@RequestParam("file") MultipartFile file) {
-        modulePermissionService.requireCanCreate(MODULE);
+        requireCanImportCustomers();
         try {
             return ResponseEntity.ok(importService.importCustomers(file));
         } catch (Exception e) {
@@ -144,5 +146,15 @@ public class CustomerController {
         modulePermissionService.requireCanEdit(MODULE);
         service.deleteCustomer(id);
         return ResponseEntity.noContent().build();
+    }
+
+    private void requireCanImportCustomers() {
+        boolean canImport = modulePermissionService.canCreate(CUSTOMER_MODULE)
+                || modulePermissionService.canEdit(CUSTOMER_MODULE)
+                || modulePermissionService.canCreate(MODULE)
+                || modulePermissionService.canEdit(MODULE);
+        if (!canImport) {
+            throw new AccessDeniedException("You do not have permission to import customers");
+        }
     }
 }
