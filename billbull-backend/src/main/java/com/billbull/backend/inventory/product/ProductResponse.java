@@ -21,6 +21,7 @@ public class ProductResponse {
     private String description;
     
     private String image; // Added field
+    private boolean availableInPos;
 
     public Long getId() {
         return id;
@@ -116,5 +117,13 @@ public class ProductResponse {
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public boolean isAvailableInPos() {
+        return availableInPos;
+    }
+
+    public void setAvailableInPos(boolean availableInPos) {
+        this.availableInPos = availableInPos;
     }
 }

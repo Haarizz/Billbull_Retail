@@ -63,7 +63,11 @@ public class PosSearchService {
         // 1. Exact barcode → product, no pinned batch.
         List<ProductAggregateResponse> byBarcode = productService.searchProductsByBarcode(q);
         if (byBarcode != null && !byBarcode.isEmpty()) {
-            return PosResolveResponse.product(byBarcode.get(0), null);
+            ProductAggregateResponse p = byBarcode.get(0);
+            if (p.getProduct() != null && !p.getProduct().isAvailableInPos()) {
+                return PosResolveResponse.blocked("This product is disabled for POS sales.");
+            }
+            return PosResolveResponse.product(p, null);
         }
 
         // 2. Exact batch number → product + pin the scanned batch unit.
@@ -84,6 +88,9 @@ public class PosSearchService {
             }
             ProductAggregateResponse product = loadActiveProduct(bm.getProductId());
             if (product != null) {
+                if (product.getProduct() != null && !product.getProduct().isAvailableInPos()) {
+                    return PosResolveResponse.blocked("This product is disabled for POS sales.");
+                }
                 return PosResolveResponse.product(product, bm.getBatchNumber());
             }
         }
@@ -99,6 +106,9 @@ public class PosSearchService {
             }
             ProductAggregateResponse product = loadActiveProductByCode(sm.getProductCode());
             if (product != null) {
+                if (product.getProduct() != null && !product.getProduct().isAvailableInPos()) {
+                    return PosResolveResponse.blocked("This product is disabled for POS sales.");
+                }
                 return PosResolveResponse.productWithSerial(product, sm.getSerialNumber());
             }
         }
@@ -110,6 +120,9 @@ public class PosSearchService {
         if (byCode != null) {
             ProductAggregateResponse product = loadActiveProduct(byCode.getId());
             if (product != null) {
+                if (product.getProduct() != null && !product.getProduct().isAvailableInPos()) {
+                    return PosResolveResponse.blocked("This product is disabled for POS sales.");
+                }
                 return PosResolveResponse.product(product, null);
             }
         }

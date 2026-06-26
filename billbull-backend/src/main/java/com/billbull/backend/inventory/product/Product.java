@@ -202,10 +202,15 @@ public class Product extends BaseEntity {
     @Column(name = "total_quantity_sold", nullable = false)
     private long totalQuantitySold = 0L;
 
+    @Column(name = "available_in_pos", nullable = false)
+    private boolean availableInPos = true;
+
     public LocalDateTime getLastSoldAt() { return lastSoldAt; }
     public void setLastSoldAt(LocalDateTime lastSoldAt) { this.lastSoldAt = lastSoldAt; }
     public long getTotalQuantitySold() { return totalQuantitySold; }
     public void setTotalQuantitySold(long totalQuantitySold) { this.totalQuantitySold = totalQuantitySold; }
+    public boolean isAvailableInPos() { return availableInPos; }
+    public void setAvailableInPos(boolean availableInPos) { this.availableInPos = availableInPos; }
 
     @OneToOne(mappedBy = "product", cascade = CascadeType.ALL)
     private ProductPricing pricing;
