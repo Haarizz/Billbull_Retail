@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.apache.poi.ss.usermodel.Cell;
@@ -42,6 +43,11 @@ public class CustomerImportService {
                 // Detect format: standard BillBull export vs. legacy "Name/Address/Phone/Email" format
                 int headerRowNum = findHeaderRow(sheet, "Customer Code");
                 boolean legacyFormat = false;
+                boolean acFormat = false;
+                if (headerRowNum < 0) {
+                    headerRowNum = findHeaderRow(sheet, "ACID");
+                    acFormat = headerRowNum >= 0;
+                }
                 if (headerRowNum < 0) {
                     headerRowNum = findLegacyHeaderRow(sheet);
                     legacyFormat = headerRowNum >= 0;
@@ -49,6 +55,23 @@ public class CustomerImportService {
                 if (headerRowNum < 0) {
                     errors.add("Sheet '" + sheet.getSheetName() + "': no recognised header row found.");
                     continue;
+                }
+
+                Map<String, Integer> headerMap = null;
+                if (headerRowNum >= 0) {
+                    Row headerRow = sheet.getRow(headerRowNum);
+                    if (headerRow != null) {
+                        headerMap = new java.util.HashMap<>();
+                        for (int c = 0; c < headerRow.getLastCellNum(); c++) {
+                            Cell hCell = headerRow.getCell(c);
+                            if (hCell != null) {
+                                String val = new DataFormatter().formatCellValue(hCell);
+                                if (val != null && !val.trim().isEmpty()) {
+                                    headerMap.put(val.trim().toUpperCase(), c + 1);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 for (int r = headerRowNum + 1; r <= sheet.getLastRowNum(); r++) {
@@ -59,7 +82,65 @@ public class CustomerImportService {
                     }
 
                     try {
-                        if (legacyFormat) {
+                        if (acFormat && headerMap != null) {
+                            String code = cell(row, headerMap.getOrDefault("ACCODE", 2));
+                            String name = cell(row, headerMap.getOrDefault("ACNAME", 5));
+                            if (isBlank(name)) {
+                                name = cell(row, headerMap.getOrDefault("ACACNAME", -1));
+                            }
+                            String mobile1 = cell(row, headerMap.getOrDefault("ACMOBILE1", -1));
+                            if (isBlank(mobile1)) mobile1 = cell(row, headerMap.getOrDefault("ACPHONE", -1));
+                            String mobile2 = cell(row, headerMap.getOrDefault("ACMOBILE2", -1));
+                            String phone = cleanPhone(firstNonBlank(mobile1, mobile2));
+                            if (isBlank(name) && !isBlank(phone)) {
+                                name = phone;
+                            }
+                            if (isBlank(name)) {
+                                skippedCount++;
+                                continue;
+                            }
+                            if (isBlank(code)) {
+                                code = buildLegacyCode("C", cell(row, headerMap.getOrDefault("ACID", 1)), name, r);
+                            }
+
+                            String address1 = cell(row, headerMap.getOrDefault("ACADR1", 6));
+                            String address2 = cell(row, headerMap.getOrDefault("ACADR2", 7));
+                            String address3 = cell(row, headerMap.getOrDefault("ACADR3", -1));
+                            String address = joinNonBlank(", ", address1, address2, address3);
+                            String email = cell(row, headerMap.getOrDefault("ACEMAILID", -1));
+                            if (isBlank(email)) email = cell(row, headerMap.getOrDefault("ACEMAIL", -1));
+                            String trn = cell(row, headerMap.getOrDefault("TRN", -1));
+                            if (isBlank(trn)) trn = cell(row, headerMap.getOrDefault("ACTRN", -1));
+                            String state = cell(row, headerMap.getOrDefault("ACSTATE", -1));
+                            String route = cell(row, headerMap.getOrDefault("ACROUTE", -1));
+                            String customerGroup = cell(row, headerMap.getOrDefault("ACCUSTGROUP", -1));
+
+                            Optional<Customer> existing = repository.findByCode(code.trim());
+                            boolean isUpdate = existing.isPresent();
+                            Customer customer = existing.orElseGet(Customer::new);
+
+                            customer.setCode(limit(code.trim(), 255));
+                            customer.setName(limit(name.trim(), 255));
+                            customer.setBillingAddress(limit(address, 1000));
+                            customer.setDefaultShippingAddress(limit(address, 1000));
+                            customer.setCity(limit(state, 255));
+                            customer.setTrn(limit(trn, 255));
+                            customer.setMobile(limit(phone, 255));
+                            customer.setPhone(limit(phone, 255));
+                            customer.setEmail(limit(email, 255));
+                            customer.setGroupType(limit(firstNonBlank(customerGroup, "General"), 255));
+                            customer.setPriceList("General");
+                            customer.setPayTerms("Immediate");
+                            customer.setStatus("Active");
+                            customer.setWarehouse(limit(route, 255));
+                            customer.setCreditStatus(firstNonBlank(customer.getCreditStatus(), "Good"));
+                            customer.setBlockCredit(Boolean.FALSE);
+                            if (customer.getBalance() == null) customer.setBalance(BigDecimal.ZERO);
+                            if (customer.getTotalSales() == null) customer.setTotalSales(BigDecimal.ZERO);
+
+                            repository.save(customer);
+                            if (isUpdate) updatedCount++; else createdCount++;
+                        } else if (legacyFormat) {
                             // Legacy format: A=serial#, B=Name, C=Address, D=Phone, E=Email
                             String serial = cell(row, 1);
                             String name = cell(row, 2);
