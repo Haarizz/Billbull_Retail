@@ -1,4 +1,4 @@
-﻿import { getImageUrl } from '../../../utils/urlUtils';
+import { getImageUrl } from '../../../utils/urlUtils';
 
 export const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -24,6 +24,7 @@ export const mapPosProductListItem = (d = {}) => ({
   isBatch: Boolean(d.isBatch),
   isSerial: Boolean(d.isSerial),
   fefoEnabled: Boolean(d.fefoEnabled),
+  availableInPos: d.availableInPos ?? true,
 });
 
 export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
@@ -49,6 +50,7 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     isBatch: product.isBatch,
     isSerial: product.isSerial,
     fefoEnabled: product.fefoEnabled,
+    availableInPos: product.availableInPos ?? true,
   });
 };
 

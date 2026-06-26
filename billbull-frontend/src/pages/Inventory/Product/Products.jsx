@@ -62,7 +62,6 @@ const PRODUCT_COLUMNS = [
   { header: 'Retail Price',    key: 'retailPrice',    width: 15, pdfWidth: 55  },
   { header: 'Status',          key: 'status',         width: 12, pdfWidth: 48  },
 ];
-
 const mapProductListItem = (d) => ({
   id: d.id,
   code: d.code || '',
@@ -80,6 +79,7 @@ const mapProductListItem = (d) => ({
   image: d.image ? getImageUrl(d.image) : null,
   packings: d.packings || [],
   barcode: d.packings?.find(p => p.barcode)?.barcode || '',
+  availableInPos: d.availableInPos ?? true,
 });
 
 const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
@@ -115,6 +115,7 @@ const INITIAL_FORM_STATE = {
   isWeighing: false,
   isDiscountAllowed: true,
   maxDiscount: 0,
+  availableInPos: true,
 
   // IMAGE STATE
   image: null,      // Preview URL (String)
@@ -257,6 +258,7 @@ const buildProductPayload = (formData) => {
       isWeighing: formData.isWeighing,
       isDiscountAllowed: formData.isDiscountAllowed,
       maxDiscount: formData.maxDiscount,
+      availableInPos: formData.availableInPos ?? true,
       status: (formData.status || 'Active').toUpperCase(),
       brand: formData.brand ? { id: Number(formData.brand) } : null,
       department: formData.department ? { id: Number(formData.department) } : null,
@@ -984,6 +986,10 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isDiscountAllowed} onChange={(e) => handleInputChange('isDiscountAllowed', e.target.checked)} />
                     Discount Allowed
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.availableInPos} onChange={(e) => handleInputChange('availableInPos', e.target.checked)} />
+                    Display the product in POS
                   </label>
                 </div>
                 {formData.batchControlled && (
@@ -2527,6 +2533,7 @@ const Products = () => {
         isWeighing: product?.isWeighing || false,
         isDiscountAllowed: product?.isDiscountAllowed != null ? product.isDiscountAllowed : true,
         maxDiscount: product?.maxDiscount || 0,
+        availableInPos: product?.availableInPos != null ? product.availableInPos : true,
         status: product?.status || 'Active',
 
         image: primaryImage ? getImageUrl(primaryImage) : null,
@@ -2864,15 +2871,22 @@ const Products = () => {
                       <td className="p-3"><CurrencyAmount value={product.cost || 0} className="text-sm font-medium text-slate-500" /></td>
                       <td className="p-3"><CurrencyAmount value={product.retailPrice || 0} className="text-sm font-bold text-slate-900" /></td>
                       <td className="p-3">
-                        {product.status === 'ACTIVE' ? (
-                          <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-emerald-600 border-slate-200">
-                            <CircleCheckBig className="mr-1 h-3 w-3" /> Active
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-slate-500 border-slate-200">
-                            <CircleX className="mr-1 h-3 w-3" /> Draft
-                          </span>
-                        )}
+                        <div className="flex flex-col gap-1 items-start">
+                          {product.status === 'ACTIVE' ? (
+                            <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-emerald-600 border-slate-200">
+                              <CircleCheckBig className="mr-1 h-3 w-3" /> Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-slate-500 border-slate-200">
+                              <CircleX className="mr-1 h-3 w-3" /> Draft
+                            </span>
+                          )}
+                          {product.availableInPos && (
+                            <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200">
+                              POS: ON
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3">
                         {displayBarcode ? (

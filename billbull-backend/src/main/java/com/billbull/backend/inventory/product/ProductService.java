@@ -752,19 +752,23 @@ public class ProductService {
     @Transactional(readOnly = true)
     @Cacheable(value = "productList", key = "#page + '_' + #size + '_' + #search + '_' + #warehouseId")
     public java.util.Map<String, Object> getList(int page, int size, String search, Long warehouseId) {
-        return getList(page, size, search, warehouseId, null, null);
+        return getList(page, size, search, warehouseId, null, null, null);
     }
 
     public java.util.Map<String, Object> getList(int page, int size, String search, Long warehouseId, Long departmentId, Long brandId) {
+        return getList(page, size, search, warehouseId, departmentId, brandId, null);
+    }
+
+    public java.util.Map<String, Object> getList(int page, int size, String search, Long warehouseId, Long departmentId, Long brandId, Boolean availableInPos) {
         org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
 
         String trimmedSearch = (search != null) ? search.trim() : "";
-        boolean hasDeptOrBrand = (departmentId != null || brandId != null);
+        boolean hasDeptOrBrand = (departmentId != null || brandId != null || availableInPos != null);
         org.springframework.data.domain.Page<Product> productPage;
 
         if (hasDeptOrBrand) {
             // Use the unified filtered query (handles all combinations via null-safe params)
-            productPage = productRepo.findAllActiveFiltered(trimmedSearch, departmentId, brandId, pageable);
+            productPage = productRepo.findAllActiveFiltered(trimmedSearch, departmentId, brandId, availableInPos, pageable);
         } else if (warehouseId != null) {
             productPage = trimmedSearch.isBlank()
                     ? productRepo.findAllActiveForListByWarehouse(warehouseId, pageable)
@@ -783,7 +787,7 @@ public class ProductService {
         // lists are not covered (the products page never sends a warehouse).
         java.util.Map<String, Long> statusCounts = new java.util.HashMap<>();
         if (warehouseId == null) {
-            for (Object[] row : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId)) {
+            for (Object[] row : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId, availableInPos)) {
                 if (row[0] == null) {
                     continue;
                 }
@@ -889,6 +893,7 @@ public class ProductService {
             // QA-001: ship productType so sales screens can short-circuit stock
             // validation for SERVICE items.
             item.put("productType", p.getProductType() != null ? p.getProductType().name() : null);
+            item.put("availableInPos", p.isAvailableInPos());
 
             String imgUrl = imageMap.get(p.getId());
             item.put("image", imgUrl);
@@ -1142,6 +1147,7 @@ public class ProductService {
             item.put("fefoEnabled", p.isFefoEnabled());
             item.put("minExpiryDaysForSale", p.getMinExpiryDaysForSale());
             item.put("productType", p.getProductType() != null ? p.getProductType().name() : null);
+            item.put("availableInPos", p.isAvailableInPos());
 
             String imgUrl = imageMap.get(p.getId());
             item.put("image", imgUrl);

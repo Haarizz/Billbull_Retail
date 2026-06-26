@@ -91,11 +91,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
                         "GROUP BY p.status")
         List<Object[]> countByStatusFiltered(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
-                        @org.springframework.data.repository.query.Param("brandId") Long brandId);
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId,
+                        @org.springframework.data.repository.query.Param("availableInPos") Boolean availableInPos);
 
         /**
          * Paginated list of products that have stock movements in the given warehouse.
@@ -141,11 +143,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  OR EXISTS (SELECT 1 FROM BatchMaster bm WHERE bm.productId = p.id AND LOWER(bm.batchNumber) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
                         "ORDER BY p.name ASC")
         Page<Product> findAllActiveFiltered(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
                         @org.springframework.data.repository.query.Param("brandId") Long brandId,
+                        @org.springframework.data.repository.query.Param("availableInPos") Boolean availableInPos,
                         Pageable pageable);
 
         /**
@@ -211,19 +215,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         /** Recently sold products — ordered by last_sold_at DESC, limited to 100. */
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
-                "WHERE p.isActive = true AND p.lastSoldAt IS NOT NULL " +
+                "WHERE p.isActive = true AND p.availableInPos = true AND p.lastSoldAt IS NOT NULL " +
                 "ORDER BY p.lastSoldAt DESC")
         Page<Product> findRecentlySold(Pageable pageable);
 
         /** Top sold products — ordered by total_quantity_sold DESC. */
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
-                "WHERE p.isActive = true AND p.totalQuantitySold > 0 " +
+                "WHERE p.isActive = true AND p.availableInPos = true AND p.totalQuantitySold > 0 " +
                 "ORDER BY p.totalQuantitySold DESC")
         Page<Product> findTopSold(Pageable pageable);
 
         /** Favourite products for a user — by product ID list. */
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
-                "WHERE p.isActive = true AND p.id IN :productIds " +
+                "WHERE p.isActive = true AND p.availableInPos = true AND p.id IN :productIds " +
                 "ORDER BY p.name ASC")
         List<Product> findFavouriteProducts(
                 @org.springframework.data.repository.query.Param("productIds") List<Long> productIds);

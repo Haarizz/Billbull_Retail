@@ -34,12 +34,13 @@ export const getProducts = async () => {
 // GET LIST (optimised — 4 queries, paginated, server-side search)
 // --------------------
 // signal (optional) — pass AbortController.signal to cancel stale requests
-export const getProductsList = async (page = 0, size = 50, search = "", signal = undefined, warehouseId = null, departmentId = null, brandId = null) => {
+export const getProductsList = async (page = 0, size = 50, search = "", signal = undefined, warehouseId = null, departmentId = null, brandId = null, availableInPos = null) => {
   const params = new URLSearchParams({ page, size });
   if (search && search.trim()) params.append("search", search.trim());
   if (warehouseId) params.append("warehouseId", warehouseId);
   if (departmentId) params.append("departmentId", departmentId);
   if (brandId) params.append("brandId", brandId);
+  if (availableInPos !== null) params.append("availableInPos", availableInPos);
   const res = await api.get(`/api/products/list?${params.toString()}`, { signal });
   return res.data;
 };

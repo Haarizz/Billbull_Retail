@@ -27,6 +27,8 @@ public class ProductRequest {
 
     private String description;
 
+    private Boolean availableInPos = true;
+
 	public String getCode() {
 		return code;
 	}
@@ -81,6 +83,14 @@ public class ProductRequest {
 
 	public void setDescription(String description) {
 		this.description = description;
+	}
+
+	public Boolean getAvailableInPos() {
+		return availableInPos;
+	}
+
+	public void setAvailableInPos(Boolean availableInPos) {
+		this.availableInPos = availableInPos;
 	}
 
     // getters and setters
