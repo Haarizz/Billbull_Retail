@@ -20,7 +20,7 @@ public class CorsConfig {
                 "http://localhost:5173",
                 "http://77.37.49.42",
 
-                // Client domains
+                // Client domains (old server)
                 "https://nest.billbull.app",
                 "https://max.billbull.app",
                 "https://hilite.billbull.app",
@@ -28,9 +28,14 @@ public class CorsConfig {
                 "https://agi.billbull.app",
                 "https://helenz.billbull.app",
 
-                // Internal environments
+                // Internal environments (old server)
                 "https://qa.billbull.app",
-                "https://geebu.billbull.app"
+                "https://geebu.billbull.app",
+
+                // New client domains (new server 62.72.59.119)
+                "https://royaltools.billbull.app",
+                "https://leroyalflowers.billbull.app",
+                "https://leroyalgifts.billbull.app"
                 ));
                 config.setAllowedMethods(List.of(
                                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
