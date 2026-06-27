@@ -57,6 +57,24 @@ public class EmployeeController {
 
     // ── HORIZONTAL: canView('hr') ────────────────────────────────────────────
 
+    @GetMapping("/delivery-persons")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, Object>> getDeliveryPersons() {
+        return service.getActiveDeliveryPersons().stream()
+                .map(emp -> {
+                    String fullName = (emp.getFirstName() + " " +
+                            (emp.getMiddleName() != null ? emp.getMiddleName() + " " : "") +
+                            emp.getLastName()).trim().replaceAll("\\s+", " ");
+                    return Map.<String, Object>of(
+                            "id", emp.getId(),
+                            "employeeCode", emp.getEmployeeCode(),
+                            "name", fullName,
+                            "phone", emp.getPhone() != null ? emp.getPhone() : ""
+                    );
+                })
+                .collect(Collectors.toList());
+    }
+
     @GetMapping
     public List<Employee> getAll() {
         modulePermissionService.requireCanView("hr");

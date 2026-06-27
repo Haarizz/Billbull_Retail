@@ -46,6 +46,9 @@ public class PosSession extends BaseEntity {
     @Column(name = "closed_at")
     private LocalDateTime closedAt;
 
+    @Column(name = "duration_seconds")
+    private Long durationSeconds;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PosSessionStatus status = PosSessionStatus.OPEN;
@@ -100,6 +103,9 @@ public class PosSession extends BaseEntity {
     @Column(name = "z_report_json", columnDefinition = "TEXT")
     private String zReportJson;
 
+    @Column(name = "closing_denominations_json", columnDefinition = "TEXT")
+    private String closingDenominationsJson;
+
     @JsonIgnore
     @OneToMany(mappedBy = "posSession", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<PosCashMovement> cashMovements = new ArrayList<>();
@@ -132,6 +138,9 @@ public class PosSession extends BaseEntity {
 
     public LocalDateTime getClosedAt() { return closedAt; }
     public void setClosedAt(LocalDateTime closedAt) { this.closedAt = closedAt; }
+
+    public Long getDurationSeconds() { return durationSeconds; }
+    public void setDurationSeconds(Long durationSeconds) { this.durationSeconds = durationSeconds; }
 
     public PosSessionStatus getStatus() { return status; }
     public void setStatus(PosSessionStatus status) { this.status = status; }
@@ -183,6 +192,9 @@ public class PosSession extends BaseEntity {
 
     public String getZReportJson() { return zReportJson; }
     public void setZReportJson(String zReportJson) { this.zReportJson = zReportJson; }
+
+    public String getClosingDenominationsJson() { return closingDenominationsJson; }
+    public void setClosingDenominationsJson(String closingDenominationsJson) { this.closingDenominationsJson = closingDenominationsJson; }
 
     public List<PosCashMovement> getCashMovements() { return cashMovements; }
     public void setCashMovements(List<PosCashMovement> cashMovements) { this.cashMovements = cashMovements; }

@@ -1,5 +1,7 @@
 package com.billbull.backend.pos.checkout;
 
+import com.billbull.backend.hr.employees.Employee;
+import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -57,6 +59,7 @@ public class PosCheckoutController {
     private final ProductPricingRepository pricingRepository;
     private final RolePermissionService permissionService;
     private final ProductService productService;
+    private final EmployeeRepository employeeRepository;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -65,7 +68,8 @@ public class PosCheckoutController {
                                   ProductRepository productRepository,
                                   ProductPricingRepository pricingRepository,
                                   RolePermissionService permissionService,
-                                  ProductService productService) {
+                                  ProductService productService,
+                                  EmployeeRepository employeeRepository) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -77,6 +81,7 @@ public class PosCheckoutController {
         this.pricingRepository = pricingRepository;
         this.permissionService = permissionService;
         this.productService = productService;
+        this.employeeRepository = employeeRepository;
     }
 
     @PostMapping
@@ -476,6 +481,7 @@ public class PosCheckoutController {
     }
 
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
+        Employee deliveryPerson = resolveDeliveryPerson(req);
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
         inv.setSalesChannel("POS");
@@ -498,8 +504,15 @@ public class PosCheckoutController {
         if (req.getShippingAddress() != null && !req.getShippingAddress().isBlank()) {
             inv.setShippingAddress(req.getShippingAddress());
         }
-        if (req.getDriverName() != null && !req.getDriverName().isBlank()) {
+        if (deliveryPerson != null) {
+            inv.setPosDriverEmployeeId(deliveryPerson.getId());
+            inv.setPosDriverEmployeeCode(deliveryPerson.getEmployeeCode());
+            inv.setPosDriverName(employeeFullName(deliveryPerson));
+        } else if (req.getDriverName() != null && !req.getDriverName().isBlank()) {
             inv.setPosDriverName(req.getDriverName());
+        }
+        if (req.getDeliveryDate() != null && !req.getDeliveryDate().isBlank()) {
+            inv.setDueDate(LocalDate.parse(req.getDeliveryDate()));
         }
         if (req.getDeliveryNotes() != null && !req.getDeliveryNotes().isBlank()) {
             inv.setPosDeliveryNotes(req.getDeliveryNotes());
@@ -567,6 +580,59 @@ public class PosCheckoutController {
         }
 
         return inv;
+    }
+
+    private Employee resolveDeliveryPerson(PosCheckoutRequest req) {
+        if (!isDeliveryCheckout(req)) return null;
+
+        if (req.getCustomerCode() == null || req.getCustomerCode().isBlank()
+                || "WALK-IN".equalsIgnoreCase(req.getCustomerCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer is required before sending an order out for delivery.");
+        }
+        if (req.getShippingAddress() == null || req.getShippingAddress().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Delivery address is required.");
+        }
+        if (req.getDeliveryDate() == null || req.getDeliveryDate().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Delivery date is required.");
+        }
+        try {
+            LocalDate.parse(req.getDeliveryDate());
+        } catch (RuntimeException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Delivery date must be a valid ISO date.");
+        }
+        if (req.getDeliveryTimeSlot() == null || req.getDeliveryTimeSlot().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Delivery time slot is required.");
+        }
+
+        Employee employee = null;
+        if (req.getDeliveryPersonEmployeeId() != null) {
+            employee = employeeRepository.findById(req.getDeliveryPersonEmployeeId()).orElse(null);
+        }
+        if (employee == null && req.getDeliveryPersonEmployeeCode() != null
+                && !req.getDeliveryPersonEmployeeCode().isBlank()) {
+            employee = employeeRepository.findByEmployeeCodeIgnoreCase(req.getDeliveryPersonEmployeeCode().trim()).orElse(null);
+        }
+        if (employee == null || !isActiveDeliveryPerson(employee)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assigned delivery person must be an active employee with the Delivery Person role.");
+        }
+        return employee;
+    }
+
+    private boolean isDeliveryCheckout(PosCheckoutRequest req) {
+        String mode = resolvePaymentMode(req);
+        return mode != null && "delivery".equalsIgnoreCase(mode.trim());
+    }
+
+    private boolean isActiveDeliveryPerson(Employee employee) {
+        String role = employee.getRole() != null ? employee.getRole().trim().toLowerCase() : "";
+        String status = employee.getStatus() != null ? employee.getStatus().trim().toLowerCase() : "";
+        return "active".equals(status) && ("delivery person".equals(role) || "delivery_person".equals(role));
+    }
+
+    private String employeeFullName(Employee employee) {
+        return (employee.getFirstName() + " "
+                + (employee.getMiddleName() != null ? employee.getMiddleName() + " " : "")
+                + employee.getLastName()).trim().replaceAll("\\s+", " ");
     }
 
     private String currentUser() {

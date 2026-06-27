@@ -376,6 +376,264 @@ const reportA4Styles = `
         font-size: 7pt;
         color: #94a3b8;
     }
+
+    /* Modern POS report overrides. Kept later in the template so older report
+       styles are neutralized without changing the renderer contract. */
+    @page {
+        size: A4 portrait;
+        margin: 10mm 9mm 12mm;
+        @bottom-right {
+            content: "Page " counter(page) " of " counter(pages);
+            font-size: 7pt;
+            color: #64748b;
+        }
+        @bottom-left {
+            content: "BillBull ERP | Confidential";
+            font-size: 7pt;
+            color: #64748b;
+        }
+    }
+    html, body { background: #fff; }
+    body {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        font-family: Inter, "Segoe UI", Arial, sans-serif;
+        color: #0f172a;
+        font-size: 8.2pt;
+        line-height: 1.38;
+    }
+    .page-pad { width: 100%; padding: 2mm 1mm 4mm; background: #fff; }
+    .doc-head {
+        border: 1px solid #d7dde6;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 9px;
+        background: #fff;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .doc-head .top {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(220px, .9fr);
+        gap: 16px;
+        align-items: start;
+    }
+    .company-row { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+    .company-logo { width: 54px; height: 54px; object-fit: contain; flex: 0 0 auto; }
+    .company-logo-placeholder {
+        width: 54px;
+        height: 54px;
+        border: 1px solid #d7dde6;
+        border-radius: 8px;
+        background: #f8fafc;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13pt;
+        font-weight: 700;
+        color: #475569;
+        flex: 0 0 auto;
+    }
+    .doc-head .company { max-width: none; min-width: 0; }
+    .doc-head .company h2 {
+        margin: 0 0 3px;
+        font-size: 13.5pt;
+        line-height: 1.15;
+        font-weight: 700;
+        color: #0f172a;
+        letter-spacing: 0;
+    }
+    .doc-head .company p {
+        margin: 0;
+        font-size: 7.4pt;
+        color: #475569;
+        line-height: 1.35;
+    }
+    .doc-head .company .branch-name { margin: 2px 0 1px; color: #1e293b; font-weight: 650; }
+    .doc-head .title-block, .title-block { text-align: right; min-width: 0; }
+    .doc-head .title-block .badge, .title-block .badge {
+        display: inline-block;
+        background: #f1f5f9;
+        color: #334155;
+        border: 1px solid #d7dde6;
+        font-size: 6.6pt;
+        font-weight: 700;
+        letter-spacing: .08em;
+        padding: 2px 8px;
+        border-radius: 999px;
+        margin-bottom: 5px;
+    }
+    .doc-head .title-block h1, .title-block h1 {
+        margin: 0;
+        font-size: 15pt;
+        line-height: 1.18;
+        font-weight: 750;
+        color: #0f172a;
+    }
+    .doc-head .title-block .note, .title-block .note {
+        margin: 4px 0 0;
+        font-size: 7.2pt;
+        color: #475569;
+        font-weight: 500;
+    }
+    .report-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 10px;
+        margin-top: 9px;
+        padding-top: 8px;
+        border-top: 1px solid #e2e8f0;
+        text-align: left;
+    }
+    .report-meta .meta-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+        font-size: 7.1pt;
+    }
+    .report-meta .meta-label {
+        color: #64748b;
+        text-transform: uppercase;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .report-meta .meta-value {
+        color: #0f172a;
+        font-weight: 650;
+        text-align: right;
+        word-break: break-word;
+    }
+    .meta-strip { gap: 4px 6px; margin: 0 0 9px; }
+    .meta-strip .pill {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 7pt;
+        color: #475569;
+    }
+    .meta-strip .pill b { color: #1e293b; font-weight: 700; }
+    .kpi-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 6px;
+        margin-bottom: 10px;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .kpi {
+        min-height: 58px;
+        border: 1px solid #d7dde6;
+        border-radius: 8px;
+        background: #fff;
+        padding: 7px 8px;
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        column-gap: 7px;
+        align-items: start;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .k-icon {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        color: #475569;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 6.5pt;
+        font-weight: 800;
+        line-height: 1;
+    }
+    .k-content { min-width: 0; }
+    .kpi .k-label { font-size: 6.6pt; color: #64748b; font-weight: 750; line-height: 1.2; }
+    .kpi .k-value { font-size: 11.2pt; font-weight: 750; color: #0f172a; margin-top: 2px; white-space: nowrap; }
+    .kpi .k-hint { font-size: 6.5pt; color: #64748b; margin-top: 1px; line-height: 1.2; }
+    .section {
+        margin-bottom: 10px;
+        break-inside: avoid-page;
+        page-break-inside: avoid;
+    }
+    .section > h3 {
+        margin: 0;
+        padding: 5px 8px;
+        font-size: 8.7pt;
+        font-weight: 750;
+        color: #0f172a;
+        background: #f8fafc;
+        border: 1px solid #d7dde6;
+        border-bottom: 0;
+        border-radius: 7px 7px 0 0;
+    }
+    table {
+        width: 100%;
+        max-width: 100%;
+        table-layout: fixed;
+        border: 1px solid #d7dde6;
+    }
+    thead { display: table-header-group; }
+    tfoot { display: table-row-group; }
+    thead th {
+        background: #eef2f7;
+        color: #334155;
+        font-weight: 750;
+        font-size: 6.8pt;
+        padding: 5px 6px;
+        border: 1px solid #d7dde6;
+        word-break: break-word;
+    }
+    tbody td {
+        padding: 4.5px 6px;
+        font-size: 7.3pt;
+        border: 1px solid #e5eaf1;
+        color: #1e293b;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+    }
+    tbody td.num { text-align: right; white-space: normal; }
+    tbody tr:nth-child(even) { background: #fafbfc; }
+    tr { page-break-inside: avoid; break-inside: avoid; }
+    .wide-section table { font-size: 6.6pt; }
+    .wide-section thead th,
+    .wide-section tbody td,
+    .wide-section tfoot td { padding-left: 4px; padding-right: 4px; font-size: 6.45pt; }
+    tfoot td {
+        padding: 5px 6px;
+        font-size: 7.3pt;
+        font-weight: 750;
+        background: #f8fafc;
+        border: 1px solid #d7dde6;
+        color: #0f172a;
+    }
+    .doc-foot {
+        margin-top: 12px;
+        padding: 8px 0 0;
+        border-top: 1px solid #d7dde6;
+        display: grid;
+        grid-template-columns: 1.3fr .9fr .8fr .8fr;
+        gap: 8px;
+        font-size: 6.8pt;
+        color: #64748b;
+    }
+    .doc-foot b { color: #334155; font-weight: 750; }
+    .confidential { text-align: right; text-transform: uppercase; letter-spacing: .08em; font-weight: 750; }
+    .print-page-number::after { content: "Page " counter(page) " of " counter(pages); }
+    @media print {
+        body { width: auto; min-height: auto; }
+        .page-pad { padding: 0; }
+        .doc-head, .kpi, .section { break-inside: avoid; page-break-inside: avoid; }
+        table { page-break-inside: auto; }
+        thead { display: table-header-group; }
+        tr, img { break-inside: avoid; page-break-inside: avoid; }
+    }
+    @media screen {
+        body { box-shadow: 0 18px 60px rgba(15, 23, 42, .12); }
+    }
 `;
 
 // Normalise monetary cells to a consistent 2-decimal, thousands-separated
@@ -478,6 +736,7 @@ const renderReportCellHtml = (col, value, companyProfile) => {
 
 const renderReportSectionHtml = (rawSection, companyProfile) => {
     const { title, columns, rows, totals, totalsLabel } = normalizeReportSection(rawSection);
+    const sectionClass = columns.length > 5 ? 'section wide-section' : 'section';
     const head = `<thead><tr>${renderReportColumnsHtml(columns, companyProfile)}</tr></thead>`;
     const body = rows.length
         ? rows
@@ -507,7 +766,17 @@ const renderReportSectionHtml = (rawSection, companyProfile) => {
         foot = `<tfoot><tr>${cells}</tr></tfoot>`;
     }
 
-    return `<div class="section">${title ? `<h3>${escapeHtml(title)}</h3>` : ''}<table>${head}<tbody>${body}</tbody>${foot}</table></div>`;
+    return `<div class="${sectionClass}">${title ? `<h3>${escapeHtml(title)}</h3>` : ''}<table>${head}<tbody>${body}</tbody>${foot}</table></div>`;
+};
+
+const kpiInitials = (label = '') => {
+    const words = String(label || '')
+        .replace(/[^a-zA-Z0-9\s]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    if (!words.length) return 'R';
+    return words.slice(0, 2).map((word) => word[0]).join('').toUpperCase();
 };
 
 export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta = {}) => {
@@ -530,6 +799,24 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
     const sections = Array.isArray(viewModel.sections) ? viewModel.sections : [];
     const kpis = Array.isArray(viewModel.kpis) ? viewModel.kpis : [];
     const note = viewModel.note ? escapeHtml(viewModel.note) : '';
+    const reportMeta = Array.isArray(viewModel.reportMeta) ? viewModel.reportMeta : [];
+    const generatedBy = meta.user || viewModel.generatedBy || 'BillBull ERP';
+    const logoHtml = companyProfile.showLogo !== false && companyProfile.logoUrl
+        ? `<img class="company-logo" src="${escapeHtml(companyProfile.logoUrl)}" alt="${companyName} logo" />`
+        : `<div class="company-logo-placeholder">${escapeHtml((companyProfile.companyName || companyProfile.name || 'B').trim().charAt(0) || 'B')}</div>`;
+    const branchMeta = branchDisplay ? `<p class="branch-name">Branch: ${branchDisplay}</p>` : '';
+    const contactParts = [];
+    if (phone) contactParts.push(`Phone: ${phone}`);
+    if (email) contactParts.push(`Email: ${email}`);
+    const reportMetaHtml = reportMeta.length
+        ? `<div class="report-meta">${reportMeta
+            .filter((item) => item && item.label)
+            .map((item) => {
+                const value = item.value === null || item.value === undefined || item.value === '' ? '-' : item.value;
+                return `<div class="meta-item"><span class="meta-label">${escapeHtml(item.label)}</span><span class="meta-value">${renderTextWithCurrencySymbols(normaliseReportMoney(value), companyProfile)}</span></div>`;
+            })
+            .join('')}</div>`
+        : '';
 
     // Applied-filter pills — only show filters that are actually set.
     const filters = Array.isArray(meta.filters) ? meta.filters : [];
@@ -546,7 +833,7 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
         ? `<div class="kpi-strip">${kpis
             .map(
                 (k) =>
-                    `<div class="kpi"><div class="k-label">${escapeHtml(k.label)}</div><div class="k-value">${renderTextWithCurrencySymbols(normaliseReportMoney(k.value), companyProfile)}</div>${k.hint ? `<div class="k-hint">${escapeHtml(k.hint)}</div>` : ''}</div>`
+                    `<div class="kpi"><div class="k-icon">${escapeHtml(k.icon || kpiInitials(k.label))}</div><div class="k-content"><div class="k-label">${escapeHtml(k.label)}</div><div class="k-value">${renderTextWithCurrencySymbols(normaliseReportMoney(k.value), companyProfile)}</div>${k.hint ? `<div class="k-hint">${escapeHtml(k.hint)}</div>` : ''}</div></div>`
             )
             .join('')}</div>`
         : '';
@@ -566,18 +853,21 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
   <div class="page-pad">
     <div class="doc-head">
         <div class="top">
-            <div class="company">
-                ${(companyProfile.showLogo !== false && companyProfile.logoUrl) ? `<img src="${companyProfile.logoUrl}" style="height:50px;max-width:200px;object-fit:contain;display:block;margin-bottom:8px;" />` : ''}
-                <h2>${companyName}</h2>
-                ${branchDisplay ? `<p style="font-size:8pt;color:#b45309;font-weight:500;margin-top:1px;">Branch: ${branchDisplay}</p>` : ''}
-                ${address ? `<p>${address}</p>` : ''}
-                ${(email || phone) ? `<p>${email ? `Email: ${email}` : ''}${email && phone ? ' &nbsp;|&nbsp; ' : ''}${phone ? `Phone: ${phone}` : ''}</p>` : ''}
-                ${trn ? `<p>TRN: ${trn}</p>` : ''}
+            <div class="company-row">
+                ${logoHtml}
+                <div class="company">
+                    <h2>${companyName}</h2>
+                    ${branchMeta}
+                    ${address ? `<p>${address}</p>` : ''}
+                    ${contactParts.length ? `<p>${contactParts.join(' | ')}</p>` : ''}
+                    ${trn ? `<p>TRN: ${trn}</p>` : ''}
+                </div>
             </div>
             <div class="title-block">
                 <span class="badge">OFFICIAL REPORT</span>
                 <h1>${reportTitle}</h1>
                 ${note ? `<p class="note">${note}</p>` : ''}
+                ${reportMetaHtml}
             </div>
         </div>
     </div>
@@ -591,8 +881,10 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
     ${(companyProfile.showStampInPrint !== false && companyProfile.stampUrl) ? `<div style="text-align:right;margin-top:20px;padding-right:24px;"><img src="${companyProfile.stampUrl}" style="height:60px;max-width:200px;object-fit:contain;display:inline-block;" /></div>` : ''}
 
     <div class="doc-foot">
-        <span>Generated by ${companyName} &nbsp;|&nbsp; Confidential</span>
-        <span>${escapeHtml(generatedAt)}</span>
+        <span><b>Generated By</b><br />${escapeHtml(generatedBy)}</span>
+        <span><b>Generated Time</b><br />${escapeHtml(generatedAt)}</span>
+        <span><b>Page</b><br /><span class="print-page-number"></span></span>
+        <span class="confidential">Confidential</span>
     </div>
   </div>
 </body>

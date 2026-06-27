@@ -148,7 +148,7 @@ const Sidebar = ({ children }) => {
       isOpen: salesOpen,
       onToggle: () => handleToggle(salesOpen, setSalesOpen),
       module: "sales",
-      roles: ["ADMIN", "SALES", "ACCOUNTANT"],
+      roles: ["ADMIN", "SALES", "ACCOUNTANT", "DELIVERY_PERSON"],
       subItems: [
         { path: "/sales/customers",     label: "Customer Ledger",       module: "sales.customer", icon: <BookUser size={14} /> },
         { path: "/sales/quotation",     label: "Quotation",             module: "sales.quotation",icon: <FileText size={14} /> },

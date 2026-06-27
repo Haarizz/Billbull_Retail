@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.invoice;
 
+import com.billbull.backend.hr.employees.Employee;
 import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
@@ -143,6 +144,17 @@ public class SalesInvoice {
 
     @Column(name = "pos_driver_name", length = 200)
     private String posDriverName;
+
+    @Column(name = "pos_driver_employee_id")
+    private Long posDriverEmployeeId;
+
+    @Column(name = "pos_driver_employee_code", length = 100)
+    private String posDriverEmployeeCode;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pos_driver_employee_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Employee posDriverEmployee;
 
     @Column(name = "pos_delivery_notes", length = 1000)
     private String posDeliveryNotes;
@@ -485,6 +497,15 @@ public class SalesInvoice {
 
     public String getPosDriverName() { return posDriverName; }
     public void setPosDriverName(String posDriverName) { this.posDriverName = posDriverName; }
+
+    public Long getPosDriverEmployeeId() { return posDriverEmployeeId; }
+    public void setPosDriverEmployeeId(Long posDriverEmployeeId) { this.posDriverEmployeeId = posDriverEmployeeId; }
+
+    public String getPosDriverEmployeeCode() { return posDriverEmployeeCode; }
+    public void setPosDriverEmployeeCode(String posDriverEmployeeCode) { this.posDriverEmployeeCode = posDriverEmployeeCode; }
+
+    public Employee getPosDriverEmployee() { return posDriverEmployee; }
+    public void setPosDriverEmployee(Employee posDriverEmployee) { this.posDriverEmployee = posDriverEmployee; }
 
     public String getPosDeliveryNotes() { return posDeliveryNotes; }
     public void setPosDeliveryNotes(String posDeliveryNotes) { this.posDeliveryNotes = posDeliveryNotes; }

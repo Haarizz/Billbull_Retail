@@ -57,6 +57,13 @@ const AMBER_LIGHT = [255, 251, 240];  // #FFFBF0
 const AMBER_ARGB = 'FFF5C742';
 const AMBER_LIGHT_ARGB = 'FFFFF8E7';
 const DARK_TEXT = [26, 18, 0];
+const XLS_HEADER_DARK = 'FF0F172A';
+const XLS_HEADER_TEXT = 'FFFFFFFF';
+const XLS_TITLE_FILL = 'FFF8FAFC';
+const XLS_TABLE_HEADER = 'FFEFF3F8';
+const XLS_BORDER = 'FFD7DDE6';
+const XLS_ZEBRA = 'FFFAFBFC';
+const XLS_SECTION = 'FFE2E8F0';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const isImageColumn = (column) => column.type === 'image';
@@ -313,6 +320,7 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         workbook.creator = companyName;
         workbook.created = new Date();
         const sheet = workbook.addWorksheet('Report');
+        sheet.views = [{ state: 'frozen', ySplit: 5 }];
 
         const numCols = columns.length;
         const lastCol = colLetter(numCols);
@@ -328,8 +336,8 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         sheet.mergeCells(`A1:${lastCol}1`);
         const brandCell = brandRow.getCell(1);
         brandCell.value = orgLine;
-        brandCell.font = { bold: true, color: { argb: 'FF1A1200' }, size: 14, name: 'Calibri' };
-        brandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_ARGB } };
+        brandCell.font = { bold: true, color: { argb: XLS_HEADER_TEXT }, size: 14, name: 'Calibri' };
+        brandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_HEADER_DARK } };
         brandCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
         // ── Row 2: Report title ─────────────────────────────────────────────
@@ -338,8 +346,8 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         sheet.mergeCells(`A2:${lastCol}2`);
         const titleCell = titleRow.getCell(1);
         titleCell.value = fileName.replace(/_/g, ' ');
-        titleCell.font = { bold: true, color: { argb: 'FF374151' }, size: 12, name: 'Calibri' };
-        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+        titleCell.font = { bold: true, color: { argb: 'FF0F172A' }, size: 12, name: 'Calibri' };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_TITLE_FILL } };
         titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
         // ── Row 3: Meta info ────────────────────────────────────────────────
@@ -352,7 +360,7 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         const metaCell = metaRow.getCell(1);
         metaCell.value = metaText;
         metaCell.font = { color: { argb: 'FF6B7280' }, size: 9, name: 'Calibri' };
-        metaCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+        metaCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_TITLE_FILL } };
         metaCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
         // ── Row 4: Spacer ───────────────────────────────────────────────────
@@ -364,23 +372,32 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         columns.forEach((col, i) => {
             const cell = headerRow.getCell(i + 1);
             cell.value = col.header;
-            cell.font = { bold: true, color: { argb: 'FF1A1200' }, size: 10, name: 'Calibri' };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_ARGB } };
+            cell.font = { bold: true, color: { argb: 'FF334155' }, size: 10, name: 'Calibri' };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_TABLE_HEADER } };
             cell.alignment = { vertical: 'middle', horizontal: isImageColumn(col) ? 'center' : 'left', wrapText: false };
             cell.border = {
-                bottom: { style: 'medium', color: { argb: 'FFE5B426' } },
-                top: { style: 'thin', color: { argb: 'FFE5B426' } },
+                bottom: { style: 'thin', color: { argb: XLS_BORDER } },
+                top: { style: 'thin', color: { argb: XLS_BORDER } },
+                left: { style: 'thin', color: { argb: XLS_BORDER } },
+                right: { style: 'thin', color: { argb: XLS_BORDER } },
             };
         });
+        sheet.autoFilter = { from: 'A5', to: `${lastCol}5` };
 
         // ── Rows 6+: Data ───────────────────────────────────────────────────
         const DATA_START_ROW = 6;
         const imageColumns = columns.filter(isImageColumn);
         const imageMap = await loadExportImages(data, columns);
+        const isCurrencyColumn = (col) => (
+            col.type === 'currency'
+            || /(amount|total|balance|cash|sales|paid|tax|discount|price|cost|variance|charge)/i.test(`${col.key} ${col.header}`)
+        );
+        const isDateColumn = (col) => col.type === 'date' || /(date|time|created|updated|opened|closed)/i.test(`${col.key} ${col.header}`);
 
         data.forEach((row, rowIndex) => {
             const sheetRow = sheet.getRow(DATA_START_ROW + rowIndex);
             sheetRow.alignment = { vertical: 'middle' };
+            const isSectionRow = Boolean(row.Section);
 
             if (imageColumns.length > 0) {
                 const maxImageHeight = Math.max(...imageColumns.map(col => getImageSize(col).height));
@@ -401,19 +418,31 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
                     // Right-align numbers
                     if (typeof cellValue === 'number') {
                         cell.alignment = { horizontal: 'right', vertical: 'middle' };
-                        cell.numFmt = Number.isInteger(cellValue) ? '#,##0' : '#,##0.00';
+                        cell.numFmt = isCurrencyColumn(col) ? '#,##0.00' : (Number.isInteger(cellValue) ? '#,##0' : '#,##0.00');
+                    } else if (cellValue instanceof Date) {
+                        cell.numFmt = 'dd-mmm-yyyy hh:mm';
+                        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                    } else if (isDateColumn(col) && cellValue) {
+                        cell.alignment = { horizontal: 'left', vertical: 'middle' };
                     }
                 }
 
-                // Alternating row color (amber tint on odd data rows)
-                if (rowIndex % 2 === 1) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER_LIGHT_ARGB } };
+                if (isSectionRow) {
+                    cell.font = { ...(cell.font || {}), bold: true, color: { argb: 'FF0F172A' }, name: 'Calibri' };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_SECTION } };
+                } else if (rowIndex % 2 === 1) {
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLS_ZEBRA } };
                 }
 
-                // Light border
                 cell.border = {
-                    bottom: { style: 'hair', color: { argb: 'FFFFE9A0' } },
+                    top: { style: 'thin', color: { argb: XLS_BORDER } },
+                    bottom: { style: 'thin', color: { argb: XLS_BORDER } },
+                    left: { style: 'thin', color: { argb: XLS_BORDER } },
+                    right: { style: 'thin', color: { argb: XLS_BORDER } },
                 };
+                if (!cell.alignment) {
+                    cell.alignment = { vertical: 'middle', horizontal: isImageColumn(col) ? 'center' : 'left', wrapText: true };
+                }
             });
         });
 
@@ -434,6 +463,27 @@ export const exportToExcel = async (data, columns, fileName = 'Export', meta = {
         });
 
         // ── Save ────────────────────────────────────────────────────────────
+        columns.forEach((col, colIndex) => {
+            const values = [
+                col.header,
+                ...data.map(row => row[col.key])
+            ].map(value => {
+                if (value === null || value === undefined) return '';
+                if (value instanceof Date) return value.toLocaleString();
+                return String(value);
+            });
+            const maxLength = Math.max(...values.map(value => value.length), 10);
+            sheet.getColumn(colIndex + 1).width = Math.min(Math.max(maxLength + 2, col.width || 12), 42);
+        });
+        sheet.pageSetup = {
+            paperSize: 9,
+            orientation: 'portrait',
+            fitToPage: true,
+            fitToWidth: 1,
+            fitToHeight: 0,
+            margins: { left: 0.35, right: 0.35, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+        };
+
         const buffer = await workbook.xlsx.writeBuffer();
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         saveAs(blob, `${generateReportFilename(fileName)}.xlsx`);

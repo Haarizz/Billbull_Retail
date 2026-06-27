@@ -55,6 +55,7 @@ const Login = () => {
         INVENTORY_MANAGER: "/inventory/products",
         ACCOUNTANT:        "/financials/ledger",
         HR:                "/payroll/employees",
+        DELIVERY_PERSON:   "/sales/pos",
         ADMIN:             "/dashboard",
       };
       const primaryRole = data.primaryRole || data.role;

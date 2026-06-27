@@ -56,6 +56,11 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    public List<Employee> getActiveDeliveryPersons() {
+        return repository.findActiveDeliveryPersons();
+    }
+
+    @Override
     public List<Employee> getPendingEmployees() {
         return repository.findByStatus("Pending");
     }

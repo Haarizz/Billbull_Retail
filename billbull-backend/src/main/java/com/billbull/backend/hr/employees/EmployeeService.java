@@ -12,6 +12,8 @@ public interface EmployeeService {
 
     List<Employee> getActiveEmployees();
 
+    List<Employee> getActiveDeliveryPersons();
+
     List<Employee> getPendingEmployees();
 
     // ===== CREATE / UPDATE =====

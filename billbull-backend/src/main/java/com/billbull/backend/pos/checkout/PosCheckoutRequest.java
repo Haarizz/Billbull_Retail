@@ -24,6 +24,10 @@ public class PosCheckoutRequest {
     private String notes;
     private String shippingAddress;
     private String driverName;
+    private Long deliveryPersonEmployeeId;
+    private String deliveryPersonEmployeeCode;
+    private String deliveryDate;
+    private String deliveryTimeSlot;
     private String deliveryNotes;
     private Double deliveryCharge;
     private List<PosCheckoutItem> items;
@@ -111,6 +115,14 @@ public class PosCheckoutRequest {
     public void setShippingAddress(String shippingAddress) { this.shippingAddress = shippingAddress; }
     public String getDriverName() { return driverName; }
     public void setDriverName(String driverName) { this.driverName = driverName; }
+    public Long getDeliveryPersonEmployeeId() { return deliveryPersonEmployeeId; }
+    public void setDeliveryPersonEmployeeId(Long deliveryPersonEmployeeId) { this.deliveryPersonEmployeeId = deliveryPersonEmployeeId; }
+    public String getDeliveryPersonEmployeeCode() { return deliveryPersonEmployeeCode; }
+    public void setDeliveryPersonEmployeeCode(String deliveryPersonEmployeeCode) { this.deliveryPersonEmployeeCode = deliveryPersonEmployeeCode; }
+    public String getDeliveryDate() { return deliveryDate; }
+    public void setDeliveryDate(String deliveryDate) { this.deliveryDate = deliveryDate; }
+    public String getDeliveryTimeSlot() { return deliveryTimeSlot; }
+    public void setDeliveryTimeSlot(String deliveryTimeSlot) { this.deliveryTimeSlot = deliveryTimeSlot; }
     public String getDeliveryNotes() { return deliveryNotes; }
     public void setDeliveryNotes(String deliveryNotes) { this.deliveryNotes = deliveryNotes; }
     public Double getDeliveryCharge() { return deliveryCharge; }

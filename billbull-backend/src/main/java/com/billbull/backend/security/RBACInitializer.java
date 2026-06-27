@@ -43,6 +43,7 @@ public class RBACInitializer {
             createRoleIfNotExists(roleRepository, "INVENTORY_MANAGER");
             createRoleIfNotExists(roleRepository, "ACCOUNTANT");
             createRoleIfNotExists(roleRepository, "HR");
+            createRoleIfNotExists(roleRepository, "DELIVERY_PERSON");
 
             // 2. Default branch — must exist before the admin is assigned to it
             Branch defaultBranch = ensureDefaultBranch(branchRepository);
