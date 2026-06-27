@@ -21,11 +21,12 @@ public class PosTerminalController {
     @PostMapping("/register")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, Object> body) {
+        String terminalId = body.get("terminalId") != null ? body.get("terminalId").toString() : null;
         String deviceFingerprint = body.getOrDefault("deviceFingerprint", "").toString();
         String deviceInfo = body.get("deviceInfo") != null ? body.get("deviceInfo").toString() : null;
         String terminalName = body.get("terminalName") != null ? body.get("terminalName").toString() : null;
         String counterName = body.get("counterName") != null ? body.get("counterName").toString() : null;
-        return ResponseEntity.ok(service.registerOrRefresh(deviceFingerprint, deviceInfo, terminalName, counterName));
+        return ResponseEntity.ok(service.registerOrRefresh(terminalId, deviceFingerprint, deviceInfo, terminalName, counterName));
     }
 
     @GetMapping("/branch/{branchId}")

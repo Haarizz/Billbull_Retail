@@ -943,11 +943,15 @@ export const generateReportThermalHtml = (viewModel = {}, companyProfile = {}, m
 
     let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportTitle)}</title><style>
 @page{margin:0;size:${paper} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.4;padding:4px 0;color:#000;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0;color:#000;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:6px 0}
-.row{display:flex;gap:6px;margin:2px 0;align-items:flex-start}
-.row .lbl{flex:0 0 auto;text-align:left;white-space:nowrap;padding-right:2px}
-.row .val{flex:1;text-align:left;word-break:break-word;overflow-wrap:break-word;hyphens:auto}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin:2px 0}
+.row .lbl{flex:1;text-align:left;word-break:break-word;overflow-wrap:anywhere}
+.row .val{flex:0 0 auto;text-align:right;white-space:nowrap}
+.info-row{display:flex;justify-content:flex-start;align-items:flex-start;margin:2px 0;font-family:'Courier New',monospace;font-size:11px;line-height:1.4}
+.info-row .info-lbl{flex:0 0 auto;width:${paper === '58mm' ? '78px' : '92px'};text-align:left;white-space:nowrap;overflow:hidden;font-weight:normal}
+.info-row .info-col{flex:0 0 auto;width:12px;text-align:center;white-space:nowrap;font-weight:normal}
+.info-row .info-val{flex:1 1 auto;text-align:left;white-space:normal;word-break:normal;overflow-wrap:break-word;min-width:0;padding-left:2px}
 .s{font-size:11px;font-weight:bold;text-transform:uppercase;color:#000;margin:10px 0 4px;border-bottom:1px solid #000;padding-bottom:2px}
 </style></head><body>`;
 
@@ -980,6 +984,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
         if (section.title) {
             html += `<div class="s">${esc(section.title)}</div>`;
         }
+        const isSessionInfo = section.title && section.title.toLowerCase().includes('session information');
         const rows = Array.isArray(section.rows) ? section.rows : [];
         rows.forEach(row => {
             const cells = Array.isArray(row) ? row : [row];
@@ -992,8 +997,16 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
             const value = cells[cells.length - 1];
             const middle = cells.slice(1, -1).filter(c => c !== '' && c != null);
             const fullLabel = middle.length ? `${label} (${middle.join('/')})` : label;
-            const labelWithColon = `${esc(fullLabel)} :`;
-            html += `<div class="row"><span class="lbl">${labelWithColon}</span><span class="val">${renderTextWithCurrencySymbols(normaliseReportMoney(value), companyProfile)}</span></div>`;
+
+            if (isSessionInfo && cells.length === 2) {
+                let mt = '2px';
+                if (label === 'Session No.' || label === 'Branch' || label === 'Terminal' || label === 'Device Info' || label === 'Shift') {
+                    mt = '8px';
+                }
+                html += `<div class="info-row" style="margin-top:${mt}"><span class="info-lbl">${esc(label)}</span><span class="info-col">:</span><span class="info-val">${esc(value)}</span></div>`;
+            } else {
+                html += `<div class="row"><span class="lbl">${esc(fullLabel)}</span><span class="val">${renderTextWithCurrencySymbols(normaliseReportMoney(value), companyProfile)}</span></div>`;
+            }
         });
         if (Array.isArray(section.footer) && section.footer.length) {
             const f = section.footer;
