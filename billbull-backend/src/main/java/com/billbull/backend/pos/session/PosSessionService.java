@@ -89,6 +89,9 @@ public class PosSessionService {
         // Check if there is already an open session for this terminal
         Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
         if (existing.isPresent()) {
+            if (!currentUser().equals(existing.get().getOpenedBy())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
+            }
             // Return existing open session instead of throwing — cashier may have refreshed
             return existing.get();
         }
@@ -117,19 +120,18 @@ public class PosSessionService {
 
     @Transactional(readOnly = true)
     public Optional<PosSession> getActiveSession(String terminalId) {
-        // Look up by terminalId alone — terminal is already branch-scoped at registration time.
-        // Avoids a 400 when the user has "All Branches" selected in the branch switcher.
         if (terminalId != null && !terminalId.isBlank()) {
-            return repo.findByTerminalIdAndStatus(terminalId, PosSessionStatus.OPEN);
-        }
-        // Fallback: try branch-scoped lookup when terminalId is missing
-        try {
-            Branch branch = branchAccessService.getRequiredCurrentUserBranch();
-            List<PosSession> sessions = repo.findByBranchIdAndStatusOrderByOpenedAtDesc(branch.getId(), PosSessionStatus.OPEN);
-            return sessions.isEmpty() ? Optional.empty() : Optional.of(sessions.get(0));
-        } catch (Exception e) {
+            Optional<PosSession> sessionOpt = repo.findByTerminalIdAndStatus(terminalId, PosSessionStatus.OPEN);
+            if (sessionOpt.isPresent()) {
+                PosSession session = sessionOpt.get();
+                if (!currentUser().equals(session.getOpenedBy())) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is locked by active cashier: " + session.getOpenedBy());
+                }
+                return Optional.of(session);
+            }
             return Optional.empty();
         }
+        return Optional.empty();
     }
 
     @Transactional(readOnly = true)
@@ -426,8 +428,8 @@ public class PosSessionService {
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
         info.put("shift", deriveShift(s.getOpenedAt()));
-        info.put("openedAt", s.getOpenedAt());
-        info.put("closedAt", s.getClosedAt());
+        info.put("openedAt", s.getOpenedAt() != null ? s.getOpenedAt().atZone(java.time.ZoneId.systemDefault()) : null);
+        info.put("closedAt", s.getClosedAt() != null ? s.getClosedAt().atZone(java.time.ZoneId.systemDefault()) : null);
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
         info.put("closingCash", nz(s.getClosingCash()));

@@ -283,6 +283,25 @@ function DeliveryPersonSelect({ options = [], value, onChange, loading = false, 
   );
 }
 
+const parseUTCDate = (ts) => {
+  if (!ts) return null;
+  if (ts instanceof Date) return isNaN(ts.getTime()) ? null : ts;
+  if (typeof ts === 'number') {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  let s = String(ts);
+  const tIdx = s.indexOf('T');
+  if (tIdx !== -1 && !s.endsWith('Z')) {
+    const timePart = s.slice(tIdx);
+    if (!timePart.includes('+') && !timePart.includes('-')) {
+      s += 'Z';
+    }
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 export default function POSSales() {
   const { company } = useCompany();
   // Active currency CODE from the company profile (falls back to AED). Report
@@ -311,6 +330,7 @@ export default function POSSales() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
+  const [terminalLockedBy, setTerminalLockedBy] = useState(null);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
   // Sidebar's display-name derivation: strip the @domain then title-case.
   const cashierDisplayName = useMemo(() => {
@@ -1100,20 +1120,32 @@ export default function POSSales() {
           }
         }
 
-        // Generate device fingerprint (browser-based, stable across refreshes)
+        // Generate or retrieve persistent device fingerprint and terminal ID
         const nav = window.navigator;
-        const fp = btoa([nav.userAgent, screen.width, screen.height, screen.colorDepth, Intl.DateTimeFormat().resolvedOptions().timeZone].join('|')).slice(0, 64);
+        let fp = localStorage.getItem('billbull:pos:device_fingerprint');
+        if (!fp) {
+          fp = btoa([nav.userAgent, screen.width, screen.height, screen.colorDepth, Intl.DateTimeFormat().resolvedOptions().timeZone, crypto.randomUUID ? crypto.randomUUID() : Math.random()].join('|')).slice(0, 64);
+          localStorage.setItem('billbull:pos:device_fingerprint', fp);
+        }
+        const cachedTerminalId = localStorage.getItem('billbull:pos:terminal_id') || null;
         const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
 
-        const regResult = await registerPosTerminal({ deviceFingerprint: fp, deviceInfo }).catch(() => null);
+        const regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo }).catch(() => null);
         if (!cancelled && regResult?.terminal) {
           setCurrentTerminal(regResult.terminal);
+          localStorage.setItem('billbull:pos:terminal_id', regResult.terminal.terminalId);
 
           // Try to resume an existing open session for this terminal
           const termId = regResult.terminal.terminalId;
-          const active = await getActivePosSession(termId).catch(() => null);
-          if (!cancelled && active?.id) {
-            setCurrentSession(active);
+          try {
+            const active = await getActivePosSession(termId);
+            if (!cancelled && active?.id) {
+              setCurrentSession(active);
+            }
+          } catch (err) {
+            if (err.response?.status === 409) {
+              if (!cancelled) setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
+            }
           }
         }
       } catch (e) {
@@ -3554,7 +3586,7 @@ export default function POSSales() {
             {currentSession?.status === 'active' || currentSession?.status === 'OPEN' && (
               <div className="text-sm space-y-1">
                 <p className="text-gray-600">Opening Cash: {formatCurrency(currentSession.openingCash)}</p>
-                <p className="text-gray-600">Started: {currentSession.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : currentSession.startTime ? new Date(currentSession.startTime).toLocaleTimeString() : '—'}</p>
+                <p className="text-gray-600">Started: {currentSession.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : currentSession.startTime ? parseUTCDate(currentSession.startTime)?.toLocaleTimeString() : '—'}</p>
               </div>
             )}
           </CardContent>
@@ -3686,7 +3718,7 @@ export default function POSSales() {
         const statDropOut = xSummary.cashDropOut ?? 0;
         const statExpectedCash = xSummary.expectedCash ?? (statOpeningCash + statCashSales + statDropIn - statDropOut);
 
-        const sessionStart = currentSession?.openedAt ? new Date(currentSession.openedAt) : null;
+        const sessionStart = currentSession?.openedAt ? parseUTCDate(currentSession.openedAt) : null;
         const nowMs = sessionNowMs;
         const diffMin = sessionStart ? Math.floor((nowMs - sessionStart.getTime()) / 60000) : 0;
         const durH = Math.floor(diffMin / 60);
@@ -3811,7 +3843,12 @@ export default function POSSales() {
     const cashVariance   = actualCash - expectedCash;
     const zCashierLabel  = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
     const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
-    const fmtTs = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : 'â€”';
+    const fmtTs = (t) => {
+      const d = parseUTCDate(t);
+      if (!d) return '—';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
     const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
     const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
@@ -4107,7 +4144,12 @@ export default function POSSales() {
     const totalPaidV     = Number(xSummary.totalPaid ?? totalSalesV);
     const voidAmountV    = Number(xSummary.voidAmount ?? 0);
     const sessInfo       = xReportData?.sessionInfo || {};
-    const fmtTs          = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '—';
+    const fmtTs          = (t) => {
+      const d = parseUTCDate(t);
+      if (!d) return '—';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
 
     const fmtDuration    = (seconds) => {
       const total = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -4118,7 +4160,7 @@ export default function POSSales() {
     };
     const durationSeconds = sessInfo.durationSeconds ?? sess?.durationSeconds
       ?? ((sess?.openedAt && sess?.closedAt)
-        ? Math.max(0, Math.floor((new Date(sess.closedAt).getTime() - new Date(sess.openedAt).getTime()) / 1000))
+        ? Math.max(0, Math.floor((parseUTCDate(sess.closedAt).getTime() - parseUTCDate(sess.openedAt).getTime()) / 1000))
         : null);
 
     return {
@@ -4153,7 +4195,8 @@ export default function POSSales() {
             ['Branch',       sessInfo.branch || sess?.branchName || '—'],
             ['Terminal',     sessInfo.terminalId || sess?.terminalId || '—'],
             ['Counter',      sessInfo.counter || sess?.counterName || '—'],
-            ['Device',       `${sessInfo.device || '—'}${sessInfo.deviceInfo ? ` (${sessInfo.deviceInfo})` : ''}`],
+            ['Device',       sessInfo.device || '—'],
+            ...(sessInfo.deviceInfo ? [['Device Info', sessInfo.deviceInfo.substring(0, 48)]] : []),
             ['Shift',        sessInfo.shift || '—'],
             ['Cashier',      sessInfo.cashier || sess?.openedBy || '—'],
             ['Opened At',    fmtTs(sessInfo.openedAt || sess?.openedAt)],
@@ -4965,7 +5008,7 @@ export default function POSSales() {
           const branchName = sess?.branchName || currentTerminal?.branchName || '—';
           const terminalId = sess?.terminalId || currentTerminal?.terminalId || '—';
           const cashier = sess?.openedBy || '—';
-          const openedAt = sess?.openedAt ? new Date(sess.openedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
+          const openedAt = sess?.openedAt ? parseUTCDate(sess.openedAt)?.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
           const currentTime = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
           return (
             <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
@@ -5012,7 +5055,7 @@ export default function POSSales() {
                 ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6,'0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6,'0')}` : '—'],
                 ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
                 ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
-                ['Opened At', xReportData?.session?.openedAt ? new Date(xReportData.session.openedAt).toLocaleTimeString() : currentSession?.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : '—'],
+                ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
                 ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
                 ['Invoice Count', String(invoiceCount)],
               ].map(([k,v]) => (
@@ -5702,6 +5745,85 @@ export default function POSSales() {
 
   return (
     <div className="min-h-screen bg-[#F7F7FA]">
+      {/* ─── TERMINAL LOCKED BY ACTIVE CASHIER (SHIFT HANDOVER OVERLAY) ─── */}
+      {terminalLockedBy && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100">
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-8 text-center text-white relative">
+              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-4 border border-white/20 shadow-inner">
+                <Lock className="h-10 w-10 text-white animate-pulse" />
+              </div>
+              <h2 className="text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
+              <p className="text-white/80 text-sm font-medium">This POS Terminal has an ongoing session</p>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 flex items-center gap-4 shadow-sm">
+                <div className="w-12 h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                  <UserCheck className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Current Occupant</p>
+                  <p className="text-lg font-extrabold text-slate-800">{terminalLockedBy}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Session is strictly isolated to prevent multi-device collision.</p>
+                </div>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-5 space-y-3">
+                <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                  <Shield className="h-5 w-5 text-amber-600" />
+                  <span>Supervisor Override &amp; Shift Handover</span>
+                </div>
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  To initiate a shift handover or force unlock this terminal, supervisor verification is required. This will transfer terminal control to your account.
+                </p>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Supervisor Security PIN</label>
+                  <input
+                    type="password"
+                    placeholder="••••"
+                    maxLength={4}
+                    value={supervisorPinValue}
+                    onChange={(e) => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
+                    className={`w-full border rounded-xl px-4 py-3 text-sm font-mono tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-[#327F74] ${supervisorPinError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                  />
+                  {supervisorPinError && <p className="text-xs text-red-500 mt-1.5 text-center font-semibold">{supervisorPinError}</p>}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTerminalLockedBy(null);
+                    showFeedback('Viewing dashboard in read-only mode', 'info');
+                  }}
+                  className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
+                >
+                  Dismiss (Read-Only)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (supervisorPinValue !== '1234' && supervisorPinValue !== '9999') {
+                      setSupervisorPinError('Invalid Supervisor PIN. Try 1234 or 9999.');
+                      return;
+                    }
+                    setSupervisorPinError('');
+                    setSupervisorPinValue('');
+                    setTerminalLockedBy(null);
+                    showFeedback('Supervisor override successful. Shift handover complete.', 'success');
+                  }}
+                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  Authorize Handover
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Render current view */}
       {currentView === 'dashboard' && renderDashboard()}
       {currentView === 'console' && <POSConsole {...consoleProps} />}

@@ -42,22 +42,45 @@ public class PosTerminalService {
      * returns the existing terminal (idempotent). Otherwise creates a new one.
      */
     @Transactional
-    public Map<String, Object> registerOrRefresh(String deviceFingerprint, String deviceInfo,
+    public Map<String, Object> registerOrRefresh(String terminalId, String deviceFingerprint, String deviceInfo,
                                                   String requestedTerminalName, String counterName) {
-        // Check existing by fingerprint FIRST — branch context is not needed for a returning terminal.
-        // Avoids a 400 when the user's branch switcher is set to "All Branches" on page reload.
+        Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+        Long branchId = branch.getId();
+
+        // 1. Zero-Trust LocalStorage verification
+        if (terminalId != null && !terminalId.isBlank()) {
+            Optional<PosTerminal> byId = repo.findByTerminalId(terminalId);
+            if (byId.isPresent()) {
+                PosTerminal t = byId.get();
+                // Validate Branch Scope & Authorization
+                if (t.getBranchId().equals(branchId)) {
+                    // Validate Physical Lifecycle Status (Ensure not BLOCKED, MAINTENANCE, or DECOMMISSIONED)
+                    if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+                        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                    }
+                    t.setLastSeenAt(LocalDateTime.now());
+                    if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
+                    // Strict Immutability: Do NOT automatically overwrite deviceFingerprint
+                    repo.save(t);
+                    return Map.of("terminal", t, "isNew", false);
+                }
+            }
+        }
+
+        // 2. Fallback to lookup by deviceFingerprint (Ensuring branch match)
         Optional<PosTerminal> existing = repo.findByDeviceFingerprint(deviceFingerprint);
         if (existing.isPresent()) {
             PosTerminal t = existing.get();
-            t.setLastSeenAt(LocalDateTime.now());
-            if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
-            repo.save(t);
-            return Map.of("terminal", t, "isNew", false);
+            if (t.getBranchId().equals(branchId)) {
+                if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                }
+                t.setLastSeenAt(LocalDateTime.now());
+                if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
+                repo.save(t);
+                return Map.of("terminal", t, "isNew", false);
+            }
         }
-
-        // New terminal — branch is required to scope the registration.
-        Branch branch = branchAccessService.getRequiredCurrentUserBranch();
-        Long branchId = branch.getId();
 
         // Check max terminals
         PosSettings settings = settingsRepo.findByBranchId(branchId).orElse(new PosSettings());
@@ -68,12 +91,12 @@ public class PosTerminalService {
                     "Maximum number of terminals (" + max + ") reached for this branch.");
         }
 
-        String terminalId = "T" + String.format("%03d", active + 1) + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+        String newTerminalId = "T" + String.format("%03d", active + 1) + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
 
         PosTerminal terminal = new PosTerminal();
         terminal.setBranchId(branchId);
         terminal.setBranchName(branch.getName());
-        terminal.setTerminalId(terminalId);
+        terminal.setTerminalId(newTerminalId);
         terminal.setTerminalName(requestedTerminalName != null ? requestedTerminalName : "Terminal " + (active + 1));
         terminal.setCounterName(counterName != null ? counterName : "Counter " + (active + 1));
         terminal.setDeviceFingerprint(deviceFingerprint);
