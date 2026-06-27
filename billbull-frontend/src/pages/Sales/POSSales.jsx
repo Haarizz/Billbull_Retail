@@ -283,6 +283,25 @@ function DeliveryPersonSelect({ options = [], value, onChange, loading = false, 
   );
 }
 
+const parseUTCDate = (ts) => {
+  if (!ts) return null;
+  if (ts instanceof Date) return isNaN(ts.getTime()) ? null : ts;
+  if (typeof ts === 'number') {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  let s = String(ts);
+  const tIdx = s.indexOf('T');
+  if (tIdx !== -1 && !s.endsWith('Z')) {
+    const timePart = s.slice(tIdx);
+    if (!timePart.includes('+') && !timePart.includes('-')) {
+      s += 'Z';
+    }
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 export default function POSSales() {
   const { company } = useCompany();
   // Active currency CODE from the company profile (falls back to AED). Report
@@ -3567,7 +3586,7 @@ export default function POSSales() {
             {currentSession?.status === 'active' || currentSession?.status === 'OPEN' && (
               <div className="text-sm space-y-1">
                 <p className="text-gray-600">Opening Cash: {formatCurrency(currentSession.openingCash)}</p>
-                <p className="text-gray-600">Started: {currentSession.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : currentSession.startTime ? new Date(currentSession.startTime).toLocaleTimeString() : '—'}</p>
+                <p className="text-gray-600">Started: {currentSession.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : currentSession.startTime ? parseUTCDate(currentSession.startTime)?.toLocaleTimeString() : '—'}</p>
               </div>
             )}
           </CardContent>
@@ -3699,7 +3718,7 @@ export default function POSSales() {
         const statDropOut = xSummary.cashDropOut ?? 0;
         const statExpectedCash = xSummary.expectedCash ?? (statOpeningCash + statCashSales + statDropIn - statDropOut);
 
-        const sessionStart = currentSession?.openedAt ? new Date(currentSession.openedAt) : null;
+        const sessionStart = currentSession?.openedAt ? parseUTCDate(currentSession.openedAt) : null;
         const nowMs = sessionNowMs;
         const diffMin = sessionStart ? Math.floor((nowMs - sessionStart.getTime()) / 60000) : 0;
         const durH = Math.floor(diffMin / 60);
@@ -3824,7 +3843,12 @@ export default function POSSales() {
     const cashVariance   = actualCash - expectedCash;
     const zCashierLabel  = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
     const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
-    const fmtTs = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : 'â€”';
+    const fmtTs = (t) => {
+      const d = parseUTCDate(t);
+      if (!d) return '—';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
     const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
     const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
@@ -4120,7 +4144,12 @@ export default function POSSales() {
     const totalPaidV     = Number(xSummary.totalPaid ?? totalSalesV);
     const voidAmountV    = Number(xSummary.voidAmount ?? 0);
     const sessInfo       = xReportData?.sessionInfo || {};
-    const fmtTs          = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '—';
+    const fmtTs          = (t) => {
+      const d = parseUTCDate(t);
+      if (!d) return '—';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
 
     const fmtDuration    = (seconds) => {
       const total = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -4131,7 +4160,7 @@ export default function POSSales() {
     };
     const durationSeconds = sessInfo.durationSeconds ?? sess?.durationSeconds
       ?? ((sess?.openedAt && sess?.closedAt)
-        ? Math.max(0, Math.floor((new Date(sess.closedAt).getTime() - new Date(sess.openedAt).getTime()) / 1000))
+        ? Math.max(0, Math.floor((parseUTCDate(sess.closedAt).getTime() - parseUTCDate(sess.openedAt).getTime()) / 1000))
         : null);
 
     return {
@@ -4979,7 +5008,7 @@ export default function POSSales() {
           const branchName = sess?.branchName || currentTerminal?.branchName || '—';
           const terminalId = sess?.terminalId || currentTerminal?.terminalId || '—';
           const cashier = sess?.openedBy || '—';
-          const openedAt = sess?.openedAt ? new Date(sess.openedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
+          const openedAt = sess?.openedAt ? parseUTCDate(sess.openedAt)?.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
           const currentTime = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
           return (
             <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
@@ -5026,7 +5055,7 @@ export default function POSSales() {
                 ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6,'0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6,'0')}` : '—'],
                 ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
                 ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
-                ['Opened At', xReportData?.session?.openedAt ? new Date(xReportData.session.openedAt).toLocaleTimeString() : currentSession?.openedAt ? new Date(currentSession.openedAt).toLocaleTimeString() : '—'],
+                ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
                 ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
                 ['Invoice Count', String(invoiceCount)],
               ].map(([k,v]) => (
