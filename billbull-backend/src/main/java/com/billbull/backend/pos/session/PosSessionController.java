@@ -31,7 +31,8 @@ public class PosSessionController {
         String counterName = body.getOrDefault("counterName", "Main Counter").toString();
         BigDecimal openingCash = body.get("openingCash") != null
                 ? new BigDecimal(body.get("openingCash").toString()) : BigDecimal.ZERO;
-        return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash));
+        boolean supervisorOverride = body.get("supervisorOverride") != null && Boolean.TRUE.equals(body.get("supervisorOverride"));
+        return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash, supervisorOverride));
     }
 
     @GetMapping("/active")

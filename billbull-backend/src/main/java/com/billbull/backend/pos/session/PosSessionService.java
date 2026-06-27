@@ -82,7 +82,7 @@ public class PosSessionService {
     }
 
     @Transactional
-    public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash) {
+    public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash, boolean supervisorOverride) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
 
@@ -90,6 +90,15 @@ public class PosSessionService {
         Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
+                if (supervisorOverride) {
+                    // Supervisor authorized a shift handover! Transfer the active session to the new cashier
+                    PosSession current = existing.get();
+                    current.setOpenedBy(currentUser());
+                    current.setNotes((current.getNotes() != null ? current.getNotes() + "\n" : "") + "Shift handover authorized to " + currentUser() + " at " + LocalDateTime.now());
+                    PosSession saved = repo.save(current);
+                    auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
+                    return saved;
+                }
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
             }
             // Return existing open session instead of throwing — cashier may have refreshed
