@@ -397,7 +397,9 @@ const AddEmployeeModal = ({
   const [formError, setFormError] = useState('');
 
   // --- Designation Roles (for Role/Designation dropdown) ---
-  const FALLBACK_ROLES = ['ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER'];
+  const FALLBACK_ROLES = ['ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DELIVERY_PERSON'];
+  const employeeRoleOptionValue = (roleName = '') => roleName === 'DELIVERY_PERSON' ? 'Delivery Person' : roleName;
+  const employeeRoleOptionLabel = (roleName = '') => roleName === 'DELIVERY_PERSON' ? 'Delivery Person' : roleName;
   const [designationRoles, setDesignationRoles] = useState([]);
   const [designationRolesLoading, setDesignationRolesLoading] = useState(false);
 
@@ -1083,8 +1085,8 @@ const AddEmployeeModal = ({
                         {designationRolesLoading ? 'Loading roles...' : 'Select a role'}
                       </option>
                       {(designationRoles.length > 0 ? designationRoles : FALLBACK_ROLES.map(r => ({ name: r }))).map((role) => (
-                        <option key={role.id ?? role.name} value={role.name}>
-                          {role.name}
+                        <option key={role.id ?? role.name} value={employeeRoleOptionValue(role.name)}>
+                          {employeeRoleOptionLabel(role.name)}
                         </option>
                       ))}
                     </select>
@@ -2373,6 +2375,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
     ACCOUNTANT:        'bg-green-100 text-green-700',
     SALES:             'bg-yellow-100 text-yellow-700',
     INVENTORY_MANAGER: 'bg-orange-100 text-orange-700',
+    DELIVERY_PERSON:   'bg-cyan-100 text-cyan-700',
   };
 
   return (

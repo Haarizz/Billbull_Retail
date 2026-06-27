@@ -27,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -100,6 +101,7 @@ public class PosSessionService {
         session.setOpenedBy(currentUser());
         session.setSessionDate(LocalDate.now());
         session.setOpenedAt(LocalDateTime.now());
+        session.setDurationSeconds(null);
         session.setStatus(PosSessionStatus.OPEN);
         session.setOpeningCash(openingCash != null ? openingCash : BigDecimal.ZERO);
         session.setTotalSales(BigDecimal.ZERO);
@@ -139,6 +141,12 @@ public class PosSessionService {
     @Transactional
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
                                    boolean supervisorApproved) {
+        return closeSession(sessionId, closingCash, notes, supervisorApproved, null);
+    }
+
+    @Transactional
+    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
+                                   boolean supervisorApproved, String closingDenominationsJson) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
@@ -168,13 +176,20 @@ public class PosSessionService {
             }
         }
 
+        LocalDateTime closeTime = LocalDateTime.now();
         session.setClosedBy(currentUser());
-        session.setClosedAt(LocalDateTime.now());
+        session.setClosedAt(closeTime);
+        if (session.getOpenedAt() != null) {
+            session.setDurationSeconds(Math.max(0, ChronoUnit.SECONDS.between(session.getOpenedAt(), closeTime)));
+        }
         session.setStatus(PosSessionStatus.CLOSED);
         session.setClosingCash(actualClosing);
         session.setExpectedCash(expectedCash);
         session.setCashDifference(actualClosing.subtract(expectedCash));
         session.setNotes(notes);
+        if (closingDenominationsJson != null && !closingDenominationsJson.isBlank()) {
+            session.setClosingDenominationsJson(closingDenominationsJson);
+        }
 
         // Capture immutable Z-Report snapshot at close time
         String varianceStr = actualClosing.subtract(expectedCash).toPlainString();
@@ -413,8 +428,10 @@ public class PosSessionService {
         info.put("shift", deriveShift(s.getOpenedAt()));
         info.put("openedAt", s.getOpenedAt());
         info.put("closedAt", s.getClosedAt());
+        info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
         info.put("closingCash", nz(s.getClosingCash()));
+        info.put("closingDenominationsJson", s.getClosingDenominationsJson());
         return info;
     }
 

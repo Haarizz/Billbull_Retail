@@ -1,5 +1,7 @@
 package com.billbull.backend.pos.session;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -15,9 +17,11 @@ import java.util.Optional;
 public class PosSessionController {
 
     private final PosSessionService service;
+    private final ObjectMapper objectMapper;
 
-    public PosSessionController(PosSessionService service) {
+    public PosSessionController(PosSessionService service, ObjectMapper objectMapper) {
         this.service = service;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/open")
@@ -52,7 +56,17 @@ public class PosSessionController {
                 ? new BigDecimal(body.get("closingCash").toString()) : null;
         String notes = body != null ? (String) body.get("notes") : null;
         boolean supervisorApproved = body != null && Boolean.TRUE.equals(body.get("supervisorApproved"));
-        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved));
+        String closingDenominationsJson = toJson(body != null ? body.get("closingDenominations") : null);
+        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson));
+    }
+
+    private String toJson(Object value) {
+        if (value == null) return null;
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 
     @PostMapping("/{id}/cash-movement")

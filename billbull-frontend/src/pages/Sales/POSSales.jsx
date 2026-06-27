@@ -149,6 +149,7 @@ import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
+import { getDeliveryPersons } from '../../api/employeeApi';
 import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
@@ -156,6 +157,131 @@ const buildPosScannerStorageKey = (branchId, terminalId) => {
   if (!branchId && !terminalId) return null;
   return `billbull:pos:scanner:${branchId ?? 'branch'}:${terminalId || 'shared'}`;
 };
+
+function DeliveryPersonSelect({ options = [], value, onChange, loading = false, error = '' }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [highlighted, setHighlighted] = useState(0);
+  const wrapperRef = useRef(null);
+
+  const selected = useMemo(
+    () => options.find(person => String(person.employeeCode) === String(value)) || null,
+    [options, value]
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(person => [
+      person.name,
+      person.employeeCode,
+      person.phone,
+    ].some(part => String(part || '').toLowerCase().includes(q)));
+  }, [options, search]);
+
+  useEffect(() => {
+    const handleClickAway = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setOpen(false);
+        setSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handleClickAway);
+    return () => document.removeEventListener('mousedown', handleClickAway);
+  }, []);
+
+  useEffect(() => {
+    setHighlighted(0);
+  }, [search, options.length]);
+
+  const commitSelection = (person) => {
+    if (!person) return;
+    onChange(person.employeeCode);
+    setSearch('');
+    setOpen(false);
+  };
+
+  const handleKeyDown = (event) => {
+    if (!open && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
+      setOpen(true);
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlighted(index => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlighted(index => Math.max(index - 1, 0));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      commitSelection(filtered[highlighted]);
+    } else if (event.key === 'Escape') {
+      setOpen(false);
+      setSearch('');
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div className={`flex items-center border rounded-xl bg-white overflow-hidden focus-within:border-[#327F74] ${error ? 'border-red-300' : 'border-gray-200'}`}>
+        <Search className="h-4 w-4 text-gray-400 ml-3 shrink-0" />
+        <input
+          type="text"
+          value={open ? search : (selected ? `${selected.name} (${selected.employeeCode})` : '')}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => { setSearch(event.target.value); setOpen(true); }}
+          onKeyDown={handleKeyDown}
+          placeholder={loading ? 'Loading delivery persons...' : 'Search delivery person'}
+          className="flex-1 min-w-0 px-2 py-2.5 text-sm focus:outline-none"
+          role="combobox"
+          aria-expanded={open}
+        />
+        {selected && (
+          <button
+            type="button"
+            onClick={() => { onChange(''); setSearch(''); setOpen(false); }}
+            className="p-2 text-gray-400 hover:text-gray-700"
+            aria-label="Clear delivery person"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(prev => !prev)}
+          className="p-2 text-gray-400 hover:text-gray-700"
+          aria-label="Open delivery person list"
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      </div>
+      {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl max-h-56 overflow-y-auto">
+          {loading ? (
+            <div className="px-3 py-3 text-xs text-gray-500">Loading delivery persons...</div>
+          ) : filtered.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-gray-500">No active delivery persons found</div>
+          ) : filtered.map((person, index) => (
+            <button
+              type="button"
+              key={person.employeeCode || person.id}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => commitSelection(person)}
+              className={`w-full text-left px-3 py-2.5 border-b border-gray-50 last:border-b-0 hover:bg-emerald-50 ${index === highlighted ? 'bg-emerald-50' : 'bg-white'}`}
+            >
+              <div className="text-sm font-semibold text-gray-900 truncate">{person.name || 'Unnamed employee'}</div>
+              <div className="text-xs text-gray-500 flex items-center gap-2">
+                <span>{person.employeeCode || '-'}</span>
+                <span>{person.phone || '-'}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function POSSales() {
   const { company } = useCompany();
@@ -178,6 +304,7 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+  const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
   // Behavior-settings editor (Console → Behavior tab)
   const [settingsDraft, setSettingsDraft] = useState(null);
@@ -249,6 +376,9 @@ export default function POSSales() {
   const [deliveryDate, setDeliveryDate] = useState('');
   const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
+  const [deliveryPersons, setDeliveryPersons] = useState([]);
+  const [deliveryPersonsLoading, setDeliveryPersonsLoading] = useState(false);
+  const [deliveryValidationErrors, setDeliveryValidationErrors] = useState({});
   
   // Quick Customer Creation Modal State
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
@@ -1193,6 +1323,33 @@ export default function POSSales() {
     }, 0);
   };
 
+  const getReportClosingDenominations = useCallback(() => {
+    const raw = xReportData?.sessionInfo?.closingDenominationsJson
+      || xReportData?.session?.closingDenominationsJson
+      || currentSession?.closingDenominationsJson;
+    if (!raw) return closingDenominations;
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (err) {
+      console.warn('Unable to parse saved closing denominations', err);
+    }
+    return closingDenominations;
+  }, [closingDenominations, currentSession?.closingDenominationsJson, xReportData?.sessionInfo?.closingDenominationsJson, xReportData?.session?.closingDenominationsJson]);
+
+  useEffect(() => {
+    const isActive = currentSession?.status === 'OPEN' || currentSession?.status === 'active';
+    if (!isActive || !currentSession?.openedAt) {
+      setSessionNowMs(Date.now());
+      return undefined;
+    }
+    setSessionNowMs(Date.now());
+    const timer = window.setInterval(() => setSessionNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);
+
   const handleStartSession = async () => {
     const total = calculateDenominationTotal(denominations);
     try {
@@ -1200,6 +1357,9 @@ export default function POSSales() {
       const counterName = currentTerminal?.counterName || 'Main Counter';
       const session = await openPosSession({ terminalId, counterName, openingCash: total });
       setCurrentSession(session);
+      setXReportData(null);
+      setZReportData(null);
+      setSessionNowMs(Date.now());
     } catch (err) {
       // Fallback to in-memory session if backend unavailable
       console.warn('Session API unavailable, falling back to local session', err);
@@ -1210,6 +1370,9 @@ export default function POSSales() {
         openedAt: new Date().toISOString(),
         status: 'OPEN'
       });
+      setXReportData(null);
+      setZReportData(null);
+      setSessionNowMs(Date.now());
     }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
@@ -1225,7 +1388,7 @@ export default function POSSales() {
       try {
         if (currentSession.id && typeof currentSession.id === 'number') {
           const closingTotal = calculateDenominationTotal(closingDenominations);
-          const closed = await closePosSession(currentSession.id, { closingCash: closingTotal });
+          const closed = await closePosSession(currentSession.id, { closingCash: closingTotal, closingDenominations });
           setCurrentSession(closed);
         } else {
           setCurrentSession({ ...currentSession, status: 'CLOSED' });
@@ -1235,6 +1398,7 @@ export default function POSSales() {
         setCurrentSession({ ...currentSession, status: 'CLOSED' });
       }
       setShowCloseSessionDialog(false);
+      setSessionNowMs(Date.now());
       setCurrentView('x-report');
       syncPosData();
     }
@@ -1633,6 +1797,19 @@ export default function POSSales() {
     }
   }, [currentTerminal?.branchId]);
 
+  const loadDeliveryPersons = useCallback(async () => {
+    setDeliveryPersonsLoading(true);
+    try {
+      const data = await getDeliveryPersons();
+      setDeliveryPersons(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('Failed to load delivery persons', err);
+      setDeliveryPersons([]);
+    } finally {
+      setDeliveryPersonsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (showDeliverySettleModal) {
       setDeliverySettleSearch('');
@@ -1645,8 +1822,36 @@ export default function POSSales() {
     }
   }, [showDeliverySettleModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (showDeliveryModal) {
+      loadDeliveryPersons();
+      setDeliveryValidationErrors({});
+    }
+  }, [showDeliveryModal, loadDeliveryPersons]);
+
+  const selectedDeliveryPerson = useMemo(
+    () => deliveryPersons.find(person => String(person.employeeCode) === String(deliveryDriver)) || null,
+    [deliveryPersons, deliveryDriver]
+  );
+
+  const validateDeliveryOrder = useCallback(() => {
+    const errors = {};
+    if (currentInvoice.items.length === 0) errors.items = 'Add at least one item before dispatching.';
+    if (!deliveryCustomerId) errors.customer = 'Customer is required.';
+    if (!deliveryAddress.trim()) errors.address = 'Delivery address is required.';
+    if (!deliveryDate) errors.date = 'Delivery date is required.';
+    if (!deliveryTimeSlot) errors.timeSlot = 'Time slot is required.';
+    if (!deliveryDriver) errors.deliveryDriver = 'Assign a delivery person.';
+    setDeliveryValidationErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      alert('Please complete the required delivery details before sending the order out for delivery.');
+      return false;
+    }
+    return true;
+  }, [currentInvoice.items.length, deliveryAddress, deliveryCustomerId, deliveryDate, deliveryDriver, deliveryTimeSlot]);
+
   const handleOutForDelivery = useCallback(async () => {
-    if (currentInvoice.items.length === 0 || !deliveryAddress) return;
+    if (!validateDeliveryOrder()) return;
     setDeliveryOutLoading(true);
     try {
       const customer = deliveryCustomerId
@@ -1668,7 +1873,10 @@ export default function POSSales() {
         branchCode: currentTerminal?.branchCode || null,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
         shippingAddress: deliveryAddress,
-        driverName: deliveryDriver || null,
+        driverName: selectedDeliveryPerson?.name || null,
+        deliveryPersonEmployeeCode: deliveryDriver || null,
+        deliveryDate,
+        deliveryTimeSlot,
         deliveryNotes: [
           deliveryDate ? `Date: ${deliveryDate}` : '',
           deliveryTimeSlot ? `Slot: ${deliveryTimeSlot}` : '',
@@ -1695,6 +1903,7 @@ export default function POSSales() {
       setDeliveryDate('');
       setDeliveryTimeSlot('');
       setDeliveryInstructions('');
+      setDeliveryValidationErrors({});
     } catch (err) {
       console.error('Out for delivery failed', err);
       alert(err?.response?.data?.message || 'Failed to create delivery order. Please try again.');
@@ -1703,7 +1912,7 @@ export default function POSSales() {
     }
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
       deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
-      currentTerminal, cartItemsToPayload, clearInvoice]);
+      currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder]);
 
   // Open the New Delivery Order dialog, pre-seeding the customer + default
   // address from whoever is already selected on the POS bill (a walk-in seeds
@@ -3478,7 +3687,7 @@ export default function POSSales() {
         const statExpectedCash = xSummary.expectedCash ?? (statOpeningCash + statCashSales + statDropIn - statDropOut);
 
         const sessionStart = currentSession?.openedAt ? new Date(currentSession.openedAt) : null;
-        const nowMs = Date.now();
+        const nowMs = sessionNowMs;
         const diffMin = sessionStart ? Math.floor((nowMs - sessionStart.getTime()) / 60000) : 0;
         const durH = Math.floor(diffMin / 60);
         const durM = diffMin % 60;
@@ -3555,6 +3764,7 @@ export default function POSSales() {
   // ── Report company profile helper ────────────────────────────────────────────
   const reportCompanyProfile = () => ({
     companyName: tplOutletName || 'BillBull ERP',
+    branchName: currentTerminal?.branchName || company?.branchName || '',
     trn: tplOutletTrn || '',
     address: tplOutletAddress || '',
     phone: tplOutletPhone || '',
@@ -3596,21 +3806,79 @@ export default function POSSales() {
     const cashierRows    = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
     const totalPaidV     = Number(zSummary.totalPaid ?? totalSalesV);
     const voidAmountV    = Number(zSummary.voidAmount ?? 0);
+    const refundTotal    = Number(zSummary.totalRefunds ?? 0);
+    const actualCash     = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
+    const cashVariance   = actualCash - expectedCash;
+    const zCashierLabel  = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
+    const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
+    const fmtTs = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : 'â€”';
+    const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
+    const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
+    const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
+    zSessionInfoRows.forEach((row) => {
+      const raw = row?.closingDenominationsJson;
+      if (!raw) return;
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        denomKeys.forEach((key) => { zDenominationTotals[key] += Number(parsed?.[key] || 0); });
+      } catch (err) {
+        console.warn('Unable to parse Z-report closing denominations', err);
+      }
+    });
 
     return {
       reportTitle: 'Z-Report / End-of-Day Closing Report',
       note: `Report No: ${reportNo}  |  Business Date: ${zReportDate || new Date().toISOString().slice(0,10)}  |  Sessions: ${sessionCount}`,
+      reportMeta: [
+        { label: 'Report No', value: reportNo },
+        { label: 'Session No', value: `${sessionCount} session${sessionCount === 1 ? '' : 's'}` },
+        { label: 'Cashier', value: zCashierLabel },
+        { label: 'Date & Time', value: new Date().toLocaleString() },
+        { label: 'Business Date', value: zReportDate || new Date().toISOString().slice(0,10) },
+        { label: 'Terminal', value: currentTerminal?.terminalId || 'All Terminals' },
+      ],
       kpis: [
-        { label: 'Gross Sales',     value: fmt(totalSalesV),   hint: 'Before discounts' },
-        { label: 'Cash Sales',      value: fmt(cashSalesV),    hint: 'Cash payments' },
-        { label: 'Card Sales',      value: fmt(cardSalesV),    hint: 'Card payments' },
-        { label: 'VAT Amount (5%)', value: fmt(totalTaxV),     hint: '5% VAT' },
-        { label: 'Expected Cash',   value: fmt(expectedCash),  hint: 'Opening + cash sales' },
-        { label: 'Total Invoices',  value: String(invoiceCount), hint: `${sessionCount} session(s)` },
+        { label: 'Opening Cash', value: fmt(openingCash), hint: `${sessionCount} session(s)`, icon: 'OC' },
+        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
+        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
+        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
+        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
+        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
+        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
+        { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + cash sales', icon: 'EC' },
+        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Closed session counts', icon: 'AC' },
+        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: actualCash === 0 ? 'Pending close count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess', icon: 'CV' },
       ],
       sections: [
         {
-          title: '1. Sales Summary', type: 'table',
+          title: '0. Session Information', type: 'table',
+          cols: ['Session', 'Cashier', 'Opened At', 'Closed At', 'Expected Cash', 'Actual Cash'],
+          rows: zSessionInfoRows.length
+            ? zSessionInfoRows.map((row) => [
+                row.sessionNo || 'â€”',
+                row.cashier || 'â€”',
+                fmtTs(row.openedAt),
+                fmtTs(row.closedAt),
+                fmt(Number(row.expectedCash ?? 0)),
+                fmt(Number(row.closingCash ?? 0)),
+              ])
+            : zSessions.map((row) => [
+                row.id ? `SESS-${String(row.id).padStart(6,'0')}` : 'â€”',
+                row.openedBy || 'â€”',
+                fmtTs(row.openedAt),
+                fmtTs(row.closedAt),
+                fmt(Number(row.expectedCash ?? 0)),
+                fmt(Number(row.closingCash ?? 0)),
+              ]),
+        },
+        {
+          title: '1. Denomination Count', type: 'table',
+          cols: ['Denomination', 'Quantity', 'Total Amount'],
+          rows: denomKeys.map(k => [denomLabels[k], String(zDenominationTotals[k] || 0), fmt((zDenominationTotals[k] || 0) * parseFloat(k))]),
+          footer: ['Total Cash Counted', '', fmt(calculateDenominationTotal(zDenominationTotals))],
+        },
+        {
+          title: '2. Sales Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
             ['Gross Sales',              fmt(totalSalesV)],
@@ -3818,7 +4086,8 @@ export default function POSSales() {
     const cashDropOut     = Number(xSummary.cashDropOut  ?? 0);
     const invoiceCount    = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
     const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-    const actualCash      = calculateDenominationTotal(closingDenominations);
+    const reportDenominations = getReportClosingDenominations();
+    const actualCash      = calculateDenominationTotal(reportDenominations);
     const cashVariance    = actualCash - expectedCashVal;
     const varStatus       = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
     const sessId = sess?.id || currentSession?.id;
@@ -3840,17 +4109,40 @@ export default function POSSales() {
     const sessInfo       = xReportData?.sessionInfo || {};
     const fmtTs          = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '—';
 
+    const fmtDuration    = (seconds) => {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      if (!total) return '0m';
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    };
+    const durationSeconds = sessInfo.durationSeconds ?? sess?.durationSeconds
+      ?? ((sess?.openedAt && sess?.closedAt)
+        ? Math.max(0, Math.floor((new Date(sess.closedAt).getTime() - new Date(sess.openedAt).getTime()) / 1000))
+        : null);
+
     return {
       reportTitle: 'X-Report / Session Close Report',
       note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6,'0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0,10)}`,
+      reportMeta: [
+        { label: 'Report No', value: reportNo },
+        { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6,'0')}` },
+        { label: 'Cashier', value: sessInfo.cashier || sess?.openedBy || '-' },
+        { label: 'Date & Time', value: new Date().toLocaleString() },
+        { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) },
+        { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
+      ],
       kpis: [
-        { label: 'Opening Cash',       value: fmt(openingCashVal),  hint: 'Float' },
-        { label: 'Total Sales',        value: fmt(totalSalesV),     hint: 'Inc. VAT' },
-        { label: 'Cash Sales',         value: fmt(cashSalesV),      hint: 'Cash payments' },
-        { label: 'Card Sales',         value: fmt(cardSalesV),      hint: 'Card payments' },
-        { label: 'Expected Cash',      value: fmt(expectedCashVal), hint: 'Opening + cash sales' },
-        { label: 'Actual Cash Counted',value: fmt(actualCash),      hint: 'Denomination count' },
-        { label: 'Cash Variance',      value: fmt(Math.abs(cashVariance)), hint: varStatus },
+        { label: 'Opening Cash', value: fmt(openingCashVal), hint: 'Float', icon: 'OC' },
+        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
+        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
+        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
+        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
+        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
+        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
+        { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + cash sales', icon: 'EC' },
+        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Denomination count', icon: 'AC' },
+        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: varStatus, icon: 'CV' },
       ],
       sections: [
         {
@@ -3866,12 +4158,13 @@ export default function POSSales() {
             ['Cashier',      sessInfo.cashier || sess?.openedBy || '—'],
             ['Opened At',    fmtTs(sessInfo.openedAt || sess?.openedAt)],
             ['Closed At',    fmtTs(sessInfo.closedAt || sess?.closedAt)],
+            ['Duration',     fmtDuration(durationSeconds)],
           ],
         },
         {
           title: '1. Denomination Count', type: 'table',
           cols: ['Denomination', 'Quantity', 'Total Amount'],
-          rows: denomKeys.map(k => [denomLabels[k], String(closingDenominations[k] || 0), fmt((closingDenominations[k] || 0) * parseFloat(k))]),
+          rows: denomKeys.map(k => [denomLabels[k], String(reportDenominations[k] || 0), fmt((reportDenominations[k] || 0) * parseFloat(k))]),
           footer: ['Total Cash Counted', '', fmt(actualCash)],
         },
         {
@@ -4007,7 +4300,8 @@ export default function POSSales() {
     const cashDropOut     = fmt(xSummary.cashDropOut ?? 0);
     const invoiceCount    = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
     const expectedCash    = fmt(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-    const actualCash      = fmt(calculateDenominationTotal(closingDenominations));
+    const reportDenominations = getReportClosingDenominations();
+    const actualCash      = fmt(calculateDenominationTotal(reportDenominations));
     const variance        = fmt(actualCash - expectedCash);
     const refundTotal     = fmt(sess?.totalRefunds ?? 0);
     const totalVoids      = sess?.totalVoids ?? 0;
@@ -4018,8 +4312,8 @@ export default function POSSales() {
       ...denomKeys.map((k, i) => ({
         Section: i === 0 ? 'Denomination Count' : '',
         Description: denomLabels[k],
-        Count: closingDenominations[k] || 0,
-        Amount: fmt((closingDenominations[k] || 0) * parseFloat(k)),
+        Count: reportDenominations[k] || 0,
+        Amount: fmt((reportDenominations[k] || 0) * parseFloat(k)),
       })),
       { Section: 'Cash Drawer',     Description: 'Opening Cash / Float',       Count: '',  Amount: openingCashVal },
       { Section: '',                Description: 'Cash Sales',                  Count: '',  Amount: cashSalesV },
@@ -4560,7 +4854,8 @@ export default function POSSales() {
   const renderXReport = () => {
     const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
-    const actualCash = calculateDenominationTotal(closingDenominations);
+    const reportDenominations = getReportClosingDenominations();
+    const actualCash = calculateDenominationTotal(reportDenominations);
 
     // Pull live figures from xReportData when available, fall back to session state
     const xSummary = xReportData?.summary || {};
@@ -4774,13 +5069,13 @@ export default function POSSales() {
                           <input
                             type="number"
                             min="0"
-                            value={closingDenominations[k] || 0}
+                            value={reportDenominations[k] || 0}
                             onChange={e => setClosingDenominations({...closingDenominations, [k]: parseInt(e.target.value)||0})}
                             className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]"
                           />
                         </td>
                         <td className="px-2 py-1.5 text-right text-[#1E293B]">
-                          <DirhamSymbol /> {(parseFloat(k) * (closingDenominations[k]||0)).toFixed(2)}
+                          <DirhamSymbol /> {(parseFloat(k) * (reportDenominations[k]||0)).toFixed(2)}
                         </td>
                       </tr>
                     ))}
@@ -9466,6 +9761,7 @@ export default function POSSales() {
                           <button key={c.id} type="button"
                             onClick={() => {
                               setDeliveryCustomerId(String(c.id));
+                              setDeliveryValidationErrors(prev => ({ ...prev, customer: '' }));
                               if (c.address || c.billingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.billingAddress));
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left transition-colors">
@@ -9490,29 +9786,34 @@ export default function POSSales() {
                 )}
               </div>
 
+              {deliveryValidationErrors.customer && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.customer}</p>}
+
               <div>
                 <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
-                <textarea rows={3} value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)}
+                <textarea rows={3} value={deliveryAddress} onChange={e => { setDeliveryAddress(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, address: '' })); }}
                   placeholder="Building, street, area, city..."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none" />
+                  className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none ${deliveryValidationErrors.address ? 'border-red-300' : 'border-gray-200'}`} />
+                {deliveryValidationErrors.address && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.address}</p>}
               </div>
 
               {/* Delivery Schedule (Date & Time Slot) */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date</label>
-                  <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white" />
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date <span className="text-red-500">*</span></label>
+                  <input type="date" value={deliveryDate} onChange={e => { setDeliveryDate(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, date: '' })); }}
+                    className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white ${deliveryValidationErrors.date ? 'border-red-300' : 'border-gray-200'}`} />
+                  {deliveryValidationErrors.date && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.date}</p>}
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Time Slot</label>
-                  <select value={deliveryTimeSlot} onChange={e => setDeliveryTimeSlot(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white">
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Time Slot <span className="text-red-500">*</span></label>
+                  <select value={deliveryTimeSlot} onChange={e => { setDeliveryTimeSlot(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, timeSlot: '' })); }}
+                    className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white ${deliveryValidationErrors.timeSlot ? 'border-red-300' : 'border-gray-200'}`}>
                     <option value="">— Select slot —</option>
                     <option value="Morning (9 AM - 1 PM)">Morning (9 AM - 1 PM)</option>
                     <option value="Afternoon (1 PM - 5 PM)">Afternoon (1 PM - 5 PM)</option>
                     <option value="Evening (5 PM - 9 PM)">Evening (5 PM - 9 PM)</option>
                   </select>
+                  {deliveryValidationErrors.timeSlot && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.timeSlot}</p>}
                 </div>
               </div>
 
@@ -9535,12 +9836,17 @@ export default function POSSales() {
                   <p className="text-[10px] text-gray-400 mt-0.5">Optional — leave blank if free delivery</p>
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Delivery Person</label>
-                  <select value={deliveryDriver} onChange={e => setDeliveryDriver(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]">
-                    <option value="">— Select person —</option>
-                    {['Ahmed K.', 'Ravi S.', 'Omar F.'].map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Delivery Person <span className="text-red-500">*</span></label>
+                  <DeliveryPersonSelect
+                    options={deliveryPersons}
+                    value={deliveryDriver}
+                    loading={deliveryPersonsLoading}
+                    error={deliveryValidationErrors.deliveryDriver}
+                    onChange={(employeeCode) => {
+                      setDeliveryDriver(employeeCode);
+                      setDeliveryValidationErrors(prev => ({ ...prev, deliveryDriver: '' }));
+                    }}
+                  />
                 </div>
               </div>
 
@@ -9567,7 +9873,7 @@ export default function POSSales() {
                 Cancel
               </button>
               <button type="button"
-                disabled={deliveryOutLoading || !deliveryAddress || currentInvoice.items.length === 0 || !deliveryCustomerId}
+                disabled={deliveryOutLoading || currentInvoice.items.length === 0}
                 onClick={handleOutForDelivery}
                 className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
                 <Truck className="h-4 w-4" />
