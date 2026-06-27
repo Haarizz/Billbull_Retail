@@ -1124,7 +1124,7 @@ export default function POSSales() {
         const nav = window.navigator;
         let fp = localStorage.getItem('billbull:pos:device_fingerprint');
         if (!fp) {
-          fp = btoa([nav.userAgent, screen.width, screen.height, screen.colorDepth, Intl.DateTimeFormat().resolvedOptions().timeZone, crypto.randomUUID ? crypto.randomUUID() : Math.random()].join('|')).slice(0, 64);
+          fp = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
           localStorage.setItem('billbull:pos:device_fingerprint', fp);
         }
         const cachedTerminalId = localStorage.getItem('billbull:pos:terminal_id') || null;
