@@ -4,9 +4,9 @@ const BASE = "/api/pos";
 
 // ── Terminal registration ──────────────────────────────────────────────────
 
-export const registerPosTerminal = async ({ deviceFingerprint, deviceInfo, terminalName, counterName }) => {
+export const registerPosTerminal = async ({ terminalId, deviceFingerprint, deviceInfo, terminalName, counterName }) => {
   const res = await api.post(`${BASE}/terminals/register`, {
-    deviceFingerprint, deviceInfo, terminalName, counterName,
+    terminalId, deviceFingerprint, deviceInfo, terminalName, counterName,
   });
   return res.data; // { terminal, isNew }
 };
