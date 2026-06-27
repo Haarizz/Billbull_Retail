@@ -1374,6 +1374,12 @@ export default function POSSales() {
       setZReportData(null);
       setSessionNowMs(Date.now());
     } catch (err) {
+      if (err.response?.status === 409) {
+        setShowStartSessionDialog(false);
+        setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
+        showFeedback('Terminal is in use by another cashier. Supervisor override required.', 'error');
+        return;
+      }
       // Fallback to in-memory session if backend unavailable
       console.warn('Session API unavailable, falling back to local session', err);
       setCurrentSession({
