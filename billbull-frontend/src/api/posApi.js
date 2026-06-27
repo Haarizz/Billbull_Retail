@@ -32,8 +32,8 @@ export const verifyPosSupervisorPin = async (pin) => {
 
 // ── Session management ─────────────────────────────────────────────────────
 
-export const openPosSession = async ({ terminalId, counterName, openingCash = 0, supervisorOverride = false }) => {
-  const res = await api.post(`${BASE}/sessions/open`, { terminalId, counterName, openingCash, supervisorOverride });
+export const openPosSession = async ({ terminalId, counterName, openingCash = 0 }) => {
+  const res = await api.post(`${BASE}/sessions/open`, { terminalId, counterName, openingCash });
   return res.data;
 };
 

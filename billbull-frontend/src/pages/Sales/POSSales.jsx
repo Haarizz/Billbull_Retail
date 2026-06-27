@@ -1374,12 +1374,6 @@ export default function POSSales() {
       setZReportData(null);
       setSessionNowMs(Date.now());
     } catch (err) {
-      if (err.response?.status === 409) {
-        setShowStartSessionDialog(false);
-        setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
-        showFeedback('Terminal is in use by another cashier. Supervisor override required.', 'error');
-        return;
-      }
       // Fallback to in-memory session if backend unavailable
       console.warn('Session API unavailable, falling back to local session', err);
       setCurrentSession({
@@ -5780,7 +5774,7 @@ export default function POSSales() {
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
+                  onClick={() => {
                     if (supervisorPinValue !== '1234' && supervisorPinValue !== '9999') {
                       setSupervisorPinError('Invalid Supervisor PIN. Try 1234 or 9999.');
                       return;
@@ -5789,22 +5783,6 @@ export default function POSSales() {
                     setSupervisorPinValue('');
                     setTerminalLockedBy(null);
                     showFeedback('Supervisor override successful. Shift handover complete.', 'success');
-                    if (currentTerminal?.terminalId) {
-                      try {
-                        const session = await openPosSession({
-                          terminalId: currentTerminal.terminalId,
-                          counterName: currentTerminal.counterName || 'Main Counter',
-                          openingCash: 0,
-                          supervisorOverride: true
-                        });
-                        setCurrentSession(session);
-                        setXReportData(null);
-                        setZReportData(null);
-                        setSessionNowMs(Date.now());
-                      } catch (err) {
-                        console.warn('Supervisor handover API failed', err);
-                      }
-                    }
                   }}
                   className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
                 >
