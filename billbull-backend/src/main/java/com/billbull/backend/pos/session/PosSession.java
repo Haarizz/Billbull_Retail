@@ -133,11 +133,23 @@ public class PosSession extends BaseEntity {
     public LocalDate getSessionDate() { return sessionDate; }
     public void setSessionDate(LocalDate sessionDate) { this.sessionDate = sessionDate; }
 
+    @JsonIgnore
     public LocalDateTime getOpenedAt() { return openedAt; }
     public void setOpenedAt(LocalDateTime openedAt) { this.openedAt = openedAt; }
 
+    @com.fasterxml.jackson.annotation.JsonProperty("openedAt")
+    public java.time.ZonedDateTime getOpenedAtZoned() {
+        return openedAt != null ? openedAt.atZone(java.time.ZoneId.systemDefault()) : null;
+    }
+
+    @JsonIgnore
     public LocalDateTime getClosedAt() { return closedAt; }
     public void setClosedAt(LocalDateTime closedAt) { this.closedAt = closedAt; }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("closedAt")
+    public java.time.ZonedDateTime getClosedAtZoned() {
+        return closedAt != null ? closedAt.atZone(java.time.ZoneId.systemDefault()) : null;
+    }
 
     public Long getDurationSeconds() { return durationSeconds; }
     public void setDurationSeconds(Long durationSeconds) { this.durationSeconds = durationSeconds; }

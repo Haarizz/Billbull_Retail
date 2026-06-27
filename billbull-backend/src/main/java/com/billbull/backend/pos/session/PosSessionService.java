@@ -428,8 +428,8 @@ public class PosSessionService {
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
         info.put("shift", deriveShift(s.getOpenedAt()));
-        info.put("openedAt", s.getOpenedAt());
-        info.put("closedAt", s.getClosedAt());
+        info.put("openedAt", s.getOpenedAt() != null ? s.getOpenedAt().atZone(java.time.ZoneId.systemDefault()) : null);
+        info.put("closedAt", s.getClosedAt() != null ? s.getClosedAt().atZone(java.time.ZoneId.systemDefault()) : null);
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
         info.put("closingCash", nz(s.getClosingCash()));
