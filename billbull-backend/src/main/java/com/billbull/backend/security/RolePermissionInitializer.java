@@ -64,6 +64,14 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
+        // DELIVERY_PERSON: delivery-focused employee role, configurable in Roles & Permissions.
+        roleRepository.findByName("DELIVERY_PERSON").ifPresent(role -> {
+            seedIfAbsent(role, "sales",        true,  false, false, false, false);
+            seedIfAbsent(role, "customer",     true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
+        });
+
         // ACCOUNTANT: full finance, read/export purchases+sales, dashboard
         roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
             seedIfAbsent(role, "finance",      true,  true,  true,  true,  true);

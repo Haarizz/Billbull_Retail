@@ -122,6 +122,7 @@ const ROLE_META = {
   HR:                { bg: 'bg-blue-50',    border: 'border-blue-200',   dot: 'bg-blue-600',   text: 'text-blue-700',   badge: 'bg-blue-100 text-blue-700' },
   ACCOUNTANT:        { bg: 'bg-green-50',   border: 'border-green-200',  dot: 'bg-green-600',  text: 'text-green-700',  badge: 'bg-green-100 text-green-700' },
   INVENTORY_MANAGER: { bg: 'bg-orange-50',  border: 'border-orange-200', dot: 'bg-orange-500', text: 'text-orange-700', badge: 'bg-orange-100 text-orange-700' },
+  DELIVERY_PERSON:   { bg: 'bg-cyan-50',    border: 'border-cyan-200',   dot: 'bg-cyan-600',   text: 'text-cyan-700',   badge: 'bg-cyan-100 text-cyan-700' },
 };
 
 const DEFAULT_META = { bg: 'bg-slate-50', border: 'border-slate-200', dot: 'bg-slate-400', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600' };
