@@ -91,12 +91,12 @@ public class PosTerminalService {
                     "Maximum number of terminals (" + max + ") reached for this branch.");
         }
 
-        String terminalId = "T" + String.format("%03d", active + 1) + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+        String newTerminalId = "T" + String.format("%03d", active + 1) + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
 
         PosTerminal terminal = new PosTerminal();
         terminal.setBranchId(branchId);
         terminal.setBranchName(branch.getName());
-        terminal.setTerminalId(terminalId);
+        terminal.setTerminalId(newTerminalId);
         terminal.setTerminalName(requestedTerminalName != null ? requestedTerminalName : "Terminal " + (active + 1));
         terminal.setCounterName(counterName != null ? counterName : "Counter " + (active + 1));
         terminal.setDeviceFingerprint(deviceFingerprint);
