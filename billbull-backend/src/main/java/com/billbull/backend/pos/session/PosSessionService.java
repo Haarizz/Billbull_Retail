@@ -121,7 +121,9 @@ public class PosSessionService {
     @Transactional(readOnly = true)
     public Optional<PosSession> getActiveSession(String terminalId) {
         if (terminalId != null && !terminalId.isBlank()) {
-            Optional<PosSession> sessionOpt = repo.findByTerminalIdAndStatus(terminalId, PosSessionStatus.OPEN);
+            Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+            Long branchId = branch.getId();
+            Optional<PosSession> sessionOpt = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
             if (sessionOpt.isPresent()) {
                 PosSession session = sessionOpt.get();
                 if (!currentUser().equals(session.getOpenedBy())) {

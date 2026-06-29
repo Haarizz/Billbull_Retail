@@ -5876,6 +5876,22 @@ export default function POSSales() {
                   {handoverBusy ? 'Verifying…' : 'Authorize Handover'}
                 </button>
               </div>
+              <div className="border-t border-slate-100 pt-4">
+                <p className="text-[10px] text-slate-400 text-center mb-2">On a different physical device? Your device may have inherited a stale terminal assignment.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+                      localStorage.removeItem('billbull:pos:device_fingerprint');
+                      localStorage.removeItem('billbull:pos:terminal_id');
+                      window.location.reload();
+                    }
+                  }}
+                  className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-500 font-semibold text-xs hover:bg-slate-50 hover:text-slate-700 transition-all"
+                >
+                  Register as New Terminal (Different Device)
+                </button>
+              </div>
             </div>
           </div>
         </div>
