@@ -25,7 +25,6 @@ import {
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
-  holdSale, getHeldSales, recallHeldSale,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
@@ -902,7 +901,10 @@ export default function POSSales() {
         })),
       };
 
+      const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+        depositApplied: previewDeposit > 0 ? previewDeposit : null,
+        balanceDue: previewDeposit > 0 ? Math.max(0, (currentInvoice.total || 0) - previewDeposit) : null,
         companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
         showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
@@ -921,7 +923,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
+  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit,
       checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
       tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -2039,11 +2041,24 @@ export default function POSSales() {
   const loadHeldSales = useCallback(async () => {
     if (!sessionId) { setHeldSales([]); return; }
     try {
-      setHeldSales(await getHeldSales(sessionId));
+      // A "Hold" is a zero-deposit layaway (hold=true). The quick-recall pills show
+      // this session's open holds; full layaways live in the Layaways list.
+      const branchId = currentTerminal?.branchId || currentSession?.branchId || null;
+      const all = await getLayaways({ branchId, status: 'ACTIVE' });
+      const holds = (all || [])
+        .filter(l => l.hold === true && l.posSessionId === sessionId)
+        .map(l => ({
+          id: l.id,
+          label: l.layawayNumber,
+          total: l.saleTotal || 0,
+          itemCount: (l.items || []).length,
+          customerName: l.customerName,
+        }));
+      setHeldSales(holds);
     } catch (err) {
       console.warn('Held sales load failed', err);
     }
-  }, [sessionId]);
+  }, [sessionId, currentTerminal, currentSession]);
 
   useEffect(() => { loadHeldSales(); }, [loadHeldSales]);
 
@@ -2064,21 +2079,30 @@ export default function POSSales() {
     }
   }, [loadPosCustomers, loadPosProducts, loadXReport, loadHeldSales, currentSession?.status]);
 
+  // Hold = a zero-deposit layaway. Reuses the layaway reservation workflow (stock is
+  // reserved, it shows in the Layaways list) but takes no deposit and allows Walk-in.
   const holdInvoice = async () => {
     if (currentInvoice.items.length === 0 || holdBusy) return;
     if (!sessionId) { alert('Open a POS session before holding a bill.'); return; }
     setHoldBusy(true);
     try {
-      await holdSale({
-        sessionId,
+      const isWalkIn = !selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id;
+      await createLayaway({
+        hold: true,
+        customerCode: isWalkIn ? 'WALK-IN' : (selectedCustomerData.code || selectedCustomerData.id),
+        customerName: isWalkIn ? 'Walk-in Customer' : selectedCustomerData.name,
+        customerPhone: isWalkIn ? null : (selectedCustomerData.phone || null),
         branchId: currentTerminal?.branchId || currentSession?.branchId || null,
+        branchName: currentTerminal?.branchName || currentSession?.branchName || null,
+        branchCode: currentTerminal?.branchCode || null,
+        sessionId,
         terminalId: currentTerminal?.terminalId || null,
-        customerCode: selectedCustomerData?.id !== WALK_IN_CUSTOMER.id
-          ? (selectedCustomerData?.code || selectedCustomerData?.id) : 'WALK-IN',
-        customerName: selectedCustomerData?.name || 'Walk-in Customer',
-        cartJson: JSON.stringify(currentInvoice),
-        total: currentInvoice.total,
-        itemCount: currentInvoice.items.length,
+        counterName: currentTerminal?.counterName || null,
+        depositRequired: false,
+        depositAmount: 0,
+        reserveStockRequested: true,
+        billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        items: cartItemsToPayload(currentInvoice.items),
       });
       clearInvoice();
       await loadHeldSales();
@@ -2090,15 +2114,12 @@ export default function POSSales() {
     }
   };
 
+  // Recall a held bill: load its hold-layaway back into the live cart for completion
+  // (checkout marks the hold converted, releasing its reservation).
   const recallInvoice = async (id) => {
     try {
-      const held = await recallHeldSale(id);
-      if (held?.cartJson) {
-        const cart = JSON.parse(held.cartJson);
-        setCurrentInvoice(recalculateInvoice(cart.items || []));
-      }
+      await startLayawayConversion(id);
       await loadHeldSales();
-      syncPosData();
     } catch (err) {
       alert(err?.response?.data?.message || 'Failed to recall the held bill.');
     }
@@ -2394,6 +2415,8 @@ export default function POSSales() {
     customerEmail = null,
     creditPreviousBalance = null,
     cashierNameOverride = null,
+    depositApplied = null,
+    balanceDue = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
     const qrDataUrl = tplInvoiceShowQRCode
@@ -2426,6 +2449,8 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
       customerPhone,
       customerEmail,
       creditPreviousBalance,
@@ -2443,6 +2468,8 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
       customerPhone,
       customerEmail,
       currency: activeCurrency,
@@ -2592,6 +2619,8 @@ export default function POSSales() {
             changeAmount: changeDue,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
+            balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
@@ -6567,6 +6596,27 @@ export default function POSSales() {
               <div className="flex-1 overflow-y-auto">
                 <div className="p-4 space-y-3">
 
+                  {/* ── Deposit / balance summary (layaway or hold conversion) ── */}
+                  {depositAmt > 0 && (
+                    <div className="bg-white rounded-2xl border border-[#F5C742]/50 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Settlement Summary</p>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between text-gray-600">
+                          <span>Order Total</span>
+                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={grandTotal} /></span>
+                        </div>
+                        <div className="flex justify-between text-green-700">
+                          <span>Deposit Paid</span>
+                          <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
+                        </div>
+                        <div className="flex justify-between border-t border-gray-100 pt-1.5 text-[#1E293B]">
+                          <span className="font-bold">Balance Due Now</span>
+                          <span className="font-black text-[#F5C742]"><CurrencyAmount amount={effectiveDue} /></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ── Pay Mode ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Payment Mode</p>
@@ -8236,6 +8286,7 @@ export default function POSSales() {
             due: l.dueDate || '—',
             status: STATUS_ENUM_TO_LABEL[eff] || eff,
             isOpen: eff === 'ACTIVE' || eff === 'PARTIALLY_PAID' || eff === 'READY_TO_CONVERT',
+            hold: !!l.hold,
             raw: l,
           };
         });
@@ -8283,7 +8334,10 @@ export default function POSSales() {
                           {filtered.map(l=>(
                             <tr key={l.entityId} onClick={()=>setSelectedLayawayId(l.entityId===selectedLayawayId?null:l.entityId)}
                               className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status==='Expired'?'bg-red-50/30':''} ${l.entityId===selectedLayawayId?'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]':'hover:bg-white'}`}>
-                              <td className="px-3 py-2 font-semibold text-[#1E293B]">{l.id}</td>
+                              <td className="px-3 py-2 font-semibold text-[#1E293B] whitespace-nowrap">
+                                {l.id}
+                                {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
+                              </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.date}</td>
                               <td className="px-3 py-2 text-[#1E293B] max-w-[90px] truncate">{l.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{l.cashier}</td>

@@ -70,16 +70,21 @@ public class PosLayawayService {
         if (activeCount == 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot save a layaway with no active (non-voided) items");
         }
+        // A POS "Hold" reuses the layaway machinery but is deposit-free and may be a
+        // Walk-in (no real customer required); a full layaway still requires a customer.
+        boolean isHold = Boolean.TRUE.equals(req.getHold());
         boolean hasRealCustomer = req.getCustomerCode() != null
                 && !req.getCustomerCode().isBlank()
                 && !"WALK-IN".equalsIgnoreCase(req.getCustomerCode().trim());
-        if (!hasRealCustomer) {
+        if (!isHold && !hasRealCustomer) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A customer is required to save a layaway");
         }
 
         PosLayaway layaway = new PosLayaway();
+        layaway.setHold(isHold);
         layaway.setLayawayNumber(nextLayawayNumber());
-        layaway.setCustomerCode(req.getCustomerCode().trim());
+        // customerCode may be null/blank/"WALK-IN" for a hold — store a stable code.
+        layaway.setCustomerCode(hasRealCustomer ? req.getCustomerCode().trim() : "WALK-IN");
         layaway.setCustomerName(req.getCustomerName());
         layaway.setCustomerPhone(req.getCustomerPhone());
         layaway.setBranchId(req.getBranchId());
@@ -151,10 +156,11 @@ public class PosLayawayService {
         layaway.setTaxTotal(round2(taxTotal));
         layaway.setSaleTotal(round2(saleTotal));
 
-        BigDecimal deposit = nz(req.getDepositAmount()).min(layaway.getSaleTotal());
+        // Holds never carry a deposit; a normal layaway takes the requested deposit (capped at total).
+        BigDecimal deposit = isHold ? BigDecimal.ZERO : nz(req.getDepositAmount()).min(layaway.getSaleTotal());
         layaway.setDepositAmount(round2(deposit));
-        layaway.setDepositPaymentMode(req.getDepositPaymentMode());
-        layaway.setDepositRequired(req.getDepositRequired() != null && req.getDepositRequired());
+        layaway.setDepositPaymentMode(isHold ? null : req.getDepositPaymentMode());
+        layaway.setDepositRequired(!isHold && req.getDepositRequired() != null && req.getDepositRequired());
         layaway.setBalanceAmount(round2(layaway.getSaleTotal().subtract(deposit).max(BigDecimal.ZERO)));
         layaway.setStatus(deriveStatus(layaway.getSaleTotal(), deposit));
 

@@ -100,6 +100,12 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "reserve_stock_requested")
     private Boolean reserveStockRequested = Boolean.TRUE;
 
+    /** True when this record was created via the POS "Hold" action rather than a full
+     *  layaway: it reuses the layaway reservation machinery but always carries a zero
+     *  deposit and does not require a real customer (Walk-in holds are allowed). */
+    @Column(name = "hold")
+    private Boolean hold = Boolean.FALSE;
+
     @Column(name = "converted_invoice_id")
     private Long convertedInvoiceId;
 
@@ -210,6 +216,9 @@ public class PosLayaway extends BaseEntity {
 
     public Boolean getReserveStockRequested() { return reserveStockRequested; }
     public void setReserveStockRequested(Boolean reserveStockRequested) { this.reserveStockRequested = reserveStockRequested; }
+
+    public Boolean getHold() { return hold; }
+    public void setHold(Boolean hold) { this.hold = hold; }
 
     public Long getConvertedInvoiceId() { return convertedInvoiceId; }
     public void setConvertedInvoiceId(Long convertedInvoiceId) { this.convertedInvoiceId = convertedInvoiceId; }

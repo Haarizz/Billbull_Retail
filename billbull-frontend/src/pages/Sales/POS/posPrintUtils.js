@@ -173,6 +173,9 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
   cashGiven = null, changeAmount = null,
+  // Layaway/Hold deposit already collected, shown as a reduction with the remaining
+  // balance due, when this sale settles a reserved order (§Layaway conversion).
+  depositApplied = null, balanceDue = null,
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
@@ -280,6 +283,12 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
+  // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
+  if (depositApplied != null && parseFloat(depositApplied) > 0) {
+    const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(grandTotal) - parseFloat(depositApplied));
+    html += `<div class="row"><span class="lbl">Deposit Paid:</span><span class="num">- ${cur} ${fmt(depositApplied)}</span></div>`;
+    html += `<div class="row b"><span>Balance Due:</span><span class="num">${cur} ${fmt(Math.max(0, bal))}</span></div>`;
+  }
   html += D;
 
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
@@ -371,6 +380,8 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   counterName = '',
   cashGiven = null,
   changeAmount = null,
+  depositApplied = null,
+  balanceDue = null,
   currency = 'AED',
   customerPhone = null,
   customerEmail = null,
@@ -429,6 +440,11 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   lines.push(buildFixedWidthLine('VAT', fmt(invoice.taxTotal), width));
   lines.push(hr);
   lines.push(buildFixedWidthLine('TOTAL', fmt(invoice.invoiceTotal), width));
+  if (depositApplied != null && parseFloat(depositApplied) > 0) {
+    const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(invoice.invoiceTotal || 0) - parseFloat(depositApplied));
+    lines.push(buildFixedWidthLine('Deposit Paid', `- ${fmt(depositApplied)}`, width));
+    lines.push(buildFixedWidthLine('Balance Due', fmt(Math.max(0, bal)), width));
+  }
   if (cashGiven != null && parseFloat(cashGiven) > 0) {
     lines.push(buildFixedWidthLine('Cash Received', fmt(cashGiven), width));
   }
