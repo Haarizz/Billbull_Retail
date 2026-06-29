@@ -17,13 +17,15 @@ export default defineConfig({
             if (id.includes('jspdf') || id.includes('html2canvas')) {
               return 'vendor-print';
             }
+            if (id.includes('qrcode') || id.includes('pngjs') || id.includes('buffer')) {
+              return 'vendor-qrcode';
+            }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
             }
             if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
               return 'vendor-react';
             }
-            return 'vendor';
           }
         }
       }
