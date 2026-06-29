@@ -20,7 +20,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.user.UserRepository;
 
 /**
  * ARCHFIX S5 — the POS supervisor PIN is BCrypt-hashed at rest and verified server-side.
@@ -31,13 +33,15 @@ class PosSettingsServiceTest {
 
     @Mock private PosSettingsRepository repo;
     @Mock private BranchAccessService branchAccessService;
+    @Mock private UserRepository userRepository;
+    @Mock private AuditLogService auditLogService;
 
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private PosSettingsService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosSettingsService(repo, branchAccessService, encoder);
+        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService);
     }
 
     @Test
