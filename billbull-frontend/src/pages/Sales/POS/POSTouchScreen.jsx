@@ -940,7 +940,8 @@ const POSTouchScreen = React.memo((props) => {
               <div className="flex justify-between text-xs text-gray-500">
                 <span>{(() => {
                   const rates = [...new Set(currentInvoice.items.filter(i=>!i.isVoided).map(i=>toNumber(i.taxRate,5)))];
-                  return rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
+                  const base = rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
+                  return currentInvoice.taxInclusive ? `${base} incl.` : base;
                 })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
               </div>
               {(Number(shippingCharge) || 0) > 0 && (

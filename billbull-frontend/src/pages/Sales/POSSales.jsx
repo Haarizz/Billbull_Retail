@@ -501,6 +501,9 @@ export default function POSSales() {
     billDiscountAmount: 0,
   });
   const currentInvoiceRef = useRef(null);
+  // True when the Quick Customer modal was launched from the Checkout credit
+  // panel, so the newly created customer is auto-selected as the credit buyer.
+  const quickCustomerCreditCtxRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [posProducts, setPosProducts] = useState([]);
@@ -890,6 +893,7 @@ export default function POSSales() {
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
+        taxInclusive: !!currentInvoice.taxInclusive,
         invoiceTotal: (currentInvoice.total || 0) + previewShipping,
         discountTotal: currentInvoice.totalDiscount || 0,
         items: (currentInvoice.items || []).map(it => ({
@@ -1840,16 +1844,29 @@ export default function POSSales() {
 
   const recalculateInvoice = (items, billDiscountAmount = 0) => {
     const activeItems = items.filter(i => !i.isVoided);
-    const subtotal = activeItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const totalDiscount = activeItems.reduce((sum, item) => sum + (item.price * item.quantity * item.discount / 100), 0);
-    // Per-line tax using each item's own rate (falls back to 5 if not set).
-    const tax = activeItems.reduce((sum, item) => {
-      const net = item.price * item.quantity * (1 - item.discount / 100);
-      return sum + net * (toNumber(item.taxRate, 5) / 100);
-    }, 0);
+    // Global VAT mode: Inclusive means the entered price already contains VAT,
+    // Exclusive means VAT is added on top. Fallback rate from POS settings.
+    const taxInclusive = !!posSettings?.taxInclusive;
+    const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
+
+    let subtotal = 0;       // net (ex-VAT) line value before line discount
+    let totalDiscount = 0;  // line discount on the same net basis
+    let tax = 0;            // extracted/added VAT after line discount
+
+    activeItems.forEach(item => {
+      const rate = toNumber(item.taxRate, fallbackRate) / 100;
+      const disc = (item.discount || 0) / 100;
+      const lineValue = item.price * item.quantity;
+      // In inclusive mode the price carries VAT, so strip it to get the net base.
+      const net = taxInclusive ? lineValue / (1 + rate) : lineValue;
+      subtotal += net;
+      totalDiscount += net * disc;
+      tax += net * (1 - disc) * rate;
+    });
+
     const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + tax);
 
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount };
+    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive };
   };
 
   const clearInvoice = () => {
@@ -2594,6 +2611,7 @@ export default function POSSales() {
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
         shippingAddress: deliveryAddress || shippingAddress || null,
         shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
+        taxInclusive: !!posSettings?.taxInclusive,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
         items,
@@ -5718,6 +5736,7 @@ export default function POSSales() {
   };
 
   const openQuickCustomerModal = useCallback((searchValue = '') => {
+    quickCustomerCreditCtxRef.current = false;
     const str = (searchValue || '').trim();
     let name = '';
     let mobile = '';
@@ -5795,6 +5814,11 @@ export default function POSSales() {
       const newCust = await createCustomer(payload);
       await loadPosCustomers();
       setSelectedCustomer(newCust.id);
+      if (quickCustomerCreditCtxRef.current) {
+        setCheckoutCreditCustomer(newCust.id);
+        setCheckoutCreditCustomerSearch('');
+        quickCustomerCreditCtxRef.current = false;
+      }
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
         if (newCust.billingAddress || newCust.address) {
@@ -6804,7 +6828,7 @@ export default function POSSales() {
                       )}
                       {/* Add new customer shortcut */}
                       {!creditCustomerData && (
-                        <button type="button" onClick={() => setShowAddCustomerDialog(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
+                        <button type="button" onClick={() => { openQuickCustomerModal(checkoutCreditCustomerSearch); quickCustomerCreditCtxRef.current = true; }} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
                           <UserPlus className="h-4 w-4" />
                           Add New Customer
                         </button>

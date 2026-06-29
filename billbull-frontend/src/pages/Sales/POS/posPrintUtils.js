@@ -283,7 +283,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
   if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
   // as their own lines so the total always ties out on the printed invoice.
   if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmt(invoice.deliveryCharge)}</span></div>`;
@@ -445,7 +445,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   if (parseFloat(invoice.discountTotal || 0) > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
   }
-  lines.push(buildFixedWidthLine('VAT', fmt(invoice.taxTotal), width));
+  lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
     lines.push(buildFixedWidthLine('Delivery Charge', fmt(invoice.deliveryCharge), width));
   }

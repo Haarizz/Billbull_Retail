@@ -100,6 +100,12 @@ public class SalesInvoice {
     @Column(name = "shipping_charge", precision = 15, scale = 2)
     private BigDecimal shippingCharge;
 
+    /** True when line prices already include VAT (Inclusive mode); VAT is then
+     *  extracted from the price rather than added on top. Persisted per-invoice so
+     *  historical receipts/reports recompute against the mode used at sale time. */
+    @Column(name = "tax_inclusive")
+    private Boolean taxInclusive = Boolean.FALSE;
+
     /** Manual rounding adjustment (+/-) applied to the invoice total. */
     @Column(precision = 15, scale = 2)
     private BigDecimal roundOff;
@@ -439,6 +445,14 @@ public class SalesInvoice {
 
     public void setShippingCharge(BigDecimal shippingCharge) {
         this.shippingCharge = shippingCharge;
+    }
+
+    public Boolean getTaxInclusive() {
+        return taxInclusive;
+    }
+
+    public void setTaxInclusive(Boolean taxInclusive) {
+        this.taxInclusive = taxInclusive;
     }
 
     public BigDecimal getRoundOff() {
