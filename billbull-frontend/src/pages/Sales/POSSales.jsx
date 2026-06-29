@@ -1478,7 +1478,7 @@ export default function POSSales() {
 
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null) => {
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null) => {
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -1541,6 +1541,7 @@ export default function POSSales() {
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
+          expiryDate: pinnedExpiry || product.expiryDate || null,
           // Lock qty on batch/serial lines — each line is exactly one physical
           // unit. The cart UI disables +/- for lines flagged batchControlled.
           batchControlled: isPinned || isBatchControlled,
@@ -2267,6 +2268,8 @@ export default function POSSales() {
         taxRate: it.taxRate != null ? it.taxRate : 5,
         total: (it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100),
         pinnedBatchNumber: it.pinnedBatchNumber || null,
+        serialNumber: it.serialNumber || null,
+        expiryDate: it.expiryDate || null,
         isVoided: !!it.voided,
       }));
       // Compute bill discount needed so the cart total matches the stored saleTotal exactly.
@@ -2931,6 +2934,7 @@ export default function POSSales() {
       cachePosProduct(productCacheRef.current, product);
       const pinnedBatchNumber = result.pinnedBatchNumber || null;
       const pinnedSerialNumber = result.pinnedSerialNumber || null;
+      const pinnedExpiry = result.pinnedExpiry || null;
       const cartItems = currentInvoiceRef.current?.items || [];
 
       // A scanned serial is a single unique unit. The same serial can never be
@@ -2961,7 +2965,7 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber);
+      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
         clearInputs();

@@ -288,14 +288,14 @@ const POSTouchScreen = React.memo((props) => {
                     <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
                       className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
                       <div className="col-span-6 min-w-0">
-                        <p className={`text-xs font-semibold leading-tight truncate ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                        <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
                         {item.isVoided
                           ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
-                          : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight truncate" dir="rtl">{item.nameAr}</p> : null}
+                          : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null}
                         {!item.isVoided && (cartViewDetailed ? (
                           <div className="mt-0.5 space-y-px">
                             {cartLineDetails(item).map(d => (
-                              <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight truncate">
+                              <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
                                 <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
                               </p>
                             ))}
@@ -882,11 +882,11 @@ const POSTouchScreen = React.memo((props) => {
                   className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
                   onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
                   <div className="col-span-5 min-w-0 pr-1">
-                    <p className={`text-[11px] font-semibold truncate leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                    <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
                     {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
                     {!item.isVoided && (cartViewDetailed ? (
                       cartLineDetails(item).map(d => (
-                        <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight truncate">
+                        <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
                           <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
                         </p>
                       ))
