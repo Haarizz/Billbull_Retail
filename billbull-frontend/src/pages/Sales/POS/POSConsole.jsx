@@ -54,7 +54,7 @@ const POSConsole = React.memo((props) => {
       { id:'promotions',label:'Promotions' },{ id:'last-receipt',label:'Last Receipt' },{ id:'orders',label:'Orders' },
       { id:'return',label:'Return' },{ id:'price-chk',label:'Price Check' },
       { id:'cash-drop',label:'Cash Drawer' },{ id:'credit-balance',label:'Credit Balance' },
-      { id:'z-report',label:'Z-Report' },{ id:'serial-batch',label:'Serial/Batch Check' },{ id:'reprint',label:'Reprint' },
+      { id:'z-report',label:'Z-Report' },{ id:'reprint',label:'Reprint' },
       { id:'lock-pos',label:'Lock POS' },{ id:'close-session',label:'Close Session' },
     ];
     const printerTypeOptions = [
@@ -477,13 +477,15 @@ const POSConsole = React.memo((props) => {
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons — not configurable in Cart Focus, which always
+                  shows the full functions panel. */}
+              {posTemplate !== 'focus' && (
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
                   <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Zap className="h-3.5 w-3.5 text-[#b8920e]" /></div>
                   Action Buttons
                 </h3>
-                <p className="text-xs text-gray-400 mb-4">Toggle which buttons appear in the Cart Focus functions panel.</p>
+                <p className="text-xs text-gray-400 mb-4">Toggle which buttons appear in the POS functions panel.</p>
                 <div className="grid grid-cols-2 gap-2">
                   {allBtnList.map(btn=>(
                     <div key={btn.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
@@ -493,6 +495,7 @@ const POSConsole = React.memo((props) => {
                   ))}
                 </div>
               </div>
+              )}
 
             </div>
           )}

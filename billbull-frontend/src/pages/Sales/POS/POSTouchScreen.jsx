@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Wrench, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
@@ -186,7 +186,6 @@ const POSTouchScreen = React.memo((props) => {
     { id:'last-receipt',    label:'Last Receipt',      icon:<Receipt className={iconCls}/>,       color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',        action:()=>setShowLastReceiptDialog(true) },
     { id:'orders',          label:'Orders',            icon:<Package className={iconCls}/>,       color:'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action:()=>setShowOrdersListDialog() },
     { id:'reprint',         label:'Reprint',           icon:<Printer className={iconCls}/>,       color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',        action:()=>setShowReprintModal(true) },
-    { id:'service',         label:'Service & Repair',  icon:<Wrench className={iconCls}/>,        color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/30 text-[#327F74]', action:()=>{ setShowServiceRepair(true); setServiceView('list'); } },
     { id:'delivery',        label:'Delivery',          icon:<Truck className={iconCls}/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>openDeliveryModal() },
     { id:'delivery-settle', label:'Delivery Settle',   icon:<PackageCheck className={iconCls}/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
     { id:'lock-pos',        label:'Lock POS',          icon:<Lock className={iconCls}/>,          color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',   action:()=>setShowLockPOS(true) },
