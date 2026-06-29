@@ -195,6 +195,15 @@ public class PosSessionService {
             session.setClosingDenominationsJson(closingDenominationsJson);
         }
 
+        // Closing a session implies its X-Report shift read is complete — stamp it so
+        // a terminal that closes out without explicitly running X-Report still satisfies
+        // the Z-Report end-of-day gate (closed terminals are no longer "active" anyway).
+        if (session.getXReportGeneratedAt() == null) {
+            session.setXReportGeneratedAt(closeTime);
+            session.setXReportGeneratedBy(currentUser());
+        }
+        session.setXReportPrinted(true);
+
         // Capture immutable Z-Report snapshot at close time
         String varianceStr = actualClosing.subtract(expectedCash).toPlainString();
         session.setZReportJson(buildZReportSnapshot(session, expectedCash, actualClosing));
@@ -312,6 +321,23 @@ public class PosSessionService {
         repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, voidDelta);
     }
 
+    /** Explicit shift X-Report run by an open terminal. Stamps {@code xReportGeneratedAt}
+     *  the first time it is called on an OPEN session (idempotent), then returns the same
+     *  payload as {@link #getXReport}. This stamp is what the end-of-day Z-Report gate
+     *  checks — the read-only {@link #getXReport} preview (used on the dashboard) never
+     *  marks completion. */
+    @Transactional
+    public Map<String, Object> generateXReport(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
+            session.setXReportGeneratedAt(LocalDateTime.now());
+            session.setXReportGeneratedBy(currentUser());
+            session.setXReportPrinted(true);
+            repo.save(session);
+        }
+        return getXReport(sessionId);
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> getXReport(Long sessionId) {
         PosSession session = getById(sessionId);
@@ -362,6 +388,28 @@ public class PosSessionService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getZReport(Long branchId, LocalDate date) {
+        // End-of-day gate: every terminal that is still OPEN for this branch+date must
+        // have generated its X-Report before the consolidated Z-Report can be produced.
+        // Any open session without an X-Report stamp is reported as a pending terminal.
+        List<PosSession> openSessions = repo.findOpenSessionsByBranchAndDate(branchId, date);
+        List<Map<String, Object>> pendingTerminals = new java.util.ArrayList<>();
+        for (PosSession s : openSessions) {
+            if (s.getXReportGeneratedAt() != null) continue;
+            String terminalName = null;
+            if (s.getTerminalId() != null && !s.getTerminalId().isBlank()) {
+                terminalName = terminalRepository.findByTerminalId(s.getTerminalId())
+                        .map(PosTerminal::getTerminalName).orElse(null);
+            }
+            Map<String, Object> p = new java.util.LinkedHashMap<>();
+            p.put("sessionId", s.getId());
+            p.put("terminalId", s.getTerminalId());
+            p.put("terminalName", terminalName);
+            p.put("counter", s.getCounterName());
+            p.put("openedBy", s.getOpenedBy());
+            pendingTerminals.add(p);
+        }
+        boolean eligible = pendingTerminals.isEmpty();
+
         List<PosSession> sessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date);
         List<Long> sessionIds = sessions.stream().map(PosSession::getId).toList();
         List<SalesInvoice> invoices = sessionIds.isEmpty()
@@ -390,6 +438,8 @@ public class PosSessionService {
                 .map(s -> nz(s.getTotalRefunds())).reduce(BigDecimal.ZERO, BigDecimal::add));
 
         Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("eligible", eligible);
+        result.put("pendingTerminals", pendingTerminals);
         result.put("sessions", sessions);
         result.put("invoices", invoices);
         result.put("date", date.toString());

@@ -92,6 +92,16 @@ public class PosSession extends BaseEntity {
     @Column(name = "x_report_printed")
     private Boolean xReportPrinted = false;
 
+    /** When this terminal's cashier explicitly generated its X-Report for the shift.
+     *  Null while the session is open and no X-Report has been run yet. The end-of-day
+     *  Z-Report is blocked until every still-open terminal for the branch has this set
+     *  (see {@code PosSessionService.getZReport}). Closing the session also stamps it. */
+    @Column(name = "x_report_generated_at")
+    private LocalDateTime xReportGeneratedAt;
+
+    @Column(name = "x_report_generated_by")
+    private String xReportGeneratedBy;
+
     @Column(name = "z_report_printed")
     private Boolean zReportPrinted = false;
 
@@ -195,6 +205,12 @@ public class PosSession extends BaseEntity {
 
     public Boolean getXReportPrinted() { return xReportPrinted; }
     public void setXReportPrinted(Boolean xReportPrinted) { this.xReportPrinted = xReportPrinted; }
+
+    public LocalDateTime getXReportGeneratedAt() { return xReportGeneratedAt; }
+    public void setXReportGeneratedAt(LocalDateTime xReportGeneratedAt) { this.xReportGeneratedAt = xReportGeneratedAt; }
+
+    public String getXReportGeneratedBy() { return xReportGeneratedBy; }
+    public void setXReportGeneratedBy(String xReportGeneratedBy) { this.xReportGeneratedBy = xReportGeneratedBy; }
 
     public Boolean getZReportPrinted() { return zReportPrinted; }
     public void setZReportPrinted(Boolean zReportPrinted) { this.zReportPrinted = zReportPrinted; }

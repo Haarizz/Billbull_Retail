@@ -22,7 +22,7 @@ import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
-  closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   holdSale, getHeldSales, recallHeldSale,
@@ -323,6 +323,10 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+  // True when this terminal has a live POS session. Session-bound features
+  // (X/Z report, cash drop/out, customer management) are locked until this is
+  // true and re-enable automatically — no refresh — when a session is opened.
+  const isSessionActive = currentSession?.status === 'active' || currentSession?.status === 'OPEN';
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
   // Behavior-settings editor (Console → Behavior tab)
@@ -357,6 +361,10 @@ export default function POSSales() {
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
   const [zReportData, setZReportData] = useState(null);
+  // When the Z-Report is blocked because terminals still owe an X-Report, this
+  // holds the pending-terminal list to display; zReportData is cleared so the
+  // report body and its print/export actions stay hidden until eligible.
+  const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
@@ -1178,7 +1186,9 @@ export default function POSSales() {
 
   // Auto-load report data when entering report views
   useEffect(() => {
-    if (currentView === 'x-report') loadXReport();
+    // Opening the dedicated X-Report view is the deliberate "Generate X Report"
+    // action — mark this terminal complete so it clears the Z-Report gate.
+    if (currentView === 'x-report') loadXReport(true);
     if (currentView === 'z-report') loadZReport(zReportDate);
     // Refresh dashboard stats whenever returning to dashboard with an active session
     if (currentView === 'dashboard' && (currentSession?.status === 'active' || currentSession?.status === 'OPEN')) {
@@ -1780,11 +1790,16 @@ export default function POSSales() {
     }
   };
 
-  const loadXReport = async () => {
+  // markGenerated=true stamps this terminal as having completed its X-Report (the
+  // deliberate "Generate X Report" action). The dashboard preview passes false so
+  // merely viewing the dashboard never satisfies the Z-Report end-of-day gate.
+  const loadXReport = async (markGenerated = false) => {
     if (!currentSession?.id || typeof currentSession.id !== 'number') return;
     setXReportLoading(true);
     try {
-      const data = await getPosXReport(currentSession.id);
+      const data = markGenerated
+        ? await generatePosXReport(currentSession.id)
+        : await getPosXReport(currentSession.id);
       setXReportData(data);
     } catch (err) {
       console.warn('X-Report load failed', err);
@@ -1799,7 +1814,15 @@ export default function POSSales() {
     setZReportLoading(true);
     try {
       const data = await getPosZReport(branchId, date || zReportDate);
-      setZReportData(data);
+      // Backend blocks the day's report until every still-open terminal has run
+      // its X-Report; surface the pending list instead of the report numbers.
+      if (data && data.eligible === false) {
+        setZReportPending(data.pendingTerminals || []);
+        setZReportData(null);
+      } else {
+        setZReportPending(null);
+        setZReportData(data);
+      }
     } catch (err) {
       console.warn('Z-Report load failed', err);
     } finally {
@@ -2656,6 +2679,13 @@ export default function POSSales() {
   };
 
   const handleCashDrop = async () => {
+    // Cash drop / cash out are session-bound — refuse if no session is open even
+    // if the dialog was reached from a template that doesn't gate the button.
+    if (!isSessionActive) {
+      setCashDropFeedback({ type: 'error', message: 'Open a POS session before recording cash movements.' });
+      setTimeout(() => setCashDropFeedback(null), 3000);
+      return;
+    }
     const amount = parseFloat(cashDropAmount) || 0;
     if (amount <= 0) return;
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
@@ -3634,10 +3664,34 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
+        {/* X-Report Tile — generate the shift X-Report without closing the session.
+            Running this clears the terminal for the end-of-day Z-Report. */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('x-report'); }}
+        >
+          <CardHeader>
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
+              <FileText className="h-8 w-8 text-white" />
+            </div>
+            <CardTitle className="mt-4">X-Report</CardTitle>
+            <CardDescription>
+              Generate the current shift report
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              {isSessionActive
+                ? 'Mid/end-of-shift read — keeps the session open'
+                : 'Start a session to generate the X-Report'}
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Z-Report Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('z-report')}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('z-report'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3650,12 +3704,14 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Consolidated report of all closed sessions
+              {isSessionActive
+                ? 'Consolidated end-of-day report (all terminals must run X-Report first)'
+                : 'Start a session to access the Z-Report'}
             </p>
           </CardContent>
         </Card>
 
-        {/* X-Report / Close Session Tile */}
+        {/* Close Session Tile */}
         <Card 
           className={`${posDashboardTileClass} ${
             currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
@@ -3670,7 +3726,7 @@ export default function POSSales() {
             <div className="bg-gradient-to-r from-[#E63946] to-[#ff6b6b] p-4 rounded-lg w-fit">
               <Lock className="h-8 w-8 text-white" />
             </div>
-            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
+            <CardTitle className="mt-4">Close Session</CardTitle>
             <CardDescription>
               Close current session and generate report
             </CardDescription>
@@ -3685,9 +3741,9 @@ export default function POSSales() {
         </Card>
 
         {/* Customer Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('customer')}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('customer'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3700,15 +3756,17 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              View statements, receive payments, manage advances
+              {isSessionActive
+                ? 'View statements, receive payments, manage advances'
+                : 'Start a session to manage customers'}
             </p>
           </CardContent>
         </Card>
 
         {/* Cash Drop / Out Tile */}
         <Card
-          className={posDashboardTileClass}
-          onClick={() => setShowCashDropDialog(true)}
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setShowCashDropDialog(true); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3721,7 +3779,9 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Add cash drops or record cash payouts
+              {isSessionActive
+                ? 'Add cash drops or record cash payouts'
+                : 'Start a session to record cash movements'}
             </p>
           </CardContent>
         </Card>
@@ -4648,6 +4708,45 @@ export default function POSSales() {
       </div>
     );
 
+    // End-of-day gate: when the backend reports terminals still owing an X-Report,
+    // show only this blocker (the report body and its actions stay hidden).
+    const zReportBlocked = Array.isArray(zReportPending) && zReportPending.length > 0;
+    const zrPendingBlocker = (
+      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-6 mb-4">
+        <div className="flex items-center gap-2 mb-2 text-red-600">
+          <Lock className="h-5 w-5" />
+          <h3 className="text-base font-semibold">Z-Report blocked — terminals pending X-Report</h3>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Every active terminal must generate its X-Report before the end-of-day Z-Report can be produced.
+          The following terminal(s) are still open without an X-Report:
+        </p>
+        <div className="border border-red-100 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-red-50 text-red-700">
+                <th className="px-4 py-2 text-left font-medium">Terminal</th>
+                <th className="px-4 py-2 text-left font-medium">Counter</th>
+                <th className="px-4 py-2 text-left font-medium">Cashier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(zReportPending || []).map((t, i) => (
+                <tr key={i} className="border-t border-red-50">
+                  <td className="px-4 py-2 text-[#1E293B]">{t.terminalName || t.terminalId || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.counter || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.openedBy || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Ask each listed terminal to run <span className="font-medium text-[#327F74]">X-Report</span> from its POS dashboard, then generate the Z-Report again.
+        </p>
+      </div>
+    );
+
     return (
     <div className="bg-[#F7F7FA] min-h-full p-6">
       {/* Sticky Header */}
@@ -4685,6 +4784,8 @@ export default function POSSales() {
       </div>
 
       {zrFilterBar}
+
+      {zReportBlocked ? zrPendingBlocker : (<>
       {zrInfoCard}
       {zrKpiCards}
 
@@ -4931,6 +5032,7 @@ export default function POSSales() {
           <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
         </ul>
       </div>
+      </>)}
     </div>
   );
   };

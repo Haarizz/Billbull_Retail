@@ -86,6 +86,14 @@ public class PosSessionController {
         return ResponseEntity.ok(service.getXReport(id));
     }
 
+    /** Explicit X-Report run for an open shift. Marks this terminal as having completed
+     *  its X-Report (used by the Z-Report end-of-day gate) and returns the report data. */
+    @PostMapping("/{id}/x-report/generate")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> generateXReport(@PathVariable Long id) {
+        return ResponseEntity.ok(service.generateXReport(id));
+    }
+
     @GetMapping("/z-report")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getZReport(
