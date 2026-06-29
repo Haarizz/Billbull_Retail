@@ -1,9 +1,13 @@
 package com.billbull.backend.pos.settings;
 
+import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.user.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 public class PosSettingsService {
@@ -11,12 +15,17 @@ public class PosSettingsService {
     private final PosSettingsRepository repo;
     private final BranchAccessService branchAccessService;
     private final PasswordEncoder passwordEncoder;
+    private final UserRepository userRepository;
+    private final AuditLogService auditLogService;
 
     public PosSettingsService(PosSettingsRepository repo, BranchAccessService branchAccessService,
-                              PasswordEncoder passwordEncoder) {
+                              PasswordEncoder passwordEncoder, UserRepository userRepository,
+                              AuditLogService auditLogService) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.passwordEncoder = passwordEncoder;
+        this.userRepository = userRepository;
+        this.auditLogService = auditLogService;
     }
 
     /** A stored PIN already BCrypt-hashed? BCrypt hashes start with $2a/$2b/$2y. */
@@ -125,6 +134,85 @@ public class PosSettingsService {
                     return false;
                 })
                 .orElse(false);
+    }
+
+    /**
+     * Verify supervisor identity by email/username + password and role membership.
+     * Roles that qualify as supervisor: ADMIN, BRANCH_ADMIN, MANAGER.
+     * On success, logs a SUPERVISOR_HANDOVER domain event for audit trail.
+     */
+    @Transactional
+    public SupervisorAuthResult verifySupervisorCredentials(String emailOrUsername, String password,
+                                                            String terminalId, String lockedBy) {
+        if (emailOrUsername == null || emailOrUsername.isBlank()
+                || password == null || password.isBlank()) {
+            return SupervisorAuthResult.invalid("Email and password are required.");
+        }
+
+        // Accept email or username — same dual-lookup as AuthController login
+        var userOpt = userRepository.findByEmailAndIsActiveTrue(emailOrUsername);
+        if (userOpt.isEmpty()) {
+            userOpt = userRepository.findByUsernameAndIsActiveTrue(emailOrUsername);
+        }
+
+        if (userOpt.isEmpty()) {
+            return SupervisorAuthResult.invalid("Account not found or inactive.");
+        }
+
+        var user = userOpt.get();
+
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            return SupervisorAuthResult.invalid("Incorrect password.");
+        }
+
+        boolean hasSupervisorRole = user.getRoles().stream()
+                .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER").contains(r.getName()));
+
+        if (!hasSupervisorRole) {
+            auditLogService.logDomainEvent("POS_TERMINAL", terminalId,
+                    "SUPERVISOR_HANDOVER_DENIED",
+                    String.format("User '%s' attempted terminal handover but lacks supervisor role. Locked by: %s",
+                            user.getUsername(), lockedBy));
+            return SupervisorAuthResult.invalid("This account does not have supervisor privileges.");
+        }
+
+        String displayName = (user.getFullName() != null && !user.getFullName().isBlank())
+                ? user.getFullName() : user.getUsername();
+
+        auditLogService.logDomainEvent("POS_TERMINAL", terminalId,
+                "SUPERVISOR_HANDOVER",
+                String.format("Supervisor '%s' (%s) authorized shift handover from cashier '%s'.",
+                        displayName, user.getUsername(), lockedBy));
+
+        return SupervisorAuthResult.valid(displayName, user.getUsername());
+    }
+
+    /** Result type for {@link #verifySupervisorCredentials}. */
+    public static class SupervisorAuthResult {
+        private final boolean valid;
+        private final String supervisorName;
+        private final String supervisorUsername;
+        private final String reason;
+
+        private SupervisorAuthResult(boolean valid, String supervisorName, String supervisorUsername, String reason) {
+            this.valid = valid;
+            this.supervisorName = supervisorName;
+            this.supervisorUsername = supervisorUsername;
+            this.reason = reason;
+        }
+
+        public static SupervisorAuthResult valid(String name, String username) {
+            return new SupervisorAuthResult(true, name, username, null);
+        }
+
+        public static SupervisorAuthResult invalid(String reason) {
+            return new SupervisorAuthResult(false, null, null, reason);
+        }
+
+        public boolean isValid() { return valid; }
+        public String getSupervisorName() { return supervisorName; }
+        public String getSupervisorUsername() { return supervisorUsername; }
+        public String getReason() { return reason; }
     }
 
     private PosSettings defaultSettings() {

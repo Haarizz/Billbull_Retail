@@ -21,7 +21,7 @@ import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
-  registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, openPosSession, getActivePosSession,
+  registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -33,7 +33,7 @@ import {
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { printHtml, generateReportA4Html, generateReportThermalHtml, downloadPdfViaServer } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import {
@@ -344,6 +344,10 @@ export default function POSSales() {
   const [showSupervisorPin, setShowSupervisorPin] = useState(false);
   const [supervisorPinValue, setSupervisorPinValue] = useState('');
   const [supervisorPinError, setSupervisorPinError] = useState('');
+  const [handoverBusy, setHandoverBusy] = useState(false);
+  const [handoverEmail, setHandoverEmail] = useState('');
+  const [handoverPassword, setHandoverPassword] = useState('');
+  const [handoverError, setHandoverError] = useState('');
   const [pendingVoidItemId, setPendingVoidItemId] = useState(null);
   // Action pending supervisor approval during layaway conversion (Clear / Remove / Void)
   const [pendingLayawayAbortAction, setPendingLayawayAbortAction] = useState(null);
@@ -930,16 +934,30 @@ export default function POSSales() {
     }
     let cancelled = false;
     try {
-      const total = currentInvoice?.total || 0;
-      const vat = currentInvoice?.tax || 0;
-      const tlv = buildZatcaTlvBase64(tplOutletName, tplOutletTrn, new Date().toISOString(), total, vat);
-      QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 })
+      const mockInv = {
+        invoiceNumber: `INV-2026-${String(invoiceCounter).padStart(4, '0')}`,
+        invoiceDate: new Date().toISOString(),
+        customerName: selectedCustomer?.name || 'Walk-in Customer',
+        subTotal: currentInvoice?.subtotal || 0,
+        taxTotal: currentInvoice?.tax || 0,
+        invoiceTotal: currentInvoice?.total || 0,
+        items: (currentInvoice?.items || []).map(it => ({
+          itemCode: it.code || it.productId || it.id || '',
+          itemName: it.name || '',
+          quantity: it.quantity || 0,
+          unitPrice: it.price || 0,
+          netAmount: it.total || 0,
+          voided: !!it.isVoided,
+        })),
+      };
+      const qrContent = buildQrContent(buildPosPrintData(mockInv, tplInvoiceFooter), tplOutletName);
+      QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
         .then(url => { if (!cancelled) setCheckoutPreviewQrDataUrl(url); })
         .catch(() => { if (!cancelled) setCheckoutPreviewQrDataUrl(null); });
     } catch { setCheckoutPreviewQrDataUrl(null); }
     return () => { cancelled = true; };
   }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
-      currentInvoice?.total, currentInvoice?.tax, tplOutletName, tplOutletTrn]);
+      currentInvoice, invoiceCounter, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
 
   // Safety net: whenever the checkout overlay is fully dismissed, drop the
   // settle-freeze so the next sale's preview tracks the live cart again. Covers
@@ -1617,6 +1635,36 @@ export default function POSSales() {
 
   // Supervisor approval mode: PIN (numeric keypad) or PASSWORD (manager login).
   const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';
+
+  const handleHandoverSubmit = async () => {
+    if (!handoverEmail) { setHandoverError('Enter supervisor email or username.'); return; }
+    if (!handoverPassword) { setHandoverError('Enter supervisor password.'); return; }
+    setHandoverBusy(true);
+    setHandoverError('');
+    try {
+      const result = await verifySupervisorAuth({
+        email: handoverEmail,
+        password: handoverPassword,
+        terminalId: currentTerminal?.terminalId || '',
+        lockedBy: terminalLockedBy || '',
+      });
+      if (!result?.valid) {
+        setHandoverError(result?.reason || 'Authorization failed. Please try again.');
+        return;
+      }
+      setHandoverEmail('');
+      setHandoverPassword('');
+      setTerminalLockedBy(null);
+      showFeedback(
+        `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
+        'success'
+      );
+    } catch {
+      setHandoverError('Could not verify credentials. Check connection and retry.');
+    } finally {
+      setHandoverBusy(false);
+    }
+  };
 
   const handleSupervisorPinSubmit = async () => {
     // ARCHFIX S5: the PIN is verified server-side (BCrypt) — it is no longer shipped to the client.
@@ -2324,15 +2372,9 @@ export default function POSSales() {
     creditPreviousBalance = null,
     cashierNameOverride = null,
   }) => {
-    const tlv = buildZatcaTlvBase64(
-      tplOutletName,
-      tplOutletTrn,
-      full.invoiceDate ? new Date(full.invoiceDate).toISOString() : new Date().toISOString(),
-      full.invoiceTotal,
-      full.taxTotal
-    );
+    const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
     const qrDataUrl = tplInvoiceShowQRCode
-      ? await QRCode.toDataURL(tlv, { errorCorrectionLevel: 'M', width: 160 })
+      ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : null;
     const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
@@ -2666,7 +2708,7 @@ export default function POSSales() {
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
           const template = buildPosA4Template(tplInvoiceFooter, { showLogo:tplInvoiceShowLogo, showCompanyDetails:tplInvoiceShowCompanyDetails, showTrn:tplInvoiceShowTrn, showCustomerDetails:tplInvoiceShowCustomerDetails, showTerms:tplInvoiceShowTerms, showNotes:tplInvoiceShowNotes, showBankDetails:tplInvoiceShowBankDetails, showQRCode:tplInvoiceShowQRCode, showStamp:tplInvoiceShowStamp, showSignature:tplInvoiceShowSignature, showGrandTotalBanner:tplInvoiceShowGrandTotalBanner, colItemCode:tplInvoiceColItemCode, colItemImage:tplInvoiceColItemImage, colBarcode:tplInvoiceColBarcode, colBatchNo:tplInvoiceColBatchNo, colDiscount:tplInvoiceColDiscount, colVatPct:tplInvoiceColVatPct, colVatAmt:tplInvoiceColVatAmt });
           const data = buildPosPrintData(full, tplInvoiceFooter);
-          const html = generateDocumentPrintHtml(template, data, companyOptions);
+          const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
             try { await downloadPdfViaServer(html, filename); } catch {
@@ -5774,19 +5816,39 @@ export default function POSSales() {
                   <span>Supervisor Override &amp; Shift Handover</span>
                 </div>
                 <p className="text-xs text-amber-700 leading-relaxed">
-                  To initiate a shift handover or force unlock this terminal, supervisor verification is required. This will transfer terminal control to your account.
+                  A supervisor must sign in to authorize this handover. This action is logged with their identity.
                 </p>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Supervisor Security PIN</label>
-                  <input
-                    type="password"
-                    placeholder="••••"
-                    maxLength={4}
-                    value={supervisorPinValue}
-                    onChange={(e) => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
-                    className={`w-full border rounded-xl px-4 py-3 text-sm font-mono tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-[#327F74] ${supervisorPinError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
-                  />
-                  {supervisorPinError && <p className="text-xs text-red-500 mt-1.5 text-center font-semibold">{supervisorPinError}</p>}
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Supervisor Email or Username</label>
+                    <input
+                      type="text"
+                      autoFocus
+                      autoComplete="username"
+                      placeholder="supervisor@company.com"
+                      value={handoverEmail}
+                      onChange={(e) => { setHandoverEmail(e.target.value); setHandoverError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
+                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Password</label>
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      placeholder="••••••••"
+                      value={handoverPassword}
+                      onChange={(e) => { setHandoverPassword(e.target.value); setHandoverError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
+                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                    />
+                  </div>
+                  {handoverError && (
+                    <p className="text-xs text-red-500 mt-1 text-center font-semibold flex items-center justify-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />{handoverError}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -5794,6 +5856,9 @@ export default function POSSales() {
                 <button
                   type="button"
                   onClick={() => {
+                    setHandoverEmail('');
+                    setHandoverPassword('');
+                    setHandoverError('');
                     setTerminalLockedBy(null);
                     showFeedback('Viewing dashboard in read-only mode', 'info');
                   }}
@@ -5803,20 +5868,12 @@ export default function POSSales() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (supervisorPinValue !== '1234' && supervisorPinValue !== '9999') {
-                      setSupervisorPinError('Invalid Supervisor PIN. Try 1234 or 9999.');
-                      return;
-                    }
-                    setSupervisorPinError('');
-                    setSupervisorPinValue('');
-                    setTerminalLockedBy(null);
-                    showFeedback('Supervisor override successful. Shift handover complete.', 'success');
-                  }}
-                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
+                  disabled={handoverBusy}
+                  onClick={handleHandoverSubmit}
+                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <CheckCircle className="h-4 w-4" />
-                  Authorize Handover
+                  {handoverBusy ? 'Verifying…' : 'Authorize Handover'}
                 </button>
               </div>
             </div>
@@ -7085,7 +7142,7 @@ export default function POSSales() {
                   const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
                   const data = buildPosPrintData(full, tplInvoiceFooter);
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
-                  printHtml(generateDocumentPrintHtml(template, data, options));
+                  printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
                   const isWalkInLR = !full.customerName || full.customerName === 'Walk-in Customer';
                   let creditPrevBalLR = null;
@@ -8501,9 +8558,11 @@ export default function POSSales() {
                   meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
                 };
                 const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
-                printHtml(generateDocumentPrintHtml(returnA4Template, returnA4Data, returnA4Options));
+                printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
               } else {
-                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+                const qrContent = buildQrContent(returnA4Data, tplOutletName);
+                const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
+                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
               }
             }
             syncPosData();
