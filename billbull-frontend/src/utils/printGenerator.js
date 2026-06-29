@@ -75,7 +75,7 @@ const getTemplateDesignerSettingsQuick = (template = {}) => {
 
 const fmt2 = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(2) : '0.00');
 
-const buildQrContent = (data, companyName) => {
+export const buildQrContent = (data, companyName) => {
     const lines = [];
 
     // ── Document identity ──────────────────────────────────────────────
