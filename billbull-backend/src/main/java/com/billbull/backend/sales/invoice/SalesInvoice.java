@@ -95,6 +95,11 @@ public class SalesInvoice {
     @Column(precision = 15, scale = 2)
     private BigDecimal deliveryCharge;
 
+    /** Flat shipping charge added to the invoice total (no VAT applied). Kept distinct
+     *  from deliveryCharge so a sale can show "Shipping" separately from "Delivery". */
+    @Column(name = "shipping_charge", precision = 15, scale = 2)
+    private BigDecimal shippingCharge;
+
     /** Manual rounding adjustment (+/-) applied to the invoice total. */
     @Column(precision = 15, scale = 2)
     private BigDecimal roundOff;
@@ -426,6 +431,14 @@ public class SalesInvoice {
 
     public void setDeliveryCharge(BigDecimal deliveryCharge) {
         this.deliveryCharge = deliveryCharge;
+    }
+
+    public BigDecimal getShippingCharge() {
+        return shippingCharge;
+    }
+
+    public void setShippingCharge(BigDecimal shippingCharge) {
+        this.shippingCharge = shippingCharge;
     }
 
     public BigDecimal getRoundOff() {

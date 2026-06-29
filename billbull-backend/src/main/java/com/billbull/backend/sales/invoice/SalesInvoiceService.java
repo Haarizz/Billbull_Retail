@@ -619,10 +619,12 @@ public class SalesInvoiceService {
             invoice.setBillDiscountAmount(billDiscAmt);
         }
 
-        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        // Delivery + shipping are flat adds (no VAT); round-off is a manual +/- adjustment.
         BigDecimal deliveryCharge = nz(invoice.getDeliveryCharge());
+        BigDecimal shippingCharge = nz(invoice.getShippingCharge());
         BigDecimal roundOff = nz(invoice.getRoundOff());
-        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal).add(deliveryCharge).add(roundOff)
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal)
+                .add(deliveryCharge).add(shippingCharge).add(roundOff)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal paid = nz(invoice.getAmountPaid());
 

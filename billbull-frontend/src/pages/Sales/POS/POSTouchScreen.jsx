@@ -35,6 +35,8 @@ const POSTouchScreen = React.memo((props) => {
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
     // layaway
     activeLayawayId, activeLayawayDeposit,
+    // shipping (order-level flat charge, not a cart line)
+    shippingCharge = 0,
     // focus / numpad
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
@@ -578,9 +580,12 @@ const POSTouchScreen = React.memo((props) => {
                 {currentInvoice.totalDiscount > 0 && (
                   <p className="text-xs text-white/80 font-medium">Disc: −{formatCurrency(currentInvoice.totalDiscount)}</p>
                 )}
+                {(Number(shippingCharge) || 0) > 0 && (
+                  <p className="text-xs text-white/80 font-medium">Shipping: {formatCurrency(Number(shippingCharge) || 0)}</p>
+                )}
               </div>
               <p className="text-3xl font-black text-white tabular-nums">
-                {formatCurrency(currentInvoice.total)}
+                {formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}
               </p>
             </div>
           </div>
@@ -726,6 +731,12 @@ const POSTouchScreen = React.memo((props) => {
 
             {/* Checkout button — always visible */}
             <div className="p-4 flex-shrink-0 border-t-2 border-[#327F74]/40">
+              {(Number(shippingCharge) || 0) > 0 && (
+                <div className="flex justify-between text-xs text-gray-500 mb-1 px-1">
+                  <span>Shipping</span>
+                  <span>{formatCurrency(Number(shippingCharge) || 0)}</span>
+                </div>
+              )}
               {activeLayawayId && activeLayawayDeposit > 0 && (
                 <div className="flex justify-between text-xs text-green-700 font-semibold mb-2 px-1">
                   <span>Layaway Deposit Applied</span>
@@ -734,9 +745,10 @@ const POSTouchScreen = React.memo((props) => {
               )}
               <button type="button"
                 onClick={() => {
+                  const grandWithShip = currentInvoice.total + (Number(shippingCharge) || 0);
                   const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-                    ? Math.max(0, currentInvoice.total - activeLayawayDeposit)
-                    : currentInvoice.total;
+                    ? Math.max(0, grandWithShip - activeLayawayDeposit)
+                    : grandWithShip;
                   setCheckoutPhase('payment');
                   setShowPaymentDialog(true);
                   setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
@@ -751,10 +763,10 @@ const POSTouchScreen = React.memo((props) => {
                 {currentInvoice.total > 0 && (
                   activeLayawayId && activeLayawayDeposit > 0 ? (
                     <span className="text-sm font-semibold text-white/80">
-                      Balance {formatCurrency(Math.max(0, currentInvoice.total - activeLayawayDeposit))}
+                      Balance {formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}
                     </span>
                   ) : (
-                    <span className="text-sm font-semibold text-white/80">{formatCurrency(currentInvoice.total)}</span>
+                    <span className="text-sm font-semibold text-white/80">{formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</span>
                   )
                 )}
               </button>
@@ -931,6 +943,11 @@ const POSTouchScreen = React.memo((props) => {
                   return rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
                 })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
               </div>
+              {(Number(shippingCharge) || 0) > 0 && (
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>Shipping</span><span>{formatCurrency(Number(shippingCharge) || 0)}</span>
+                </div>
+              )}
               {activeLayawayId && activeLayawayDeposit > 0 && (
                 <div className="flex justify-between text-xs text-green-600 font-semibold border-t border-green-100 pt-1 mt-1">
                   <span>Deposit Paid</span><span>−{formatCurrency(activeLayawayDeposit)}</span>
@@ -942,13 +959,13 @@ const POSTouchScreen = React.memo((props) => {
                 {activeLayawayId && activeLayawayDeposit > 0 ? (
                   <>
                     <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Balance Due</p>
-                    <p className="text-xl font-black text-white leading-none">{formatCurrency(Math.max(0, currentInvoice.total - activeLayawayDeposit))}</p>
-                    <p className="text-[10px] text-white/70">Total: {formatCurrency(currentInvoice.total)}</p>
+                    <p className="text-xl font-black text-white leading-none">{formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}</p>
+                    <p className="text-[10px] text-white/70">Total: {formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
                   </>
                 ) : (
                   <>
                     <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Total</p>
-                    <p className="text-xl font-black text-white leading-none">{formatCurrency(currentInvoice.total)}</p>
+                    <p className="text-xl font-black text-white leading-none">{formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
                   </>
                 )}
               </div>
@@ -1409,9 +1426,10 @@ const POSTouchScreen = React.memo((props) => {
                 // Pre-fill the tender to the amount actually due NOW (grand total minus
                 // any layaway deposit already collected) so the cashier isn't pushed to
                 // over-tender the full invoice when a deposit exists.
+                const grandWithShip = currentInvoice.total + (Number(shippingCharge) || 0);
                 const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-                  ? Math.max(0, currentInvoice.total - activeLayawayDeposit)
-                  : currentInvoice.total;
+                  ? Math.max(0, grandWithShip - activeLayawayDeposit)
+                  : grandWithShip;
                 setCheckoutPhase('payment'); setShowPaymentDialog(true);
                 setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
                 setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
@@ -1421,8 +1439,8 @@ const POSTouchScreen = React.memo((props) => {
               <CreditCard className="h-4 w-4" />
               {currentInvoice.items.length > 0
                 ? (activeLayawayId && activeLayawayDeposit > 0
-                    ? `Checkout · Balance ${formatCurrencyStr(Math.max(0, currentInvoice.total - activeLayawayDeposit))}`
-                    : `Checkout · ${formatCurrencyStr(currentInvoice.total)}`)
+                    ? `Checkout · Balance ${formatCurrencyStr(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}`
+                    : `Checkout · ${formatCurrencyStr(currentInvoice.total + (Number(shippingCharge) || 0))}`)
                 : 'Checkout'}
             </button>
           </div>

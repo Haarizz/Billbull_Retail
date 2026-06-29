@@ -176,6 +176,9 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   // Layaway/Hold deposit already collected, shown as a reduction with the remaining
   // balance due, when this sale settles a reserved order (§Layaway conversion).
   depositApplied = null, balanceDue = null,
+  // Flat (untaxed) shipping charge shown as its own line before TOTAL. invoice.invoiceTotal
+  // is expected to already include it.
+  shippingCharge = null,
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
@@ -281,6 +284,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
   if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
+  // as their own lines so the total always ties out on the printed invoice.
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmt(invoice.deliveryCharge)}</span></div>`;
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmt(shippingCharge)}</span></div>`;
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
   // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
@@ -382,6 +389,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   changeAmount = null,
   depositApplied = null,
   balanceDue = null,
+  shippingCharge = null,
   currency = 'AED',
   customerPhone = null,
   customerEmail = null,
@@ -438,6 +446,12 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
   }
   lines.push(buildFixedWidthLine('VAT', fmt(invoice.taxTotal), width));
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) {
+    lines.push(buildFixedWidthLine('Delivery Charge', fmt(invoice.deliveryCharge), width));
+  }
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) {
+    lines.push(buildFixedWidthLine('Shipping', fmt(shippingCharge), width));
+  }
   lines.push(hr);
   lines.push(buildFixedWidthLine('TOTAL', fmt(invoice.invoiceTotal), width));
   if (depositApplied != null && parseFloat(depositApplied) > 0) {

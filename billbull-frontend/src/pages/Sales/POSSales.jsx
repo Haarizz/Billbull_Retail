@@ -680,6 +680,9 @@ export default function POSSales() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingMethod, setShippingMethod] = useState('standard');
   const [shippingCost, setShippingCost] = useState('15');
+  // Committed shipping charge applied to the order as a separate (non-product, untaxed)
+  // totals line — NOT a cart item. Added to the grand total at checkout/preview/receipt.
+  const [shippingCharge, setShippingCharge] = useState(0);
   const [showAddCustomerDialog, setShowAddCustomerDialog] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
@@ -873,6 +876,7 @@ export default function POSSales() {
       const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
+      const previewShipping = Number(shippingCharge) || 0;
 
       const mockInvoice = {
         invoiceNumber: invoiceNo,
@@ -886,7 +890,7 @@ export default function POSSales() {
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
-        invoiceTotal: currentInvoice.total || 0,
+        invoiceTotal: (currentInvoice.total || 0) + previewShipping,
         discountTotal: currentInvoice.totalDiscount || 0,
         items: (currentInvoice.items || []).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
@@ -902,9 +906,11 @@ export default function POSSales() {
       };
 
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+      const previewGrand = (currentInvoice.total || 0) + previewShipping;
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+        shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
-        balanceDue: previewDeposit > 0 ? Math.max(0, (currentInvoice.total || 0) - previewDeposit) : null,
+        balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
         companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
         showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
@@ -923,7 +929,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit,
+  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
       checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
       tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -1855,6 +1861,8 @@ export default function POSSales() {
       total: 0,
       billDiscountAmount: 0,
     });
+    // Shipping is an order-level charge, not a cart line — clear it with the cart.
+    setShippingCharge(0);
   };
 
   // Map live cart lines to the backend item shape shared by checkout + layaway.
@@ -2417,6 +2425,7 @@ export default function POSSales() {
     cashierNameOverride = null,
     depositApplied = null,
     balanceDue = null,
+    shippingCharge = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
     const qrDataUrl = tplInvoiceShowQRCode
@@ -2451,6 +2460,7 @@ export default function POSSales() {
       changeAmount,
       depositApplied,
       balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       creditPreviousBalance,
@@ -2470,6 +2480,7 @@ export default function POSSales() {
       changeAmount,
       depositApplied,
       balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       currency: activeCurrency,
@@ -2520,7 +2531,9 @@ export default function POSSales() {
     if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;
     setCheckoutSettling(true);
     try {
-      const grandTotal = currentInvoice.total;
+      // Shipping is an untaxed flat add on top of the product total (not a cart line).
+      const shippingChargeNum = Number(shippingCharge) || 0;
+      const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
@@ -2579,7 +2592,8 @@ export default function POSSales() {
         branchName: currentTerminal?.branchName || null,
         branchCode: currentTerminal?.branchCode || null,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
-        shippingAddress: deliveryAddress || null,
+        shippingAddress: deliveryAddress || shippingAddress || null,
+        shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
         items,
@@ -2621,6 +2635,7 @@ export default function POSSales() {
             customerEmail: customer?.email,
             depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
             balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
+            shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
@@ -5878,7 +5893,7 @@ export default function POSSales() {
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
-    activeLayawayId, activeLayawayDeposit,
+    activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
     classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
@@ -6509,7 +6524,8 @@ export default function POSSales() {
           );
         }
 
-        const grandTotal = currentInvoice.total;
+        const shippingChargeNum = Number(shippingCharge) || 0;
+        const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
         const subtotal = currentInvoice.subtotal;
         const totalDisc = currentInvoice.totalDiscount;
         const totalVat = currentInvoice.tax;
@@ -6596,21 +6612,33 @@ export default function POSSales() {
               <div className="flex-1 overflow-y-auto">
                 <div className="p-4 space-y-3">
 
-                  {/* ── Deposit / balance summary (layaway or hold conversion) ── */}
-                  {depositAmt > 0 && (
+                  {/* ── Settlement summary (shipping and/or layaway-hold deposit) ── */}
+                  {(depositAmt > 0 || shippingChargeNum > 0) && (
                     <div className="bg-white rounded-2xl border border-[#F5C742]/50 p-4 shadow-sm">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Settlement Summary</p>
                       <div className="space-y-1.5 text-sm">
                         <div className="flex justify-between text-gray-600">
-                          <span>Order Total</span>
-                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={grandTotal} /></span>
+                          <span>Items Total</span>
+                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={currentInvoice.total || 0} /></span>
                         </div>
-                        <div className="flex justify-between text-green-700">
-                          <span>Deposit Paid</span>
-                          <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
+                        {shippingChargeNum > 0 && (
+                          <div className="flex justify-between text-gray-600">
+                            <span>Shipping</span>
+                            <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={shippingChargeNum} /></span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[#1E293B] border-t border-gray-100 pt-1.5">
+                          <span className="font-semibold">Order Total</span>
+                          <span className="font-semibold"><CurrencyAmount amount={grandTotal} /></span>
                         </div>
+                        {depositAmt > 0 && (
+                          <div className="flex justify-between text-green-700">
+                            <span>Deposit Paid</span>
+                            <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
+                          </div>
+                        )}
                         <div className="flex justify-between border-t border-gray-100 pt-1.5 text-[#1E293B]">
-                          <span className="font-bold">Balance Due Now</span>
+                          <span className="font-bold">{depositAmt > 0 ? 'Balance Due Now' : 'Total Payable'}</span>
                           <span className="font-black text-[#F5C742]"><CurrencyAmount amount={effectiveDue} /></span>
                         </div>
                       </div>
@@ -9065,20 +9093,11 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setShowAddShippingDialog(false)}>Cancel</Button>
             <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => {
               const cost = parseFloat(shippingCost) || 0;
-              if (cost > 0) {
-                const shippingId = '__SHIPPING__';
-                setCurrentInvoice(prev => {
-                  const filtered = prev.items.filter(i => i.id !== shippingId);
-                  const shippingLine = {
-                    id: shippingId, productId: null, name: `Shipping (${shippingMethod.charAt(0).toUpperCase() + shippingMethod.slice(1)})`,
-                    nameAr: '', barcode: 'SHIPPING', code: 'SHIPPING', image: null,
-                    price: cost, quantity: 1, discount: 0, taxRate: 0, total: cost,
-                    isShipping: true,
-                  };
-                  return recalculateInvoice([...filtered, shippingLine], prev.billDiscountAmount || 0);
-                });
-                showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
-              }
+              // Shipping is a separate (untaxed) totals line, not a cart product — the
+              // cart keeps only real products. Stored as state and added at the total.
+              setShippingCharge(cost);
+              if (cost > 0) showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
+              else showFeedback('success', 'Shipping charge cleared');
               setShowAddShippingDialog(false);
             }}>
               <CheckCircle className="h-4 w-4 mr-2" />Add Shipping
