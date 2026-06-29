@@ -164,6 +164,35 @@ const POSTouchScreen = React.memo((props) => {
       });
     }, 300);
   }, [toggleFavourite]);
+
+  // Shared, template-independent Actions/Functions buttons. Defined once so the
+  // Classic and Cart Focus panels render the same set, labels, icons and colours
+  // and never drift apart. Interaction-specific buttons (Add Qty / Discount /
+  // Price / Remove) stay inline in each template because their behaviour depends
+  // on that template's editing model (inline numpad vs middle-column keypad).
+  const commonActionButtons = (iconCls = 'h-4 w-4') => [
+    { id:'quick-add-product', label:'Quick Add Product', icon:<Plus className={iconCls}/>,        color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowQuickProductModal(true) },
+    { id:'layaways',        label:'Layaways',          icon:<Pause className={iconCls}/>,         color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',    action:()=>setShowLayawaysList(true) },
+    { id:'save-layaway',    label:'Save Layaway',      icon:<Archive className={iconCls}/>,       color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',    action:()=>setShowSaveLayaway(true) },
+    { id:'save-order',      label:'Save as Order',     icon:<FileText className={iconCls}/>,      color:'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action:()=>setShowSaveOrderDialog(true) },
+    { id:'add-shipping',    label:'Add Shipping',      icon:<Truck className={iconCls}/>,         color:'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',        action:()=>setShowAddShippingDialog(true) },
+    { id:'coupons',         label:'Coupons',           icon:<Tag className={iconCls}/>,           color:'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700',        action:()=>setShowCouponsDialog(true) },
+    { id:'promotions',      label:'Promotions',        icon:<Zap className={iconCls}/>,           color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800',    action:()=>setShowPromotionsDialog(true) },
+    { id:'return',          label:'Return',            icon:<RotateCcw className={iconCls}/>,     color:'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action:()=>{ setReturnStep(1); setReturnInvoiceQuery(''); setReturnInvoiceFound(null); setReturnSelectedItems({}); setReturnReasons({}); setShowReturn(true); } },
+    { id:'price-chk',       label:'Price Check',       icon:<Search className={iconCls}/>,        color:'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700',        action:()=>{ setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
+    { id:'credit-balance',  label:'Credit Balance',    icon:<CreditCard className={iconCls}/>,    color:'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action:()=>{ setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
+    { id:'serial-batch',    label:'Serial/Batch Check',icon:<Hash className={iconCls}/>,          color:'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',        action:()=>{ setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
+    { id:'cash-drop',       label:'Cash Drawer',       icon:<DollarSign className={iconCls}/>,    color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowCashDropDialog(true) },
+    { id:'last-receipt',    label:'Last Receipt',      icon:<Receipt className={iconCls}/>,       color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',        action:()=>setShowLastReceiptDialog(true) },
+    { id:'orders',          label:'Orders',            icon:<Package className={iconCls}/>,       color:'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action:()=>setShowOrdersListDialog() },
+    { id:'reprint',         label:'Reprint',           icon:<Printer className={iconCls}/>,       color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',        action:()=>setShowReprintModal(true) },
+    { id:'service',         label:'Service & Repair',  icon:<Wrench className={iconCls}/>,        color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/30 text-[#327F74]', action:()=>{ setShowServiceRepair(true); setServiceView('list'); } },
+    { id:'delivery',        label:'Delivery',          icon:<Truck className={iconCls}/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>openDeliveryModal() },
+    { id:'delivery-settle', label:'Delivery Settle',   icon:<PackageCheck className={iconCls}/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
+    { id:'lock-pos',        label:'Lock POS',          icon:<Lock className={iconCls}/>,          color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',   action:()=>setShowLockPOS(true) },
+    { id:'close-session',   label:'Close Session',     icon:<XCircle className={iconCls}/>,       color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',            action:()=>{ if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); } },
+  ];
+
   return (
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
       {/* Top Bar */}
@@ -369,55 +398,55 @@ const POSTouchScreen = React.memo((props) => {
                   const stockQty = matchingProduct?.stock ?? 25;
 
                   return (
-                    <div className="bg-[#1E293B] p-5 flex-1 flex flex-col justify-between text-white">
+                    <div className="bg-gradient-to-br from-[#FFF8E7] to-white p-5 flex-1 flex flex-col justify-between text-[#1E293B] border-l-4 border-[#F5C742]">
                       <div>
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-[#F5C742]">Last Scanned Item</span>
-                          <span className="text-[10px] font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">{lastScannedItem.name} added</span>
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-[#B8942E]">Last Scanned Item</span>
+                          <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">{lastScannedItem.name} added</span>
                         </div>
                         <div className="flex items-start gap-3 mb-4">
-                          <div className="w-12 h-12 rounded-2xl bg-[#F5C742]/10 border border-[#F5C742]/30 flex items-center justify-center flex-shrink-0 text-[#F5C742]">
+                          <div className="w-12 h-12 rounded-2xl bg-[#F5C742]/15 border border-[#F5C742]/40 flex items-center justify-center flex-shrink-0 text-[#B8942E]">
                             <Package className="h-6 w-6" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <p className="text-base font-bold text-white leading-tight truncate">{lastScannedItem.name}</p>
-                                <p className="text-[11px] font-mono text-[#F5C742] mt-1">{lastScannedItem.barcode}</p>
-                                {lastScannedItem.nameAr && <p className="text-xs text-gray-400 mt-1 truncate" dir="rtl">{lastScannedItem.nameAr}</p>}
+                                <p className="text-base font-bold text-[#1E293B] leading-tight break-words">{lastScannedItem.name}</p>
+                                <p className="text-[11px] font-mono text-[#B8942E] mt-1">{lastScannedItem.barcode}</p>
+                                {lastScannedItem.nameAr && <p className="text-xs text-gray-500 mt-1 break-words" dir="rtl">{lastScannedItem.nameAr}</p>}
                               </div>
                               <div className="text-right flex-shrink-0">
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Line Total</p>
-                                <p className="text-xl font-black text-[#F5C742] mt-0.5">{formatCurrency(lastScannedItem.total)}</p>
+                                <p className="text-[10px] font-bold uppercase text-gray-500 tracking-wider">Line Total</p>
+                                <p className="text-xl font-black text-[#B8942E] mt-0.5">{formatCurrency(lastScannedItem.total)}</p>
                               </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 border-t border-slate-700/60 pt-4">
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Qty</p>
-                          <p className="text-sm font-bold text-white mt-1">x{qty}</p>
+                      <div className="grid grid-cols-3 gap-2 border-t border-[#F5C742]/30 pt-4">
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Qty</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">x{qty}</p>
                         </div>
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Unit Price</p>
-                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(unitPrice)}</p>
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Unit Price</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(unitPrice)}</p>
                         </div>
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Discount</p>
-                          <p className="text-sm font-bold text-white mt-1">{discountPct}%</p>
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Discount</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{discountPct}%</p>
                         </div>
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">VAT ({taxRate}%)</p>
-                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(vatAmount)}</p>
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">VAT ({taxRate}%)</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(vatAmount)}</p>
                         </div>
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Net Price</p>
-                          <p className="text-sm font-bold text-white mt-1">{formatCurrency(netPrice)}</p>
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Net Price</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{formatCurrency(netPrice)}</p>
                         </div>
-                        <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-2.5 text-center">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Stock</p>
-                          <p className="text-sm font-bold text-white mt-1">{stockQty} units</p>
+                        <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Stock</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{stockQty} units</p>
                         </div>
                       </div>
                     </div>
@@ -611,30 +640,15 @@ const POSTouchScreen = React.memo((props) => {
             {rightPanelTab === 'functions' && (
               <div className="flex-1 overflow-y-auto p-3">
                 {(() => {
-                  const allBtns = [
-                    { id: 'quick-add-product', label: 'Quick Add Product', icon: <Plus className="h-5 w-5" />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowQuickProductModal(true) },
-                    { id: 'add-qty',    label: 'Add Qty',      icon: <Plus className="h-5 w-5" />,        color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${posActionMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`,     action: () => { setPosActionMode(m => m === 'qty' ? 'none' : 'qty'); setBarcodeInput(''); setSelectedFocusItemId(null); } },
-                    { id: 'remove',     label: 'Remove Item',  icon: <Trash2 className="h-5 w-5" />,      color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',          action: () => { const last = currentInvoice.items[0]; if (last) guardedRemoveFromInvoice(last.id); } },
-                    { id: 'discount',   label: 'Discount',     icon: <Percent className="h-5 w-5" />,     color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${posActionMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => { setPosActionMode(m => m === 'discount' ? 'none' : 'discount'); setBarcodeInput(''); setSelectedFocusItemId(null); setDiscountInputType('percent'); } },
-                    { id: 'layaways',   label: 'Layaways',     icon: <Pause className="h-5 w-5" />,       color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',  action: () => setShowLayawaysList(true) },
-                    { id: 'save-layaway', label: 'Save Layaway', icon: <Archive className="h-5 w-5" />,  color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',  action: () => setShowSaveLayaway(true) },
-                    { id: 'save-order', label: 'Save as Order', icon: <FileText className="h-5 w-5" />,   color: 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action: () => setShowSaveOrderDialog(true) },
-                    { id: 'add-shipping', label: 'Add Shipping', icon: <TrendingUp className="h-5 w-5" />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',   action: () => setShowAddShippingDialog(true) },
-                    { id: 'coupons',    label: 'Coupons',      icon: <Tag className="h-5 w-5" />,         color: 'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700',      action: () => setShowCouponsDialog(true) },
-                    { id: 'promotions', label: 'Promotions',   icon: <Zap className="h-5 w-5" />,         color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800', action: () => setShowPromotionsDialog(true) },
-                    { id: 'return',     label: 'Return',       icon: <RotateCcw className="h-5 w-5" />,   color: 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action: () => { setReturnStep(1); setReturnInvoiceQuery(''); setReturnInvoiceFound(null); setReturnSelectedItems({}); setReturnReasons({}); setShowReturn(true); } },
-                    { id: 'price-chk',  label: 'Price Check',  icon: <Search className="h-5 w-5" />,      color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700',      action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
-                    { id: 'cash-drop',  label: 'Cash Drawer',  icon: <DollarSign className="h-5 w-5" />,  color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowCashDropDialog(true) },
-                    { id: 'last-receipt', label: 'Last Receipt', icon: <Receipt className="h-5 w-5" />,  color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',      action: () => setShowLastReceiptDialog(true) },
-                    { id: 'orders',       label: 'Orders',       icon: <Package className="h-5 w-5" />,    color: 'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action: () => setShowOrdersListDialog() },
-                    { id: 'credit-balance', label: 'Credit Balance', icon: <CreditCard className="h-5 w-5" />, color: 'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
-                    { id: 'serial-batch', label: 'Serial/Batch Check', icon: <Hash className="h-5 w-5" />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
-                    { id: 'reprint',    label: 'Reprint',      icon: <Printer className="h-5 w-5" />,     color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',     action: () => setShowReprintModal(true) },
-                    { id: 'lock-pos',   label: 'Lock POS',     icon: <Lock className="h-5 w-5" />,        color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
-                    { id: 'close-session', label: 'Close Session', icon: <XCircle className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',         action: () => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); } },
-                    { id: 'delivery',       label: 'Delivery',       icon: <Truck className="h-5 w-5" />,        color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => openDeliveryModal() },
-                    { id: 'delivery-settle',label: 'Delivery Settle', icon: <PackageCheck className="h-5 w-5" />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
+                  // Interaction-specific buttons (Cart Focus uses the middle-column
+                  // keypad via posActionMode); shared buttons come from the single
+                  // commonActionButtons() definition so both templates stay in sync.
+                  const interactive = [
+                    { id: 'add-qty',  label: 'Add Qty',     icon: <Plus className="h-5 w-5" />,    color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${posActionMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`,     action: () => { setPosActionMode(m => m === 'qty' ? 'none' : 'qty'); setBarcodeInput(''); setSelectedFocusItemId(null); } },
+                    { id: 'discount', label: 'Discount',    icon: <Percent className="h-5 w-5" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${posActionMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => { setPosActionMode(m => m === 'discount' ? 'none' : 'discount'); setBarcodeInput(''); setSelectedFocusItemId(null); setDiscountInputType('percent'); } },
+                    { id: 'remove',   label: 'Remove Item', icon: <Trash2 className="h-5 w-5" />,  color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { const last = currentInvoice.items[0]; if (last) guardedRemoveFromInvoice(last.id); } },
                   ];
+                  const allBtns = [...interactive, ...commonActionButtons('h-5 w-5')];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                   return (
                     <>
@@ -782,7 +796,7 @@ const POSTouchScreen = React.memo((props) => {
       <div className="flex-1 flex overflow-hidden bg-[#F7F7FA]">
 
         {/* ══ COL 1: CART ════════════════════════════════════════ */}
-        <div className="w-[360px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
+        <div className="w-[440px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
 
           {/* Customer bar — gold, matches Cart Focus */}
           <div className="bg-[#F5C742] px-3 py-2.5 shrink-0 relative border-b border-[#e6b838]">
@@ -1001,7 +1015,7 @@ const POSTouchScreen = React.memo((props) => {
 
           {/* Category sidebar */}
           {!hideCategoriesPanel && (
-            <div className="w-[168px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+            <div className="w-[148px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
               <div className="p-2.5">
                 <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pb-1.5">Categories</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -1330,32 +1344,16 @@ const POSTouchScreen = React.memo((props) => {
                     setClassicNumpadValue('');
                     if (classicNumpadMode !== mode) setSelectedFocusItemId(null);
                   };
-                  const allBtns = [
-                    { id:'quick-add-product', label:'Quick Add Product', icon:<Plus className="h-4 w-4"/>, color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowQuickProductModal(true) },
-                    { id:'add-qty',    label:'Add Qty',      icon:<Plus className="h-4 w-4"/>,        color:`bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode==='qty'?'ring-2 ring-[#F5C742] bg-blue-100':''}`,     action:()=>openNumpad('qty') },
-                    { id:'discount',   label:'Disc %',       icon:<Percent className="h-4 w-4"/>,     color:`bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode==='discount'?'ring-2 ring-[#F5C742]':''}`, action:()=>openNumpad('discount') },
-                    { id:'price',      label:'Price',        icon:<Tag className="h-4 w-4"/>,         color:`bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode==='price'?'ring-2 ring-[#F5C742] bg-purple-100':''}`, action:()=>openNumpad('price') },
-                    { id:'remove',     label:'Remove',       icon:<Trash2 className="h-4 w-4"/>,      color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',       action:()=>{const l=currentInvoice.items[0];if(l)guardedRemoveFromInvoice(l.id);} },
-                    { id:'layaways',   label:'Layaways',     icon:<Pause className="h-4 w-4"/>,       color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700', action:()=>setShowLayawaysList(true) },
-                    { id:'return',     label:'Return',       icon:<RotateCcw className="h-4 w-4"/>,   color:'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action:()=>{setReturnStep(1);setReturnInvoiceQuery('');setReturnInvoiceFound(null);setReturnSelectedItems({});setReturnReasons({});setShowReturn(true);} },
-                    { id:'price-chk',  label:'Price Chk',   icon:<Search className="h-4 w-4"/>,      color:'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700',      action:()=>{setPriceCheckQuery('');setPriceCheckResult(null);setShowPriceCheck(true);} },
-                    { id:'credit-balance',label:'Credit Bal',icon:<CreditCard className="h-4 w-4"/>, color:'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action:()=>{setCreditBalanceQuery('');setCreditBalanceResult(null);setShowCreditBalance(true);} },
-                    { id:'serial-batch',label:'Serial/Batch',icon:<Hash className="h-4 w-4"/>,       color:'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',      action:()=>{setSerialBatchQuery('');setSerialBatchResult(null);setSerialBatchSubView('check');setSerialBatchInvoiceNo('');setSerialBatchItemCode('');setSerialBatchCustomerMobile('');setSerialBatchSelectedItem(null);setShowSerialBatch(true);} },
-                    { id:'save-layaway', label:'Save Layaway',   icon:<Archive className="h-4 w-4"/>,    color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',   action:()=>setShowSaveLayaway(true) },
-                    { id:'save-order',   label:'Save as Order',  icon:<FileText className="h-4 w-4"/>,   color:'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action:()=>setShowSaveOrderDialog(true) },
-                    { id:'add-shipping', label:'Add Shipping',   icon:<Truck className="h-4 w-4"/>,      color:'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700',       action:()=>setShowAddShippingDialog(true) },
-                    { id:'coupons',      label:'Coupons',        icon:<Tag className="h-4 w-4"/>,        color:'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700',        action:()=>setShowCouponsDialog(true) },
-                    { id:'promotions',   label:'Promotions',     icon:<Zap className="h-4 w-4"/>,        color:'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800',   action:()=>setShowPromotionsDialog(true) },
-                    { id:'last-receipt', label:'Last Receipt',   icon:<Receipt className="h-4 w-4"/>,    color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',       action:()=>setShowLastReceiptDialog(true) },
-                    { id:'orders',       label:'Orders',         icon:<Package className="h-4 w-4"/>,    color:'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action:()=>setShowOrdersListDialog() },
-                    { id:'reprint',      label:'Reprint Inv.',  icon:<Printer className="h-4 w-4"/>,    color:'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600',       action:()=>setShowReprintModal(true) },
-                    { id:'cash-drop',    label:'Cash Drop',     icon:<DollarSign className="h-4 w-4"/>, color:'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action:()=>setShowCashDropDialog(true) },
-                    { id:'service',      label:'Service & Repair', icon:<Wrench className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/30 text-[#327F74]', action:()=>{ setShowServiceRepair(true); setServiceView('list'); } },
-                    { id:'lock-pos',     label:'Lock POS',      icon:<Lock className="h-4 w-4"/>,       color:'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700',  action:()=>setShowLockPOS(true) },
-                    { id:'close-session',  label:'Close Session',   icon:<XCircle className="h-4 w-4"/>,      color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600',           action:()=> { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); } },
-                    { id:'delivery',       label:'Delivery',        icon:<Truck className="h-4 w-4"/>,         color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>openDeliveryModal() },
-                    { id:'delivery-settle',label:'Delivery Settle', icon:<PackageCheck className="h-4 w-4"/>,  color:'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action:()=>{ setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
+                  // Interaction-specific buttons (Classic uses the inline numpad);
+                  // shared buttons come from the single commonActionButtons()
+                  // definition so both templates stay in sync.
+                  const interactive = [
+                    { id:'add-qty',  label:'Add Qty',  icon:<Plus className="h-4 w-4"/>,    color:`bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode==='qty'?'ring-2 ring-[#F5C742] bg-blue-100':''}`,     action:()=>openNumpad('qty') },
+                    { id:'discount', label:'Disc %',   icon:<Percent className="h-4 w-4"/>, color:`bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode==='discount'?'ring-2 ring-[#F5C742]':''}`, action:()=>openNumpad('discount') },
+                    { id:'price',    label:'Price',    icon:<Tag className="h-4 w-4"/>,     color:`bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode==='price'?'ring-2 ring-[#F5C742] bg-purple-100':''}`, action:()=>openNumpad('price') },
+                    { id:'remove',   label:'Remove',   icon:<Trash2 className="h-4 w-4"/>,  color:'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action:()=>{const l=currentInvoice.items[0];if(l)guardedRemoveFromInvoice(l.id);} },
                   ];
+                  const allBtns = [...interactive, ...commonActionButtons('h-4 w-4')];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                   return (
                     <div className="grid grid-cols-2 gap-1.5">
@@ -1436,8 +1434,8 @@ const POSTouchScreen = React.memo((props) => {
                 setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
               }}
               disabled={currentInvoice.items.length === 0}
-              className="w-full h-12 rounded-xl bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-sm shadow-[#F5C742]/30">
-              <CreditCard className="h-4 w-4" />
+              className="w-full h-16 rounded-2xl bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black text-lg flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-[#F5C742]/30">
+              <CreditCard className="h-6 w-6" />
               {currentInvoice.items.length > 0
                 ? (activeLayawayId && activeLayawayDeposit > 0
                     ? `Checkout · Balance ${formatCurrencyStr(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}`
