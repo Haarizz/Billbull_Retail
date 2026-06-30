@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, LayoutDashboard } from 'lucide-react';
+import DeviceDashboardPanel from './DeviceDashboardPanel';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
@@ -247,6 +248,7 @@ const POSConsole = React.memo((props) => {
       { id:'layout',    label:'Manage Layouts', icon:<LayoutGrid className="h-4 w-4" /> },
       { id:'behavior',  label:'Behavior',       icon:<Shield className="h-4 w-4" /> },
       { id:'devices',   label:'Devices',        icon:<Printer className="h-4 w-4" /> },
+      { id:'dashboard', label:'Dashboard',      icon:<LayoutDashboard className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
       { id:'terminals', label:'Terminals',      icon:<Hash className="h-4 w-4" /> },
     ];
@@ -1089,6 +1091,11 @@ const POSConsole = React.memo((props) => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* ══ DEVICE DASHBOARD ══ */}
+          {consoleTab==='dashboard' && (
+            <DeviceDashboardPanel branchId={currentTerminal?.branchId} />
           )}
 
           {/* ══ PRINT TEMPLATES ══ */}

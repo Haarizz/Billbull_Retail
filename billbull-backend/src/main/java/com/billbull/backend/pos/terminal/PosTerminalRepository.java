@@ -11,4 +11,8 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
     List<PosTerminal> findByBranchIdOrderByTerminalIdAsc(Long branchId);
     List<PosTerminal> findByBranchId(Long branchId);
     int countByBranchIdAndStatus(Long branchId, PosTerminalStatus status);
+
+    /** Phase D — terminals currently bound to a given Hardware Profile, used by the assignment
+     *  engine's conflict detection (a device claimed by a profile assigned elsewhere). */
+    List<PosTerminal> findByHardwareProfileId(Long hardwareProfileId);
 }

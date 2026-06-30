@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull Retail ERP - Deployment Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+
+    :root {
+        --bg-body: #f1f5f9;
+        --bg-card: #ffffff;
+        --text-main: #334155;
+        --text-muted: #64748b;
+        --heading: #0f172a;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --border-color: #e2e8f0;
+        --code-bg: #0f172a;
+        --code-text: #e2e8f0;
+        --inline-code-bg: #f1f5f9;
+        --inline-code-text: #ec4899;
+        --accent: #3b82f6;
+    }
+    
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        line-height: 1.7;
+        color: var(--text-main);
+        background-color: var(--bg-body);
+        background-image: radial-gradient(#cbd5e1 1px, transparent 0);
+        background-size: 24px 24px;
+        margin: 0;
+        padding: 60px 20px;
+    }
+
+    .container {
+        max-width: 960px;
+        margin: 0 auto;
+        background-color: var(--bg-card);
+        padding: 60px 80px;
+        border-radius: 24px;
+        box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.02);
+    }
+
+    /* Typography */
+    h1, h2, h3, h4 { 
+        color: var(--heading); 
+        margin-top: 2em; 
+        margin-bottom: 0.75em; 
+        font-weight: 700; 
+        letter-spacing: -0.02em;
+    }
+    
+    h1 { 
+        font-size: 2.8em; 
+        font-weight: 800;
+        line-height: 1.2;
+        margin-top: 0;
+        text-align: center;
+        background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.4em;
+    }
+    
+    .meta-info {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.95em;
+        margin-bottom: 3em;
+        padding-bottom: 2.5em;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 15px 30px;
+    }
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .meta-item strong {
+        color: var(--heading);
+        font-weight: 600;
+    }
+    
+    h2 { 
+        font-size: 1.8em; 
+        padding-bottom: 12px; 
+        border-bottom: 1px solid var(--border-color); 
+        position: relative;
+        margin-top: 2.5em;
+    }
+    h2::after {
+        content: '';
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        width: 80px;
+        height: 3px;
+        background-color: var(--primary);
+        border-radius: 3px;
+    }
+    
+    h3 { 
+        font-size: 1.3em; 
+        color: #1e293b; 
+        margin-top: 2em;
+    }
+    
+    a { 
+        color: var(--primary); 
+        text-decoration: none; 
+        font-weight: 600;
+        transition: color 0.2s;
+    }
+    a:hover { color: var(--primary-hover); text-decoration: underline; }
+    
+    p, ul, ol { margin-bottom: 1.5em; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin-bottom: 0.6em; }
+    
+    /* Code blocks */
+    .code-wrapper {
+        margin: 2em 0;
+        border-radius: 12px;
+        background-color: var(--code-bg);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+    }
+    .code-header {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .mac-dots {
+        display: flex;
+        gap: 8px;
+    }
+    .mac-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+    }
+    .mac-dot.red { background-color: #ff5f56; box-shadow: 0 0 0 1px rgba(224, 68, 62, 0.5); }
+    .mac-dot.yellow { background-color: #ffbd2e; box-shadow: 0 0 0 1px rgba(222, 161, 35, 0.5); }
+    .mac-dot.green { background-color: #27c93f; box-shadow: 0 0 0 1px rgba(26, 171, 41, 0.5); }
+    
+    .code-lang {
+        margin-left: auto;
+        color: #94a3b8;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 600;
+    }
+
+    pre {
+        margin: 0;
+        padding: 24px 20px;
+        overflow-x: auto;
+    }
+    
+    code {
+        font-family: 'Fira Code', monospace;
+        background-color: var(--inline-code-bg);
+        color: var(--inline-code-text);
+        padding: 0.2em 0.5em;
+        border-radius: 6px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    pre code {
+        background-color: transparent;
+        color: var(--code-text);
+        padding: 0;
+        font-size: 0.9em;
+        line-height: 1.6;
+        font-weight: 400;
+    }
+    
+    /* Checklists */
+    .task-list { 
+        list-style-type: none; 
+        padding-left: 0; 
+        margin-top: 1.5em;
+    }
+    .task-list li { 
+        display: flex; 
+        align-items: center; 
+        margin-bottom: 12px; 
+        background: #f8fafc;
+        padding: 16px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s ease;
+        font-weight: 500;
+    }
+    .task-list li:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px -4px rgba(0,0,0,0.05);
+        border-color: #cbd5e1;
+        background: #ffffff;
+    }
+    .task-list input[type="checkbox"] { 
+        margin-right: 16px; 
+        width: 20px;
+        height: 20px;
+        accent-color: var(--accent);
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+    
+    /* Table of Contents specific styling */
+    #table-of-contents + ol {
+        background: #f8fafc;
+        padding: 30px 30px 30px 60px;
+        border-radius: 16px;
+        border: 1px solid var(--border-color);
+        box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+    }
+    #table-of-contents + ol li {
+        margin-bottom: 10px;
+    }
+    #table-of-contents + ol li::marker {
+        color: var(--primary);
+        font-weight: 700;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        body { padding: 20px 10px; }
+        .container {
+            padding: 40px 24px;
+            border-radius: 16px;
+        }
+        h1 { font-size: 2.2em; }
+        .meta-info { flex-direction: column; gap: 10px; align-items: center; }
+    }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1 id="billbull-retail-erp---complete-vps-deployment-guide">BillBull Retail ERP</h1>
+<div class="meta-info">
+    <div class="meta-item"><strong>Date:</strong> June 2026</div>
+    <div class="meta-item"><strong>Version:</strong> 1.0</div>
+    <div class="meta-item"><strong>Platform:</strong> Ubuntu 24.04 LTS</div>
+    <div class="meta-item"><strong>Target:</strong> 3+ Client Multi-Tenant Setup</div>
+</div>
+
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#server-overview">Server Overview</a></li>
+<li><a href="#initial-setup">Initial Setup</a></li>
+<li><a href="#database-setup">Database Setup</a></li>
+<li><a href="#code-deployment">Code Deployment</a></li>
+<li><a href="#backend-configuration">Backend Configuration</a></li>
+<li><a href="#systemd-services">Systemd Services</a></li>
+<li><a href="#nginx-reverse-proxy">Nginx Reverse Proxy</a></li>
+<li><a href="#ssl-certificates">SSL Certificates</a></li>
+<li><a href="#admin-user-setup">Admin User Setup</a></li>
+<li><a href="#testing">Testing</a></li>
+<li><a href="#deployment-checklist">Deployment Checklist</a></li>
+</ol>
+
+<h2 id="server-overview">Server Overview</h2>
+<h3 id="architecture">Architecture</h3>
+<ul>
+<li><strong>Single Shared Frontend</strong> (React build) served by Nginx</li>
+<li><strong>Multiple Backend Instances</strong> (one per client, different ports)</li>
+<li><strong>Single PostgreSQL</strong> with separate databases per client</li>
+<li><strong>One Nginx</strong> routing domains to correct backend ports</li>
+</ul>
+<h3 id="clients-setup">Clients Setup (Example)</h3>
+<ul>
+<li><strong>royaltools.billbull.app</strong> → Backend port 8080 → Database: <code>billbull_royaltools</code></li>
+<li><strong>leroyalflowers.billbull.app</strong> → Backend port 8081 → Database: <code>billbull_leroyalflowers</code></li>
+<li><strong>leroyalgifts.billbull.app</strong> → Backend port 8082 → Database: <code>billbull_leroyalgifts</code></li>
+</ul>
+<h3 id="prerequisites">Prerequisites</h3>
+<ul>
+<li>Fresh Ubuntu 24.04 LTS VPS</li>
+<li>Root access via SSH</li>
+<li>Domain DNS records pointing to VPS IP (62.72.59.119 in example)</li>
+</ul>
+
+<h2 id="initial-setup">Initial Setup</h2>
+<h3>Step 1: Update System</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt update &amp;&amp; apt upgrade -y
+apt install -y ufw curl wget git unzip</code></pre>
+</div>
+<h3>Step 2: Configure Firewall</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw enable</code></pre>
+</div>
+<h3>Step 3: Install Java 17</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt install -y openjdk-17-jdk
+java -version</code></pre>
+</div>
+<p><strong>Expected Output:</strong> <code>openjdk version "17.0.x"</code></p>
+<h3>Step 4: Install Maven</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt install -y maven
+mvn -version</code></pre>
+</div>
+<h3>Step 5: Install PostgreSQL</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt install -y postgresql postgresql-contrib
+systemctl enable postgresql
+systemctl start postgresql</code></pre>
+</div>
+<h3>Step 6: Install Node.js (for frontend build only)</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt install -y nodejs
+node -v &amp;&amp; npm -v</code></pre>
+</div>
+<h3>Step 7: Install Nginx</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt install -y nginx
+systemctl enable nginx
+systemctl start nginx</code></pre>
+</div>
+<h3>Step 8: Install Certbot (for SSL)</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">apt install -y certbot python3-certbot-nginx</code></pre>
+</div>
+
+<h2 id="database-setup">Database Setup</h2>
+<h3>Step 1: Connect to PostgreSQL</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql</code></pre>
+</div>
+<h3>Step 2: Create Databases and User</h3>
+<p>Run these SQL commands inside psql:</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">SQL</div>
+    </div>
+    <pre><code class="language-sql">CREATE USER billbull WITH PASSWORD 'root';
+
+CREATE DATABASE billbull_royaltools;
+CREATE DATABASE billbull_leroyalflowers;
+CREATE DATABASE billbull_leroyalgifts;
+
+GRANT ALL PRIVILEGES ON DATABASE billbull_royaltools TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_leroyalflowers TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_leroyalgifts TO billbull;
+
+\l
+\q</code></pre>
+</div>
+<p><strong>Verify:</strong> All 3 databases should be listed and owned by postgres with billbull having privileges.</p>
+
+<h2 id="code-deployment">Code Deployment</h2>
+<h3>Step 1: Clone Repository</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root
+git clone https://github.com/Haarizz/Billbull_Retail.git billbull
+cd billbull</code></pre>
+</div>
+<h3>Step 2: Verify Branch</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">git status
+git log --oneline -5</code></pre>
+</div>
+<p>Ensure you're on the <code>main</code> branch or the branch with the latest code.</p>
+
+<h2 id="frontend-build--deployment">Frontend Build &amp; Deployment</h2>
+<h3>Step 1: Build React Frontend</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root/billbull/billbull-frontend
+npm install
+npm run build</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>dist/</code> folder created with <code>index.html</code> and <code>assets/</code></p>
+<h3>Step 2: Copy to Web Root</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">mkdir -p /var/www/billbull
+cp -r /root/billbull/billbull-frontend/dist/* /var/www/billbull/</code></pre>
+</div>
+<p><strong>Verify:</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">ls /var/www/billbull/</code></pre>
+</div>
+<p>Should show: <code>index.html</code>, <code>assets/</code>, etc.</p>
+
+<h2 id="backend-configuration">Backend Configuration</h2>
+<h3>Step 1: Add CORS Configuration</h3>
+<p>Update the CORS config to include the new client domains.</p>
+<p><strong>File:</strong> <code>billbull-backend/src/main/java/com/billbull/backend/config/CorsConfig.java</code></p>
+<p>Add to the <code>setAllowedOrigins(List.of(...))</code> array:</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">JAVA</div>
+    </div>
+    <pre><code class="language-java">"https://royaltools.billbull.app",
+"https://leroyalflowers.billbull.app",
+"https://leroyalgifts.billbull.app"</code></pre>
+</div>
+<h3>Step 2: Create Client-Specific Properties Files</h3>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-royaltools.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-royaltools
+server.port=8080
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_royaltools
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/royaltools/
+
+jwt.secret=${JWT_SECRET_ROYALTOOLS:royaltools-secret-key-32chars-minimum!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-leroyalflowers.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-leroyalflowers
+server.port=8081
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_leroyalflowers
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/leroyalflowers/
+
+jwt.secret=${JWT_SECRET_LEROYALFLOWERS:leroyalflowers-secret-key-32chars-minimum!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-leroyalgifts.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-leroyalgifts
+server.port=8082
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_leroyalgifts
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/leroyalgifts/
+
+jwt.secret=${JWT_SECRET_LEROYALGIFTS:leroyalgifts-secret-key-32chars-minimum!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<h3>Step 3: Commit &amp; Push Changes</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root/billbull
+git add -A
+git commit -m "Add CORS for new clients + application property files for royaltools, leroyalflowers, leroyalgifts"
+git push origin main</code></pre>
+</div>
+<h3>Step 4: Build Backend JAR</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root/billbull
+git pull origin main
+cd billbull-backend
+mvn clean package -DskipTests</code></pre>
+</div>
+<p><strong>Expected:</strong> Jar created at <code>target/billbull-backend-0.0.1-SNAPSHOT.jar</code> (size ~80MB+)</p>
+
+<h2 id="systemd-services">Systemd Services</h2>
+<h3>Step 1: Create Upload Directories</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">mkdir -p /root/billbull/uploads/royaltools
+mkdir -p /root/billbull/uploads/leroyalflowers
+mkdir -p /root/billbull/uploads/leroyalgifts</code></pre>
+</div>
+<h3>Step 2: Create Systemd Service - Royal Tools</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-royaltools.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Royal Tools
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=royaltools
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 3: Create Systemd Service - Le Royal Flowers</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-leroyalflowers.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Le Royal Flowers
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalflowers
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 4: Create Systemd Service - Le Royal Gifts</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-leroyalgifts.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Le Royal Gifts
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalgifts
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 5: Enable and Start Services</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl daemon-reload
+systemctl enable billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts
+systemctl start billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+<h3>Step 6: Verify Services Running</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+<p><strong>Expected:</strong> All three show <code>active (running)</code></p>
+<h3>Step 7: Check Backend Logs</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">journalctl -u billbull-royaltools -n 50 -f</code></pre>
+</div>
+<p><strong>Look for:</strong></p>
+<ul>
+<li><code>Tomcat initialized with port 8080</code></li>
+<li><code>Started BillbullBackendApplication</code></li>
+<li>No ERROR lines about database</li>
+</ul>
+
+<h2 id="nginx-reverse-proxy">Nginx Reverse Proxy</h2>
+<h3>Step 1: Create SSL Files (Temporary, before Certbot)</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/letsencrypt/options-ssl-nginx.conf &lt;&lt; 'EOF'
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers on;
+ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+ssl_session_cache shared:le_nginx_SSL:10m;
+ssl_session_timeout 1440m;
+ssl_session_tickets off;
+EOF
+
+mkdir -p /etc/letsencrypt
+openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048</code></pre>
+</div>
+<h3>Step 2: Create Nginx Configuration</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/nginx/sites-available/billbull &lt;&lt; 'EOF'
+server {
+    listen 80;
+    server_name royaltools.billbull.app leroyalflowers.billbull.app leroyalgifts.billbull.app;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name royaltools.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/royaltools.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/royaltools.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8080/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name leroyalflowers.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/leroyalflowers.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/leroyalflowers.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8081/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name leroyalgifts.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/leroyalgifts.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/leroyalgifts.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8082/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+EOF</code></pre>
+</div>
+<h3>Step 3: Enable Nginx Configuration</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">ln -s /etc/nginx/sites-available/billbull /etc/nginx/sites-enabled/billbull
+rm -f /etc/nginx/sites-enabled/default</code></pre>
+</div>
+
+<h2 id="ssl-certificates">SSL Certificates</h2>
+<h3>Step 1: Get SSL Certs with Certbot (Standalone Mode)</h3>
+<p>Use standalone mode because we need certs before Nginx can fully start:</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">certbot certonly --standalone -d royaltools.billbull.app
+certbot certonly --standalone -d leroyalflowers.billbull.app
+certbot certonly --standalone -d leroyalgifts.billbull.app</code></pre>
+</div>
+<p><strong>During prompt:</strong></p>
+<ul>
+<li>Enter email: <code>your-email@example.com</code></li>
+<li>Agree to terms: <code>Y</code></li>
+<li>Share email with EFF: <code>Y</code> (optional)</li>
+</ul>
+<h3>Step 2: Verify Certificates Created</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">ls -la /etc/letsencrypt/live/</code></pre>
+</div>
+<p>Should show 3 directories:</p>
+<ul>
+<li><code>royaltools.billbull.app/</code></li>
+<li><code>leroyalflowers.billbull.app/</code></li>
+<li><code>leroyalgifts.billbull.app/</code></li>
+</ul>
+<p>Each containing: <code>fullchain.pem</code>, <code>privkey.pem</code></p>
+<h3>Step 3: Test Nginx Configuration</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">nginx -t</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>nginx: configuration file /etc/nginx/nginx.conf test is successful</code></p>
+<h3>Step 4: Reload Nginx</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl reload nginx
+systemctl status nginx</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>active (running)</code></p>
+
+<h2 id="admin-user-setup">Admin User Setup</h2>
+<h3>Step 1: Generate Bcrypt Hash for Password</h3>
+<p>Use an online bcrypt generator or bcrypt tool. For password <code>admin123</code>:</p>
+<p>Hash: <code>$2a$12$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS</code></p>
+<p>Or generate your own with a different password.</p>
+<h3>Step 2: Update Admin Password for All Clients</h3>
+<p><strong>Royal Tools (billbull_royaltools):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_royaltools -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<p><strong>Le Royal Flowers (billbull_leroyalflowers):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_leroyalflowers -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<p><strong>Le Royal Gifts (billbull_leroyalgifts):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_leroyalgifts -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<h3>Step 3: Restart Backends to Pick Up Changes</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+<p>Wait 10 seconds for services to restart.</p>
+
+<h2 id="testing">Testing</h2>
+<h3>Step 1: Test Frontend Loading</h3>
+<p>Visit in browser:</p>
+<ul>
+<li><a href="https://royaltools.billbull.app">https://royaltools.billbull.app</a> → Should load login page</li>
+<li><a href="https://leroyalflowers.billbull.app">https://leroyalflowers.billbull.app</a> → Should load login page</li>
+<li><a href="https://leroyalgifts.billbull.app">https://leroyalgifts.billbull.app</a> → Should load login page</li>
+</ul>
+<h3>Step 2: Test Admin Login</h3>
+<p>On any of the above URLs:</p>
+<p><strong>Username:</strong> <code>admin</code><br>
+<strong>Password:</strong> <code>admin123</code> (or whatever you set)</p>
+<p><strong>Expected:</strong> Login succeeds, redirects to dashboard</p>
+<h3>Step 3: Verify Database Tables Created</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_royaltools -c "\dt"</code></pre>
+</div>
+<p>Should show 50+ tables (users, roles, branches, sales_invoices, etc.)</p>
+<h3>Step 4: Check Service Health</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+<p>All should show <code>active (running)</code> with no recent errors.</p>
+
+<h2 id="deployment-checklist">Deployment Checklist</h2>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Fresh Ubuntu 24.04 LTS VPS provisioned</li>
+<li><input type="checkbox" disabled> DNS A records for all 3 domains point to VPS IP</li>
+<li><input type="checkbox" disabled> SSH access confirmed</li>
+<li><input type="checkbox" disabled> Firewall rules configured (80, 443, 22)</li>
+</ul>
+<h3>Installation</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Java 17 installed</li>
+<li><input type="checkbox" disabled> Maven installed</li>
+<li><input type="checkbox" disabled> Node.js installed</li>
+<li><input type="checkbox" disabled> PostgreSQL installed and running</li>
+<li><input type="checkbox" disabled> Nginx installed</li>
+<li><input type="checkbox" disabled> Certbot installed</li>
+</ul>
+<h3>Database</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> PostgreSQL user "billbull" created</li>
+<li><input type="checkbox" disabled> 3 databases created (royaltools, leroyalflowers, leroyalgifts)</li>
+<li><input type="checkbox" disabled> Permissions granted to billbull user</li>
+</ul>
+<h3>Code</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Repository cloned to /root/billbull</li>
+<li><input type="checkbox" disabled> CORS config updated with new domains</li>
+<li><input type="checkbox" disabled> 3 application-*.properties files created</li>
+<li><input type="checkbox" disabled> Changes committed and pushed to main</li>
+<li><input type="checkbox" disabled> Frontend built and copied to /var/www/billbull</li>
+<li><input type="checkbox" disabled> Backend JAR built successfully</li>
+</ul>
+<h3>Services</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> 3 systemd service files created</li>
+<li><input type="checkbox" disabled> Services enabled and started</li>
+<li><input type="checkbox" disabled> All 3 services show "active (running)"</li>
+<li><input type="checkbox" disabled> Backend logs show successful startup</li>
+</ul>
+<h3>Nginx &amp; SSL</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Nginx config created</li>
+<li><input type="checkbox" disabled> SSL certificates obtained from Let's Encrypt</li>
+<li><input type="checkbox" disabled> Nginx test passes (<code>nginx -t</code>)</li>
+<li><input type="checkbox" disabled> Nginx reloaded</li>
+<li><input type="checkbox" disabled> HTTPS accessible on all 3 domains</li>
+</ul>
+<h3>Admin Access</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Admin password hash updated for all 3 databases</li>
+<li><input type="checkbox" disabled> Backends restarted</li>
+<li><input type="checkbox" disabled> Login successful with admin/admin123</li>
+</ul>
+<h3>Final Testing</h3>
+<ul class="task-list">
+<li><input type="checkbox" disabled> All 3 domains load login page</li>
+<li><input type="checkbox" disabled> Admin can log in on all 3 domains</li>
+<li><input type="checkbox" disabled> Database tables created on login</li>
+<li><input type="checkbox" disabled> No 500 errors in logs</li>
+<li><input type="checkbox" disabled> API endpoints responding (check network tab)</li>
+</ul>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3>Backend Won't Start</h3>
+<p><strong>Check logs:</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">journalctl -u billbull-royaltools -n 100 -f</code></pre>
+</div>
+<p><strong>Common issues:</strong></p>
+<ul>
+<li>Database connection failed → Check PostgreSQL is running</li>
+<li>Port already in use → Change port in application-*.properties</li>
+<li>Flyway migration error → Ensure Flyway is disabled</li>
+</ul>
+<h3>Nginx 502 Bad Gateway</h3>
+<p><strong>Cause:</strong> Backend not responding<br>
+<strong>Fix:</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl status billbull-royaltools
+curl http://127.0.0.1:8080/api/auth/login</code></pre>
+</div>
+<h3>SSL Certificate Not Found</h3>
+<p><strong>Check:</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">ls -la /etc/letsencrypt/live/</code></pre>
+</div>
+<p><strong>Fix:</strong> Re-run certbot for missing domains</p>
+<h3>Password Not Working After Update</h3>
+<p><strong>Root cause:</strong> Backend cached user in memory<br>
+<strong>Fix:</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+
+<h2 id="monitoring--maintenance">Monitoring &amp; Maintenance</h2>
+<h3>Daily Health Check</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash"># Check all services running
+systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts
+
+# Check for recent errors
+journalctl -u billbull-royaltools -n 20 --no-pager
+journalctl -u billbull-leroyalflowers -n 20 --no-pager
+journalctl -u billbull-leroyalgifts -n 20 --no-pager
+
+# Check Nginx
+systemctl status nginx</code></pre>
+</div>
+<h3>SSL Certificate Renewal</h3>
+<p>Certbot auto-renews every 60 days. Verify:</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">certbot renew --dry-run</code></pre>
+</div>
+<h3>Database Backups</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash"># Backup all databases
+pg_dump -U postgres billbull_royaltools > /backups/royaltools_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_leroyalflowers > /backups/leroyalflowers_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_leroyalgifts > /backups/leroyalgifts_$(date +%Y%m%d).sql</code></pre>
+</div>
+<h3>Deploying Updates</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root/billbull
+git pull origin main
+cd billbull-backend
+mvn clean package -DskipTests
+systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+</div>
+
+<h2 id="support">Support</h2>
+<p>For issues or questions:</p>
+<ul>
+<li>Check backend logs: <code>journalctl -u billbull-royaltools -f</code></li>
+<li>Check Nginx logs: <code>tail -f /var/log/nginx/error.log</code></li>
+<li>Check PostgreSQL: <code>sudo -u postgres psql -d billbull_royaltools</code></li>
+</ul>
+<div style="text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px dashed var(--border-color); color: var(--text-muted);">
+    <strong>End of Deployment Guide</strong>
+</div>
+
+</div>
+</body>
+</html>

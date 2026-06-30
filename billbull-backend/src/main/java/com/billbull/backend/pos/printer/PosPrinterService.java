@@ -1,5 +1,9 @@
 package com.billbull.backend.pos.printer;
 
+import com.billbull.backend.pos.device.PosDevice;
+import com.billbull.backend.pos.device.PosDeviceStatus;
+import com.billbull.backend.pos.device.PosDeviceType;
+import com.billbull.backend.pos.devicemanager.DeviceManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -13,9 +17,11 @@ import java.util.Objects;
 public class PosPrinterService {
 
     private final PosPrinterRepository repo;
+    private final DeviceManager deviceManager;
 
-    public PosPrinterService(PosPrinterRepository repo) {
+    public PosPrinterService(PosPrinterRepository repo, DeviceManager deviceManager) {
         this.repo = repo;
+        this.deviceManager = deviceManager;
     }
 
     public List<PosPrinter> list(Long branchId, String terminalId, PosPrinterType deviceType) {
@@ -39,6 +45,8 @@ public class PosPrinterService {
         PosPrinter printer = new PosPrinter();
         apply(printer, req);
         printer.setRuntimeStatus(PosPrinterRuntimeStatus.UNKNOWN);
+        PosDevice device = syncDeviceRecord(printer);
+        printer.setDeviceId(device.getId());
         return repo.save(printer);
     }
 
@@ -46,7 +54,16 @@ public class PosPrinterService {
         PosPrinter printer = get(id);
         validateRequest(req, id);
         apply(printer, req);
+        PosDevice device = syncDeviceRecord(printer);
+        printer.setDeviceId(device.getId());
         return repo.save(printer);
+    }
+
+    /** Keeps the printer's shared Device Manager parent row (pos_devices) in sync. */
+    private PosDevice syncDeviceRecord(PosPrinter printer) {
+        return deviceManager.syncDeviceRecord(PosDeviceType.PRINTER, printer.getDeviceCode(), printer.getDeviceName(),
+                printer.getBranchId(), printer.getBranchName(), printer.getTerminalId(), printer.getCounterName(),
+                PosDeviceStatus.valueOf(printer.getStatus().name()));
     }
 
     public PosPrinter updateRuntime(Long id, RuntimeRequest req) {
@@ -65,6 +82,7 @@ public class PosPrinterService {
         printer.setStatus(PosPrinterStatus.DECOMMISSIONED);
         printer.setDefaultPrinter(false);
         printer.setActive(false);
+        syncDeviceRecord(printer);
         return repo.save(printer);
     }
 

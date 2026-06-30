@@ -45,6 +45,18 @@ public class PosTerminal extends BaseEntity {
     @Column(nullable = false, length = 20)
     private PosTerminalStatus status = PosTerminalStatus.ACTIVE;
 
+    /** Phase D — optional Hardware Profile assignment. Null means this terminal still uses the
+     *  legacy direct per-device assignment (PosPrinter.terminalId etc.) — backward compatible,
+     *  see HardwareProfileAssignmentEngine for the precedence rule once a profile is assigned. */
+    @Column(name = "hardware_profile_id")
+    private Long hardwareProfileId;
+
+    /** The profile's version at the moment it was assigned to this terminal — compared against
+     *  the profile's current version to detect drift (the profile has since been edited but this
+     *  terminal hasn't been re-synced). Null whenever hardwareProfileId is null. */
+    @Column(name = "assigned_profile_version")
+    private Integer assignedProfileVersion;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -79,4 +91,10 @@ public class PosTerminal extends BaseEntity {
 
     public PosTerminalStatus getStatus() { return status; }
     public void setStatus(PosTerminalStatus status) { this.status = status; }
+
+    public Long getHardwareProfileId() { return hardwareProfileId; }
+    public void setHardwareProfileId(Long hardwareProfileId) { this.hardwareProfileId = hardwareProfileId; }
+
+    public Integer getAssignedProfileVersion() { return assignedProfileVersion; }
+    public void setAssignedProfileVersion(Integer assignedProfileVersion) { this.assignedProfileVersion = assignedProfileVersion; }
 }
