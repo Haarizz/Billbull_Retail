@@ -60,6 +60,7 @@ import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
+import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
 
 @Service
 public class SalesInvoiceService {
@@ -89,6 +90,7 @@ public class SalesInvoiceService {
     private final BatchSelectionService batchSelectionService;
     private final PaymentService paymentService;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+    private final PosDayCloseRepository dayCloseRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -114,7 +116,8 @@ public class SalesInvoiceService {
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
             PaymentService paymentService,
-            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
+            PosDayCloseRepository dayCloseRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -140,6 +143,7 @@ public class SalesInvoiceService {
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
         this.notifPublisher = notifPublisher;
+        this.dayCloseRepository = dayCloseRepository;
     }
 
     // ----------------------------
@@ -233,6 +237,15 @@ public class SalesInvoiceService {
     @Transactional
     public SalesInvoice save(SalesInvoice invoice) {
         SalesInvoice existing = invoice.getId() != null ? invoiceRepo.findById(invoice.getId()).orElse(null) : null;
+
+        if (invoice.getInvoiceDate() != null) {
+            Long checkBranchId = existing != null ? existing.getBranchId() : (invoice.getBranchId() != null ? invoice.getBranchId() : branchAccessService.getRequiredCurrentUserBranch().getId());
+            if (dayCloseRepository.existsByBranchIdAndCloseDate(checkBranchId, invoice.getInvoiceDate())) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.FORBIDDEN,
+                        "Cannot create or modify invoices for a closed business day.");
+            }
+        }
 
         if (existing != null) {
             branchAccessService.assertTransactionBranchAccessible(existing.getBranchId(), "Sales Invoice");
@@ -910,6 +923,11 @@ public class SalesInvoiceService {
     @Transactional
     public void delete(Long id) {
         SalesInvoice existing = getById(id);
+        if (existing != null && dayCloseRepository.existsByBranchIdAndCloseDate(existing.getBranchId(), existing.getInvoiceDate())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "Cannot delete an invoice for a closed business day.");
+        }
         if (existing != null && existing.getStatus() == SalesInvoiceStatus.POSTED) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Posted invoices cannot be deleted.");
