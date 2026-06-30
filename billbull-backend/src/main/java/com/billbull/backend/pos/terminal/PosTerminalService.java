@@ -54,15 +54,25 @@ public class PosTerminalService {
                 PosTerminal t = byId.get();
                 // Validate Branch Scope & Authorization
                 if (t.getBranchId().equals(branchId)) {
-                    // Validate Physical Lifecycle Status (Ensure not BLOCKED, MAINTENANCE, or DECOMMISSIONED)
-                    if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
-                        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                    // Reject the terminalId claim if the device fingerprint doesn't match —
+                    // this means a different physical device is presenting a stale or copied
+                    // terminalId from localStorage. Fall through to fingerprint-based lookup.
+                    boolean fingerprintMismatch = deviceFingerprint != null && !deviceFingerprint.isBlank()
+                            && t.getDeviceFingerprint() != null
+                            && !deviceFingerprint.equals(t.getDeviceFingerprint());
+                    if (fingerprintMismatch) {
+                        // Different device — do not reuse this terminal; fall through below
+                    } else {
+                        // Validate Physical Lifecycle Status (Ensure not BLOCKED, MAINTENANCE, or DECOMMISSIONED)
+                        if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+                            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                        }
+                        t.setLastSeenAt(LocalDateTime.now());
+                        if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
+                        // Strict Immutability: Do NOT automatically overwrite deviceFingerprint
+                        repo.save(t);
+                        return Map.of("terminal", t, "isNew", false);
                     }
-                    t.setLastSeenAt(LocalDateTime.now());
-                    if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
-                    // Strict Immutability: Do NOT automatically overwrite deviceFingerprint
-                    repo.save(t);
-                    return Map.of("terminal", t, "isNew", false);
                 }
             }
         }

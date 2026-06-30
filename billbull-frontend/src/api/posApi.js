@@ -30,6 +30,13 @@ export const verifyPosSupervisorPin = async (pin) => {
   return res.data?.valid === true;
 };
 
+// Verify supervisor identity by user credentials for shift handover.
+// Returns { valid, supervisorName, supervisorUsername, reason } — never ships passwords to client.
+export const verifySupervisorAuth = async ({ email, password, terminalId, lockedBy }) => {
+  const res = await api.post(`${BASE}/settings/supervisor-auth`, { email, password, terminalId, lockedBy });
+  return res.data; // { valid: bool, supervisorName?: string, supervisorUsername?: string, reason?: string }
+};
+
 // ── Session management ─────────────────────────────────────────────────────
 
 export const openPosSession = async ({ terminalId, counterName, openingCash = 0 }) => {
