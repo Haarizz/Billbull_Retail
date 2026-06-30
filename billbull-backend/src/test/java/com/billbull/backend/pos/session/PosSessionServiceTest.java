@@ -64,6 +64,8 @@ class PosSessionServiceTest {
     @Mock private PosAuditLogRepository auditLogRepository;
     @Mock private PosTerminalRepository terminalRepository;
     @Mock private SalesReturnRepository returnRepository;
+    @Mock private com.billbull.backend.pos.dayclose.PosDayCloseRepository dayCloseRepository;
+    @Mock private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private PosSessionService service;
 
@@ -71,7 +73,7 @@ class PosSessionServiceTest {
     void setUp() {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
-                terminalRepository, returnRepository);
+                terminalRepository, returnRepository, dayCloseRepository, objectMapper);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no tender / audit rows unless a test stubs them.
         lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());

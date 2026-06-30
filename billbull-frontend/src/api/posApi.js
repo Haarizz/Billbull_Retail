@@ -139,6 +139,14 @@ export const getPosZReport = async (branchId, date) => {
   return res.data;
 };
 
+export const closePosDay = async (branchId, date) => {
+  const res = await api.post(`${BASE}/sessions/close-day`, null, {
+    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+  });
+  return res.data;
+};
+
+
 // ── Unified search / scan resolver ─────────────────────────────────────────
 
 /**
