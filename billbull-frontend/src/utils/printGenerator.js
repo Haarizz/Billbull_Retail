@@ -1030,6 +1030,87 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     return html;
 };
 
+// Plain-text counterpart to generateReportThermalHtml — same viewModel, rendered as
+// raw lines for the local print agent's text path (no HTML/driver dialog involved).
+export const generateReportThermalText = (viewModel = {}, companyProfile = {}, meta = {}) => {
+    const paper = meta.paper === '58mm' ? '58mm' : '80mm';
+    const width = THERMAL_WIDTHS[paper];
+    const hr = '-'.repeat(width);
+
+    const companyName = companyProfile.companyName || companyProfile.name || 'BillBull ERP';
+    const branch = companyProfile.branchName || (meta.branch && meta.branch !== 'All' ? meta.branch : '');
+    const trn = companyProfile.trn || '';
+    const reportTitle = viewModel.reportTitle || meta.reportTitle || 'POS Report';
+    const sections = Array.isArray(viewModel.sections) ? viewModel.sections : [];
+    const kpis = Array.isArray(viewModel.kpis) ? viewModel.kpis : [];
+
+    const lines = [];
+    lines.push(centerThermal(companyName.toUpperCase(), width));
+    if (branch) lines.push(centerThermal(branch, width));
+    if (trn) lines.push(centerThermal(`TRN: ${trn}`, width));
+    lines.push(hr);
+    lines.push(centerThermal(reportTitle.toUpperCase(), width));
+    lines.push(hr);
+
+    if (viewModel.note) {
+        String(viewModel.note).split('|').map(s => s.trim()).filter(Boolean)
+            .forEach(part => lines.push(centerThermal(part, width)));
+        lines.push(hr);
+    }
+
+    if (Array.isArray(meta.filters)) {
+        meta.filters.forEach(f => {
+            if (f && f.label) lines.push(padThermalRow(f.label, String(f.value ?? ''), width));
+        });
+        if (meta.filters.length) lines.push(hr);
+    }
+
+    if (kpis.length) {
+        kpis.forEach(k => lines.push(padThermalRow(k.label, k.value, width)));
+        lines.push(hr);
+    }
+
+    sections.forEach(section => {
+        if (section.title) lines.push(section.title.toUpperCase().slice(0, width));
+        const isSessionInfo = section.title && section.title.toLowerCase().includes('session information');
+        const rows = Array.isArray(section.rows) ? section.rows : [];
+        rows.forEach(row => {
+            const cells = Array.isArray(row) ? row : [row];
+            if (cells.length === 0) return;
+            if (cells.length === 1) {
+                lines.push(String(cells[0] ?? '').slice(0, width));
+                return;
+            }
+            const label = cells[0];
+            const value = cells[cells.length - 1];
+            const middle = cells.slice(1, -1).filter(c => c !== '' && c != null);
+            const fullLabel = middle.length ? `${label} (${middle.join('/')})` : label;
+            if (isSessionInfo && cells.length === 2) {
+                lines.push(`${String(label)}: ${String(value)}`.slice(0, width));
+            } else {
+                lines.push(padThermalRow(fullLabel, value, width));
+            }
+        });
+        if (Array.isArray(section.footer) && section.footer.length) {
+            const f = section.footer;
+            const label = f[0];
+            const value = f[f.length - 1];
+            const middle = f.slice(1, -1).filter(c => c !== '' && c != null);
+            const fullLabel = middle.length ? `${label} (${middle.join('/')})` : label;
+            lines.push(hr);
+            lines.push(padThermalRow(fullLabel, value, width));
+        }
+        lines.push(hr);
+    });
+
+    lines.push(centerThermal(`Generated ${new Date().toLocaleString()}`, width));
+    if (meta.user) lines.push(centerThermal(`By: ${meta.user}`, width));
+    lines.push(centerThermal('*** END OF REPORT ***', width));
+    lines.push('');
+    lines.push('');
+    return lines.join('\n');
+};
+
 export const generateReportPrintHtml = (_template, reportTitle, columns, data, companyProfile = {}, meta = {}) => {
     const generatedAt = new Date().toLocaleString();
     const companyName = escapeHtml(companyProfile.companyName || 'BillBull ERP');

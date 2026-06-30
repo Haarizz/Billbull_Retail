@@ -33,7 +33,7 @@ import {
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { printHtml, generateReportA4Html, generateReportThermalHtml, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import {
@@ -134,7 +134,7 @@ import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, re
 import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
 import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct } from './POS/posUtils';
 import {
-  buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml,
+  buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
 } from './POS/posPrintUtils';
@@ -150,7 +150,8 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
-import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { resolvePrinterForContext, sendReceiptToConfiguredPrinter, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { buildEscPosReceiptBase64 } from '../../utils/escPosReceipt';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -485,6 +486,9 @@ export default function POSSales() {
   // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
   // and no company stamp occupies that slot — "stamp if uploaded, else QR").
   const [checkoutPreviewQrDataUrl, setCheckoutPreviewQrDataUrl] = useState(null);
+  // Customer's outstanding balance for the checkout Thermal preview's Credit Account
+  // section — fetched async (useMemo can't await), mirrors the lookup done at print time.
+  const [checkoutPreviewCreditBalance, setCheckoutPreviewCreditBalance] = useState(null);
   const [receiptSharePhone, setReceiptSharePhone] = useState('');
   const [receiptShareEmail, setReceiptShareEmail] = useState('');
   const [lastPaidInvoice, setLastPaidInvoice] = useState(null);
@@ -574,6 +578,7 @@ export default function POSSales() {
   const [reprintError, setReprintError] = useState(null);
   const [reprintPrinting, setReprintPrinting] = useState(false);
   const [reprintPrintMode, setReprintPrintMode] = useState('thermal');
+  const [reprintPreviewCredit, setReprintPreviewCredit] = useState(null);
   // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
   const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
@@ -924,6 +929,7 @@ export default function POSSales() {
         showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: showQrInPreview,
         showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes,
         showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
+        creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement
       });
@@ -940,9 +946,28 @@ export default function POSSales() {
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
       tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
       tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-      tplInvoiceColDiscount, tplInvoiceQrPlacement]);
+      tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Fetch the selected customer's outstanding balance for the checkout preview's
+  // Credit Account section — same lookup used at actual print time.
+  useEffect(() => {
+    if (!tplInvoiceShowBankDetails || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
+      setCheckoutPreviewCreditBalance(null);
+      return;
+    }
+    const code = selectedCustomerData.code || selectedCustomerData.id;
+    if (!code) {
+      setCheckoutPreviewCreditBalance(null);
+      return;
+    }
+    let cancelled = false;
+    posCreditBalance(code)
+      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : null); })
+      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
+    return () => { cancelled = true; };
+  }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
 
   // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
@@ -2239,6 +2264,28 @@ export default function POSSales() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showReprintModal]);
 
+  // Keep the reprint preview's Credit Account section in sync with the selected
+  // invoice — mirrors the credit lookup done at actual print time so the on-screen
+  // preview doesn't silently omit the customer's balance.
+  useEffect(() => {
+    const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
+    const isWalkIn = !inv?.customerName || inv.customerName === 'Walk-in Customer';
+    if (!tplInvoiceShowBankDetails || !inv || isWalkIn || !inv.customerCode) {
+      setReprintPreviewCredit(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cr = await posCreditBalance(inv.customerCode);
+        if (!cancelled) setReprintPreviewCredit(cr?.found ? { previousBalance: cr.outstanding ?? 0 } : null);
+      } catch (_) {
+        if (!cancelled) setReprintPreviewCredit(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reprintSelectedInvoice, reprintInvoices, tplInvoiceShowBankDetails]);
+
   useEffect(() => {
     if (!selectedLayawayId) { setSelectedLayawayDetail(null); return; }
     let cancelled = false;
@@ -2276,13 +2323,34 @@ export default function POSSales() {
       });
       if (print) {
         try {
-          printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, {
+          const layawayHtmlOpts = {
             companyName: tplOutletName,
             trn: tplOutletTrn,
             header: tplReceiptHeader,
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
-          }));
+          };
+          const layawayHtml = buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts);
+          if (tplReceiptPaper === 'A4') {
+            printHtml(layawayHtml);
+          } else {
+            const printer = resolvePrinterForContext(printerConfigs, {
+              deviceType: 'RECEIPT_PRINTER',
+              branchId: saved.branchId || currentTerminal?.branchId || null,
+              terminalId: currentTerminal?.terminalId || null,
+            });
+            if (!printer) {
+              printHtml(layawayHtml);
+            } else {
+              try {
+                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
+                await sendReceiptToConfiguredPrinter(printer, { receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
+              } catch (err) {
+                console.warn('Configured printer failed for layaway receipt, falling back to browser print', err);
+                printHtml(layawayHtml);
+              }
+            }
+          }
         } catch { /* print is best-effort */ }
       }
       clearInvoice();
@@ -2559,7 +2627,47 @@ export default function POSSales() {
       customerEmail,
       currency: activeCurrency,
     });
-    return { html, text };
+    // Raw ESC/POS binary payload — the only path that actually carries
+    // density/heat/font/raster-image commands to the printer hardware
+    // (the HTML and plain-text paths above go through the Windows driver
+    // or a bare socket write with no print-quality control at all).
+    let escPosBase64 = null;
+    try {
+      escPosBase64 = await buildEscPosReceiptBase64(tplInvoicePaper, full, {
+        companyName: tplOutletName,
+        trn: tplOutletTrn,
+        header: tplInvoiceHeader,
+        footer: tplInvoiceFooter,
+        showTrn: tplInvoiceShowTrn,
+        isReprint,
+        logoDataUrl: tplLogoDataUrl,
+        showLogo: tplInvoiceShowLogo,
+        showCompanyDetails: tplInvoiceShowCompanyDetails,
+        outletAddress: tplOutletAddress,
+        outletPhone: tplOutletPhone,
+        showServiceCharge: tplInvoiceShowGrandTotalBanner,
+        showVatSummary: tplInvoiceColVatAmt,
+        showPaymentDetails: tplInvoiceColDiscount,
+        showQRCode: tplInvoiceShowQRCode,
+        qrContent: tplInvoiceShowQRCode ? qrContent : null,
+        showCustomerDetails: tplInvoiceShowCustomerDetails,
+        showFooterText: tplInvoiceShowTerms,
+        cashierName: cashierNameOverride || cashierDisplayName,
+        terminalId: full.posTerminalId || currentTerminal?.terminalId,
+        counterName: full.posCounterName || currentTerminal?.counterName,
+        cashGiven,
+        changeAmount,
+        depositApplied,
+        balanceDue,
+        shippingCharge,
+        customerPhone,
+        customerEmail,
+        currency: activeCurrency,
+      });
+    } catch (err) {
+      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
+    }
+    return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
     tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoicePaper,
@@ -2573,6 +2681,7 @@ export default function POSSales() {
     full,
     html,
     text,
+    escPosBase64,
     title = 'BillBull POS Receipt',
   }) => {
     const printer = resolvePrinterForContext(printerConfigs, {
@@ -2583,6 +2692,17 @@ export default function POSSales() {
     if (!printer) {
       printHtml(html);
       return { mode: 'browser-fallback', printer: null };
+    }
+    // Prefer raw ESC/POS — it's the only path with real density/heat/font/logo
+    // control. Fall back to the plain-text agent path, then to browser/driver
+    // printing, so a malformed payload or an unreachable agent never blocks checkout.
+    if (escPosBase64) {
+      try {
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+        return { mode: 'agent-escpos', printer };
+      } catch (err) {
+        console.warn('ESC/POS print failed, falling back to plain-text agent print', err);
+      }
     }
     try {
       await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title });
@@ -2702,12 +2822,17 @@ export default function POSSales() {
 
       if (tplInvoicePaper !== 'A4') {
         try {
-          const { html, text } = await buildThermalReceiptArtifacts({
+          let creditPrevBalAuto = null;
+          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
+            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
+          }
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             cashGiven: paid.paidAmount,
             changeAmount: changeDue,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            creditPreviousBalance: creditPrevBalAuto,
             depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
             balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
             shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
@@ -2716,6 +2841,7 @@ export default function POSSales() {
             full: savedInvoice,
             html,
             text,
+            escPosBase64,
             title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
           openCashDrawer('RECEIPT_PRINT');
@@ -2875,7 +3001,7 @@ export default function POSSales() {
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
           }
-          const { html, text } = await buildThermalReceiptArtifacts({
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
             customerPhone: custRec?.phone,
@@ -2888,6 +3014,7 @@ export default function POSSales() {
             full,
             html,
             text,
+            escPosBase64,
             title: `Reprint ${full.invoiceNumber || reprintSelectedInvoice || ''}`.trim(),
           });
         }
@@ -3232,7 +3359,7 @@ export default function POSSales() {
           )}
 
           {/* ── KPI Cards ── */}
-          <div className="grid grid-cols-3 xl:grid-cols-9 gap-3">
+          <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-9 gap-3">
             {kpis.map((k, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-2">
                 <div className="flex items-center justify-between">
@@ -3351,7 +3478,7 @@ export default function POSSales() {
           {analyticsTab === 'receivables' && (
             <div className="space-y-6">
               {/* Aging summary */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {agingData.map((a, i) => {
                   const colors = ['#22C55E','#F59E0B','#F97316','#EF4444'];
                   return (
@@ -3405,6 +3532,7 @@ export default function POSSales() {
                   <AlertTriangle className="h-5 w-5 text-red-500" />
                   Top Overdue Customers
                 </h2>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
@@ -3431,6 +3559,7 @@ export default function POSSales() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -3439,7 +3568,7 @@ export default function POSSales() {
           {analyticsTab === 'customers' && (
             <div className="space-y-6">
               {/* Customer summary stats */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
                   { label: 'Total Customers',    value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.totalCustomers) : '—', icon: <Users className="h-4 w-4" />,     color: '#327F74' },
                   { label: 'New This Period',     value: '—', icon: <UserPlus className="h-4 w-4" />,  color: '#22C55E' },
@@ -3467,6 +3596,7 @@ export default function POSSales() {
                   </h2>
                   <button className="text-xs text-[#327F74] hover:underline">View All</button>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
@@ -3503,6 +3633,7 @@ export default function POSSales() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               {/* Customer purchase trend bar chart */}
@@ -3529,7 +3660,7 @@ export default function POSSales() {
           {/* ══ INVOICES TAB ══ */}
           {analyticsTab === 'invoices' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Invoice & POS trend */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                   <h2 className="text-[#1E293B] mb-4 flex items-center gap-2">
@@ -3582,7 +3713,7 @@ export default function POSSales() {
               </div>
 
               {/* POS trend + avg invoice */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
                   { label: 'Average Invoice Value', value: kpi ? fmt(kpi.avgInvoiceValue)  : '—', sub: 'Per invoice', icon: <DollarSign className="h-4 w-4" />, color: '#327F74' },
                   { label: 'Total Invoices Issued',  value: kpi ? fmtN(kpi.invoiceCount)   : '—', sub: 'In period',   icon: <FileText className="h-4 w-4" />,   color: '#6366F1' },
@@ -3624,7 +3755,7 @@ export default function POSSales() {
           {analyticsTab === 'returns' && (
             <div className="space-y-6">
               {/* Returns KPI row */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
                   { label: 'Sales Return Value',   value: analyticsData?.returnMetrics ? fmt(analyticsData.returnMetrics.salesReturnsValue) : '—', sub: '—', icon: <RotateCcw className="h-4 w-4" />,  color: '#EC4899' },
                   { label: 'Credit Notes Value',   value: '—', sub: '—', icon: <CreditCard className="h-4 w-4" />, color: '#14B8A6' },
@@ -3674,7 +3805,7 @@ export default function POSSales() {
               </div>
 
               {/* Return reason analysis */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                   <h2 className="text-[#1E293B] mb-4 flex items-center gap-2">
                     <ClipboardList className="h-5 w-5 text-[#F5C742]" />
@@ -3703,6 +3834,7 @@ export default function POSSales() {
                     <CreditCard className="h-5 w-5 text-[#F5C742]" />
                     Credit Notes Detail
                   </h2>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100">
@@ -3717,6 +3849,7 @@ export default function POSSales() {
                       </tr>
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4642,12 +4775,38 @@ export default function POSSales() {
     return generateReportA4Html(vm, cp, meta);
   };
 
+  // Thermal reports go straight to the configured default printer (no browser
+  // print dialog); A4 reports keep using the browser dialog since the local
+  // print agent only carries raw text/ESC-POS, not full HTML, today.
+  const printReportWithConfiguredPrinter = async (vm, cp, meta) => {
+    const html = renderReportHtml(vm, cp, meta);
+    if (reportPrintMode !== '80mm' && reportPrintMode !== '58mm') {
+      printHtml(html);
+      return;
+    }
+    const printer = resolvePrinterForContext(printerConfigs, {
+      deviceType: 'RECEIPT_PRINTER',
+      branchId: currentTerminal?.branchId || null,
+      terminalId: currentTerminal?.terminalId || null,
+    });
+    if (!printer) {
+      printHtml(html);
+      return;
+    }
+    try {
+      const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
+      await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+    } catch (err) {
+      console.warn('Configured printer failed for report print, falling back to browser print', err);
+      printHtml(html);
+    }
+  };
+
   const handleZReportPrint = () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const vm  = buildZReportViewModel();
     const cp  = reportCompanyProfile();
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
-    printHtml(html);
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
   };
 
   const handleZReportPreview = () => {
@@ -4694,8 +4853,7 @@ export default function POSSales() {
     const vm  = buildXReportViewModel();
     const cp  = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
-    printHtml(html);
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
   };
 
   const handleXReportPreview = () => {
@@ -4781,7 +4939,7 @@ export default function POSSales() {
 
     const zrInfoCard = (
       <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1 text-xs">
             {[
               ['Report Date', zReportDate || new Date().toLocaleDateString()],
@@ -4806,7 +4964,7 @@ export default function POSSales() {
     );
 
     const zrKpiCards = (
-      <div className="grid grid-cols-6 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         {[
           { label: 'Gross Sales', value: <CurrencyAmount amount={zTotalSales} />, sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" /> },
           { label: 'Cash Sales', value: <CurrencyAmount amount={zCashSales} />, sub: 'Cash payments', icon: <Banknote className="h-4 w-4" /> },
@@ -4830,6 +4988,7 @@ export default function POSSales() {
           <span className="text-[#327F74]">{icon}</span>
           <span className="text-sm text-[#1E293B]">{title}</span>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-[#F7F7FA] text-gray-500">
@@ -4849,6 +5008,7 @@ export default function POSSales() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     );
 
@@ -4895,7 +5055,7 @@ export default function POSSales() {
     <div className="bg-[#F7F7FA] min-h-full p-6">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
               <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
@@ -4907,7 +5067,7 @@ export default function POSSales() {
             <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
             <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
               <option value="a4">A4</option>
               <option value="80mm">Thermal 80mm</option>
@@ -4983,6 +5143,7 @@ export default function POSSales() {
           <span className="text-[#327F74]"><Banknote className="h-4 w-4" /></span>
           <span className="text-sm text-[#1E293B]">4. Cash Drawer Summary</span>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-[#F7F7FA] text-gray-500">
@@ -5003,6 +5164,7 @@ export default function POSSales() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Section 5: Card / Bank Settlement Summary */}
@@ -5194,7 +5356,7 @@ export default function POSSales() {
               <span className="text-sm text-white">13. Final Day Close Summary</span>
               <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {[
                 ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
                 ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
@@ -5222,7 +5384,7 @@ export default function POSSales() {
         <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
           I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
         </p>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label className="text-xs text-gray-500">Cashier Signature</label>
             <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
@@ -5317,7 +5479,7 @@ export default function POSSales() {
     <div className="bg-[#F7F7FA] min-h-full flex flex-col">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 bg-[#F7F7FA] border-b border-[#327F74]/10 px-6 pt-4 pb-3">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
               <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
@@ -5329,7 +5491,7 @@ export default function POSSales() {
             <h1 className="text-xl text-[#1E293B]">X-Report / Close Session</h1>
             <p className="text-xs text-gray-500 mt-0.5">Close the current POS session, verify cash drawer balance, enter denomination count, and generate the session closing report.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-gray-300 text-gray-600 text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
               <option value="a4">A4</option>
               <option value="80mm">Thermal 80mm</option>
@@ -5407,7 +5569,7 @@ export default function POSSales() {
           </div>
         )}
         <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1 text-xs">
               {[
                 ['Branch / Outlet', xReportData?.session?.branchName || currentSession?.branchName || '—'],
@@ -5434,7 +5596,7 @@ export default function POSSales() {
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-7 gap-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
           {[
             {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCashVal} />,icon:<Wallet className="h-4 w-4" />},
             {label:'Total Sales',value:<CurrencyAmount amount={totalSales} />,icon:<TrendingUp className="h-4 w-4" />},
@@ -5453,7 +5615,7 @@ export default function POSSales() {
         </div>
 
         {/* Two-column layout */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* LEFT COLUMN */}
           <div>
             {/* Section 1: Denomination Count */}
@@ -5821,7 +5983,7 @@ export default function POSSales() {
                 <p className="text-xs text-gray-600 mb-3 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
                   I confirm that the above sales, collections, refunds, cash drawer balance, and denomination count have been verified for this POS session.
                 </p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-gray-500">Cashier Name</label>
                     <input value={xReportCashierName} onChange={e=>setXReportCashierName(e.target.value)} className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -6302,7 +6464,7 @@ export default function POSSales() {
                   <span className="text-xs font-medium text-slate-500 uppercase">Bank Notes</span>
                   <div className="h-px flex-1 bg-slate-200"></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
                     <div key={note} className="flex items-center space-x-3">
                       <DenominationLabel value={note} />
@@ -6334,7 +6496,7 @@ export default function POSSales() {
                   <span className="text-xs font-medium text-amber-600 uppercase">Coins</span>
                   <div className="h-px flex-1 bg-amber-200"></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {['1', '0.50', '0.25'].map((coin) => (
                     <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                       <DenominationLabel value={coin} />
@@ -6426,7 +6588,7 @@ export default function POSSales() {
                       <span className="text-xs font-medium text-slate-500 uppercase">Bank Notes</span>
                       <div className="h-px flex-1 bg-slate-200"></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
                         <div key={note} className="flex items-center space-x-3">
                           <DenominationLabel value={note} />
@@ -6450,7 +6612,7 @@ export default function POSSales() {
                       <span className="text-xs font-medium text-[#F5C742] uppercase">Coins</span>
                       <div className="h-px flex-1 bg-[#F5C742]/40"></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {['1', '0.50', '0.25'].map((coin) => (
                         <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                           <DenominationLabel value={coin} />
@@ -6713,7 +6875,7 @@ export default function POSSales() {
                           if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
                             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
                           }
-                          const { html, text } = await buildThermalReceiptArtifacts({
+                          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
@@ -6725,6 +6887,7 @@ export default function POSSales() {
                             full,
                             html,
                             text,
+                            escPosBase64,
                             title: `Receipt ${full.invoiceNumber || ''}`.trim(),
                           });
                         }
@@ -6798,7 +6961,7 @@ export default function POSSales() {
           <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
 
             {/* ══ LEFT: Invoice Preview ════════════════════════════════ */}
-            <div className="w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
+            <div className="w-[280px] lg:w-[340px] xl:w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
               {checkoutPreviewBlobUrl ? (
                 <ThermalScaledPreview src={checkoutPreviewBlobUrl} />
               ) : (
@@ -6873,7 +7036,7 @@ export default function POSSales() {
                   {/* ── Pay Mode ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Payment Mode</p>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                       {([
                         ['cash',  'Cash',   Banknote,   '#16a34a'],
                         ['card',  'Card',   CreditCard, '#2563eb'],
@@ -6956,7 +7119,7 @@ export default function POSSales() {
                   {checkoutPayMode === 'card' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         {['Visa','Mastercard','Amex','Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setCheckoutCardType(ct)}
                             className={`py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
@@ -7036,7 +7199,7 @@ export default function POSSales() {
                       )}
                       {/* Credit terms */}
                       {creditCustomerData && (
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] font-bold text-gray-400 uppercase">Credit Terms (Days)</label>
                             <select value={checkoutCreditTerms} onChange={e => setCheckoutCreditTerms(e.target.value)} className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-[#F5C742]">
@@ -7060,7 +7223,7 @@ export default function POSSales() {
                   {checkoutPayMode === 'mixed' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment — Cash + Card</p>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount</label>
                           <div className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center justify-between cursor-pointer ${checkoutKeypadTarget==='mixed-cash'?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 bg-gray-50'}`}
@@ -7078,7 +7241,7 @@ export default function POSSales() {
                           </div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         {['Visa','Mastercard','Amex','Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setMixedCardType(ct)}
                             className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${mixedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
@@ -7236,7 +7399,7 @@ export default function POSSales() {
               {/* ── Settlement footer ── */}
               <div className="bg-white border-t-2 border-[#F5C742]/30 px-5 py-4 shrink-0">
                 {/* Summary row */}
-                <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                   <div className="bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl p-3 text-center">
                     <p className="text-[9px] text-gray-500 uppercase font-bold">{depositAmt > 0 ? 'Balance Due' : 'Total'}</p>
                     <p className="text-base font-black text-[#1E293B]"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
@@ -7570,7 +7733,7 @@ export default function POSSales() {
                   if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
                     try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
                   }
-                  const { html, text } = await buildThermalReceiptArtifacts({
+                  const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
                     cashGiven: lastPaidInvoice?.paidAmount,
@@ -7584,6 +7747,7 @@ export default function POSSales() {
                     full,
                     html,
                     text,
+                    escPosBase64,
                     title: `Reprint ${full.invoiceNumber || ''}`.trim(),
                   });
                 }
@@ -7675,7 +7839,7 @@ export default function POSSales() {
               {/* Main body: list + preview */}
               <div className="flex flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col ${selected ? 'w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
                     <span className="text-xs text-[#327F74]">Latest first</span>
@@ -7709,7 +7873,7 @@ export default function POSSales() {
                                 {inv.reprints > 0 && <span className="ml-1 text-[9px] bg-amber-100 text-amber-600 rounded px-1">×{inv.reprints} reprint</span>}
                               </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{inv.date}&nbsp;{inv.time}</td>
-                              <td className="px-3 py-2 text-[#1E293B] max-w-[100px] truncate">{inv.customer}</td>
+                              <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{inv.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{inv.cashier}</td>
                               <td className="px-3 py-2 text-gray-500">{inv.terminal}</td>
                               <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${payModeColor(inv.payMode)}`}>{inv.payMode}</span></td>
@@ -7736,7 +7900,7 @@ export default function POSSales() {
 
                 {/* Receipt Preview Panel */}
                 {selected && (
-                  <div className="w-[45%] flex flex-col overflow-hidden bg-white">
+                  <div className="w-1/2 lg:w-[45%] flex flex-col overflow-hidden bg-white">
                     <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -7752,7 +7916,7 @@ export default function POSSales() {
                           <p className="font-bold text-[#1E293B] text-sm">{selected._raw?.branchName || currentTerminal?.branchName || 'BillBull Retail'}</p>
                           <p className="text-gray-500">{selected._raw?.branchCode || ''}</p>
                         </div>
-                        <div className="grid grid-cols-2 gap-1 border-b border-gray-100 pb-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 border-b border-gray-100 pb-3">
                           {[['Invoice No.',selected.id],['Date',selected.date || ''],['Time',selected.time],['Cashier',selected.cashier],['Terminal',selected.terminal],['Customer',selected.customer]].map(([k,v])=>(
                             <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                           ))}
@@ -7782,6 +7946,19 @@ export default function POSSales() {
                         <div className="border-t border-gray-100 pt-2 space-y-0.5">
                           <div className="flex justify-between"><span className="text-gray-400">Payment Mode</span><span className="font-semibold">{selected.payMode}</span></div>
                         </div>
+                        {reprintPreviewCredit && (
+                          <div className="border-t border-gray-100 pt-2 space-y-0.5">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">Credit Account</p>
+                            {[
+                              ['Previous Balance', (reprintPreviewCredit.previousBalance || 0).toFixed(2)],
+                              ['Invoice Credit', (0).toFixed(2)],
+                              ['Amount Paid', (selected._raw?.invoiceTotal || 0).toFixed(2)],
+                              ['Updated Balance', (reprintPreviewCredit.previousBalance || 0).toFixed(2)],
+                            ].map(([l, v]) => (
+                              <div key={l} className="flex justify-between"><span className="text-gray-400">{l}</span><span className="text-[#1E293B]">{v}</span></div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {/* Audit Info */}
                       <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
@@ -8549,14 +8726,14 @@ export default function POSSales() {
                         </div>
                         <span className={`text-xs rounded px-2 py-0.5 ${data.customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{data.customer.status || '—'}</span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                         {[['Mobile', data.customer.mobile||'—'], ['Email', data.customer.email||'—'], ['Type', data.customer.groupType||'—']].map(([k,v])=>(
                           <div key={k}><span className="text-gray-400">{k}:</span><span className="ml-1 text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                     </div>
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {[
                         {label:'Outstanding',val:<CurrencyAmount amount={toNumber(data.outstanding,0)} />,sub:'unpaid invoices',color:'text-red-600'},
                         {label:'Credit Limit',val:<CurrencyAmount amount={toNumber(data.creditLimit,0)} />,sub:'approved limit',color:'text-[#327F74]'},
@@ -8647,7 +8824,7 @@ export default function POSSales() {
                 <button onClick={()=>{setShowLayawaysList(false);setShowSaveLayaway(true);}} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
               </div>
               <div className="flex flex-1 min-h-0">
-                <div className={`flex flex-col overflow-hidden ${selected?'w-[55%]':'w-full'} border-r border-[#327F74]/10`}>
+                <div className={`flex flex-col overflow-hidden ${selected?'w-1/2 lg:w-[55%]':'w-full'} border-r border-[#327F74]/10`}>
                   <div className="overflow-auto flex-1">
                     {layawaysLoading ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
@@ -8669,7 +8846,7 @@ export default function POSSales() {
                                 {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
                               </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.date}</td>
-                              <td className="px-3 py-2 text-[#1E293B] max-w-[90px] truncate">{l.customer}</td>
+                              <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{l.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{l.cashier}</td>
                               <td className="px-3 py-2 text-right">{l.items}</td>
                               <td className="px-3 py-2 text-right font-semibold"><CurrencyAmount amount={l.saleAmt} /></td>
@@ -8691,13 +8868,13 @@ export default function POSSales() {
                   </div>
                 </div>
                 {selected && (
-                  <div className="w-[45%] flex flex-col bg-white overflow-hidden">
+                  <div className="w-1/2 lg:w-[45%] flex flex-col bg-white overflow-hidden">
                     <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
                       <button onClick={()=>setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="overflow-auto flex-1 p-4 space-y-3 text-xs">
-                      <div className="grid grid-cols-2 gap-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                         {[['Customer',selected.customer],['Cashier',selected.cashier],['Sale Amount',<CurrencyAmount amount={selected.saleAmt} />],['Deposit Paid',<CurrencyAmount amount={selected.deposit} />],['Balance Due',<CurrencyAmount amount={selected.balance} />],['Due Date',selected.due],['Status',selected.status],['Created',selected.date+' '+selected.time]].map(([k,v])=>(
                           <div key={k} className="flex gap-1"><span className="text-gray-400 w-24 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
                         ))}
@@ -8776,7 +8953,7 @@ export default function POSSales() {
                 <button onClick={()=>setShowSaveLayaway(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               <div className="overflow-auto flex-1">
-                <div className="grid grid-cols-2 gap-4 p-5">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
                   {/* LEFT */}
                   <div className="space-y-4">
                     {/* Customer */}
@@ -8795,6 +8972,7 @@ export default function POSSales() {
                     {/* Cart Items */}
                     <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Cart Items</div>
+                      <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead><tr className="text-gray-400 border-b border-gray-100">{['Item','Qty','Rate','Disc','VAT','Total'].map(h=><th key={h} className={`px-3 py-1.5 text-left ${h!=='Item'?'text-right':''}`}>{h}</th>)}</tr></thead>
                         <tbody>
@@ -8815,6 +8993,7 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   </div>
                   {/* RIGHT */}
@@ -9068,7 +9247,23 @@ export default function POSSales() {
               } else {
                 const qrContent = buildQrContent(returnA4Data, tplOutletName);
                 const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
-                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+                const returnHtml = buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement });
+                const returnPrinter = resolvePrinterForContext(printerConfigs, {
+                  deviceType: 'RECEIPT_PRINTER',
+                  branchId: inv.branchId || currentTerminal?.branchId || null,
+                  terminalId: currentTerminal?.terminalId || null,
+                });
+                if (!returnPrinter) {
+                  printHtml(returnHtml);
+                } else {
+                  try {
+                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone });
+                    await sendReceiptToConfiguredPrinter(returnPrinter, { receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
+                  } catch (err) {
+                    console.warn('Configured printer failed for return receipt, falling back to browser print', err);
+                    printHtml(returnHtml);
+                  }
+                }
               }
             }
             syncPosData();
@@ -9146,7 +9341,7 @@ export default function POSSales() {
                         }}
                         className="w-full"
                       />
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-gray-400 block mb-0.5">Customer Mobile</label>
                           <input value={returnCustomerMobile}
@@ -9411,7 +9606,7 @@ export default function POSSales() {
             </div>
             <div>
               <Label>Shipping Method</Label>
-              <div className="grid grid-cols-3 gap-2 mt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
                 {[{id:'standard',label:'Standard',price:'15'},{id:'express',label:'Express',price:'35'},{id:'same-day',label:'Same Day',price:'60'}].map(m => (
                   <button key={m.id} type="button" onClick={() => { setShippingMethod(m.id); setShippingCost(m.price); }}
                     className={`p-2 rounded-lg border-2 text-center transition-colors ${shippingMethod === m.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200'}`}>
@@ -9670,7 +9865,7 @@ export default function POSSales() {
                   </div>
                   <div className="flex flex-1 min-h-0 overflow-hidden">
                     {/* Results list */}
-                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
+                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-1/2 lg:w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
                       <div className="overflow-auto flex-1 p-5">
                         {serialBatchResult === null && (
                           <div className="flex flex-col items-center justify-center h-48 text-center"><Hash className="h-12 w-12 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan or enter a batch number or invoice to search sold items.</p></div>
@@ -9693,7 +9888,7 @@ export default function POSSales() {
                                   </div>
                                   <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5 shrink-0">{item.status}</span>
                                 </div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-xs">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-xs">
                                   <div><span className="text-gray-400">Invoice: </span><span className="text-[#1E293B]">{item.invoiceNumber}</span></div>
                                   <div><span className="text-gray-400">Date: </span><span className="text-[#1E293B]">{fmtDate(item.invoiceDate)}</span></div>
                                   <div><span className="text-gray-400">Customer: </span><span className="text-[#1E293B]">{item.customerName || '—'}</span></div>
@@ -9765,7 +9960,7 @@ export default function POSSales() {
                     </div>
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
                       <p className="text-sm font-semibold text-[#1E293B]">Return Details</p>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Return Quantity (max: {selectedItem?.soldQty ?? 1})</label>
                           <input type="number" min={1} max={selectedItem?.soldQty ?? 1} value={serialBatchReturnQty} onChange={e=>setSerialBatchReturnQty(Math.min(selectedItem?.soldQty??1,Math.max(1,parseInt(e.target.value)||1)))} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -9833,7 +10028,7 @@ export default function POSSales() {
                         <label className="text-xs text-gray-500 block mb-1">Customer Reported Problem</label>
                         <textarea placeholder="Describe the issue reported by customer..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -9932,7 +10127,7 @@ export default function POSSales() {
                   <p className="text-xs text-gray-500">Manage warranty checks, repair intake, service jobs, spare parts usage, customer approvals, service invoices, and delivery status.</p>
                 </div>
                 {/* KPIs */}
-                <div className="grid grid-cols-7 gap-3 mb-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
                   {kpis.map(k=>(
                     <div key={k.label} className={`${k.bg} border border-[#327F74]/10 rounded-lg p-3 flex flex-col gap-1`}>
                       <div className={`flex items-center gap-1 ${k.color}`}>{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
@@ -9978,7 +10173,7 @@ export default function POSSales() {
                           <td className="px-3 py-2 font-semibold text-[#327F74] cursor-pointer hover:underline" onClick={()=>setServiceView('detail')}>{j.no}</td>
                           <td className="px-3 py-2 text-gray-500">{j.date}</td>
                           <td className="px-3 py-2 text-[#1E293B]">{j.customer}</td>
-                          <td className="px-3 py-2 text-[#1E293B] max-w-[120px] truncate">{j.item}</td>
+                          <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{j.item}</td>
                           <td className="px-3 py-2 text-gray-400 font-mono text-[10px]">{j.serial}</td>
                           <td className="px-3 py-2"><span className={`text-[10px] font-medium ${warrantyColor(j.warranty)}`}>{j.warranty}</span></td>
                           <td className="px-3 py-2 text-gray-500">{j.problem}</td>
@@ -10021,7 +10216,7 @@ export default function POSSales() {
                   {serviceJobStep===1&&(
                     <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
                       <div className="flex items-center gap-2 mb-1"><Users className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">A. Customer Details</p></div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {[{l:'Customer Name',ph:'Full name'},{l:'Mobile Number',ph:'+971 XX XXX XXXX'},{l:'Email',ph:'email@example.com'},{l:'Customer Code',ph:'CUS-XXXXX'},{l:'Address',ph:'Street, City, Emirate'}].map(f=>(
                           <div key={f.l} className={f.l==='Address'?'col-span-2':''}>
                             <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -10037,7 +10232,7 @@ export default function POSSales() {
                     <div className="max-w-2xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">B. Product / Item Details</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {[{l:'Invoice Number',ph:'SI-POS-...'},{l:'Serial Number',ph:'SXXXXX-XXXXX'},{l:'Batch Number',ph:'BT-XXXX'},{l:'Item Code',ph:'PRD-...'},{l:'Item Name',ph:'Product name'},{l:'Brand',ph:'Brand name'},{l:'Model',ph:'Model No.'},{l:'Category',ph:'Category'}].map(f=>(
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -10053,7 +10248,7 @@ export default function POSSales() {
                           <p className="text-sm font-semibold text-green-800 flex items-center gap-1"><Shield className="h-4 w-4" />Warranty Check Result</p>
                           <span className="text-xs bg-green-100 text-green-700 border border-green-300 rounded px-2 py-0.5">Free Repair Eligible</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-1 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
                           {[['Warranty Status','Under Warranty'],['Start Date','12 Mar 2026'],['Expiry Date','12 Mar 2027'],['Warranty Period','12 Months'],['Covered','Yes'],['Repair Charge','AED 0.00']].map(([k,v])=>(
                             <div key={k} className="flex gap-1"><span className="text-green-600 w-28 shrink-0">{k}:</span><span className="text-green-800 font-medium">{renderAED(v)}</span></div>
                           ))}
@@ -10070,7 +10265,7 @@ export default function POSSales() {
                         <label className="text-xs text-gray-500 block mb-0.5">Customer Reported Problem</label>
                         <textarea placeholder="Describe the issue..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-20 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-0.5">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -10110,7 +10305,7 @@ export default function POSSales() {
                     <div className="max-w-3xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Wrench className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">E. Technician Diagnosis</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-xs text-gray-500 block mb-0.5">Technician</label>
                             <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -10201,7 +10396,7 @@ export default function POSSales() {
                     <div className="max-w-lg mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Truck className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">I. Delivery / Completion</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {[{l:'Ready for Delivery Date',t:'date'},{l:'Delivered Date',t:'date'},{l:'Delivered By',t:'text',ph:'Staff name'},{l:'Received By (Customer)',t:'text',ph:'Customer name'}].map(f=>(
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -10262,7 +10457,7 @@ export default function POSSales() {
                   ))}
                 </div>
                 {serviceDetailTab==='overview'&&(
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <p className="text-sm font-semibold text-[#1E293B] mb-3">Job Timeline</p>
                       <div className="space-y-3">
@@ -10312,7 +10507,7 @@ export default function POSSales() {
                   <button onClick={()=>setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back</button>
                   <h1 className="text-xl text-[#1E293B]">Service &amp; Repair Settings</h1>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {[
                     {title:'1. Warranty Rules',icon:<Shield className="h-4 w-4 text-[#327F74]" />,fields:['Default warranty period','Warranty by product category','Warranty by brand','Allow warranty without invoice: Yes/No','Warranty validation based on invoice date']},
                     {title:'2. Service Charges',icon:<DollarSign className="h-4 w-4 text-[#327F74]" />,fields:['Default inspection charge (AED)','Default labour charge (AED)','Urgent service charge (AED)','Minimum repair charge (AED)','VAT applicable: Yes/No']},
@@ -10594,7 +10789,7 @@ export default function POSSales() {
               </div>
 
               {/* Delivery Schedule (Date & Time Slot) */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date <span className="text-red-500">*</span></label>
                   <input type="date" value={deliveryDate} onChange={e => { setDeliveryDate(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, date: '' })); }}
@@ -10621,7 +10816,7 @@ export default function POSSales() {
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Charge (AED)</label>
                   <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden focus-within:border-[#327F74]">
@@ -10808,7 +11003,7 @@ export default function POSSales() {
                                 </div>
                                 <p className="text-base font-black text-[#1E293B]">Total Due <span className="text-[#327F74]">AED {selBalance.toFixed(2)}</span></p>
                               </div>
-                              <div className="grid grid-cols-4 gap-2 mb-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                                 {[
                                   { label: 'Invoice Amt',     val: o.invoiceAmt,     highlight: false, red: false },
                                   { label: 'Delivery Charge', val: o.deliveryCharge, highlight: false, red: false },
@@ -10842,7 +11037,7 @@ export default function POSSales() {
 
                               {deliverySettlePayMode === 'Mix' && (
                                 <div className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                                  <div className="grid grid-cols-2 gap-3 mb-2">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
                                     <div>
                                       <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Cash (AED)</label>
                                       <input type="number" min="0" step="0.01" value={deliverySettleMixCash}

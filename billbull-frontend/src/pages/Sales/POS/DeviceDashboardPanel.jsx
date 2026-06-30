@@ -143,7 +143,7 @@ const DeviceDashboardPanel = ({ branchId }) => {
             ) : (
                 <>
                     {/* Metrics */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
                         <MetricCard icon={Printer} label="Devices Online" value={metrics.devicesOnline ?? 0} tone="emerald" />
                         <MetricCard icon={Printer} label="Devices Offline" value={metrics.devicesOffline ?? 0} tone="gray" />
                         <MetricCard icon={ListOrdered} label="Pending Print Jobs" value={metrics.pendingPrintJobs ?? 0} tone="blue" />
@@ -161,6 +161,7 @@ const DeviceDashboardPanel = ({ branchId }) => {
 
                     {/* Hardware Profiles */}
                     <SectionCard icon={LayoutDashboard} title={`Hardware Profiles (${profiles.length})`}>
+                        <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-gray-100 bg-gray-50">
@@ -183,10 +184,12 @@ const DeviceDashboardPanel = ({ branchId }) => {
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </SectionCard>
 
                     {/* Devices */}
                     <SectionCard icon={Printer} title={`Devices (${devices.length})`}>
+                        <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-gray-100 bg-gray-50">
@@ -213,11 +216,13 @@ const DeviceDashboardPanel = ({ branchId }) => {
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </SectionCard>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {/* Discovered Devices */}
                         <SectionCard icon={Radar} title={`Discovered Devices Awaiting Registration (${discovered.length})`}>
+                            <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="border-b border-gray-100 bg-gray-50">
@@ -247,10 +252,12 @@ const DeviceDashboardPanel = ({ branchId }) => {
                                     ))}
                                 </tbody>
                             </table>
+                            </div>
                         </SectionCard>
 
                         {/* Print Queue */}
                         <SectionCard icon={ListOrdered} title={`Print Queue (${printQueue.length} in flight)`}>
+                            <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="border-b border-gray-100 bg-gray-50">
@@ -273,11 +280,13 @@ const DeviceDashboardPanel = ({ branchId }) => {
                                     ))}
                                 </tbody>
                             </table>
+                            </div>
                         </SectionCard>
                     </div>
 
                     {/* Recent Events */}
                     <SectionCard icon={History} title="Recent Device Events">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-gray-100 bg-gray-50">
@@ -302,6 +311,7 @@ const DeviceDashboardPanel = ({ branchId }) => {
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                     </SectionCard>
 
                     <p className="text-[11px] text-gray-400">

@@ -53,7 +53,7 @@ const CustomerPicker = React.memo(({ customers, value, onChange, placeholder = '
       </div>
       {open && (
         <div className="absolute z-50 top-full mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
-          <div className="max-h-52 overflow-y-auto">
+          <div className="max-h-[min(13rem,40vh)] overflow-y-auto">
             {results.length === 0
               ? <div className="px-3 py-4 text-sm text-gray-400 text-center">No customers found</div>
               : results.map(c => (

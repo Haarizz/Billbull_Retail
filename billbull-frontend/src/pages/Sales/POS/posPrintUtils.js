@@ -382,6 +382,7 @@ const buildFixedWidthLine = (left, right, width) => {
 export const buildThermalReceiptText = (paperSize, invoice, {
   companyName, trn, header, footer,
   showTrn = true,
+  documentTitle = null,
   cashierName = '',
   terminalId = '',
   counterName = '',
@@ -412,6 +413,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   if (showTrn && trn) pushCentered(`TRN: ${trn}`);
   if (header) pushCentered(header);
   lines.push(hr);
+  pushCentered(documentTitle || 'TAX INVOICE');
   lines.push(buildFixedWidthLine('Invoice', invoice.invoiceNumber || invoice.id || '', width));
   if (invoice.invoiceDate) {
     const dt = new Date(invoice.invoiceDate);
@@ -558,6 +560,66 @@ ${layaway.remarks ? `<div style="font-size:9px;margin-top:2px">Note: ${esc(layaw
 <div class="c" style="font-size:9px">Balance must be paid on collection.</div>
 ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>` : ''}
 </body></html>`;
+};
+
+export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const fmt = n => {
+    const v = parseFloat(n) || 0;
+    return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+  const layDate = layaway.createdAt
+    ? new Date(layaway.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dueStr = layaway.dueDate
+    ? new Date(layaway.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '';
+  const items = layaway.items || [];
+
+  pushCentered(companyName || 'BillBull');
+  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+  if (header) pushCentered(header);
+  lines.push(hr);
+  pushCentered('NOT A TAX INVOICE');
+  pushCentered('LAYAWAY RECEIPT');
+  lines.push(hr);
+  lines.push(`LAY: ${layaway.layawayNumber || 'Auto'}`.slice(0, width));
+  lines.push(layDate);
+  lines.push(`Cust: ${layaway.customerName || ''}`.slice(0, width));
+  if (layaway.customerPhone) lines.push(`Tel: ${layaway.customerPhone}`.slice(0, width));
+  lines.push(hr);
+  items.forEach((it) => {
+    const qty = it.quantity || 0;
+    const price = it.price || it.unitPrice || 0;
+    const total = it.lineTotal || it.netAmount || (qty * price);
+    lines.push(buildFixedWidthLine(`${it.itemName || ''} x${qty}`, `AED ${fmt(total)}`, width));
+  });
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Sale Total', `AED ${fmt(layaway.saleTotal)}`, width));
+  if (parseFloat(layaway.depositAmount || 0) > 0) {
+    lines.push(buildFixedWidthLine(`Deposit (${layaway.depositPaymentMode || ''})`, `AED ${fmt(layaway.depositAmount)}`, width));
+  }
+  lines.push(buildFixedWidthLine('BALANCE DUE', `AED ${fmt(layaway.balanceAmount)}`, width));
+  if (dueStr) {
+    lines.push(hr);
+    lines.push(`Due Date: ${dueStr}`.slice(0, width));
+  }
+  if (layaway.remarks) lines.push(`Note: ${layaway.remarks}`.slice(0, width));
+  lines.push(hr);
+  pushCentered('Items reserved until due date.');
+  pushCentered('Balance must be paid on collection.');
+  if (footer) pushCentered(footer);
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
 };
 
 export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {

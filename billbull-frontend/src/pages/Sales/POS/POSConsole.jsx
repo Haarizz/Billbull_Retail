@@ -10,6 +10,7 @@ import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml
 import { printHtml } from '../../../utils/printGenerator';
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
+import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 
 const POSConsole = React.memo((props) => {
   const { 
@@ -208,15 +209,17 @@ const POSConsole = React.memo((props) => {
     const handlePrinterTest = async (printer) => {
       setPrinterBusyId(printer.id);
       try {
+        const testParams = {
+          companyName: currentTerminal?.branchName || 'BillBull',
+          branchName: currentTerminal?.branchName || '',
+          terminalId: currentTerminal?.terminalId || '',
+          counterName: currentTerminal?.counterName || '',
+          printerName: printer.systemPrinterName || printer.deviceName,
+          paperSize: printer.paperSize || '80mm',
+        };
         const result = await testConfiguredPrinter(printer, {
-          testText: buildThermalTestReceiptText({
-            companyName: currentTerminal?.branchName || 'BillBull',
-            branchName: currentTerminal?.branchName || '',
-            terminalId: currentTerminal?.terminalId || '',
-            counterName: currentTerminal?.counterName || '',
-            printerName: printer.systemPrinterName || printer.deviceName,
-            paperSize: printer.paperSize || '80mm',
-          }),
+          testText: buildThermalTestReceiptText(testParams),
+          escPosBase64: buildEscPosTestReceipt(testParams),
         });
         const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(result?.message || 'Printer test sent successfully.'));
         setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
@@ -418,7 +421,7 @@ const POSConsole = React.memo((props) => {
           </div>
 
           {/* Tab bar */}
-          <div className="flex gap-1 mt-4">
+          <div className="flex flex-wrap gap-1 mt-4">
             {tabs.map(t=>(
               <button key={t.id} onClick={()=>{ setConsoleTab(t.id); if(t.id==='terminals') loadTerminals(); if(t.id==='behavior') beginEditSettings(); }}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-t-xl text-sm font-semibold border-b-2 transition-all ${consoleTab===t.id ? 'border-[#F5C742] text-[#1E293B] bg-[#F5C742]/5' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
@@ -441,7 +444,7 @@ const POSConsole = React.memo((props) => {
                   Layout Template
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Choose the POS screen layout for the billing terminal.</p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {([['classic','Classic','Standard 3-column layout'],['compact','Compact','Minimal sidebar layout'],['focus','Cart Focus','Full-screen cart mode']]).map(([val,label,desc])=>(
                     <button key={val} type="button" onClick={()=>setPosTemplate(val)}
                       className={`p-4 rounded-xl border-2 text-left transition-all ${posTemplate===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
@@ -463,7 +466,7 @@ const POSConsole = React.memo((props) => {
                   Panel Visibility
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Show or hide panels in the POS billing screen.</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
                     {label:'Categories Bar', desc:'Left category navigation',state:hideCategoriesPanel,set:setHideCategoriesPanel},
                     {label:'Items Panel',    desc:'Product grid with search',state:hideItemsPanel,    set:setHideItemsPanel},
@@ -488,7 +491,7 @@ const POSConsole = React.memo((props) => {
                   Action Buttons
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Toggle which buttons appear in the POS functions panel.</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {allBtnList.map(btn=>(
                     <div key={btn.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
                       <span className="text-sm text-[#1E293B]">{btn.label}</span>
@@ -567,10 +570,10 @@ const POSConsole = React.memo((props) => {
                 </div>
 
                 {d.requireSupervisorForVoid && (
-                  <div className="grid grid-cols-2 gap-3 mb-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
                     <div>
                       <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Approval Method</label>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {[['PIN','PIN'],['PASSWORD','Password']].map(([val,lbl])=>(
                           <button key={val} type="button" onClick={()=>patch({ supervisorApprovalMode: val })}
                             className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${d.supervisorApprovalMode===val?'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]':'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
@@ -601,7 +604,7 @@ const POSConsole = React.memo((props) => {
                   Removal Behavior
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Decide what happens to a line when the cashier removes it.</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
                     ['VOID','Void (recommended)','Mark in red + strike-through, keep on receipt, audit log & reports.'],
                     ['DELETE','Delete','Remove the line entirely. Not recorded.'],
@@ -623,7 +626,7 @@ const POSConsole = React.memo((props) => {
                   VAT / Tax Mode
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Decide whether product prices already include VAT or VAT is added at checkout.</p>
-                <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                   {[
                     [false,'Exclusive','Prices are net of VAT. VAT is added on top at checkout.'],
                     [true,'Inclusive','Prices already include VAT. VAT is extracted from the price.'],
@@ -654,7 +657,7 @@ const POSConsole = React.memo((props) => {
                   Cart Display
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">Choose how much detail each cart line shows the cashier.</p>
-                <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                   {[
                     ['MINIMAL','Minimal','Item name, qty & price only. Fastest, cleanest cart.'],
                     ['DETAILED','Detailed','Show extra item identifiers per line (configured below).'],
@@ -669,7 +672,7 @@ const POSConsole = React.memo((props) => {
                 </div>
                 <div className={`transition-opacity ${d.cartViewMode==='DETAILED' ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                   <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Fields to display per line</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {cartFieldToggles.map(([key,label])=>(
                       <div key={key} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
                         <span className="text-sm text-[#1E293B]">{label}</span>
@@ -754,7 +757,7 @@ const POSConsole = React.memo((props) => {
                   {scannerConfigSavedFlash && <span className="text-xs font-semibold text-green-600">Saved</span>}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase">Device Code</label>
                     <input value={scannerConfig?.deviceCode || ''} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), deviceCode: e.target.value }))} placeholder="e.g. POS-SCAN-01" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]" />
@@ -793,7 +796,7 @@ const POSConsole = React.memo((props) => {
                       Keep POS scan box focused
                     </label>
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-1 sm:col-span-2">
                     <label className="text-[10px] font-bold text-gray-400 uppercase">Notes</label>
                     <textarea value={scannerConfig?.notes || ''} onChange={e=>setScannerConfig(prev => ({ ...(prev || {}), notes: e.target.value }))} placeholder="Optional notes for scanner assignment or setup" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] min-h-[78px]" />
                   </div>
@@ -918,7 +921,7 @@ const POSConsole = React.memo((props) => {
 
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Quick Add</p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {printerTypeOptions.map(({ value, label })=>(
                     <button key={value} type="button" onClick={()=>openPrinterDialog(value)}
                       className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 p-4 text-center flex flex-col items-center gap-2 transition-all hover:bg-[#F5C742]/5">
@@ -941,7 +944,7 @@ const POSConsole = React.memo((props) => {
                       </div>
                       <button onClick={()=>setPrinterDialogOpen(false)}><X className="h-5 w-5 text-gray-400" /></button>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Printer Type</label>
                         <select value={printerForm.deviceType} onChange={e=>setPrinterForm(f => ({ ...f, deviceType: e.target.value, connectionType: e.target.value === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : (f.connectionType === 'ZEBRA_BROWSER_PRINT' ? 'WINDOWS_QUEUE' : f.connectionType), printTemplate: e.target.value === 'KITCHEN_PRINTER' ? 'Kitchen' : e.target.value === 'LABEL_PRINTER' ? 'Label' : 'Receipt', paperSize: e.target.value === 'LABEL_PRINTER' ? '100x150mm' : (f.paperSize === '100x150mm' ? '80mm' : f.paperSize) }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
@@ -1001,7 +1004,7 @@ const POSConsole = React.memo((props) => {
                           {printTemplateOptions.map(option => <option key={option} value={option}>{option}</option>)}
                         </select>
                       </div>
-                      <div className="col-span-2 grid grid-cols-3 gap-4 bg-gray-50 rounded-xl p-4">
+                      <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 rounded-xl p-4">
                         <label className="flex items-center gap-2 text-sm font-medium text-[#1E293B]">
                           <input type="checkbox" checked={printerForm.assignToCurrentTerminal} onChange={e=>setPrinterForm(f => ({ ...f, assignToCurrentTerminal: e.target.checked }))} />
                           Assign to current terminal
@@ -1018,7 +1021,7 @@ const POSConsole = React.memo((props) => {
                           </select>
                         </div>
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-1 sm:col-span-2">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Notes</label>
                         <textarea value={printerForm.notes} onChange={e=>setPrinterForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes for setup or assignment" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] min-h-[88px]" />
                       </div>
@@ -1036,7 +1039,7 @@ const POSConsole = React.memo((props) => {
               {/* Quick-add cards */}
               {false && <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Quick Add</p>
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[['Receipt Printer',<Printer className="h-5 w-5"/>],['Barcode Scanner',<Search className="h-5 w-5"/>],['Cash Drawer',<Wallet className="h-5 w-5"/>],['Card Terminal',<CreditCard className="h-5 w-5"/>]].map(([label,icon])=>(
                     <button key={label} type="button" onClick={()=>{setNewDevType(label);setShowAddDevice(true);}}
                       className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-[#F5C742]/60 p-4 text-center flex flex-col items-center gap-2 transition-all hover:bg-[#F5C742]/5">
@@ -1292,7 +1295,7 @@ const POSConsole = React.memo((props) => {
             return (
               <div>
                 {/* ── Template type tab bar ── */}
-                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-5 p-1.5 flex gap-1">
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-5 p-1.5 flex flex-wrap gap-1">
                   {templateTabs.map(t => (
                     <button key={t.id} onClick={() => setTemplateSubTab(t.id)}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${templateSubTab===t.id ? 'bg-[#F5C742]/15 text-[#1E293B] border border-[#F5C742]/40' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
@@ -1303,7 +1306,7 @@ const POSConsole = React.memo((props) => {
                 </div>
 
                 {/* ── Two-column: Settings (left) + Live Preview (right) ── */}
-                <div className="flex gap-5 items-start">
+                <div className="flex flex-col lg:flex-row gap-5 items-start">
 
                   {/* ── Left: all settings ── */}
                   <div className="flex-1 min-w-0 space-y-4">
@@ -1318,7 +1321,7 @@ const POSConsole = React.memo((props) => {
                         </div>
                       </div>
                       <div className="p-5 space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Branch Name</label>
                             <input value={tplOutletName} onChange={e=>setTplOutletName(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
@@ -1410,7 +1413,7 @@ const POSConsole = React.memo((props) => {
                           </div>
                           <div>
                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">QR / Image Position</label>
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               {[['before','Before Footer Text'],['after','After Footer Text']].map(([val,lbl])=>(
                                 <button key={val} type="button"
                                   onClick={()=>cfg.setQrPlacement?.(val)}
@@ -1498,7 +1501,7 @@ const POSConsole = React.memo((props) => {
                   </div>
 
                   {/* ── Right: sticky live preview ── */}
-                  <div className="shrink-0 w-[360px] sticky top-6">
+                  <div className="w-full lg:w-[260px] xl:w-[360px] sticky top-6">
                     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                       {/* Preview header */}
                       <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
@@ -1710,7 +1713,7 @@ const POSConsole = React.memo((props) => {
               </div>
 
               {/* ── Stats bar ── */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
                   { label: 'Total', value: terminalList.length, sub: `of ${maxSlots} slots`, color: 'text-[#1E293B]', bg: 'bg-white' },
                   { label: 'Active',   value: activeCount,   sub: 'online & ready',   color: 'text-green-700', bg: 'bg-green-50' },
@@ -1894,7 +1897,7 @@ const POSConsole = React.memo((props) => {
                                 </span>
 
                                 {/* Action buttons */}
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap justify-end">
                                   <button
                                     onClick={() => startEdit(t)}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
@@ -1963,7 +1966,7 @@ const POSConsole = React.memo((props) => {
                                 <p className="text-[10px] font-mono text-gray-400 mt-0.5">{t.terminalId}</p>
                               </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="space-y-1.5">
                                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Terminal Name</label>
                                 <input
@@ -2029,5 +2032,3 @@ const POSConsole = React.memo((props) => {
 });
 POSConsole.displayName = 'POSConsole';
 export default POSConsole;
-
-
