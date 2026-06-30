@@ -30,6 +30,8 @@ public class PosCheckoutRequest {
     private String deliveryTimeSlot;
     private String deliveryNotes;
     private Double deliveryCharge;
+    private Double shippingCharge;
+    private Boolean taxInclusive;
     private List<PosCheckoutItem> items;
 
     public static class PosCheckoutItem {
@@ -127,6 +129,10 @@ public class PosCheckoutRequest {
     public void setDeliveryNotes(String deliveryNotes) { this.deliveryNotes = deliveryNotes; }
     public Double getDeliveryCharge() { return deliveryCharge; }
     public void setDeliveryCharge(Double deliveryCharge) { this.deliveryCharge = deliveryCharge; }
+    public Double getShippingCharge() { return shippingCharge; }
+    public void setShippingCharge(Double shippingCharge) { this.shippingCharge = shippingCharge; }
+    public Boolean getTaxInclusive() { return taxInclusive; }
+    public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
 }

@@ -520,6 +520,10 @@ public class PosCheckoutController {
         if (req.getDeliveryCharge() != null && req.getDeliveryCharge() > 0) {
             inv.setDeliveryCharge(java.math.BigDecimal.valueOf(req.getDeliveryCharge()));
         }
+        if (req.getShippingCharge() != null && req.getShippingCharge() > 0) {
+            inv.setShippingCharge(java.math.BigDecimal.valueOf(req.getShippingCharge()));
+        }
+        inv.setTaxInclusive(Boolean.TRUE.equals(req.getTaxInclusive()));
 
         // §2.4 Price override gate: batch-load product pricings and verify that any
         // below-list-price sale is made by a user with the pos_price_override permission.

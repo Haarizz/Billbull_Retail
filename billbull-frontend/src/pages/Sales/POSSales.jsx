@@ -22,10 +22,9 @@ import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
-  closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
-  holdSale, getHeldSales, recallHeldSale,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
@@ -323,6 +322,10 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+  // True when this terminal has a live POS session. Session-bound features
+  // (X/Z report, cash drop/out, customer management) are locked until this is
+  // true and re-enable automatically — no refresh — when a session is opened.
+  const isSessionActive = currentSession?.status === 'active' || currentSession?.status === 'OPEN';
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
   // Behavior-settings editor (Console → Behavior tab)
@@ -357,6 +360,10 @@ export default function POSSales() {
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
   const [zReportData, setZReportData] = useState(null);
+  // When the Z-Report is blocked because terminals still owe an X-Report, this
+  // holds the pending-terminal list to display; zReportData is cleared so the
+  // report body and its print/export actions stay hidden until eligible.
+  const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
@@ -494,6 +501,9 @@ export default function POSSales() {
     billDiscountAmount: 0,
   });
   const currentInvoiceRef = useRef(null);
+  // True when the Quick Customer modal was launched from the Checkout credit
+  // panel, so the newly created customer is auto-selected as the credit buyer.
+  const quickCustomerCreditCtxRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [posProducts, setPosProducts] = useState([]);
@@ -673,6 +683,9 @@ export default function POSSales() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingMethod, setShippingMethod] = useState('standard');
   const [shippingCost, setShippingCost] = useState('15');
+  // Committed shipping charge applied to the order as a separate (non-product, untaxed)
+  // totals line — NOT a cart item. Added to the grand total at checkout/preview/receipt.
+  const [shippingCharge, setShippingCharge] = useState(0);
   const [showAddCustomerDialog, setShowAddCustomerDialog] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
@@ -866,6 +879,7 @@ export default function POSSales() {
       const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
+      const previewShipping = Number(shippingCharge) || 0;
 
       const mockInvoice = {
         invoiceNumber: invoiceNo,
@@ -879,7 +893,8 @@ export default function POSSales() {
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
-        invoiceTotal: currentInvoice.total || 0,
+        taxInclusive: !!currentInvoice.taxInclusive,
+        invoiceTotal: (currentInvoice.total || 0) + previewShipping,
         discountTotal: currentInvoice.totalDiscount || 0,
         items: (currentInvoice.items || []).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
@@ -894,7 +909,12 @@ export default function POSSales() {
         })),
       };
 
+      const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+      const previewGrand = (currentInvoice.total || 0) + previewShipping;
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+        shippingCharge: previewShipping > 0 ? previewShipping : null,
+        depositApplied: previewDeposit > 0 ? previewDeposit : null,
+        balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
         companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
         showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
@@ -913,7 +933,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
+  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
       checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
       tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -1178,7 +1198,9 @@ export default function POSSales() {
 
   // Auto-load report data when entering report views
   useEffect(() => {
-    if (currentView === 'x-report') loadXReport();
+    // Opening the dedicated X-Report view is the deliberate "Generate X Report"
+    // action — mark this terminal complete so it clears the Z-Report gate.
+    if (currentView === 'x-report') loadXReport(true);
     if (currentView === 'z-report') loadZReport(zReportDate);
     // Refresh dashboard stats whenever returning to dashboard with an active session
     if (currentView === 'dashboard' && (currentSession?.status === 'active' || currentSession?.status === 'OPEN')) {
@@ -1456,7 +1478,7 @@ export default function POSSales() {
 
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null) => {
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null) => {
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -1519,6 +1541,7 @@ export default function POSSales() {
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
+          expiryDate: pinnedExpiry || product.expiryDate || null,
           // Lock qty on batch/serial lines — each line is exactly one physical
           // unit. The cart UI disables +/- for lines flagged batchControlled.
           batchControlled: isPinned || isBatchControlled,
@@ -1780,11 +1803,16 @@ export default function POSSales() {
     }
   };
 
-  const loadXReport = async () => {
+  // markGenerated=true stamps this terminal as having completed its X-Report (the
+  // deliberate "Generate X Report" action). The dashboard preview passes false so
+  // merely viewing the dashboard never satisfies the Z-Report end-of-day gate.
+  const loadXReport = async (markGenerated = false) => {
     if (!currentSession?.id || typeof currentSession.id !== 'number') return;
     setXReportLoading(true);
     try {
-      const data = await getPosXReport(currentSession.id);
+      const data = markGenerated
+        ? await generatePosXReport(currentSession.id)
+        : await getPosXReport(currentSession.id);
       setXReportData(data);
     } catch (err) {
       console.warn('X-Report load failed', err);
@@ -1799,7 +1827,15 @@ export default function POSSales() {
     setZReportLoading(true);
     try {
       const data = await getPosZReport(branchId, date || zReportDate);
-      setZReportData(data);
+      // Backend blocks the day's report until every still-open terminal has run
+      // its X-Report; surface the pending list instead of the report numbers.
+      if (data && data.eligible === false) {
+        setZReportPending(data.pendingTerminals || []);
+        setZReportData(null);
+      } else {
+        setZReportPending(null);
+        setZReportData(data);
+      }
     } catch (err) {
       console.warn('Z-Report load failed', err);
     } finally {
@@ -1809,16 +1845,29 @@ export default function POSSales() {
 
   const recalculateInvoice = (items, billDiscountAmount = 0) => {
     const activeItems = items.filter(i => !i.isVoided);
-    const subtotal = activeItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const totalDiscount = activeItems.reduce((sum, item) => sum + (item.price * item.quantity * item.discount / 100), 0);
-    // Per-line tax using each item's own rate (falls back to 5 if not set).
-    const tax = activeItems.reduce((sum, item) => {
-      const net = item.price * item.quantity * (1 - item.discount / 100);
-      return sum + net * (toNumber(item.taxRate, 5) / 100);
-    }, 0);
+    // Global VAT mode: Inclusive means the entered price already contains VAT,
+    // Exclusive means VAT is added on top. Fallback rate from POS settings.
+    const taxInclusive = !!posSettings?.taxInclusive;
+    const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
+
+    let subtotal = 0;       // net (ex-VAT) line value before line discount
+    let totalDiscount = 0;  // line discount on the same net basis
+    let tax = 0;            // extracted/added VAT after line discount
+
+    activeItems.forEach(item => {
+      const rate = toNumber(item.taxRate, fallbackRate) / 100;
+      const disc = (item.discount || 0) / 100;
+      const lineValue = item.price * item.quantity;
+      // In inclusive mode the price carries VAT, so strip it to get the net base.
+      const net = taxInclusive ? lineValue / (1 + rate) : lineValue;
+      subtotal += net;
+      totalDiscount += net * disc;
+      tax += net * (1 - disc) * rate;
+    });
+
     const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + tax);
 
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount };
+    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive };
   };
 
   const clearInvoice = () => {
@@ -1830,6 +1879,8 @@ export default function POSSales() {
       total: 0,
       billDiscountAmount: 0,
     });
+    // Shipping is an order-level charge, not a cart line — clear it with the cart.
+    setShippingCharge(0);
   };
 
   // Map live cart lines to the backend item shape shared by checkout + layaway.
@@ -2016,11 +2067,24 @@ export default function POSSales() {
   const loadHeldSales = useCallback(async () => {
     if (!sessionId) { setHeldSales([]); return; }
     try {
-      setHeldSales(await getHeldSales(sessionId));
+      // A "Hold" is a zero-deposit layaway (hold=true). The quick-recall pills show
+      // this session's open holds; full layaways live in the Layaways list.
+      const branchId = currentTerminal?.branchId || currentSession?.branchId || null;
+      const all = await getLayaways({ branchId, status: 'ACTIVE' });
+      const holds = (all || [])
+        .filter(l => l.hold === true && l.posSessionId === sessionId)
+        .map(l => ({
+          id: l.id,
+          label: l.layawayNumber,
+          total: l.saleTotal || 0,
+          itemCount: (l.items || []).length,
+          customerName: l.customerName,
+        }));
+      setHeldSales(holds);
     } catch (err) {
       console.warn('Held sales load failed', err);
     }
-  }, [sessionId]);
+  }, [sessionId, currentTerminal, currentSession]);
 
   useEffect(() => { loadHeldSales(); }, [loadHeldSales]);
 
@@ -2041,21 +2105,30 @@ export default function POSSales() {
     }
   }, [loadPosCustomers, loadPosProducts, loadXReport, loadHeldSales, currentSession?.status]);
 
+  // Hold = a zero-deposit layaway. Reuses the layaway reservation workflow (stock is
+  // reserved, it shows in the Layaways list) but takes no deposit and allows Walk-in.
   const holdInvoice = async () => {
     if (currentInvoice.items.length === 0 || holdBusy) return;
     if (!sessionId) { alert('Open a POS session before holding a bill.'); return; }
     setHoldBusy(true);
     try {
-      await holdSale({
-        sessionId,
+      const isWalkIn = !selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id;
+      await createLayaway({
+        hold: true,
+        customerCode: isWalkIn ? 'WALK-IN' : (selectedCustomerData.code || selectedCustomerData.id),
+        customerName: isWalkIn ? 'Walk-in Customer' : selectedCustomerData.name,
+        customerPhone: isWalkIn ? null : (selectedCustomerData.phone || null),
         branchId: currentTerminal?.branchId || currentSession?.branchId || null,
+        branchName: currentTerminal?.branchName || currentSession?.branchName || null,
+        branchCode: currentTerminal?.branchCode || null,
+        sessionId,
         terminalId: currentTerminal?.terminalId || null,
-        customerCode: selectedCustomerData?.id !== WALK_IN_CUSTOMER.id
-          ? (selectedCustomerData?.code || selectedCustomerData?.id) : 'WALK-IN',
-        customerName: selectedCustomerData?.name || 'Walk-in Customer',
-        cartJson: JSON.stringify(currentInvoice),
-        total: currentInvoice.total,
-        itemCount: currentInvoice.items.length,
+        counterName: currentTerminal?.counterName || null,
+        depositRequired: false,
+        depositAmount: 0,
+        reserveStockRequested: true,
+        billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        items: cartItemsToPayload(currentInvoice.items),
       });
       clearInvoice();
       await loadHeldSales();
@@ -2067,15 +2140,12 @@ export default function POSSales() {
     }
   };
 
+  // Recall a held bill: load its hold-layaway back into the live cart for completion
+  // (checkout marks the hold converted, releasing its reservation).
   const recallInvoice = async (id) => {
     try {
-      const held = await recallHeldSale(id);
-      if (held?.cartJson) {
-        const cart = JSON.parse(held.cartJson);
-        setCurrentInvoice(recalculateInvoice(cart.items || []));
-      }
+      await startLayawayConversion(id);
       await loadHeldSales();
-      syncPosData();
     } catch (err) {
       alert(err?.response?.data?.message || 'Failed to recall the held bill.');
     }
@@ -2198,6 +2268,8 @@ export default function POSSales() {
         taxRate: it.taxRate != null ? it.taxRate : 5,
         total: (it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100),
         pinnedBatchNumber: it.pinnedBatchNumber || null,
+        serialNumber: it.serialNumber || null,
+        expiryDate: it.expiryDate || null,
         isVoided: !!it.voided,
       }));
       // Compute bill discount needed so the cart total matches the stored saleTotal exactly.
@@ -2371,6 +2443,9 @@ export default function POSSales() {
     customerEmail = null,
     creditPreviousBalance = null,
     cashierNameOverride = null,
+    depositApplied = null,
+    balanceDue = null,
+    shippingCharge = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
     const qrDataUrl = tplInvoiceShowQRCode
@@ -2403,6 +2478,9 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       creditPreviousBalance,
@@ -2420,6 +2498,9 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       currency: activeCurrency,
@@ -2470,7 +2551,9 @@ export default function POSSales() {
     if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;
     setCheckoutSettling(true);
     try {
-      const grandTotal = currentInvoice.total;
+      // Shipping is an untaxed flat add on top of the product total (not a cart line).
+      const shippingChargeNum = Number(shippingCharge) || 0;
+      const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
@@ -2529,7 +2612,9 @@ export default function POSSales() {
         branchName: currentTerminal?.branchName || null,
         branchCode: currentTerminal?.branchCode || null,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
-        shippingAddress: deliveryAddress || null,
+        shippingAddress: deliveryAddress || shippingAddress || null,
+        shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
+        taxInclusive: !!posSettings?.taxInclusive,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
         items,
@@ -2569,6 +2654,9 @@ export default function POSSales() {
             changeAmount: changeDue,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
+            balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
+            shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
@@ -2656,6 +2744,13 @@ export default function POSSales() {
   };
 
   const handleCashDrop = async () => {
+    // Cash drop / cash out are session-bound — refuse if no session is open even
+    // if the dialog was reached from a template that doesn't gate the button.
+    if (!isSessionActive) {
+      setCashDropFeedback({ type: 'error', message: 'Open a POS session before recording cash movements.' });
+      setTimeout(() => setCashDropFeedback(null), 3000);
+      return;
+    }
     const amount = parseFloat(cashDropAmount) || 0;
     if (amount <= 0) return;
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
@@ -2839,6 +2934,7 @@ export default function POSSales() {
       cachePosProduct(productCacheRef.current, product);
       const pinnedBatchNumber = result.pinnedBatchNumber || null;
       const pinnedSerialNumber = result.pinnedSerialNumber || null;
+      const pinnedExpiry = result.pinnedExpiry || null;
       const cartItems = currentInvoiceRef.current?.items || [];
 
       // A scanned serial is a single unique unit. The same serial can never be
@@ -2869,7 +2965,7 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber);
+      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
         clearInputs();
@@ -3634,10 +3730,34 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
+        {/* X-Report Tile — generate the shift X-Report without closing the session.
+            Running this clears the terminal for the end-of-day Z-Report. */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('x-report'); }}
+        >
+          <CardHeader>
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
+              <FileText className="h-8 w-8 text-white" />
+            </div>
+            <CardTitle className="mt-4">X-Report</CardTitle>
+            <CardDescription>
+              Generate the current shift report
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              {isSessionActive
+                ? 'Mid/end-of-shift read — keeps the session open'
+                : 'Start a session to generate the X-Report'}
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Z-Report Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('z-report')}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('z-report'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3650,12 +3770,14 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Consolidated report of all closed sessions
+              {isSessionActive
+                ? 'Consolidated end-of-day report (all terminals must run X-Report first)'
+                : 'Start a session to access the Z-Report'}
             </p>
           </CardContent>
         </Card>
 
-        {/* X-Report / Close Session Tile */}
+        {/* Close Session Tile */}
         <Card 
           className={`${posDashboardTileClass} ${
             currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
@@ -3670,7 +3792,7 @@ export default function POSSales() {
             <div className="bg-gradient-to-r from-[#E63946] to-[#ff6b6b] p-4 rounded-lg w-fit">
               <Lock className="h-8 w-8 text-white" />
             </div>
-            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
+            <CardTitle className="mt-4">Close Session</CardTitle>
             <CardDescription>
               Close current session and generate report
             </CardDescription>
@@ -3685,9 +3807,9 @@ export default function POSSales() {
         </Card>
 
         {/* Customer Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('customer')}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('customer'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3700,15 +3822,17 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              View statements, receive payments, manage advances
+              {isSessionActive
+                ? 'View statements, receive payments, manage advances'
+                : 'Start a session to manage customers'}
             </p>
           </CardContent>
         </Card>
 
         {/* Cash Drop / Out Tile */}
         <Card
-          className={posDashboardTileClass}
-          onClick={() => setShowCashDropDialog(true)}
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setShowCashDropDialog(true); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3721,7 +3845,9 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Add cash drops or record cash payouts
+              {isSessionActive
+                ? 'Add cash drops or record cash payouts'
+                : 'Start a session to record cash movements'}
             </p>
           </CardContent>
         </Card>
@@ -4648,6 +4774,45 @@ export default function POSSales() {
       </div>
     );
 
+    // End-of-day gate: when the backend reports terminals still owing an X-Report,
+    // show only this blocker (the report body and its actions stay hidden).
+    const zReportBlocked = Array.isArray(zReportPending) && zReportPending.length > 0;
+    const zrPendingBlocker = (
+      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-6 mb-4">
+        <div className="flex items-center gap-2 mb-2 text-red-600">
+          <Lock className="h-5 w-5" />
+          <h3 className="text-base font-semibold">Z-Report blocked — terminals pending X-Report</h3>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Every active terminal must generate its X-Report before the end-of-day Z-Report can be produced.
+          The following terminal(s) are still open without an X-Report:
+        </p>
+        <div className="border border-red-100 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-red-50 text-red-700">
+                <th className="px-4 py-2 text-left font-medium">Terminal</th>
+                <th className="px-4 py-2 text-left font-medium">Counter</th>
+                <th className="px-4 py-2 text-left font-medium">Cashier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(zReportPending || []).map((t, i) => (
+                <tr key={i} className="border-t border-red-50">
+                  <td className="px-4 py-2 text-[#1E293B]">{t.terminalName || t.terminalId || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.counter || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.openedBy || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Ask each listed terminal to run <span className="font-medium text-[#327F74]">X-Report</span> from its POS dashboard, then generate the Z-Report again.
+        </p>
+      </div>
+    );
+
     return (
     <div className="bg-[#F7F7FA] min-h-full p-6">
       {/* Sticky Header */}
@@ -4685,6 +4850,8 @@ export default function POSSales() {
       </div>
 
       {zrFilterBar}
+
+      {zReportBlocked ? zrPendingBlocker : (<>
       {zrInfoCard}
       {zrKpiCards}
 
@@ -4931,6 +5098,7 @@ export default function POSSales() {
           <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
         </ul>
       </div>
+      </>)}
     </div>
   );
   };
@@ -5572,6 +5740,7 @@ export default function POSSales() {
   };
 
   const openQuickCustomerModal = useCallback((searchValue = '') => {
+    quickCustomerCreditCtxRef.current = false;
     const str = (searchValue || '').trim();
     let name = '';
     let mobile = '';
@@ -5649,6 +5818,11 @@ export default function POSSales() {
       const newCust = await createCustomer(payload);
       await loadPosCustomers();
       setSelectedCustomer(newCust.id);
+      if (quickCustomerCreditCtxRef.current) {
+        setCheckoutCreditCustomer(newCust.id);
+        setCheckoutCreditCustomerSearch('');
+        quickCustomerCreditCtxRef.current = false;
+      }
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
         if (newCust.billingAddress || newCust.address) {
@@ -5747,7 +5921,7 @@ export default function POSSales() {
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
-    activeLayawayId, activeLayawayDeposit,
+    activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
     classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
@@ -6378,7 +6552,8 @@ export default function POSSales() {
           );
         }
 
-        const grandTotal = currentInvoice.total;
+        const shippingChargeNum = Number(shippingCharge) || 0;
+        const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
         const subtotal = currentInvoice.subtotal;
         const totalDisc = currentInvoice.totalDiscount;
         const totalVat = currentInvoice.tax;
@@ -6464,6 +6639,39 @@ export default function POSSales() {
 
               <div className="flex-1 overflow-y-auto">
                 <div className="p-4 space-y-3">
+
+                  {/* ── Settlement summary (shipping and/or layaway-hold deposit) ── */}
+                  {(depositAmt > 0 || shippingChargeNum > 0) && (
+                    <div className="bg-white rounded-2xl border border-[#F5C742]/50 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Settlement Summary</p>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between text-gray-600">
+                          <span>Items Total</span>
+                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={currentInvoice.total || 0} /></span>
+                        </div>
+                        {shippingChargeNum > 0 && (
+                          <div className="flex justify-between text-gray-600">
+                            <span>Shipping</span>
+                            <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={shippingChargeNum} /></span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[#1E293B] border-t border-gray-100 pt-1.5">
+                          <span className="font-semibold">Order Total</span>
+                          <span className="font-semibold"><CurrencyAmount amount={grandTotal} /></span>
+                        </div>
+                        {depositAmt > 0 && (
+                          <div className="flex justify-between text-green-700">
+                            <span>Deposit Paid</span>
+                            <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t border-gray-100 pt-1.5 text-[#1E293B]">
+                          <span className="font-bold">{depositAmt > 0 ? 'Balance Due Now' : 'Total Payable'}</span>
+                          <span className="font-black text-[#F5C742]"><CurrencyAmount amount={effectiveDue} /></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* ── Pay Mode ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
@@ -6624,7 +6832,7 @@ export default function POSSales() {
                       )}
                       {/* Add new customer shortcut */}
                       {!creditCustomerData && (
-                        <button type="button" onClick={() => setShowAddCustomerDialog(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
+                        <button type="button" onClick={() => { openQuickCustomerModal(checkoutCreditCustomerSearch); quickCustomerCreditCtxRef.current = true; }} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
                           <UserPlus className="h-4 w-4" />
                           Add New Customer
                         </button>
@@ -8134,6 +8342,7 @@ export default function POSSales() {
             due: l.dueDate || '—',
             status: STATUS_ENUM_TO_LABEL[eff] || eff,
             isOpen: eff === 'ACTIVE' || eff === 'PARTIALLY_PAID' || eff === 'READY_TO_CONVERT',
+            hold: !!l.hold,
             raw: l,
           };
         });
@@ -8181,7 +8390,10 @@ export default function POSSales() {
                           {filtered.map(l=>(
                             <tr key={l.entityId} onClick={()=>setSelectedLayawayId(l.entityId===selectedLayawayId?null:l.entityId)}
                               className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status==='Expired'?'bg-red-50/30':''} ${l.entityId===selectedLayawayId?'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]':'hover:bg-white'}`}>
-                              <td className="px-3 py-2 font-semibold text-[#1E293B]">{l.id}</td>
+                              <td className="px-3 py-2 font-semibold text-[#1E293B] whitespace-nowrap">
+                                {l.id}
+                                {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
+                              </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.date}</td>
                               <td className="px-3 py-2 text-[#1E293B] max-w-[90px] truncate">{l.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{l.cashier}</td>
@@ -8909,20 +9121,11 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setShowAddShippingDialog(false)}>Cancel</Button>
             <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => {
               const cost = parseFloat(shippingCost) || 0;
-              if (cost > 0) {
-                const shippingId = '__SHIPPING__';
-                setCurrentInvoice(prev => {
-                  const filtered = prev.items.filter(i => i.id !== shippingId);
-                  const shippingLine = {
-                    id: shippingId, productId: null, name: `Shipping (${shippingMethod.charAt(0).toUpperCase() + shippingMethod.slice(1)})`,
-                    nameAr: '', barcode: 'SHIPPING', code: 'SHIPPING', image: null,
-                    price: cost, quantity: 1, discount: 0, taxRate: 0, total: cost,
-                    isShipping: true,
-                  };
-                  return recalculateInvoice([...filtered, shippingLine], prev.billDiscountAmount || 0);
-                });
-                showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
-              }
+              // Shipping is a separate (untaxed) totals line, not a cart product — the
+              // cart keeps only real products. Stored as state and added at the total.
+              setShippingCharge(cost);
+              if (cost > 0) showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
+              else showFeedback('success', 'Shipping charge cleared');
               setShowAddShippingDialog(false);
             }}>
               <CheckCircle className="h-4 w-4 mr-2" />Add Shipping

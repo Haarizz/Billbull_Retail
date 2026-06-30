@@ -95,6 +95,17 @@ export const getPosXReport = async (sessionId) => {
   return res.data;
 };
 
+/**
+ * Explicitly generate (and mark complete) the X-Report for an open session.
+ * Stamps the session so the end-of-day Z-Report gate sees this terminal as done.
+ * Use this when the cashier deliberately runs their X-Report; the read-only
+ * getPosXReport above is for the dashboard preview and does NOT mark completion.
+ */
+export const generatePosXReport = async (sessionId) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/x-report/generate`);
+  return res.data;
+};
+
 export const getAllPosTerminals = async (branchId) => {
   const res = await api.get(`${BASE}/terminals/branch/${branchId}/all`);
   return res.data;

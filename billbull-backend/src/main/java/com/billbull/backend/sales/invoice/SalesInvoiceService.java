@@ -291,7 +291,8 @@ public class SalesInvoiceService {
                     linkedDeliveryItems.remove(linkedDeliveryItem);
                     hydrateInvoiceItemFromDeliveryNote(item, linkedDeliveryItem);
                 }
-                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null);
+                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null,
+                        Boolean.TRUE.equals(invoice.getTaxInclusive()));
 
                 Product product = item.getItemCode() != null
                         ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
@@ -619,10 +620,12 @@ public class SalesInvoiceService {
             invoice.setBillDiscountAmount(billDiscAmt);
         }
 
-        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        // Delivery + shipping are flat adds (no VAT); round-off is a manual +/- adjustment.
         BigDecimal deliveryCharge = nz(invoice.getDeliveryCharge());
+        BigDecimal shippingCharge = nz(invoice.getShippingCharge());
         BigDecimal roundOff = nz(invoice.getRoundOff());
-        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal).add(deliveryCharge).add(roundOff)
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal)
+                .add(deliveryCharge).add(shippingCharge).add(roundOff)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal paid = nz(invoice.getAmountPaid());
 
@@ -643,7 +646,7 @@ public class SalesInvoiceService {
     /** Null-safe money view: treats {@code null} as zero. */
     private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
 
-    private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {
+    void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote, boolean taxInclusive) {
         if (item == null) {
             return;
         }
@@ -665,8 +668,23 @@ public class SalesInvoiceService {
         BigDecimal discountAmount = gross.multiply(discountPercent).divide(BigDecimal.valueOf(100));
         BigDecimal footerDisc = nz(item.getFooterDiscount());
         BigDecimal taxableAmount = gross.subtract(discountAmount).subtract(footerDisc).max(BigDecimal.ZERO);
-        BigDecimal taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
-        BigDecimal netAmount = taxableAmount.add(taxAmount);
+
+        BigDecimal taxAmount;
+        BigDecimal netAmount;
+        if (taxInclusive) {
+            // Price already includes VAT: the discounted line value IS the
+            // customer-paid (gross-of-VAT) total. Extract the embedded tax so
+            // subTotal aggregation (netAmount − taxAmount) still yields ex-VAT.
+            BigDecimal divisor = BigDecimal.valueOf(100).add(taxPercent);
+            BigDecimal exVat = divisor.signum() == 0 ? taxableAmount
+                    : taxableAmount.multiply(BigDecimal.valueOf(100)).divide(divisor, 6, java.math.RoundingMode.HALF_UP);
+            taxAmount = taxableAmount.subtract(exVat);
+            netAmount = taxableAmount;
+        } else {
+            // Price is net of VAT: tax is added on top of the discounted value.
+            taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+            netAmount = taxableAmount.add(taxAmount);
+        }
 
         item.setGrossAmount(roundCurrency(gross));
         item.setTaxAmount(roundCurrency(taxAmount));

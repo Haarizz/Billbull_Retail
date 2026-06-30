@@ -43,6 +43,9 @@ public class PosResolveResponse {
      */
     private String pinnedSerialNumber;
 
+    /** Expiry date of the matched batch, surfaced so the cart line can show it. */
+    private java.time.LocalDate pinnedExpiry;
+
     /** Populated when {@code type == CUSTOMER}. */
     private CustomerMatch customer;
 
@@ -73,10 +76,16 @@ public class PosResolveResponse {
     }
 
     public static PosResolveResponse product(ProductAggregateResponse product, String pinnedBatchNumber) {
+        return product(product, pinnedBatchNumber, null);
+    }
+
+    public static PosResolveResponse product(ProductAggregateResponse product, String pinnedBatchNumber,
+                                             java.time.LocalDate pinnedExpiry) {
         PosResolveResponse res = new PosResolveResponse();
         res.type = Type.PRODUCT;
         res.product = product;
         res.pinnedBatchNumber = pinnedBatchNumber;
+        res.pinnedExpiry = pinnedExpiry;
         return res;
     }
 
@@ -112,6 +121,8 @@ public class PosResolveResponse {
     public void setPinnedBatchNumber(String pinnedBatchNumber) { this.pinnedBatchNumber = pinnedBatchNumber; }
     public String getPinnedSerialNumber() { return pinnedSerialNumber; }
     public void setPinnedSerialNumber(String pinnedSerialNumber) { this.pinnedSerialNumber = pinnedSerialNumber; }
+    public java.time.LocalDate getPinnedExpiry() { return pinnedExpiry; }
+    public void setPinnedExpiry(java.time.LocalDate pinnedExpiry) { this.pinnedExpiry = pinnedExpiry; }
     public CustomerMatch getCustomer() { return customer; }
     public void setCustomer(CustomerMatch customer) { this.customer = customer; }
 }
