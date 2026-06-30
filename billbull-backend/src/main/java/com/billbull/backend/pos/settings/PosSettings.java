@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.settings;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.billbull.backend.common.BaseEntity;
 import jakarta.persistence.*;
 
@@ -109,10 +110,12 @@ public class PosSettings extends BaseEntity {
     private Boolean autoPrintReceipt = false;
 
     // Tax inclusive pricing
+    @JsonProperty("taxInclusive")
     @Column(name = "tax_inclusive")
     private Boolean taxInclusive = false;
 
     // Default tax rate
+    @JsonProperty("defaultTaxRate")
     @Column(name = "default_tax_rate")
     private Double defaultTaxRate = 5.0;
 

@@ -108,4 +108,13 @@ public class PosSessionController {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
         return ResponseEntity.ok(service.getZReport(branchId, reportDate));
     }
+
+    @PostMapping("/close-day")
+    @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
+    public ResponseEntity<Map<String, Object>> closeDay(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        return ResponseEntity.ok(service.closeDay(branchId, reportDate));
+    }
 }

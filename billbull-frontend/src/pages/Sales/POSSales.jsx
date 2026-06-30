@@ -14,15 +14,16 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
 import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
-import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
-import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
+import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage } from '../../api/salesInvoiceApi';
+import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
-  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
@@ -382,6 +383,7 @@ export default function POSSales() {
   const [closeSessionTab, setCloseSessionTab] = useState('cash');
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
   const [cardSettlementRef, setCardSettlementRef] = useState('');
+
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
   const [xReportCardVerified, setXReportCardVerified] = useState(false);
@@ -1824,6 +1826,7 @@ export default function POSSales() {
     setSettingsSaving(true);
     try {
       const payload = { ...(posSettings || {}), ...settingsDraft };
+      console.log('SAVING POS SETTINGS PAYLOAD:', payload);
       const saved = await savePosSettings(payload);
       setPosSettings(saved || payload);
       setSettingsDraft(null);
@@ -1874,6 +1877,21 @@ export default function POSSales() {
       }
     } catch (err) {
       console.warn('Z-Report load failed', err);
+    } finally {
+      setZReportLoading(false);
+    }
+  };
+
+  const handleCloseDay = async () => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    if (!branchId) return;
+    try {
+      setZReportLoading(true);
+      const data = await closePosDay(branchId, zReportDate);
+      setZReportData(data);
+      alert('Business day has been officially closed.');
+    } catch (err) {
+      alert(err?.response?.data?.message || 'Failed to close business day.');
     } finally {
       setZReportLoading(false);
     }
@@ -3776,15 +3794,15 @@ export default function POSSales() {
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
               <FileText className="h-8 w-8 text-white" />
             </div>
-            <CardTitle className="mt-4">X-Report</CardTitle>
+            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
             <CardDescription>
-              Generate the current shift report
+              Generate report and close session
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
               {isSessionActive
-                ? 'Mid/end-of-shift read — keeps the session open'
+                ? 'Generate shift report or close current session'
                 : 'Start a session to generate the X-Report'}
             </p>
           </CardContent>
@@ -3816,30 +3834,7 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
-        {/* Close Session Tile */}
-        <Card 
-          className={`${posDashboardTileClass} ${
-            currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
-          }`}
-          onClick={openCloseSessionDialog}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#E63946] to-[#ff6b6b] p-4 rounded-lg w-fit">
-              <Lock className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">Close Session</CardTitle>
-            <CardDescription>
-              Close current session and generate report
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {currentSession?.status === 'active' || currentSession?.status === 'OPEN' 
-                ? 'End session with denomination count' 
-                : 'No active session to close'}
-            </p>
-          </CardContent>
-        </Card>
+
 
         {/* Customer Tile */}
         <Card
@@ -4923,16 +4918,23 @@ export default function POSSales() {
             <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
             <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
             <button
-              onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) loadZReport(zReportDate); }}
-              disabled={zReportLoading || !zReportData}
+              onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
+              disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
               className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-              <Lock className="h-3 w-3" />Close Day
+              <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
             </button>
           </div>
         </div>
       </div>
 
       {zrFilterBar}
+
+      {zReportData?.isDayClosed && (
+        <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
+          <Lock className="h-4 w-4" />
+          This business day has been officially closed. Showing finalized snapshot.
+        </div>
+      )}
 
       {zReportBlocked ? zrPendingBlocker : (<>
       {zrInfoCard}
@@ -6115,7 +6117,7 @@ export default function POSSales() {
     cartViewDetailed, cartLineDetails,
     setShowPaymentDialog, setTenderedAmount, setCheckoutPhase, setCheckoutKeypadMode,
     setCheckoutKeypadTarget, setCheckoutKeypadVisible,
-    setShowPOSConfig, setShowCashDropDialog, setShowCloseSessionDialog, setShowLastReceiptDialog,
+    setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway,
     setShowOrdersListDialog: async () => {
       setOrdersListLoading(true);
@@ -8354,71 +8356,148 @@ export default function POSSales() {
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
-            <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
+            <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
                 <div>
-                  <div className="flex items-center gap-2"><Search className="h-4 w-4 text-cyan-600" /><span className="text-base font-semibold text-[#1E293B]">Price Check</span></div>
-                  <p className="text-xs text-gray-500 mt-0.5">Scan or search an item to check price, stock, barcode, and product details.</p>
+                  <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Price Check</span></div>
+                  <p className="text-sm text-gray-500 mt-1">Scan or search an item to check price, stock, barcode, and product details.</p>
                 </div>
-                <button onClick={() => setShowPriceCheck(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowPriceCheck(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
               </div>
               {/* Search */}
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0">
-                <input value={priceCheckQuery} onChange={e => setPriceCheckQuery(e.target.value)} onKeyDown={e => e.key==='Enter' && doSearch()}
-                  placeholder="Scan barcode or type item name / code..." className="flex-1 border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
-                <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
+              <div className="bg-white border-b border-gray-100 px-6 py-4 flex gap-3 shrink-0">
+                <div className="relative flex-1">
+                  <AsyncSearchableDropdown
+                    value={null}
+                    inputValue={priceCheckQuery}
+                    onInputChange={setPriceCheckQuery}
+                    placeholder="Scan barcode or type item name / code..."
+                    fetchOptions={async (query) => {
+                      if (!query) return [];
+                      try {
+                        const resolved = await resolvePosEntry(query);
+                        if (resolved?.type === 'PRODUCT' && resolved.product) {
+                          return [mapPosProductAggregateItem(resolved.product, query)];
+                        }
+                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true);
+                        if (Array.isArray(searchData?.content)) {
+                          return searchData.content.map(p => mapPosProductListItem(p));
+                        }
+                      } catch { return []; }
+                      return [];
+                    }}
+                    renderOption={(opt, active) => (
+                      <div className="flex items-center gap-3 p-2">
+                        {opt.image ? (
+                           <img src={opt.image.startsWith('data:') || opt.image.startsWith('http') ? opt.image : `data:image/jpeg;base64,${opt.image}`} alt="" className="w-10 h-10 object-cover rounded" />
+                        ) : (
+                           <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center shrink-0"><Search className="h-5 w-5 text-gray-400" /></div>
+                        )}
+                        <div className="flex-1 overflow-hidden">
+                          <p className="font-bold text-sm text-gray-900 leading-tight truncate">{opt.name}</p>
+                          <p className="text-xs text-gray-500 leading-tight truncate">{opt.code} {opt.barcode ? `| ${opt.barcode}` : ''}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-bold text-[#327F74] text-sm">{opt.price} AED</p>
+                          <p className="text-[10px] text-gray-500">Stock: {opt.stock}</p>
+                        </div>
+                      </div>
+                    )}
+                    onSelect={(opt) => {
+                      if (opt) {
+                        setPriceCheckQuery(opt.name || opt.code || '');
+                        setPriceCheckResult(opt);
+                      }
+                    }}
+                    className="w-full text-base"
+                    debounceMs={300}
+                  />
+                </div>
+                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 transition-colors shrink-0"><Search className="h-4 w-4" />Search</button>
+                <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shrink-0">Clear</button>
               </div>
-              <div className="overflow-auto flex-1 p-5">
+              <div className="overflow-auto flex-1 p-6">
                 {priceCheckResult === null && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <Search className="h-10 w-10 text-gray-200 mb-3" />
-                    <p className="text-sm text-gray-400">Scan a barcode or type an item name to check price and availability.</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <Search className="h-12 w-12 text-gray-300 mb-4" />
+                    <p className="text-sm font-medium text-gray-500">Scan a barcode or type an item name to check price and availability.</p>
                   </div>
                 )}
                 {priceCheckResult === 'searching' && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" />
-                    <p className="text-sm text-gray-400">Searching...</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
+                    <p className="text-sm font-medium text-gray-500">Searching...</p>
                   </div>
                 )}
                 {priceCheckResult === 'notfound' && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <AlertCircle className="h-10 w-10 text-gray-300 mb-3" />
-                    <p className="text-sm text-gray-500">No item found for the scanned barcode or search keyword.</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
+                    <p className="text-sm font-medium text-gray-500">No item found for the scanned barcode or search keyword.</p>
                   </div>
                 )}
                 {foundProduct && (
                   <div className="space-y-4">
-                    {/* Item Card */}
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 flex gap-4 shadow-sm">
-                      {foundProduct.image
-                        ? <img src={foundProduct.image} className="w-20 h-20 rounded-lg object-cover shrink-0" alt={foundProduct.name} />
-                        : <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 text-gray-300 text-xs">IMG</div>}
-                      <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                        {[['Item Code',foundProduct.code],['Barcode',foundProduct.barcode],['Item Name',foundProduct.name],['Department',foundProduct.departmentName||'—']].map(([k,v])=>(
-                          <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
-                        ))}
+                    <div className="bg-white border border-[#327F74]/20 rounded-2xl p-5 flex flex-col md:flex-row gap-6 shadow-sm">
+                      {/* Left: Image & Details */}
+                      <div className="flex flex-1 gap-5">
+                        <div className="w-28 h-28 shrink-0 rounded-xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                          {foundProduct.image
+                            ? <img src={foundProduct.image} className="w-full h-full object-cover" alt={foundProduct.name} />
+                            : <ShoppingCart className="w-8 h-8 text-gray-300" />}
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center space-y-3">
+                          <div>
+                            <h3 className="text-lg font-bold text-[#1E293B] leading-tight">{foundProduct.name}</h3>
+                            <p className="text-sm text-gray-500 mt-1">{foundProduct.departmentName || 'General Department'}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
+                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Item Code</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.code}</span></div>
+                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Barcode</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.barcode}</span></div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="shrink-0 text-right space-y-1">
-                        <div className="text-2xl font-bold text-[#327F74]"><CurrencyAmount amount={finalPrice} /></div>
-                        <div className="text-xs text-gray-400">Base: <DirhamSymbol /> {basePrice.toFixed(2)}</div>
-                        {discountPct > 0 && <div className="text-xs text-orange-500">Disc {discountPct}%: −<DirhamSymbol /> {(basePrice - discountedPrice).toFixed(2)}</div>}
-                        <div className="text-xs text-gray-400">VAT {vatRate}% included</div>
-                        <div className="mt-2"><span className={`text-xs rounded px-2 py-0.5 ${foundProduct.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>{foundProduct.stock > 0 ? `In Stock: ${foundProduct.stock}` : 'Out of Stock'}</span></div>
+                      
+                      {/* Right: Pricing & Stock */}
+                      <div className="md:w-64 shrink-0 bg-gray-50 rounded-xl p-4 flex flex-col justify-center border border-gray-100 relative">
+                        <div className="absolute -top-3 right-4">
+                          <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full shadow-sm border ${foundProduct.stock > 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                            {foundProduct.stock > 0 ? `${foundProduct.stock} in Stock` : 'Out of Stock'}
+                          </span>
+                        </div>
+                        
+                        <div className="text-center mt-3 mb-4">
+                          <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">Selling Price</p>
+                          <div className="text-3xl font-black text-[#327F74] flex items-center justify-center gap-1">
+                            <DirhamSymbol /> {finalPrice.toFixed(2)}
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1.5 font-medium">VAT {vatRate}% Included</p>
+                        </div>
+                        
+                        <div className="space-y-1.5 pt-3 border-t border-gray-200">
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span className="text-gray-500">Base Price:</span>
+                            <span className="text-[#1E293B]"><DirhamSymbol /> {basePrice.toFixed(2)}</span>
+                          </div>
+                          {discountPct > 0 && (
+                            <div className="flex justify-between text-[11px] text-orange-600 font-bold">
+                              <span>Discount ({discountPct}%):</span>
+                              <span>−<DirhamSymbol /> {(basePrice - discountedPrice).toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end gap-3 shrink-0">
+                <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
                 {foundProduct && (
                   <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
-                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" />Add to Cart
+                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-colors">
+                    <Plus className="h-4 w-4" />Add to Cart
                   </button>
                 )}
-                <button onClick={() => setShowPriceCheck(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
           </div>
@@ -9031,11 +9110,42 @@ export default function POSSales() {
                   <div className="max-w-lg mx-auto space-y-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
                       <p className="text-sm font-semibold text-[#1E293B]">Scan / Search Invoice</p>
-                      <input value={returnInvoiceQuery}
-                        onChange={e=>{setReturnInvoiceQuery(e.target.value);setReturnInvoiceFound(null);setReturnInvoiceError('');}}
-                        onKeyDown={e=>e.key==='Enter'&&doSearchInvoice()}
+                      <AsyncSearchableDropdown
+                        value={null}
+                        inputValue={returnInvoiceQuery}
+                        onInputChange={(val) => { setReturnInvoiceQuery(val); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
                         placeholder="Scan invoice barcode or enter invoice number..."
-                        className="w-full border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
+                        fetchOptions={async (query) => {
+                          if (!query) return [];
+                          try {
+                            const res = await getSalesInvoicesPage({ search: query, size: 5 });
+                            if (res && res.content) {
+                              return res.content;
+                            }
+                          } catch { return []; }
+                          return [];
+                        }}
+                        renderOption={(opt, active) => (
+                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
+                            <div>
+                              <p className="font-bold text-sm text-[#1E293B]">{opt.invoiceNumber}</p>
+                              <p className="text-xs text-gray-500">{opt.customerName || 'Walk-in'}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-[#327F74] text-sm">{opt.grandTotal} AED</p>
+                              <p className="text-[10px] text-gray-400">{opt.invoiceDate ? new Date(opt.invoiceDate).toLocaleDateString() : ''}</p>
+                            </div>
+                          </div>
+                        )}
+                        onSelect={(opt) => {
+                          if (opt) {
+                            setReturnInvoiceQuery(opt.invoiceNumber);
+                            // Give state a moment to update before running doSearchInvoice, which reads from returnInvoiceQuery state
+                            setTimeout(() => document.getElementById('searchInvoiceBtn')?.click(), 50);
+                          }
+                        }}
+                        className="w-full"
+                      />
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-gray-400 block mb-0.5">Customer Mobile</label>
@@ -9051,7 +9161,7 @@ export default function POSSales() {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={doSearchInvoice} disabled={returnInvoiceLoading||(!returnInvoiceQuery.trim()&&!returnCustomerMobile.trim())}
+                        <button id="searchInvoiceBtn" onClick={doSearchInvoice} disabled={returnInvoiceLoading||(!returnInvoiceQuery.trim()&&!returnCustomerMobile.trim())}
                           className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded flex items-center gap-1">
                           <Search className="h-3.5 w-3.5" />{returnInvoiceLoading?'Searching…':'Search Invoice'}
                         </button>
@@ -9431,18 +9541,131 @@ export default function POSSales() {
                 <>
                   {/* Search */}
                   <div className="bg-white border-b border-gray-100 px-5 py-3 space-y-2 shrink-0">
-                    <input value={serialBatchQuery} onChange={e=>setSerialBatchQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                      placeholder="Scan batch number..." autoFocus
-                      className="w-full border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                    <AsyncSearchableDropdown
+                        value={null}
+                        inputValue={serialBatchQuery}
+                        onInputChange={setSerialBatchQuery}
+                        placeholder="Scan or search batch number..."
+                        fetchOptions={async (query) => {
+                          if (!query) return [];
+                          try {
+                            const res = await posBatchCheck({ batchNumber: query, invoiceNumber: serialBatchInvoiceNo, itemCode: serialBatchItemCode, customerMobile: serialBatchCustomerMobile });
+                            if (res && res.results) {
+                              return res.results;
+                            }
+                          } catch { return []; }
+                          return [];
+                        }}
+                        renderOption={(opt, active) => (
+                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
+                            <div>
+                              <p className="font-bold text-sm text-[#1E293B]">{opt.batchNumber}</p>
+                              <p className="text-xs text-gray-500">{opt.itemName}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-xs text-gray-700">Inv: {opt.invoiceNumber}</p>
+                              <p className="text-[10px] text-gray-400">Qty: {opt.soldQty}</p>
+                            </div>
+                          </div>
+                        )}
+                        onSelect={(opt) => {
+                          if (opt) {
+                            setSerialBatchQuery(opt.batchNumber || '');
+                            if (opt.invoiceNumber) setSerialBatchInvoiceNo(opt.invoiceNumber);
+                            if (opt.itemCode) setSerialBatchItemCode(opt.itemCode);
+                            setTimeout(() => doBatchSearch(), 50);
+                          }
+                        }}
+                        className="w-full text-sm"
+                        debounceMs={400}
+                    />
                     <div className="flex flex-wrap gap-2">
-                      <input value={serialBatchItemCode} onChange={e=>setSerialBatchItemCode(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Item code / barcode" className="flex-1 min-w-[140px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <input value={serialBatchInvoiceNo} onChange={e=>setSerialBatchInvoiceNo(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Invoice number" className="flex-1 min-w-[140px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <input value={serialBatchCustomerMobile} onChange={e=>setSerialBatchCustomerMobile(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Customer mobile" className="flex-1 min-w-[120px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <button onClick={doBatchSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                      <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
+                      <div className="flex-1 min-w-[140px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchItemCode}
+                          onInputChange={setSerialBatchItemCode}
+                          placeholder="Item code / barcode"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true);
+                              return res?.content || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex flex-col py-1">
+                              <span className="font-medium text-xs">{opt.itemName}</span>
+                              <span className="text-[10px] text-gray-500">{opt.itemCode} {opt.barcode ? `| ${opt.barcode}` : ''}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchItemCode(opt.itemCode || opt.barcode || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[140px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchInvoiceNo}
+                          onInputChange={setSerialBatchInvoiceNo}
+                          placeholder="Invoice number"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await getSalesInvoicesPage({ search: query, size: 5 });
+                              return res?.content || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex justify-between py-1">
+                              <span className="font-medium text-xs">{opt.invoiceNumber}</span>
+                              <span className="text-[10px] text-gray-500">{opt.customerName || 'Walk-in'}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchInvoiceNo(opt.invoiceNumber || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchCustomerMobile}
+                          onInputChange={setSerialBatchCustomerMobile}
+                          placeholder="Customer mobile"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await searchCustomersAllFields(query);
+                              return res || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex flex-col py-1">
+                              <span className="font-medium text-xs">{opt.name}</span>
+                              <span className="text-[10px] text-gray-500">{opt.mobile || opt.email || ''}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchCustomerMobile(opt.mobile || opt.name || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <button onClick={doBatchSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1 shrink-0"><Search className="h-3 w-3" />Search</button>
+                      <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1 shrink-0"><RotateCcw className="h-3 w-3" />Reset</button>
                     </div>
                   </div>
                   <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -10145,31 +10368,6 @@ export default function POSSales() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
-              {/* Service & Repair Quick Access */}
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Modules</h3>
-                <button onClick={() => { setShowServiceRepair(true); setServiceView('list'); setShowPOSConfig(false); }} className="w-full flex items-center gap-3 p-3 bg-teal-50 border-2 border-teal-300 rounded-xl hover:bg-teal-100 transition-colors text-left">
-                  <div className="w-10 h-10 rounded-xl bg-[#327F74] flex items-center justify-center shrink-0">
-                    <Wrench className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-[#1E293B]">Service &amp; Repair Management</p>
-                    <p className="text-[10px] text-teal-700 mt-0.5">Warranty checks, repair jobs, invoices &amp; delivery</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-teal-500" />
-                </button>
-                <button onClick={() => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setShowPOSConfig(false); setShowSerialBatch(true); }} className="w-full flex items-center gap-3 p-3 bg-[#F5C742]/10 border-2 border-[#F5C742]/50 rounded-xl hover:bg-[#F5C742]/20 transition-colors text-left mt-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#F5C742] flex items-center justify-center shrink-0">
-                    <Hash className="h-5 w-5 text-[#1E293B]" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-[#1E293B]">Serial / Batch Check</p>
-                    <p className="text-[10px] text-amber-700 mt-0.5">Search sold items, view invoice &amp; warranty details</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-amber-500" />
-                </button>
-              </div>
-
               {/* Layout Toggles */}
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Panel Visibility</h3>

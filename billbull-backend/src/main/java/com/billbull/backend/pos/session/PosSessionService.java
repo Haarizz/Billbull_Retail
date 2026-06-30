@@ -21,6 +21,11 @@ import com.billbull.backend.sales.returns.SalesReturnStatus;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
+import com.billbull.backend.pos.dayclose.PosDayClose;
+import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
+import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
+import com.billbull.backend.sales.payment.PaymentStatus;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -50,6 +55,8 @@ public class PosSessionService {
     private final PosAuditLogRepository auditLogRepository;
     private final PosTerminalRepository terminalRepository;
     private final SalesReturnRepository returnRepository;
+    private final PosDayCloseRepository dayCloseRepository;
+    private final ObjectMapper objectMapper;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -69,7 +76,9 @@ public class PosSessionService {
                              PaymentRepository paymentRepository,
                              PosAuditLogRepository auditLogRepository,
                              PosTerminalRepository terminalRepository,
-                             SalesReturnRepository returnRepository) {
+                             SalesReturnRepository returnRepository,
+                             PosDayCloseRepository dayCloseRepository,
+                             ObjectMapper objectMapper) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -81,6 +90,8 @@ public class PosSessionService {
         this.auditLogRepository = auditLogRepository;
         this.terminalRepository = terminalRepository;
         this.returnRepository = returnRepository;
+        this.dayCloseRepository = dayCloseRepository;
+        this.objectMapper = objectMapper;
     }
 
     private String currentUser() {
@@ -106,6 +117,11 @@ public class PosSessionService {
     public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
+
+        // 0. Verify day is not already closed
+        if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
+        }
 
         // Check if there is already an open session for this terminal
         Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
@@ -433,6 +449,23 @@ public class PosSessionService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getZReport(Long branchId, LocalDate date) {
+        // 1. Check if day is already closed
+        Optional<PosDayClose> dayClose = dayCloseRepository.findByBranchIdAndCloseDate(branchId, date);
+        if (dayClose.isPresent()) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> snapshot = objectMapper.readValue(dayClose.get().getzReportJson(), Map.class);
+                snapshot.put("isDayClosed", true);
+                return snapshot;
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse Z-Report snapshot", e);
+            }
+        }
+        
+        return generateDynamicZReport(branchId, date);
+    }
+    
+    private Map<String, Object> generateDynamicZReport(Long branchId, LocalDate date) {
         // End-of-day gate: every terminal that is still OPEN for this branch+date must
         // have generated its X-Report before the consolidated Z-Report can be produced.
         // Any open session without an X-Report stamp is reported as a pending terminal.
@@ -455,11 +488,15 @@ public class PosSessionService {
         }
         boolean eligible = pendingTerminals.isEmpty();
 
-        List<PosSession> sessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date);
+        List<PosSession> sessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+                .filter(s -> s.getStatus() == PosSessionStatus.CLOSED)
+                .toList();
         List<Long> sessionIds = sessions.stream().map(PosSession::getId).toList();
         List<SalesInvoice> invoices = sessionIds.isEmpty()
                 ? List.of()
-                : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds);
+                : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds).stream()
+                    .filter(inv -> inv.getStatus() != SalesInvoiceStatus.CANCELLED && inv.getStatus() != SalesInvoiceStatus.DRAFT)
+                    .toList();
 
         TenderTotals tender = aggregateTender(invoices);
 
@@ -518,7 +555,109 @@ public class PosSessionService {
         // totalCashSales/totalCardSales counters, which never see "mixed" sales at all
         // (recordInvoiceOnSession buckets mixed payments into totalMixedSales only).
         result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, sessions));
+        result.put("isDayClosed", false);
         return result;
+    }
+    
+    @Transactional
+    public Map<String, Object> closeDay(Long branchId, LocalDate date) {
+        // 1. Check lock/duplicate
+        if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Business day has already been closed.");
+        }
+        
+        // 2. Lock branch to prevent concurrent closes for the same branch
+        Branch branch = branchRepository.findById(branchId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Branch not found"));
+            
+        // 3. Validations
+        List<PosSession> allSessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date);
+        long openCount = allSessions.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
+        if (openCount > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + openCount + " POS sessions are still open.");
+        }
+        
+        // Check for pending/failed payments for the date's invoices
+        List<Long> sessionIds = allSessions.stream().map(PosSession::getId).toList();
+        List<SalesInvoice> invoices = sessionIds.isEmpty() ? List.of() : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds);
+        long draftInvoices = invoices.stream().filter(i -> i.getStatus() == SalesInvoiceStatus.DRAFT).count();
+        if (draftInvoices > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + draftInvoices + " Draft invoices exist.");
+        }
+        
+        List<String> invoiceNumbers = invoices.stream().map(SalesInvoice::getInvoiceNumber).toList();
+        if (!invoiceNumbers.isEmpty()) {
+            List<Payment> payments = paymentRepository.findTenderForInvoices(invoiceNumbers);
+            long pendingPayments = payments.stream().filter(p -> p.getStatus() == PaymentStatus.PENDING || p.getStatus() == PaymentStatus.FAILED).count();
+            if (pendingPayments > 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: Pending or failed payment transactions found.");
+            }
+        }
+        
+        // 4. Generate dynamic report
+        Map<String, Object> report = generateDynamicZReport(branchId, date);
+        
+        // 5. Cash Reconciliation Validation
+        @SuppressWarnings("unchecked")
+        Map<String, Object> summary = (Map<String, Object>) report.get("summary");
+        BigDecimal totalSales = (BigDecimal) summary.getOrDefault("totalSales", BigDecimal.ZERO);
+        BigDecimal cashSales = (BigDecimal) summary.getOrDefault("cashSales", BigDecimal.ZERO);
+        BigDecimal cardSales = (BigDecimal) summary.getOrDefault("cardSales", BigDecimal.ZERO);
+        BigDecimal creditSales = (BigDecimal) summary.getOrDefault("creditSales", BigDecimal.ZERO);
+        BigDecimal otherSales = (BigDecimal) summary.getOrDefault("otherSales", BigDecimal.ZERO);
+        
+        BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales);
+        if (totalSales.subtract(computedTotalSales).abs().compareTo(new BigDecimal("0.05")) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                "Cannot close day: Sales reconciliation failed. Variance: " + totalSales.subtract(computedTotalSales));
+        }
+        
+        BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
+        // Cash paid in/out is recorded in sessions.
+        BigDecimal cashPaidIn = allSessions.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashPaidOut = allSessions.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
+        
+        // Let's compute actual expected cash from sessions directly
+        BigDecimal expectedCashSessions = allSessions.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (expectedCashComputed.subtract(expectedCashSessions).abs().compareTo(new BigDecimal("0.05")) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                "Cannot close day: Cash reconciliation failed. Variance: " + expectedCashComputed.subtract(expectedCashSessions));
+        }
+
+        report.put("isDayClosed", true);
+        
+        // 6. Save Snapshot
+        PosDayClose dayClose = new PosDayClose();
+        dayClose.setBranchId(branchId);
+        dayClose.setCloseDate(date);
+        dayClose.setClosedBy(currentUser());
+        dayClose.setClosedAt(LocalDateTime.now());
+        dayClose.setBranchName(branch.getName());
+        dayClose.setBranchCode(branch.getCode());
+        dayClose.setReportVersion("1.0");
+        
+        dayClose.setGrossSales((BigDecimal) summary.getOrDefault("grossSales", BigDecimal.ZERO));
+        dayClose.setNetSales((BigDecimal) summary.getOrDefault("netSalesExTax", BigDecimal.ZERO));
+        dayClose.setTotalDiscount((BigDecimal) summary.getOrDefault("totalDiscount", BigDecimal.ZERO));
+        dayClose.setTotalVat((BigDecimal) summary.getOrDefault("totalTax", BigDecimal.ZERO));
+        dayClose.setCashSales(cashSales);
+        dayClose.setCardSales(cardSales);
+        dayClose.setCreditSales(creditSales);
+        dayClose.setOtherSales(otherSales);
+        dayClose.setExpectedCash(expectedCashSessions);
+        dayClose.setTotalInvoices((Integer) summary.getOrDefault("invoiceCount", 0));
+        dayClose.setTotalSessions((Integer) summary.getOrDefault("sessionCount", 0));
+        
+        try {
+            dayClose.setzReportJson(objectMapper.writeValueAsString(report));
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to serialize Z-Report");
+        }
+        
+        dayCloseRepository.save(dayClose);
+        
+        return report;
     }
 
     /** Returns/refund figures for a single business day + branch, sourced from the Sales
@@ -595,10 +734,8 @@ public class PosSessionService {
                 })
                 .toList();
     }
+// ... existing code ...
 
-    /** Per-cashier breakdown for the Z-Report: groups invoices by the session owner
-     *  (openedBy) and aggregates real tender (not the session's running counters) so
-     *  split Cash+Card payments are correctly attributed to both buckets. */
     private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<PosSession> sessions) {
         Map<Long, String> cashierBySessionId = new java.util.HashMap<>();
         for (PosSession s : sessions) {
@@ -606,6 +743,7 @@ public class PosSessionService {
         }
         Map<String, List<SalesInvoice>> byCashier = new java.util.LinkedHashMap<>();
         for (SalesInvoice inv : invoices) {
+            if (inv.getStatus() == SalesInvoiceStatus.CANCELLED || inv.getStatus() == SalesInvoiceStatus.DRAFT) continue;
             String cashier = inv.getPosSessionId() != null
                     ? cashierBySessionId.getOrDefault(inv.getPosSessionId(), "—")
                     : "—";
