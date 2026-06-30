@@ -427,6 +427,15 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         List<SalesInvoice> findByInvoiceNumberPrefixWithItems(@Param("invoiceNumber") String invoiceNumber);
 
         /**
+         * POS Sales Return: exact invoice-number lookup with items eagerly fetched, so the
+         * controller can serialize the response without a LazyInitializationException
+         * (the repository's own transaction/session closes before the controller body runs).
+         */
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items i " +
+               "WHERE s.invoiceNumber = :invoiceNumber")
+        Optional<SalesInvoice> findByInvoiceNumberWithItems(@Param("invoiceNumber") String invoiceNumber);
+
+        /**
          * POS Reprint: fetch POS_SALE invoices for a branch within a date range, latest first.
          * Items are not fetched here — caller uses the summary projection only.
          */

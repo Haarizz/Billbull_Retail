@@ -27,6 +27,9 @@ public class PosLayawayCreateRequest {
     private String remarks;
     private Boolean reserveStockRequested;
     private Double billDiscountAmount;
+    /** When true this is a POS "Hold": deposit is forced to zero and a real customer
+     *  is not required (Walk-in holds allowed). Otherwise a normal layaway. */
+    private Boolean hold;
 
     private List<PosLayawayItemRequest> items;
 
@@ -99,6 +102,8 @@ public class PosLayawayCreateRequest {
     public void setReserveStockRequested(Boolean reserveStockRequested) { this.reserveStockRequested = reserveStockRequested; }
     public Double getBillDiscountAmount() { return billDiscountAmount; }
     public void setBillDiscountAmount(Double billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
+    public Boolean getHold() { return hold; }
+    public void setHold(Boolean hold) { this.hold = hold; }
     public List<PosLayawayItemRequest> getItems() { return items; }
     public void setItems(List<PosLayawayItemRequest> items) { this.items = items; }
 }

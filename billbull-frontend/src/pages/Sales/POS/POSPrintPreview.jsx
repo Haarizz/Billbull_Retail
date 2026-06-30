@@ -91,7 +91,7 @@ export const ThermalMock = ({
   );
 
   return (
-    <div style={{
+    <div className="max-w-full" style={{
       width: '100%',
       maxWidth: is58 ? 260 : 330,
       margin: '0 auto',
@@ -350,7 +350,7 @@ export const ServiceJobA4Preview = ({ companyName, trn, address, phone, footerNo
 };
 
 export const PaperSizePicker = ({ value, onChange }) => (
-  <div className="flex gap-1.5">
+  <div className="flex flex-wrap gap-1.5">
     {['80mm', '58mm', 'A4'].map(s => (
       <button
         type="button"
@@ -455,7 +455,7 @@ export function A4ScaledPreview({ src, fillWidth = false }) {
 export function ThermalScaledPreview({ src }) {
   return (
     <div className="flex-1 flex justify-center bg-[#f0f2f5] p-6 overflow-y-auto">
-      <div className="w-[340px] bg-white shadow-2xl p-4 rounded-xl border border-gray-200 shrink-0 flex flex-col" style={{ minHeight: '500px' }}>
+      <div className="w-[340px] max-w-full bg-white shadow-2xl p-4 rounded-xl border border-gray-200 shrink-0 flex flex-col" style={{ minHeight: '500px' }}>
         <iframe src={src} style={{ width: '100%', flex: 1, border: 'none', display: 'block', height: '100%', minHeight: '600px' }} title="Thermal Receipt Preview" />
       </div>
     </div>

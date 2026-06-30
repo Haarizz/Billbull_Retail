@@ -92,6 +92,16 @@ public class PosSession extends BaseEntity {
     @Column(name = "x_report_printed")
     private Boolean xReportPrinted = false;
 
+    /** When this terminal's cashier explicitly generated its X-Report for the shift.
+     *  Null while the session is open and no X-Report has been run yet. The end-of-day
+     *  Z-Report is blocked until every still-open terminal for the branch has this set
+     *  (see {@code PosSessionService.getZReport}). Closing the session also stamps it. */
+    @Column(name = "x_report_generated_at")
+    private LocalDateTime xReportGeneratedAt;
+
+    @Column(name = "x_report_generated_by")
+    private String xReportGeneratedBy;
+
     @Column(name = "z_report_printed")
     private Boolean zReportPrinted = false;
 
@@ -105,6 +115,21 @@ public class PosSession extends BaseEntity {
 
     @Column(name = "closing_denominations_json", columnDefinition = "TEXT")
     private String closingDenominationsJson;
+
+    @Column(name = "card_batch_no")
+    private String cardBatchNo;
+
+    @Column(name = "card_settlement_verified")
+    private Boolean cardSettlementVerified = false;
+
+    @Column(name = "closing_cashier_name")
+    private String closingCashierName;
+
+    @Column(name = "closing_supervisor_name")
+    private String closingSupervisorName;
+
+    @Column(name = "closing_remarks", length = 1000)
+    private String closingRemarks;
 
     @JsonIgnore
     @OneToMany(mappedBy = "posSession", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
@@ -196,6 +221,12 @@ public class PosSession extends BaseEntity {
     public Boolean getXReportPrinted() { return xReportPrinted; }
     public void setXReportPrinted(Boolean xReportPrinted) { this.xReportPrinted = xReportPrinted; }
 
+    public LocalDateTime getXReportGeneratedAt() { return xReportGeneratedAt; }
+    public void setXReportGeneratedAt(LocalDateTime xReportGeneratedAt) { this.xReportGeneratedAt = xReportGeneratedAt; }
+
+    public String getXReportGeneratedBy() { return xReportGeneratedBy; }
+    public void setXReportGeneratedBy(String xReportGeneratedBy) { this.xReportGeneratedBy = xReportGeneratedBy; }
+
     public Boolean getZReportPrinted() { return zReportPrinted; }
     public void setZReportPrinted(Boolean zReportPrinted) { this.zReportPrinted = zReportPrinted; }
 
@@ -207,6 +238,21 @@ public class PosSession extends BaseEntity {
 
     public String getClosingDenominationsJson() { return closingDenominationsJson; }
     public void setClosingDenominationsJson(String closingDenominationsJson) { this.closingDenominationsJson = closingDenominationsJson; }
+
+    public String getCardBatchNo() { return cardBatchNo; }
+    public void setCardBatchNo(String cardBatchNo) { this.cardBatchNo = cardBatchNo; }
+
+    public Boolean getCardSettlementVerified() { return cardSettlementVerified; }
+    public void setCardSettlementVerified(Boolean cardSettlementVerified) { this.cardSettlementVerified = cardSettlementVerified; }
+
+    public String getClosingCashierName() { return closingCashierName; }
+    public void setClosingCashierName(String closingCashierName) { this.closingCashierName = closingCashierName; }
+
+    public String getClosingSupervisorName() { return closingSupervisorName; }
+    public void setClosingSupervisorName(String closingSupervisorName) { this.closingSupervisorName = closingSupervisorName; }
+
+    public String getClosingRemarks() { return closingRemarks; }
+    public void setClosingRemarks(String closingRemarks) { this.closingRemarks = closingRemarks; }
 
     public List<PosCashMovement> getCashMovements() { return cashMovements; }
     public void setCashMovements(List<PosCashMovement> cashMovements) { this.cashMovements = cashMovements; }

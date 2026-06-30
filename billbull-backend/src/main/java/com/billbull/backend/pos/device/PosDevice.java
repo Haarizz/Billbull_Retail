@@ -5,14 +5,20 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 /**
- * Registered POS terminal. Device must exist and be ACTIVE before it can open a
- * POS session. §2.7 of the POS gap analysis.
+ * Shared parent row for every piece of POS hardware (printer, scanner, cash drawer, card
+ * terminal, ...). Type-specific configuration lives in the matching feature package's own
+ * entity (e.g. {@code pos.printer.PosPrinter}), linked back here via a {@code device_id} FK;
+ * this row exists so Hardware Profiles, Discovery, Health and the Device Dashboard can refer
+ * to "a device" generically without knowing its concrete type.
+ * See docs/pos-device-architecture-specification-v2-2026-06-30.md §6.5.
  */
 @Entity
 @Table(name = "pos_devices", indexes = {
-    @Index(name = "idx_pos_device_code",   columnList = "device_code",  unique = true),
-    @Index(name = "idx_pos_device_branch", columnList = "branch_id"),
-    @Index(name = "idx_pos_device_status", columnList = "status")
+    @Index(name = "idx_pos_device_code",     columnList = "device_code",  unique = true),
+    @Index(name = "idx_pos_device_branch",   columnList = "branch_id"),
+    @Index(name = "idx_pos_device_status",   columnList = "status"),
+    @Index(name = "idx_pos_device_type",     columnList = "device_type"),
+    @Index(name = "idx_pos_device_terminal", columnList = "terminal_id")
 })
 public class PosDevice extends BaseEntity {
 
@@ -33,8 +39,21 @@ public class PosDevice extends BaseEntity {
     private String counterName;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "device_type", nullable = false, length = 30)
+    private PosDeviceType deviceType = PosDeviceType.GENERIC;
+
+    /** Optional terminal scope — matches {@code PosTerminal.terminalId} (string identifier). */
+    @Column(name = "terminal_id", length = 80)
+    private String terminalId;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PosDeviceStatus status = PosDeviceStatus.ACTIVE;
+
+    /** System-observed health, distinct from the admin-controlled {@link #status}. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "runtime_health", nullable = false, length = 20)
+    private PosDeviceRuntimeHealth runtimeHealth = PosDeviceRuntimeHealth.UNKNOWN;
 
     /** ISO 8601 timestamp of the device's last heartbeat ping. */
     @Column(name = "last_heartbeat")
@@ -58,8 +77,17 @@ public class PosDevice extends BaseEntity {
     public String getCounterName() { return counterName; }
     public void setCounterName(String counterName) { this.counterName = counterName; }
 
+    public PosDeviceType getDeviceType() { return deviceType; }
+    public void setDeviceType(PosDeviceType deviceType) { this.deviceType = deviceType; }
+
+    public String getTerminalId() { return terminalId; }
+    public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
+
     public PosDeviceStatus getStatus() { return status; }
     public void setStatus(PosDeviceStatus status) { this.status = status; }
+
+    public PosDeviceRuntimeHealth getRuntimeHealth() { return runtimeHealth; }
+    public void setRuntimeHealth(PosDeviceRuntimeHealth runtimeHealth) { this.runtimeHealth = runtimeHealth; }
 
     public LocalDateTime getLastHeartbeat() { return lastHeartbeat; }
     public void setLastHeartbeat(LocalDateTime lastHeartbeat) { this.lastHeartbeat = lastHeartbeat; }

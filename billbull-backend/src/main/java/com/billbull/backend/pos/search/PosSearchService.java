@@ -91,7 +91,7 @@ public class PosSearchService {
                 if (product.getProduct() != null && !product.getProduct().isAvailableInPos()) {
                     return PosResolveResponse.blocked("This product is disabled for POS sales.");
                 }
-                return PosResolveResponse.product(product, bm.getBatchNumber());
+                return PosResolveResponse.product(product, bm.getBatchNumber(), bm.getExpiryDate());
             }
         }
 

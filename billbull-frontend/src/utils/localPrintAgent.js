@@ -1,4 +1,5 @@
 import { printZplBatch } from "./zebraZpl";
+import { createPrintJob, dispatchPrintJob, reportPrintJobResult } from "../api/posPrintJobApi";
 
 const PRINT_AGENT_BASES = [
   "http://127.0.0.1:19777",
@@ -90,7 +91,25 @@ export const printReceiptThroughAgent = async ({
   });
 };
 
-export const testConfiguredPrinter = async (printer, { testText, labelPayload } = {}) => {
+// Sends a raw ESC/POS byte stream (base64-encoded) straight to the printer,
+// bypassing the Windows print driver. This is the only path that actually
+// carries density/heat/font/raster-image commands to the hardware — see
+// escPosReceipt.js for why the text and HTML/driver paths can't.
+export const printEscPosThroughAgent = async ({
+  printerName,
+  dataBase64,
+  connectionType,
+  ipAddress,
+  portNumber,
+  title,
+}) => {
+  return agentFetch("/print/escpos", {
+    method: "POST",
+    body: JSON.stringify({ printerName, dataBase64, connectionType, ipAddress, portNumber, title }),
+  });
+};
+
+export const testConfiguredPrinter = async (printer, { testText, escPosBase64, labelPayload } = {}) => {
   if (!printer) {
     throw new Error("Printer configuration is missing.");
   }
@@ -107,6 +126,19 @@ export const testConfiguredPrinter = async (printer, { testText, labelPayload } 
     await printZplBatch(labels, printer.deviceIdentifier || printer.systemPrinterName || null);
     return { ok: true, message: "Test label sent to Zebra printer." };
   }
+  if (escPosBase64) {
+    try {
+      return await printEscPosThroughAgent({
+        printerName: printer.systemPrinterName,
+        dataBase64: escPosBase64,
+        connectionType: printer.connectionType,
+        ipAddress: printer.ipAddress,
+        portNumber: printer.portNumber,
+      });
+    } catch (err) {
+      console.warn('ESC/POS test print failed, falling back to plain-text test print', err);
+    }
+  }
   return testPrintAgentPrinter({
     printerName: printer.systemPrinterName,
     text: testText,
@@ -119,7 +151,22 @@ export const testConfiguredPrinter = async (printer, { testText, labelPayload } 
   });
 };
 
-export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title }) => {
+// Phase B (Device Manager print-job spine): every receipt print is also recorded as a backend
+// pos_print_jobs row for audit/queue visibility, in addition to the existing direct call below.
+// Job bookkeeping is strictly best-effort and must never block or fail an actual print — until
+// the external Local Device Agent executable is updated to poll the job queue itself, the browser
+// remains the one actually invoking the agent for receipts. See
+// docs/pos-device-architecture-specification-v2-2026-06-30.md §10.3 for the documented interim state.
+const trackPrintJobSafely = async (fn, label) => {
+  try {
+    return await fn();
+  } catch (err) {
+    console.warn(`[print-job] ${label} failed (non-blocking):`, err);
+    return null;
+  }
+};
+
+export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title, sourceType, sourceRefId } = {}) => {
   if (!printer) {
     throw new Error("Printer configuration is missing.");
   }
@@ -130,16 +177,85 @@ export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, tit
   } else if (isBlank(printer.systemPrinterName)) {
     throw new Error("Configured printer does not have a system printer name.");
   }
-  return printReceiptThroughAgent({
-    printerName: printer.systemPrinterName,
-    text: receiptText,
-    title: title || "BillBull POS Receipt",
-    paperWidthMm: paperWidthToMm(printer.paperSize),
-    connectionType: printer.connectionType,
-    ipAddress: printer.ipAddress,
-    portNumber: printer.portNumber,
-    deviceIdentifier: printer.deviceIdentifier,
-  });
+
+  const job = printer.id
+    ? await trackPrintJobSafely(() => createPrintJob({
+        printerId: printer.id,
+        jobType: "RECEIPT",
+        sourceType: sourceType || null,
+        sourceRefId: sourceRefId || null,
+        payload: receiptText,
+      }), "create print job")
+    : null;
+  if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+
+  try {
+    const result = await printReceiptThroughAgent({
+      printerName: printer.systemPrinterName,
+      text: receiptText,
+      title: title || "BillBull POS Receipt",
+      paperWidthMm: paperWidthToMm(printer.paperSize),
+      connectionType: printer.connectionType,
+      ipAddress: printer.ipAddress,
+      portNumber: printer.portNumber,
+      deviceIdentifier: printer.deviceIdentifier,
+    });
+    if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
+    return result;
+  } catch (err) {
+    if (job) {
+      await trackPrintJobSafely(
+        () => reportPrintJobResult(job.id, { success: false, errorMessage: err?.message || "Print failed." }),
+        "report print job failure",
+      );
+    }
+    throw err;
+  }
+};
+
+export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64, receiptText, title, sourceType, sourceRefId } = {}) => {
+  if (!printer) {
+    throw new Error("Printer configuration is missing.");
+  }
+  if (printer.connectionType === "NETWORK_IP") {
+    if (isBlank(printer.ipAddress) || !printer.portNumber) {
+      throw new Error("Configured network printer does not have an IP address and port.");
+    }
+  } else if (isBlank(printer.systemPrinterName)) {
+    throw new Error("Configured printer does not have a system printer name.");
+  }
+
+  const job = printer.id
+    ? await trackPrintJobSafely(() => createPrintJob({
+        printerId: printer.id,
+        jobType: "RECEIPT",
+        sourceType: sourceType || null,
+        sourceRefId: sourceRefId || null,
+        payload: receiptText || "[ESC/POS binary receipt]",
+      }), "create print job")
+    : null;
+  if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+
+  try {
+    const result = await printEscPosThroughAgent({
+      printerName: printer.systemPrinterName,
+      dataBase64,
+      connectionType: printer.connectionType,
+      ipAddress: printer.ipAddress,
+      portNumber: printer.portNumber,
+      title,
+    });
+    if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
+    return result;
+  } catch (err) {
+    if (job) {
+      await trackPrintJobSafely(
+        () => reportPrintJobResult(job.id, { success: false, errorMessage: err?.message || "Print failed." }),
+        "report print job failure",
+      );
+    }
+    throw err;
+  }
 };
 
 export const runtimeStatusFromPrintError = (error) => {

@@ -173,6 +173,12 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
   cashGiven = null, changeAmount = null,
+  // Layaway/Hold deposit already collected, shown as a reduction with the remaining
+  // balance due, when this sale settles a reserved order (§Layaway conversion).
+  depositApplied = null, balanceDue = null,
+  // Flat (untaxed) shipping charge shown as its own line before TOTAL. invoice.invoiceTotal
+  // is expected to already include it.
+  shippingCharge = null,
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
@@ -277,9 +283,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
   if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
+  // as their own lines so the total always ties out on the printed invoice.
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmt(invoice.deliveryCharge)}</span></div>`;
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmt(shippingCharge)}</span></div>`;
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
+  // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
+  if (depositApplied != null && parseFloat(depositApplied) > 0) {
+    const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(grandTotal) - parseFloat(depositApplied));
+    html += `<div class="row"><span class="lbl">Deposit Paid:</span><span class="num">- ${cur} ${fmt(depositApplied)}</span></div>`;
+    html += `<div class="row b"><span>Balance Due:</span><span class="num">${cur} ${fmt(Math.max(0, bal))}</span></div>`;
+  }
   html += D;
 
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
@@ -366,11 +382,15 @@ const buildFixedWidthLine = (left, right, width) => {
 export const buildThermalReceiptText = (paperSize, invoice, {
   companyName, trn, header, footer,
   showTrn = true,
+  documentTitle = null,
   cashierName = '',
   terminalId = '',
   counterName = '',
   cashGiven = null,
   changeAmount = null,
+  depositApplied = null,
+  balanceDue = null,
+  shippingCharge = null,
   currency = 'AED',
   customerPhone = null,
   customerEmail = null,
@@ -393,6 +413,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   if (showTrn && trn) pushCentered(`TRN: ${trn}`);
   if (header) pushCentered(header);
   lines.push(hr);
+  pushCentered(documentTitle || 'TAX INVOICE');
   lines.push(buildFixedWidthLine('Invoice', invoice.invoiceNumber || invoice.id || '', width));
   if (invoice.invoiceDate) {
     const dt = new Date(invoice.invoiceDate);
@@ -426,9 +447,20 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   if (parseFloat(invoice.discountTotal || 0) > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
   }
-  lines.push(buildFixedWidthLine('VAT', fmt(invoice.taxTotal), width));
+  lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) {
+    lines.push(buildFixedWidthLine('Delivery Charge', fmt(invoice.deliveryCharge), width));
+  }
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) {
+    lines.push(buildFixedWidthLine('Shipping', fmt(shippingCharge), width));
+  }
   lines.push(hr);
   lines.push(buildFixedWidthLine('TOTAL', fmt(invoice.invoiceTotal), width));
+  if (depositApplied != null && parseFloat(depositApplied) > 0) {
+    const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(invoice.invoiceTotal || 0) - parseFloat(depositApplied));
+    lines.push(buildFixedWidthLine('Deposit Paid', `- ${fmt(depositApplied)}`, width));
+    lines.push(buildFixedWidthLine('Balance Due', fmt(Math.max(0, bal)), width));
+  }
   if (cashGiven != null && parseFloat(cashGiven) > 0) {
     lines.push(buildFixedWidthLine('Cash Received', fmt(cashGiven), width));
   }
@@ -528,6 +560,66 @@ ${layaway.remarks ? `<div style="font-size:9px;margin-top:2px">Note: ${esc(layaw
 <div class="c" style="font-size:9px">Balance must be paid on collection.</div>
 ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>` : ''}
 </body></html>`;
+};
+
+export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const fmt = n => {
+    const v = parseFloat(n) || 0;
+    return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+  const layDate = layaway.createdAt
+    ? new Date(layaway.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dueStr = layaway.dueDate
+    ? new Date(layaway.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '';
+  const items = layaway.items || [];
+
+  pushCentered(companyName || 'BillBull');
+  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+  if (header) pushCentered(header);
+  lines.push(hr);
+  pushCentered('NOT A TAX INVOICE');
+  pushCentered('LAYAWAY RECEIPT');
+  lines.push(hr);
+  lines.push(`LAY: ${layaway.layawayNumber || 'Auto'}`.slice(0, width));
+  lines.push(layDate);
+  lines.push(`Cust: ${layaway.customerName || ''}`.slice(0, width));
+  if (layaway.customerPhone) lines.push(`Tel: ${layaway.customerPhone}`.slice(0, width));
+  lines.push(hr);
+  items.forEach((it) => {
+    const qty = it.quantity || 0;
+    const price = it.price || it.unitPrice || 0;
+    const total = it.lineTotal || it.netAmount || (qty * price);
+    lines.push(buildFixedWidthLine(`${it.itemName || ''} x${qty}`, `AED ${fmt(total)}`, width));
+  });
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Sale Total', `AED ${fmt(layaway.saleTotal)}`, width));
+  if (parseFloat(layaway.depositAmount || 0) > 0) {
+    lines.push(buildFixedWidthLine(`Deposit (${layaway.depositPaymentMode || ''})`, `AED ${fmt(layaway.depositAmount)}`, width));
+  }
+  lines.push(buildFixedWidthLine('BALANCE DUE', `AED ${fmt(layaway.balanceAmount)}`, width));
+  if (dueStr) {
+    lines.push(hr);
+    lines.push(`Due Date: ${dueStr}`.slice(0, width));
+  }
+  if (layaway.remarks) lines.push(`Note: ${layaway.remarks}`.slice(0, width));
+  lines.push(hr);
+  pushCentered('Items reserved until due date.');
+  pushCentered('Balance must be paid on collection.');
+  if (footer) pushCentered(footer);
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
 };
 
 export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {

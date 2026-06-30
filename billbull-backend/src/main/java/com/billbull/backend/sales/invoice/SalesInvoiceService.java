@@ -60,6 +60,7 @@ import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
+import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
 
 @Service
 public class SalesInvoiceService {
@@ -89,6 +90,7 @@ public class SalesInvoiceService {
     private final BatchSelectionService batchSelectionService;
     private final PaymentService paymentService;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+    private final PosDayCloseRepository dayCloseRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -114,7 +116,8 @@ public class SalesInvoiceService {
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
             PaymentService paymentService,
-            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
+            PosDayCloseRepository dayCloseRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -140,6 +143,7 @@ public class SalesInvoiceService {
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
         this.notifPublisher = notifPublisher;
+        this.dayCloseRepository = dayCloseRepository;
     }
 
     // ----------------------------
@@ -234,6 +238,15 @@ public class SalesInvoiceService {
     public SalesInvoice save(SalesInvoice invoice) {
         SalesInvoice existing = invoice.getId() != null ? invoiceRepo.findById(invoice.getId()).orElse(null) : null;
 
+        if (invoice.getInvoiceDate() != null) {
+            Long checkBranchId = existing != null ? existing.getBranchId() : (invoice.getBranchId() != null ? invoice.getBranchId() : branchAccessService.getRequiredCurrentUserBranch().getId());
+            if (dayCloseRepository.existsByBranchIdAndCloseDate(checkBranchId, invoice.getInvoiceDate())) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.FORBIDDEN,
+                        "Cannot create or modify invoices for a closed business day.");
+            }
+        }
+
         if (existing != null) {
             branchAccessService.assertTransactionBranchAccessible(existing.getBranchId(), "Sales Invoice");
             if (existing.getStatus() == SalesInvoiceStatus.POSTED) {
@@ -291,7 +304,8 @@ public class SalesInvoiceService {
                     linkedDeliveryItems.remove(linkedDeliveryItem);
                     hydrateInvoiceItemFromDeliveryNote(item, linkedDeliveryItem);
                 }
-                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null);
+                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null,
+                        Boolean.TRUE.equals(invoice.getTaxInclusive()));
 
                 Product product = item.getItemCode() != null
                         ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
@@ -619,10 +633,12 @@ public class SalesInvoiceService {
             invoice.setBillDiscountAmount(billDiscAmt);
         }
 
-        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        // Delivery + shipping are flat adds (no VAT); round-off is a manual +/- adjustment.
         BigDecimal deliveryCharge = nz(invoice.getDeliveryCharge());
+        BigDecimal shippingCharge = nz(invoice.getShippingCharge());
         BigDecimal roundOff = nz(invoice.getRoundOff());
-        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal).add(deliveryCharge).add(roundOff)
+        BigDecimal total = subTotal.subtract(billDiscAmt).add(taxTotal)
+                .add(deliveryCharge).add(shippingCharge).add(roundOff)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal paid = nz(invoice.getAmountPaid());
 
@@ -643,7 +659,7 @@ public class SalesInvoiceService {
     /** Null-safe money view: treats {@code null} as zero. */
     private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
 
-    private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {
+    void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote, boolean taxInclusive) {
         if (item == null) {
             return;
         }
@@ -665,8 +681,23 @@ public class SalesInvoiceService {
         BigDecimal discountAmount = gross.multiply(discountPercent).divide(BigDecimal.valueOf(100));
         BigDecimal footerDisc = nz(item.getFooterDiscount());
         BigDecimal taxableAmount = gross.subtract(discountAmount).subtract(footerDisc).max(BigDecimal.ZERO);
-        BigDecimal taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
-        BigDecimal netAmount = taxableAmount.add(taxAmount);
+
+        BigDecimal taxAmount;
+        BigDecimal netAmount;
+        if (taxInclusive) {
+            // Price already includes VAT: the discounted line value IS the
+            // customer-paid (gross-of-VAT) total. Extract the embedded tax so
+            // subTotal aggregation (netAmount − taxAmount) still yields ex-VAT.
+            BigDecimal divisor = BigDecimal.valueOf(100).add(taxPercent);
+            BigDecimal exVat = divisor.signum() == 0 ? taxableAmount
+                    : taxableAmount.multiply(BigDecimal.valueOf(100)).divide(divisor, 6, java.math.RoundingMode.HALF_UP);
+            taxAmount = taxableAmount.subtract(exVat);
+            netAmount = taxableAmount;
+        } else {
+            // Price is net of VAT: tax is added on top of the discounted value.
+            taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+            netAmount = taxableAmount.add(taxAmount);
+        }
 
         item.setGrossAmount(roundCurrency(gross));
         item.setTaxAmount(roundCurrency(taxAmount));
@@ -892,6 +923,11 @@ public class SalesInvoiceService {
     @Transactional
     public void delete(Long id) {
         SalesInvoice existing = getById(id);
+        if (existing != null && dayCloseRepository.existsByBranchIdAndCloseDate(existing.getBranchId(), existing.getInvoiceDate())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "Cannot delete an invoice for a closed business day.");
+        }
         if (existing != null && existing.getStatus() == SalesInvoiceStatus.POSTED) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Posted invoices cannot be deleted.");

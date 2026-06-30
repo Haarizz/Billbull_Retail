@@ -57,7 +57,13 @@ public class PosSessionController {
         String notes = body != null ? (String) body.get("notes") : null;
         boolean supervisorApproved = body != null && Boolean.TRUE.equals(body.get("supervisorApproved"));
         String closingDenominationsJson = toJson(body != null ? body.get("closingDenominations") : null);
-        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson));
+        String cardBatchNo = body != null ? (String) body.get("cardBatchNo") : null;
+        Boolean cardSettlementVerified = body != null ? (Boolean) body.get("cardSettlementVerified") : null;
+        String closingCashierName = body != null ? (String) body.get("closingCashierName") : null;
+        String closingSupervisorName = body != null ? (String) body.get("closingSupervisorName") : null;
+        String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
+        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
+                cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks));
     }
 
     private String toJson(Object value) {
@@ -86,6 +92,14 @@ public class PosSessionController {
         return ResponseEntity.ok(service.getXReport(id));
     }
 
+    /** Explicit X-Report run for an open shift. Marks this terminal as having completed
+     *  its X-Report (used by the Z-Report end-of-day gate) and returns the report data. */
+    @PostMapping("/{id}/x-report/generate")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> generateXReport(@PathVariable Long id) {
+        return ResponseEntity.ok(service.generateXReport(id));
+    }
+
     @GetMapping("/z-report")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getZReport(
@@ -93,5 +107,14 @@ public class PosSessionController {
             @RequestParam(required = false) String date) {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
         return ResponseEntity.ok(service.getZReport(branchId, reportDate));
+    }
+
+    @PostMapping("/close-day")
+    @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
+    public ResponseEntity<Map<String, Object>> closeDay(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        return ResponseEntity.ok(service.closeDay(branchId, reportDate));
     }
 }

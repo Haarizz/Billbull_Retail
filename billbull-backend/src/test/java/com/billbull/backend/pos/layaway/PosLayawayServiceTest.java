@@ -126,6 +126,29 @@ class PosLayawayServiceTest {
     }
 
     @Test
+    void holdAllowsWalkInAndForcesZeroDeposit() {
+        // A POS "Hold" reuses the layaway path but is deposit-free and may be Walk-in.
+        when(productRepository.findByCode("NORMAL-ITEM")).thenReturn(Optional.of(normalProduct("NORMAL-ITEM")));
+        PosLayawayCreateRequest req = new PosLayawayCreateRequest();
+        req.setHold(true);
+        req.setCustomerCode("WALK-IN");            // no real customer
+        req.setDepositAmount(50.0);                // requested deposit must be ignored
+        req.setDepositRequired(true);
+        req.setItems(List.of(line("NORMAL-ITEM", 2, 100.0, null))); // 200 + 5% = 210
+
+        PosLayaway saved = service.create(req);
+
+        assertTrue(saved.getHold());
+        assertMoney("210.0", saved.getSaleTotal());
+        assertMoney("0.0", saved.getDepositAmount());      // forced to zero
+        assertMoney("210.0", saved.getBalanceAmount());
+        assertEquals(PosLayawayStatus.ACTIVE, saved.getStatus());
+        // No deposit → no deposit GL posting.
+        verify(postingEngine, never())
+                .createJournalFromLayawayDeposit(anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
     void createRejectsNonFefoBatchLineWithoutScannedBatch() {
         // Batch-controlled but FEFO disabled → a specific batch must be chosen,
         // so the cashier still has to scan one.

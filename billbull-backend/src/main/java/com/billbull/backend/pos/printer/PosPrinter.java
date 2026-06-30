@@ -22,6 +22,12 @@ public class PosPrinter extends BaseEntity {
     @Column(name = "device_code", nullable = false, length = 50, unique = true)
     private String deviceCode;
 
+    /** Parent row in the shared device registry (pos.device.PosDevice). Nullable only for
+     *  rows that predate the Device Manager (Phase A) — backfilled by V22 for existing data;
+     *  always set by PosPrinterService for printers created from this point on. */
+    @Column(name = "device_id")
+    private Long deviceId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "device_type", nullable = false, length = 40)
     private PosPrinterType deviceType;
@@ -98,6 +104,14 @@ public class PosPrinter extends BaseEntity {
 
     public void setDeviceCode(String deviceCode) {
         this.deviceCode = deviceCode;
+    }
+
+    public Long getDeviceId() {
+        return deviceId;
+    }
+
+    public void setDeviceId(Long deviceId) {
+        this.deviceId = deviceId;
     }
 
     public PosPrinterType getDeviceType() {

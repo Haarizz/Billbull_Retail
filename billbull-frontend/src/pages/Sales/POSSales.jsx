@@ -14,18 +14,18 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
 import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
-import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
-import { sendSalesInvoiceEmail, getSalesInvoiceById } from '../../api/salesInvoiceApi';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
+import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage } from '../../api/salesInvoiceApi';
+import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
-  closePosSession, addPosCashMovement, getPosXReport, getPosZReport, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
-  holdSale, getHeldSales, recallHeldSale,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
@@ -33,7 +33,7 @@ import {
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { printHtml, generateReportA4Html, generateReportThermalHtml, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import {
@@ -134,7 +134,7 @@ import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, re
 import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
 import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct } from './POS/posUtils';
 import {
-  buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml,
+  buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
 } from './POS/posPrintUtils';
@@ -150,7 +150,8 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
-import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { resolvePrinterForContext, sendReceiptToConfiguredPrinter, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { buildEscPosReceiptBase64 } from '../../utils/escPosReceipt';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -323,6 +324,10 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+  // True when this terminal has a live POS session. Session-bound features
+  // (X/Z report, cash drop/out, customer management) are locked until this is
+  // true and re-enable automatically — no refresh — when a session is opened.
+  const isSessionActive = currentSession?.status === 'active' || currentSession?.status === 'OPEN';
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
   // Behavior-settings editor (Console → Behavior tab)
@@ -357,6 +362,10 @@ export default function POSSales() {
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
   const [zReportData, setZReportData] = useState(null);
+  // When the Z-Report is blocked because terminals still owe an X-Report, this
+  // holds the pending-terminal list to display; zReportData is cleared so the
+  // report body and its print/export actions stay hidden until eligible.
+  const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
@@ -375,11 +384,11 @@ export default function POSSales() {
   const [closeSessionTab, setCloseSessionTab] = useState('cash');
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
   const [cardSettlementRef, setCardSettlementRef] = useState('');
+
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
   const [xReportCardVerified, setXReportCardVerified] = useState(false);
-  const [xReportChecklist, setXReportChecklist] = useState({cashCount: false, varianceReviewed: false, cardSettlement: false, holdBills: false, supervisorApproval: false, sessionClosed: false});
-  const [xReportCashierName, setXReportCashierName] = useState('Ahmad Al-Farsi');
+  const [xReportCashierName, setXReportCashierName] = useState('');
   const [xReportSupervisorName, setXReportSupervisorName] = useState('');
   const [xReportClosingRemarks, setXReportClosingRemarks] = useState('');
 
@@ -477,6 +486,9 @@ export default function POSSales() {
   // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
   // and no company stamp occupies that slot — "stamp if uploaded, else QR").
   const [checkoutPreviewQrDataUrl, setCheckoutPreviewQrDataUrl] = useState(null);
+  // Customer's outstanding balance for the checkout Thermal preview's Credit Account
+  // section — fetched async (useMemo can't await), mirrors the lookup done at print time.
+  const [checkoutPreviewCreditBalance, setCheckoutPreviewCreditBalance] = useState(null);
   const [receiptSharePhone, setReceiptSharePhone] = useState('');
   const [receiptShareEmail, setReceiptShareEmail] = useState('');
   const [lastPaidInvoice, setLastPaidInvoice] = useState(null);
@@ -494,6 +506,9 @@ export default function POSSales() {
     billDiscountAmount: 0,
   });
   const currentInvoiceRef = useRef(null);
+  // True when the Quick Customer modal was launched from the Checkout credit
+  // panel, so the newly created customer is auto-selected as the credit buyer.
+  const quickCustomerCreditCtxRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [posProducts, setPosProducts] = useState([]);
@@ -563,6 +578,7 @@ export default function POSSales() {
   const [reprintError, setReprintError] = useState(null);
   const [reprintPrinting, setReprintPrinting] = useState(false);
   const [reprintPrintMode, setReprintPrintMode] = useState('thermal');
+  const [reprintPreviewCredit, setReprintPreviewCredit] = useState(null);
   // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
   const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
@@ -673,6 +689,9 @@ export default function POSSales() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingMethod, setShippingMethod] = useState('standard');
   const [shippingCost, setShippingCost] = useState('15');
+  // Committed shipping charge applied to the order as a separate (non-product, untaxed)
+  // totals line — NOT a cart item. Added to the grand total at checkout/preview/receipt.
+  const [shippingCharge, setShippingCharge] = useState(0);
   const [showAddCustomerDialog, setShowAddCustomerDialog] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
@@ -866,6 +885,7 @@ export default function POSSales() {
       const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
+      const previewShipping = Number(shippingCharge) || 0;
 
       const mockInvoice = {
         invoiceNumber: invoiceNo,
@@ -879,7 +899,8 @@ export default function POSSales() {
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
-        invoiceTotal: currentInvoice.total || 0,
+        taxInclusive: !!currentInvoice.taxInclusive,
+        invoiceTotal: (currentInvoice.total || 0) + previewShipping,
         discountTotal: currentInvoice.totalDiscount || 0,
         items: (currentInvoice.items || []).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
@@ -894,7 +915,12 @@ export default function POSSales() {
         })),
       };
 
+      const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+      const previewGrand = (currentInvoice.total || 0) + previewShipping;
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
+        shippingCharge: previewShipping > 0 ? previewShipping : null,
+        depositApplied: previewDeposit > 0 ? previewDeposit : null,
+        balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
         companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
         showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
@@ -903,6 +929,7 @@ export default function POSSales() {
         showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: showQrInPreview,
         showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes,
         showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
+        creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement
       });
@@ -913,15 +940,34 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter,
+  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
       checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
       tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
       tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
       tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
       tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-      tplInvoiceColDiscount, tplInvoiceQrPlacement]);
+      tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Fetch the selected customer's outstanding balance for the checkout preview's
+  // Credit Account section — same lookup used at actual print time.
+  useEffect(() => {
+    if (!tplInvoiceShowBankDetails || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
+      setCheckoutPreviewCreditBalance(null);
+      return;
+    }
+    const code = selectedCustomerData.code || selectedCustomerData.id;
+    if (!code) {
+      setCheckoutPreviewCreditBalance(null);
+      return;
+    }
+    let cancelled = false;
+    posCreditBalance(code)
+      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : null); })
+      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
+    return () => { cancelled = true; };
+  }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
 
   // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
@@ -1178,7 +1224,9 @@ export default function POSSales() {
 
   // Auto-load report data when entering report views
   useEffect(() => {
-    if (currentView === 'x-report') loadXReport();
+    // Opening the dedicated X-Report view is the deliberate "Generate X Report"
+    // action — mark this terminal complete so it clears the Z-Report gate.
+    if (currentView === 'x-report') loadXReport(true);
     if (currentView === 'z-report') loadZReport(zReportDate);
     // Refresh dashboard stats whenever returning to dashboard with an active session
     if (currentView === 'dashboard' && (currentSession?.status === 'active' || currentSession?.status === 'OPEN')) {
@@ -1389,6 +1437,24 @@ export default function POSSales() {
     return closingDenominations;
   }, [closingDenominations, currentSession?.closingDenominationsJson, xReportData?.sessionInfo?.closingDenominationsJson, xReportData?.session?.closingDenominationsJson]);
 
+  // Hydrate Declaration & Card Settlement fields from the backend the first time a
+  // session's report data loads (not on every refresh, so in-progress edits aren't
+  // clobbered by a Refresh/modal-open re-fetch of the same session). Re-fires only
+  // when the session id itself changes, so values never leak across sessions and
+  // persisted values reappear correctly when an already-closed session is reopened.
+  useEffect(() => {
+    const sessId = xReportData?.session?.id;
+    if (!sessId) return;
+    const info = xReportData?.sessionInfo || {};
+    setXReportCashierName(info.closingCashierName || xReportData?.session?.openedBy || '');
+    setXReportSupervisorName(info.closingSupervisorName || '');
+    setXReportClosingRemarks(info.closingRemarks || '');
+    setXReportVarianceRemarks(info.varianceRemarks || '');
+    setXReportCardBatchNo(info.cardBatchNo || '');
+    setXReportCardVerified(!!info.cardSettlementVerified);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xReportData?.session?.id]);
+
   useEffect(() => {
     const isActive = currentSession?.status === 'OPEN' || currentSession?.status === 'active';
     if (!isActive || !currentSession?.openedAt) {
@@ -1438,7 +1504,16 @@ export default function POSSales() {
       try {
         if (currentSession.id && typeof currentSession.id === 'number') {
           const closingTotal = calculateDenominationTotal(closingDenominations);
-          const closed = await closePosSession(currentSession.id, { closingCash: closingTotal, closingDenominations });
+          const closed = await closePosSession(currentSession.id, {
+            closingCash: closingTotal,
+            closingDenominations,
+            notes: xReportVarianceRemarks,
+            cardBatchNo: xReportCardBatchNo,
+            cardSettlementVerified: xReportCardVerified,
+            closingCashierName: xReportCashierName,
+            closingSupervisorName: xReportSupervisorName,
+            closingRemarks: xReportClosingRemarks,
+          });
           setCurrentSession(closed);
         } else {
           setCurrentSession({ ...currentSession, status: 'CLOSED' });
@@ -1454,9 +1529,19 @@ export default function POSSales() {
     }
   };
 
+  // Single entry point for opening the Close Session modal: always refreshes
+  // xReportData first so the modal's Expected/Actual/Variance match the X-Report
+  // page exactly, instead of relying on a possibly-stale cached xReportData.
+  const openCloseSessionDialog = () => {
+    if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
+      setShowCloseSessionDialog(true);
+      loadXReport();
+    }
+  };
+
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null) => {
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null) => {
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -1519,6 +1604,7 @@ export default function POSSales() {
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
+          expiryDate: pinnedExpiry || product.expiryDate || null,
           // Lock qty on batch/serial lines — each line is exactly one physical
           // unit. The cart UI disables +/- for lines flagged batchControlled.
           batchControlled: isPinned || isBatchControlled,
@@ -1765,6 +1851,7 @@ export default function POSSales() {
     setSettingsSaving(true);
     try {
       const payload = { ...(posSettings || {}), ...settingsDraft };
+      console.log('SAVING POS SETTINGS PAYLOAD:', payload);
       const saved = await savePosSettings(payload);
       setPosSettings(saved || payload);
       setSettingsDraft(null);
@@ -1780,11 +1867,16 @@ export default function POSSales() {
     }
   };
 
-  const loadXReport = async () => {
+  // markGenerated=true stamps this terminal as having completed its X-Report (the
+  // deliberate "Generate X Report" action). The dashboard preview passes false so
+  // merely viewing the dashboard never satisfies the Z-Report end-of-day gate.
+  const loadXReport = async (markGenerated = false) => {
     if (!currentSession?.id || typeof currentSession.id !== 'number') return;
     setXReportLoading(true);
     try {
-      const data = await getPosXReport(currentSession.id);
+      const data = markGenerated
+        ? await generatePosXReport(currentSession.id)
+        : await getPosXReport(currentSession.id);
       setXReportData(data);
     } catch (err) {
       console.warn('X-Report load failed', err);
@@ -1799,7 +1891,15 @@ export default function POSSales() {
     setZReportLoading(true);
     try {
       const data = await getPosZReport(branchId, date || zReportDate);
-      setZReportData(data);
+      // Backend blocks the day's report until every still-open terminal has run
+      // its X-Report; surface the pending list instead of the report numbers.
+      if (data && data.eligible === false) {
+        setZReportPending(data.pendingTerminals || []);
+        setZReportData(null);
+      } else {
+        setZReportPending(null);
+        setZReportData(data);
+      }
     } catch (err) {
       console.warn('Z-Report load failed', err);
     } finally {
@@ -1807,18 +1907,46 @@ export default function POSSales() {
     }
   };
 
+  const handleCloseDay = async () => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    if (!branchId) return;
+    try {
+      setZReportLoading(true);
+      const data = await closePosDay(branchId, zReportDate);
+      setZReportData(data);
+      alert('Business day has been officially closed.');
+    } catch (err) {
+      alert(err?.response?.data?.message || 'Failed to close business day.');
+    } finally {
+      setZReportLoading(false);
+    }
+  };
+
   const recalculateInvoice = (items, billDiscountAmount = 0) => {
     const activeItems = items.filter(i => !i.isVoided);
-    const subtotal = activeItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const totalDiscount = activeItems.reduce((sum, item) => sum + (item.price * item.quantity * item.discount / 100), 0);
-    // Per-line tax using each item's own rate (falls back to 5 if not set).
-    const tax = activeItems.reduce((sum, item) => {
-      const net = item.price * item.quantity * (1 - item.discount / 100);
-      return sum + net * (toNumber(item.taxRate, 5) / 100);
-    }, 0);
+    // Global VAT mode: Inclusive means the entered price already contains VAT,
+    // Exclusive means VAT is added on top. Fallback rate from POS settings.
+    const taxInclusive = !!posSettings?.taxInclusive;
+    const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
+
+    let subtotal = 0;       // net (ex-VAT) line value before line discount
+    let totalDiscount = 0;  // line discount on the same net basis
+    let tax = 0;            // extracted/added VAT after line discount
+
+    activeItems.forEach(item => {
+      const rate = toNumber(item.taxRate, fallbackRate) / 100;
+      const disc = (item.discount || 0) / 100;
+      const lineValue = item.price * item.quantity;
+      // In inclusive mode the price carries VAT, so strip it to get the net base.
+      const net = taxInclusive ? lineValue / (1 + rate) : lineValue;
+      subtotal += net;
+      totalDiscount += net * disc;
+      tax += net * (1 - disc) * rate;
+    });
+
     const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + tax);
 
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount };
+    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive };
   };
 
   const clearInvoice = () => {
@@ -1830,6 +1958,8 @@ export default function POSSales() {
       total: 0,
       billDiscountAmount: 0,
     });
+    // Shipping is an order-level charge, not a cart line — clear it with the cart.
+    setShippingCharge(0);
   };
 
   // Map live cart lines to the backend item shape shared by checkout + layaway.
@@ -2016,11 +2146,24 @@ export default function POSSales() {
   const loadHeldSales = useCallback(async () => {
     if (!sessionId) { setHeldSales([]); return; }
     try {
-      setHeldSales(await getHeldSales(sessionId));
+      // A "Hold" is a zero-deposit layaway (hold=true). The quick-recall pills show
+      // this session's open holds; full layaways live in the Layaways list.
+      const branchId = currentTerminal?.branchId || currentSession?.branchId || null;
+      const all = await getLayaways({ branchId, status: 'ACTIVE' });
+      const holds = (all || [])
+        .filter(l => l.hold === true && l.posSessionId === sessionId)
+        .map(l => ({
+          id: l.id,
+          label: l.layawayNumber,
+          total: l.saleTotal || 0,
+          itemCount: (l.items || []).length,
+          customerName: l.customerName,
+        }));
+      setHeldSales(holds);
     } catch (err) {
       console.warn('Held sales load failed', err);
     }
-  }, [sessionId]);
+  }, [sessionId, currentTerminal, currentSession]);
 
   useEffect(() => { loadHeldSales(); }, [loadHeldSales]);
 
@@ -2041,21 +2184,30 @@ export default function POSSales() {
     }
   }, [loadPosCustomers, loadPosProducts, loadXReport, loadHeldSales, currentSession?.status]);
 
+  // Hold = a zero-deposit layaway. Reuses the layaway reservation workflow (stock is
+  // reserved, it shows in the Layaways list) but takes no deposit and allows Walk-in.
   const holdInvoice = async () => {
     if (currentInvoice.items.length === 0 || holdBusy) return;
     if (!sessionId) { alert('Open a POS session before holding a bill.'); return; }
     setHoldBusy(true);
     try {
-      await holdSale({
-        sessionId,
+      const isWalkIn = !selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id;
+      await createLayaway({
+        hold: true,
+        customerCode: isWalkIn ? 'WALK-IN' : (selectedCustomerData.code || selectedCustomerData.id),
+        customerName: isWalkIn ? 'Walk-in Customer' : selectedCustomerData.name,
+        customerPhone: isWalkIn ? null : (selectedCustomerData.phone || null),
         branchId: currentTerminal?.branchId || currentSession?.branchId || null,
+        branchName: currentTerminal?.branchName || currentSession?.branchName || null,
+        branchCode: currentTerminal?.branchCode || null,
+        sessionId,
         terminalId: currentTerminal?.terminalId || null,
-        customerCode: selectedCustomerData?.id !== WALK_IN_CUSTOMER.id
-          ? (selectedCustomerData?.code || selectedCustomerData?.id) : 'WALK-IN',
-        customerName: selectedCustomerData?.name || 'Walk-in Customer',
-        cartJson: JSON.stringify(currentInvoice),
-        total: currentInvoice.total,
-        itemCount: currentInvoice.items.length,
+        counterName: currentTerminal?.counterName || null,
+        depositRequired: false,
+        depositAmount: 0,
+        reserveStockRequested: true,
+        billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        items: cartItemsToPayload(currentInvoice.items),
       });
       clearInvoice();
       await loadHeldSales();
@@ -2067,15 +2219,12 @@ export default function POSSales() {
     }
   };
 
+  // Recall a held bill: load its hold-layaway back into the live cart for completion
+  // (checkout marks the hold converted, releasing its reservation).
   const recallInvoice = async (id) => {
     try {
-      const held = await recallHeldSale(id);
-      if (held?.cartJson) {
-        const cart = JSON.parse(held.cartJson);
-        setCurrentInvoice(recalculateInvoice(cart.items || []));
-      }
+      await startLayawayConversion(id);
       await loadHeldSales();
-      syncPosData();
     } catch (err) {
       alert(err?.response?.data?.message || 'Failed to recall the held bill.');
     }
@@ -2115,6 +2264,28 @@ export default function POSSales() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showReprintModal]);
 
+  // Keep the reprint preview's Credit Account section in sync with the selected
+  // invoice — mirrors the credit lookup done at actual print time so the on-screen
+  // preview doesn't silently omit the customer's balance.
+  useEffect(() => {
+    const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
+    const isWalkIn = !inv?.customerName || inv.customerName === 'Walk-in Customer';
+    if (!tplInvoiceShowBankDetails || !inv || isWalkIn || !inv.customerCode) {
+      setReprintPreviewCredit(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cr = await posCreditBalance(inv.customerCode);
+        if (!cancelled) setReprintPreviewCredit(cr?.found ? { previousBalance: cr.outstanding ?? 0 } : null);
+      } catch (_) {
+        if (!cancelled) setReprintPreviewCredit(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reprintSelectedInvoice, reprintInvoices, tplInvoiceShowBankDetails]);
+
   useEffect(() => {
     if (!selectedLayawayId) { setSelectedLayawayDetail(null); return; }
     let cancelled = false;
@@ -2152,13 +2323,34 @@ export default function POSSales() {
       });
       if (print) {
         try {
-          printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, {
+          const layawayHtmlOpts = {
             companyName: tplOutletName,
             trn: tplOutletTrn,
             header: tplReceiptHeader,
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
-          }));
+          };
+          const layawayHtml = buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts);
+          if (tplReceiptPaper === 'A4') {
+            printHtml(layawayHtml);
+          } else {
+            const printer = resolvePrinterForContext(printerConfigs, {
+              deviceType: 'RECEIPT_PRINTER',
+              branchId: saved.branchId || currentTerminal?.branchId || null,
+              terminalId: currentTerminal?.terminalId || null,
+            });
+            if (!printer) {
+              printHtml(layawayHtml);
+            } else {
+              try {
+                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
+                await sendReceiptToConfiguredPrinter(printer, { receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
+              } catch (err) {
+                console.warn('Configured printer failed for layaway receipt, falling back to browser print', err);
+                printHtml(layawayHtml);
+              }
+            }
+          }
         } catch { /* print is best-effort */ }
       }
       clearInvoice();
@@ -2198,6 +2390,8 @@ export default function POSSales() {
         taxRate: it.taxRate != null ? it.taxRate : 5,
         total: (it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100),
         pinnedBatchNumber: it.pinnedBatchNumber || null,
+        serialNumber: it.serialNumber || null,
+        expiryDate: it.expiryDate || null,
         isVoided: !!it.voided,
       }));
       // Compute bill discount needed so the cart total matches the stored saleTotal exactly.
@@ -2371,6 +2565,9 @@ export default function POSSales() {
     customerEmail = null,
     creditPreviousBalance = null,
     cashierNameOverride = null,
+    depositApplied = null,
+    balanceDue = null,
+    shippingCharge = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
     const qrDataUrl = tplInvoiceShowQRCode
@@ -2403,6 +2600,9 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       creditPreviousBalance,
@@ -2420,11 +2620,54 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
       customerPhone,
       customerEmail,
       currency: activeCurrency,
     });
-    return { html, text };
+    // Raw ESC/POS binary payload — the only path that actually carries
+    // density/heat/font/raster-image commands to the printer hardware
+    // (the HTML and plain-text paths above go through the Windows driver
+    // or a bare socket write with no print-quality control at all).
+    let escPosBase64 = null;
+    try {
+      escPosBase64 = await buildEscPosReceiptBase64(tplInvoicePaper, full, {
+        companyName: tplOutletName,
+        trn: tplOutletTrn,
+        header: tplInvoiceHeader,
+        footer: tplInvoiceFooter,
+        showTrn: tplInvoiceShowTrn,
+        isReprint,
+        logoDataUrl: tplLogoDataUrl,
+        showLogo: tplInvoiceShowLogo,
+        showCompanyDetails: tplInvoiceShowCompanyDetails,
+        outletAddress: tplOutletAddress,
+        outletPhone: tplOutletPhone,
+        showServiceCharge: tplInvoiceShowGrandTotalBanner,
+        showVatSummary: tplInvoiceColVatAmt,
+        showPaymentDetails: tplInvoiceColDiscount,
+        showQRCode: tplInvoiceShowQRCode,
+        qrContent: tplInvoiceShowQRCode ? qrContent : null,
+        showCustomerDetails: tplInvoiceShowCustomerDetails,
+        showFooterText: tplInvoiceShowTerms,
+        cashierName: cashierNameOverride || cashierDisplayName,
+        terminalId: full.posTerminalId || currentTerminal?.terminalId,
+        counterName: full.posCounterName || currentTerminal?.counterName,
+        cashGiven,
+        changeAmount,
+        depositApplied,
+        balanceDue,
+        shippingCharge,
+        customerPhone,
+        customerEmail,
+        currency: activeCurrency,
+      });
+    } catch (err) {
+      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
+    }
+    return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
     tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoicePaper,
@@ -2438,6 +2681,7 @@ export default function POSSales() {
     full,
     html,
     text,
+    escPosBase64,
     title = 'BillBull POS Receipt',
   }) => {
     const printer = resolvePrinterForContext(printerConfigs, {
@@ -2448,6 +2692,17 @@ export default function POSSales() {
     if (!printer) {
       printHtml(html);
       return { mode: 'browser-fallback', printer: null };
+    }
+    // Prefer raw ESC/POS — it's the only path with real density/heat/font/logo
+    // control. Fall back to the plain-text agent path, then to browser/driver
+    // printing, so a malformed payload or an unreachable agent never blocks checkout.
+    if (escPosBase64) {
+      try {
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+        return { mode: 'agent-escpos', printer };
+      } catch (err) {
+        console.warn('ESC/POS print failed, falling back to plain-text agent print', err);
+      }
     }
     try {
       await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title });
@@ -2470,7 +2725,9 @@ export default function POSSales() {
     if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;
     setCheckoutSettling(true);
     try {
-      const grandTotal = currentInvoice.total;
+      // Shipping is an untaxed flat add on top of the product total (not a cart line).
+      const shippingChargeNum = Number(shippingCharge) || 0;
+      const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
@@ -2529,7 +2786,9 @@ export default function POSSales() {
         branchName: currentTerminal?.branchName || null,
         branchCode: currentTerminal?.branchCode || null,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
-        shippingAddress: deliveryAddress || null,
+        shippingAddress: deliveryAddress || shippingAddress || null,
+        shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
+        taxInclusive: !!posSettings?.taxInclusive,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
         items,
@@ -2563,17 +2822,26 @@ export default function POSSales() {
 
       if (tplInvoicePaper !== 'A4') {
         try {
-          const { html, text } = await buildThermalReceiptArtifacts({
+          let creditPrevBalAuto = null;
+          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
+            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
+          }
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             cashGiven: paid.paidAmount,
             changeAmount: changeDue,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            creditPreviousBalance: creditPrevBalAuto,
+            depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
+            balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
+            shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
             html,
             text,
+            escPosBase64,
             title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
           openCashDrawer('RECEIPT_PRINT');
@@ -2656,6 +2924,13 @@ export default function POSSales() {
   };
 
   const handleCashDrop = async () => {
+    // Cash drop / cash out are session-bound — refuse if no session is open even
+    // if the dialog was reached from a template that doesn't gate the button.
+    if (!isSessionActive) {
+      setCashDropFeedback({ type: 'error', message: 'Open a POS session before recording cash movements.' });
+      setTimeout(() => setCashDropFeedback(null), 3000);
+      return;
+    }
     const amount = parseFloat(cashDropAmount) || 0;
     if (amount <= 0) return;
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
@@ -2726,7 +3001,7 @@ export default function POSSales() {
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
           }
-          const { html, text } = await buildThermalReceiptArtifacts({
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
             customerPhone: custRec?.phone,
@@ -2739,6 +3014,7 @@ export default function POSSales() {
             full,
             html,
             text,
+            escPosBase64,
             title: `Reprint ${full.invoiceNumber || reprintSelectedInvoice || ''}`.trim(),
           });
         }
@@ -2839,6 +3115,7 @@ export default function POSSales() {
       cachePosProduct(productCacheRef.current, product);
       const pinnedBatchNumber = result.pinnedBatchNumber || null;
       const pinnedSerialNumber = result.pinnedSerialNumber || null;
+      const pinnedExpiry = result.pinnedExpiry || null;
       const cartItems = currentInvoiceRef.current?.items || [];
 
       // A scanned serial is a single unique unit. The same serial can never be
@@ -2869,7 +3146,7 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber);
+      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
         clearInputs();
@@ -3082,7 +3359,7 @@ export default function POSSales() {
           )}
 
           {/* ── KPI Cards ── */}
-          <div className="grid grid-cols-3 xl:grid-cols-9 gap-3">
+          <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-9 gap-3">
             {kpis.map((k, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-2">
                 <div className="flex items-center justify-between">
@@ -3201,7 +3478,7 @@ export default function POSSales() {
           {analyticsTab === 'receivables' && (
             <div className="space-y-6">
               {/* Aging summary */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {agingData.map((a, i) => {
                   const colors = ['#22C55E','#F59E0B','#F97316','#EF4444'];
                   return (
@@ -3255,6 +3532,7 @@ export default function POSSales() {
                   <AlertTriangle className="h-5 w-5 text-red-500" />
                   Top Overdue Customers
                 </h2>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
@@ -3281,6 +3559,7 @@ export default function POSSales() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           )}
@@ -3289,7 +3568,7 @@ export default function POSSales() {
           {analyticsTab === 'customers' && (
             <div className="space-y-6">
               {/* Customer summary stats */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
                   { label: 'Total Customers',    value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.totalCustomers) : '—', icon: <Users className="h-4 w-4" />,     color: '#327F74' },
                   { label: 'New This Period',     value: '—', icon: <UserPlus className="h-4 w-4" />,  color: '#22C55E' },
@@ -3317,6 +3596,7 @@ export default function POSSales() {
                   </h2>
                   <button className="text-xs text-[#327F74] hover:underline">View All</button>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
@@ -3353,6 +3633,7 @@ export default function POSSales() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               {/* Customer purchase trend bar chart */}
@@ -3379,7 +3660,7 @@ export default function POSSales() {
           {/* ══ INVOICES TAB ══ */}
           {analyticsTab === 'invoices' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Invoice & POS trend */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                   <h2 className="text-[#1E293B] mb-4 flex items-center gap-2">
@@ -3432,7 +3713,7 @@ export default function POSSales() {
               </div>
 
               {/* POS trend + avg invoice */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
                   { label: 'Average Invoice Value', value: kpi ? fmt(kpi.avgInvoiceValue)  : '—', sub: 'Per invoice', icon: <DollarSign className="h-4 w-4" />, color: '#327F74' },
                   { label: 'Total Invoices Issued',  value: kpi ? fmtN(kpi.invoiceCount)   : '—', sub: 'In period',   icon: <FileText className="h-4 w-4" />,   color: '#6366F1' },
@@ -3474,7 +3755,7 @@ export default function POSSales() {
           {analyticsTab === 'returns' && (
             <div className="space-y-6">
               {/* Returns KPI row */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
                   { label: 'Sales Return Value',   value: analyticsData?.returnMetrics ? fmt(analyticsData.returnMetrics.salesReturnsValue) : '—', sub: '—', icon: <RotateCcw className="h-4 w-4" />,  color: '#EC4899' },
                   { label: 'Credit Notes Value',   value: '—', sub: '—', icon: <CreditCard className="h-4 w-4" />, color: '#14B8A6' },
@@ -3524,7 +3805,7 @@ export default function POSSales() {
               </div>
 
               {/* Return reason analysis */}
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                   <h2 className="text-[#1E293B] mb-4 flex items-center gap-2">
                     <ClipboardList className="h-5 w-5 text-[#F5C742]" />
@@ -3553,6 +3834,7 @@ export default function POSSales() {
                     <CreditCard className="h-5 w-5 text-[#F5C742]" />
                     Credit Notes Detail
                   </h2>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100">
@@ -3567,6 +3849,7 @@ export default function POSSales() {
                       </tr>
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3634,10 +3917,37 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
-        {/* Z-Report Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('z-report')}
+        {/* X-Report Tile — generate the shift X-Report without closing the session.
+            Running this clears the terminal for the end-of-day Z-Report. */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('x-report'); }}
+        >
+          <CardHeader>
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
+              <FileText className="h-8 w-8 text-white" />
+            </div>
+            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
+            <CardDescription>
+              Generate report and close session
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              {isSessionActive
+                ? 'Generate shift report or close current session'
+                : 'Start a session to generate the X-Report'}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Z-Report Tile — a cross-session, end-of-day report keyed by branch/date, not
+            by this terminal's own session, so it must stay reachable after this
+            terminal's session is closed (that's normally exactly when a cashier wants
+            to check Z-Report eligibility or pull the day's consolidated report). */}
+        <Card
+          className={`${posDashboardTileClass}${currentTerminal?.branchId ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (currentTerminal?.branchId) setCurrentView('z-report'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3650,44 +3960,19 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Consolidated report of all closed sessions
+              {currentTerminal?.branchId
+                ? 'Consolidated end-of-day report (all terminals must run X-Report first)'
+                : 'Register a terminal to access the Z-Report'}
             </p>
           </CardContent>
         </Card>
 
-        {/* X-Report / Close Session Tile */}
-        <Card 
-          className={`${posDashboardTileClass} ${
-            currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
-          }`}
-          onClick={() => {
-            if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
-              setShowCloseSessionDialog(true);
-            }
-          }}
-        >
-          <CardHeader>
-            <div className="bg-gradient-to-r from-[#E63946] to-[#ff6b6b] p-4 rounded-lg w-fit">
-              <Lock className="h-8 w-8 text-white" />
-            </div>
-            <CardTitle className="mt-4">X-Report / Close Session</CardTitle>
-            <CardDescription>
-              Close current session and generate report
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">
-              {currentSession?.status === 'active' || currentSession?.status === 'OPEN' 
-                ? 'End session with denomination count' 
-                : 'No active session to close'}
-            </p>
-          </CardContent>
-        </Card>
+
 
         {/* Customer Tile */}
-        <Card 
-          className={posDashboardTileClass}
-          onClick={() => setCurrentView('customer')}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setCurrentView('customer'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3700,15 +3985,17 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              View statements, receive payments, manage advances
+              {isSessionActive
+                ? 'View statements, receive payments, manage advances'
+                : 'Start a session to manage customers'}
             </p>
           </CardContent>
         </Card>
 
         {/* Cash Drop / Out Tile */}
         <Card
-          className={posDashboardTileClass}
-          onClick={() => setShowCashDropDialog(true)}
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (isSessionActive) setShowCashDropDialog(true); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3721,7 +4008,9 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              Add cash drops or record cash payouts
+              {isSessionActive
+                ? 'Add cash drops or record cash payouts'
+                : 'Start a session to record cash movements'}
             </p>
           </CardContent>
         </Card>
@@ -4011,18 +4300,31 @@ export default function POSSales() {
           rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
         },
         {
-          title: '8. Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
+          title: '8. Returns / Refund Summary', type: 'table',
+          cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
-            ['Net Quantity Sold', String(itemsSoldV), fmt(totalSalesV)],
+            ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${fmt(zSummary.salesReturnTotal)})` : fmt(0)],
+            ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
+            ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
+            ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
           ],
         },
         {
-          title: '10. Cashier / Session Wise Summary', type: 'table',
+          title: '9. Product / Item Movement Summary', type: 'table',
+          cols: ['Description', 'Quantity', 'Amount'],
+          rows: [
+            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
+            ['Total Items Returned', String(zSummary.totalItemsReturned ?? 0), (zSummary.totalItemsReturned ?? 0) > 0 ? `(${fmt(zSummary.salesReturnTotal ?? 0)})` : fmt(0)],
+            ['Net Quantity Sold', String(zSummary.netQuantitySold ?? itemsSoldV), fmt(totalSalesV)],
+            ...((Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map(it =>
+              [`  Top Seller: ${it.itemCode || '—'} — ${it.itemName || '—'}`, String(it.quantity ?? 0), fmt(it.amount ?? 0)])),
+          ],
+        },
+        {
+          title: '10. Cashier Wise Summary', type: 'table',
           cols: ['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit'],
-          rows: zSessions.length > 0
-            ? zSessions.map(s => [s.openedBy || '—', String(s.invoiceCount || 0), fmt(s.totalSales ?? 0), fmt(s.totalCashSales ?? 0), fmt(s.totalCardSales ?? 0), fmt(s.totalCreditSales ?? 0)])
+          rows: (Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).length > 0
+            ? zReportData.cashierWiseSummary.map(c => [c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
             : [['—', '0', fmt(0), fmt(0), fmt(0), fmt(0)]],
           footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
         },
@@ -4134,15 +4436,27 @@ export default function POSSales() {
       { Section: '',                        Description: 'VAT 5% — Tax Amount',     Count: '',         Amount: totalTaxV },
       { Section: '',                        Description: 'Total Inc. VAT',           Count: '',         Amount: totalSalesV },
       { Section: 'Discount',                Description: 'Total Discount',           Count: '',         Amount: discountV },
+      { Section: 'Returns / Refund',        Description: 'Sales Returns',            Count: zSummary.salesReturnCount ?? 0, Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '',                        Description: 'Refunds Processed',        Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
+      { Section: '',                        Description: 'Credit Notes Issued',      Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
+      { Section: '',                        Description: 'Exchange Transactions',    Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
       { Section: 'Item Movement',           Description: 'Total Items Sold',         Count: String(itemsSold), Amount: totalSalesV },
+      { Section: '',                        Description: 'Total Items Returned',     Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '',                        Description: 'Net Quantity Sold',        Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
+      ...(Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map((it, i) => ({
+        Section: i === 0 ? 'Top Selling Items' : '',
+        Description: `${it.itemCode || '—'} — ${it.itemName || '—'}`,
+        Count: it.quantity ?? 0,
+        Amount: fmt(it.amount ?? 0),
+      })),
       { Section: 'Customer Credit',         Description: 'Credit Sales',             Count: creditInvoices.length, Amount: creditTotal },
       { Section: 'Invoice Range',           Description: 'First Invoice',            Count: invNums[0] || '—', Amount: '' },
       { Section: '',                        Description: 'Last Invoice',             Count: invNums[invNums.length - 1] || '—', Amount: '' },
-      ...zSessions.map((s, i) => ({
+      ...(Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).map((c, i) => ({
         Section: i === 0 ? 'Cashier Wise' : '',
-        Description: s.openedBy || '—',
-        Count: s.invoiceCount || 0,
-        Amount: fmt(s.totalSales ?? 0),
+        Description: c.cashier || '—',
+        Count: c.invoiceCount || 0,
+        Amount: fmt(c.netSales ?? 0),
       })),
     ];
   };
@@ -4174,9 +4488,13 @@ export default function POSSales() {
     const denomKeys   = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
 
-    const cardInvoices   = xInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('card'));
-    const refundTotal    = Number(xSummary.totalRefunds ?? sess?.totalRefunds ?? 0);
-    const netCardSettle  = Math.max(0, cardSalesV - refundTotal);
+    const cardPayCount   = Number(xSummary.cardInvoiceCount ?? 0);
+    const refundTotal    = Number(xSummary.totalRefunds ?? 0);
+    const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
+    const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
+    const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
+    const netCardSettle  = cardSalesV - cardRefundTotal;
+    const netCardCount   = Math.max(0, cardPayCount - cardRefundCount);
     const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
     // Detailed void/removal data from the backend audit trail + persisted voided lines.
     const postedVoids    = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
@@ -4272,17 +4590,22 @@ export default function POSSales() {
             ['Cash',   String(xSummary.cashInvoiceCount   ?? '—'), fmt(cashSalesV)],
             ['Card',   String(xSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
             ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
+            ...((xSummary.otherSales ?? 0) > 0
+              ? [['Other', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
+              : []),
           ],
-          // Total Collected = actual tender taken, not invoice value.
-          footer: ['Total Collected', String(invoiceCount), fmt(totalPaidV)],
+          // Total Collected = actual tender taken across every mode, not invoice count/value.
+          footer: ['Total Collected', String(xSummary.totalTenderCount ?? invoiceCount), fmt(totalPaidV)],
         },
         {
           title: '4. Card / Bank Settlement Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Card Sales',          String(cardInvoices.length), fmt(cardSalesV)],
-            ['Card Refunds',        String(totalVoids),          refundTotal > 0 ? `(${fmt(refundTotal)})` : fmt(0)],
-            ['Net Card Settlement', String(Math.max(0, cardInvoices.length - totalVoids)), fmt(netCardSettle)],
+            ['Card Sales',          String(cardPayCount),   fmt(cardSalesV)],
+            ['Card Refunds',        String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
+            ['Net Card Settlement', String(netCardCount),    fmt(netCardSettle)],
+            ['Card Machine Batch No.', sessInfo.cardBatchNo || xReportCardBatchNo || '—', ''],
+            ['Card Settlement Verified', (sessInfo.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No', ''],
           ],
         },
         {
@@ -4304,15 +4627,18 @@ export default function POSSales() {
         {
           title: '7. Discount Summary', type: 'table',
           cols: ['Description', 'Amount'],
-          rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
+          rows: [
+            ['Bill Level Discount', fmt(xSummary.billDiscount ?? 0)],
+            ['Line Item Discount', fmt(xSummary.lineDiscount ?? 0)],
+          ],
+          footer: ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
         },
         {
           title: '8. Return / Refund Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Refunds',  String(totalVoids), fmt(refundTotal)],
-            ['Card Refunds',   String(totalVoids), fmt(refundTotal)],
-            ['Cash Refunds',   '0',                fmt(0)],
+            ['Total Refunds',  String(totalRefundCount), fmt(refundTotal)],
+            ['Card Refunds',   String(cardRefundCount),  fmt(cardRefundTotal)],
           ],
         },
         {
@@ -4388,8 +4714,13 @@ export default function POSSales() {
     const reportDenominations = getReportClosingDenominations();
     const actualCash      = fmt(calculateDenominationTotal(reportDenominations));
     const variance        = fmt(actualCash - expectedCash);
-    const refundTotal     = fmt(sess?.totalRefunds ?? 0);
-    const totalVoids      = sess?.totalVoids ?? 0;
+    const refundTotal     = fmt(xSummary.totalRefunds ?? 0);
+    const totalRefundCount = xSummary.totalRefundCount ?? 0;
+    const cardRefundTotal = fmt(xSummary.cardRefundSales ?? 0);
+    const cardRefundCount = xSummary.cardRefundCount ?? 0;
+    const otherSalesV     = fmt(xSummary.otherSales ?? 0);
+    const totalPaidV      = fmt(xSummary.totalPaid ?? totalSalesV);
+    const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
     const denomKeys       = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels     = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
 
@@ -4410,13 +4741,19 @@ export default function POSSales() {
       { Section: 'Payment Tender',  Description: 'Cash',                        Count: xSummary.cashInvoiceCount   ?? 0, Amount: cashSalesV },
       { Section: '',                Description: 'Card',                        Count: xSummary.cardInvoiceCount   ?? 0, Amount: cardSalesV },
       { Section: '',                Description: 'Credit',                      Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      { Section: '',                Description: 'Total',                       Count: invoiceCount, Amount: totalSalesV },
+      ...(otherSalesV > 0 ? [{ Section: '', Description: 'Other', Count: xSummary.otherInvoiceCount ?? 0, Amount: otherSalesV }] : []),
+      { Section: '',                Description: 'Total',                       Count: totalTenderCountV, Amount: totalPaidV },
       { Section: 'VAT / Tax',       Description: 'VAT 5% — Taxable Amount',    Count: '',  Amount: salesExTaxV },
       { Section: '',                Description: 'VAT 5% — Tax Amount',        Count: '',  Amount: totalTaxV },
       { Section: '',                Description: 'Total Inc. VAT',              Count: '',  Amount: totalSalesV },
-      { Section: 'Discount',        Description: 'Total Discount',              Count: '',  Amount: discountV },
-      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalVoids, Amount: refundTotal },
-      { Section: 'Card Settlement', Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - totalVoids), Amount: fmt(Math.max(0, cardSalesV - refundTotal)) },
+      { Section: 'Discount',        Description: 'Bill Level Discount',         Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
+      { Section: '',                Description: 'Line Item Discount',          Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
+      { Section: '',                Description: 'Total Discount',              Count: '',  Amount: discountV },
+      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalRefundCount, Amount: refundTotal },
+      { Section: 'Card Settlement', Description: 'Card Refunds',                Count: cardRefundCount, Amount: cardRefundTotal },
+      { Section: '',                Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
+      { Section: '',                Description: 'Card Machine Batch No.',      Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
+      { Section: '',                Description: 'Card Settlement Verified',    Count: '', Amount: (sess?.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No' },
       { Section: 'Invoice Count',   Description: 'Total Invoices',              Count: invoiceCount, Amount: totalSalesV },
       ...xInvoices.slice(0, 200).map((inv, i) => ({
         Section: i === 0 ? 'Invoice List' : '',
@@ -4438,12 +4775,38 @@ export default function POSSales() {
     return generateReportA4Html(vm, cp, meta);
   };
 
+  // Thermal reports go straight to the configured default printer (no browser
+  // print dialog); A4 reports keep using the browser dialog since the local
+  // print agent only carries raw text/ESC-POS, not full HTML, today.
+  const printReportWithConfiguredPrinter = async (vm, cp, meta) => {
+    const html = renderReportHtml(vm, cp, meta);
+    if (reportPrintMode !== '80mm' && reportPrintMode !== '58mm') {
+      printHtml(html);
+      return;
+    }
+    const printer = resolvePrinterForContext(printerConfigs, {
+      deviceType: 'RECEIPT_PRINTER',
+      branchId: currentTerminal?.branchId || null,
+      terminalId: currentTerminal?.terminalId || null,
+    });
+    if (!printer) {
+      printHtml(html);
+      return;
+    }
+    try {
+      const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
+      await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+    } catch (err) {
+      console.warn('Configured printer failed for report print, falling back to browser print', err);
+      printHtml(html);
+    }
+  };
+
   const handleZReportPrint = () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const vm  = buildZReportViewModel();
     const cp  = reportCompanyProfile();
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
-    printHtml(html);
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
   };
 
   const handleZReportPreview = () => {
@@ -4490,8 +4853,7 @@ export default function POSSales() {
     const vm  = buildXReportViewModel();
     const cp  = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
-    printHtml(html);
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
   };
 
   const handleXReportPreview = () => {
@@ -4577,7 +4939,7 @@ export default function POSSales() {
 
     const zrInfoCard = (
       <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1 text-xs">
             {[
               ['Report Date', zReportDate || new Date().toLocaleDateString()],
@@ -4602,7 +4964,7 @@ export default function POSSales() {
     );
 
     const zrKpiCards = (
-      <div className="grid grid-cols-6 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         {[
           { label: 'Gross Sales', value: <CurrencyAmount amount={zTotalSales} />, sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" /> },
           { label: 'Cash Sales', value: <CurrencyAmount amount={zCashSales} />, sub: 'Cash payments', icon: <Banknote className="h-4 w-4" /> },
@@ -4626,6 +4988,7 @@ export default function POSSales() {
           <span className="text-[#327F74]">{icon}</span>
           <span className="text-sm text-[#1E293B]">{title}</span>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-[#F7F7FA] text-gray-500">
@@ -4645,6 +5008,46 @@ export default function POSSales() {
             )}
           </tbody>
         </table>
+        </div>
+      </div>
+    );
+
+    // End-of-day gate: when the backend reports terminals still owing an X-Report,
+    // show only this blocker (the report body and its actions stay hidden).
+    const zReportBlocked = Array.isArray(zReportPending) && zReportPending.length > 0;
+    const zrPendingBlocker = (
+      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-6 mb-4">
+        <div className="flex items-center gap-2 mb-2 text-red-600">
+          <Lock className="h-5 w-5" />
+          <h3 className="text-base font-semibold">Z-Report blocked — terminals pending X-Report</h3>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Every active terminal must generate its X-Report before the end-of-day Z-Report can be produced.
+          The following terminal(s) are still open without an X-Report:
+        </p>
+        <div className="border border-red-100 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-red-50 text-red-700">
+                <th className="px-4 py-2 text-left font-medium">Terminal</th>
+                <th className="px-4 py-2 text-left font-medium">Counter</th>
+                <th className="px-4 py-2 text-left font-medium">Cashier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(zReportPending || []).map((t, i) => (
+                <tr key={i} className="border-t border-red-50">
+                  <td className="px-4 py-2 text-[#1E293B]">{t.terminalName || t.terminalId || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.counter || '—'}</td>
+                  <td className="px-4 py-2 text-[#1E293B]">{t.openedBy || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Ask each listed terminal to run <span className="font-medium text-[#327F74]">X-Report</span> from its POS dashboard, then generate the Z-Report again.
+        </p>
       </div>
     );
 
@@ -4652,7 +5055,7 @@ export default function POSSales() {
     <div className="bg-[#F7F7FA] min-h-full p-6">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
               <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
@@ -4664,7 +5067,7 @@ export default function POSSales() {
             <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
             <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
               <option value="a4">A4</option>
               <option value="80mm">Thermal 80mm</option>
@@ -4675,16 +5078,25 @@ export default function POSSales() {
             <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
             <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
             <button
-              onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) loadZReport(zReportDate); }}
-              disabled={zReportLoading || !zReportData}
+              onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
+              disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
               className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-              <Lock className="h-3 w-3" />Close Day
+              <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
             </button>
           </div>
         </div>
       </div>
 
       {zrFilterBar}
+
+      {zReportData?.isDayClosed && (
+        <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
+          <Lock className="h-4 w-4" />
+          This business day has been officially closed. Showing finalized snapshot.
+        </div>
+      )}
+
+      {zReportBlocked ? zrPendingBlocker : (<>
       {zrInfoCard}
       {zrKpiCards}
 
@@ -4731,6 +5143,7 @@ export default function POSSales() {
           <span className="text-[#327F74]"><Banknote className="h-4 w-4" /></span>
           <span className="text-sm text-[#1E293B]">4. Cash Drawer Summary</span>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-[#F7F7FA] text-gray-500">
@@ -4751,6 +5164,7 @@ export default function POSSales() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Section 5: Card / Bank Settlement Summary */}
@@ -4793,30 +5207,99 @@ export default function POSSales() {
         ]}
       />
 
-      {/* Section 8: Item Movement Summary */}
+      {/* Section 8: Returns / Refund Summary */}
       <ZRTable
-        title="8. Item Movement Summary"
-        icon={<Package className="h-4 w-4" />}
-        cols={['Description', 'Quantity', 'Amount']}
+        title="8. Returns / Refund Summary"
+        icon={<RotateCcw className="h-4 w-4" />}
+        cols={['Description', 'Count', 'Amount']}
         rows={[
-          ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z8s" amount={zTotalSales} />],
-          ['Net Quantity Sold', String(zTotalItemsSold), <CurrencyAmount key="z8n" amount={zTotalSales} />],
+          ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount key="z8sr" amount={0} />],
+          ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
+          ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
+          ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
         ]}
       />
 
-      {/* Section 10: Cashier Wise Summary (derived from sessions) */}
+      {/* Section 9: Item Movement Summary */}
       {(() => {
-        const cashierRows = zSessions.map(s => [
-          s.openedBy || '—',
-          String(s.invoiceCount || 0),
-          <CurrencyAmount key={`c10ns${s.id}`} amount={s.totalSales ?? 0} />,
-          <CurrencyAmount key={`c10ca${s.id}`} amount={s.totalCashSales ?? 0} />,
-          <CurrencyAmount key={`c10cd${s.id}`} amount={s.totalCardSales ?? 0} />,
-          <CurrencyAmount key={`c10cr${s.id}`} amount={s.totalCreditSales ?? 0} />,
+        const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
+        const itemsReturned = zSummary.totalItemsReturned ?? 0;
+        const netQty = zSummary.netQuantitySold ?? zTotalItemsSold;
+        return (
+          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+              <span className="text-[#327F74]"><Package className="h-4 w-4" /></span>
+              <span className="text-sm text-[#1E293B]">9. Product / Item Movement Summary</span>
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-[#F7F7FA] text-gray-500">
+                  <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
+                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Quantity</th>
+                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z9s" amount={zTotalSales} />],
+                  ['Total Items Returned', String(itemsReturned), itemsReturned > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal ?? 0)})` : <CurrencyAmount key="z9rt" amount={0} />],
+                  ['Net Quantity Sold', String(netQty), <CurrencyAmount key="z9n" amount={zTotalSales} />],
+                ].map(([d, q, a], i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                    <td className="px-4 py-2 text-[#1E293B]">{d}</td>
+                    <td className="px-4 py-2 text-right text-[#1E293B]">{q}</td>
+                    <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {topItems.length > 0 && (
+              <div className="px-4 py-3 border-t border-[#327F74]/10">
+                <p className="text-xs font-semibold text-[#1E293B] mb-2">Top Selling Items</p>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500">
+                      <th className="px-2 py-1 text-left font-medium">Item Code</th>
+                      <th className="px-2 py-1 text-left font-medium">Item Name</th>
+                      <th className="px-2 py-1 text-right font-medium">Qty</th>
+                      <th className="px-2 py-1 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topItems.map((it, i) => (
+                      <tr key={i} className="border-t border-gray-50">
+                        <td className="px-2 py-1 text-[#327F74]">{it.itemCode || '—'}</td>
+                        <td className="px-2 py-1 text-[#1E293B]">{it.itemName || '—'}</td>
+                        <td className="px-2 py-1 text-right text-[#1E293B]">{it.quantity ?? 0}</td>
+                        <td className="px-2 py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.amount ?? 0} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Section 10: Cashier Wise Summary — backend-aggregated per session owner, with
+          cash/card/credit split from actual tender (sales_payments), so a split
+          Cash+Card sale correctly shows in both columns instead of landing nowhere
+          (the per-session totalCashSales/totalCardSales counters never see "mixed"
+          sales — those are bucketed into a separate totalMixedSales counter only). */}
+      {(() => {
+        const cashierWise = Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : [];
+        const cashierRows = cashierWise.map((c, i) => [
+          c.cashier || '—',
+          String(c.invoiceCount || 0),
+          <CurrencyAmount key={`c10ns${i}`} amount={c.netSales ?? 0} />,
+          <CurrencyAmount key={`c10ca${i}`} amount={c.cash ?? 0} />,
+          <CurrencyAmount key={`c10cd${i}`} amount={c.card ?? 0} />,
+          <CurrencyAmount key={`c10cr${i}`} amount={c.credit ?? 0} />,
         ]);
         return (
           <ZRTable
-            title="10. Cashier / Session Wise Summary"
+            title="10. Cashier Wise Summary"
             icon={<Users className="h-4 w-4" />}
             cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
             rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
@@ -4873,7 +5356,7 @@ export default function POSSales() {
               <span className="text-sm text-white">13. Final Day Close Summary</span>
               <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {[
                 ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
                 ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
@@ -4901,7 +5384,7 @@ export default function POSSales() {
         <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
           I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
         </p>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label className="text-xs text-gray-500">Cashier Signature</label>
             <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
@@ -4931,6 +5414,7 @@ export default function POSSales() {
           <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
         </ul>
       </div>
+      </>)}
     </div>
   );
   };
@@ -4941,6 +5425,10 @@ export default function POSSales() {
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
+    // Once closed, reportDenominations comes from the immutable backend snapshot and
+    // ignores further local edits — disable the inputs so they can't be edited with
+    // no visible effect.
+    const isSessionClosed = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase() === 'CLOSED';
 
     // Pull live figures from xReportData when available, fall back to session state
     const xSummary = xReportData?.summary || {};
@@ -4991,7 +5479,7 @@ export default function POSSales() {
     <div className="bg-[#F7F7FA] min-h-full flex flex-col">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 bg-[#F7F7FA] border-b border-[#327F74]/10 px-6 pt-4 pb-3">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
               <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
@@ -5003,7 +5491,7 @@ export default function POSSales() {
             <h1 className="text-xl text-[#1E293B]">X-Report / Close Session</h1>
             <p className="text-xs text-gray-500 mt-0.5">Close the current POS session, verify cash drawer balance, enter denomination count, and generate the session closing report.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-gray-300 text-gray-600 text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
               <option value="a4">A4</option>
               <option value="80mm">Thermal 80mm</option>
@@ -5017,7 +5505,7 @@ export default function POSSales() {
               {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
             </button>
             <button
-              onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }}
+              onClick={openCloseSessionDialog}
               disabled={currentSession?.status !== 'OPEN'}
               className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
               <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
@@ -5081,7 +5569,7 @@ export default function POSSales() {
           </div>
         )}
         <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1 text-xs">
               {[
                 ['Branch / Outlet', xReportData?.session?.branchName || currentSession?.branchName || '—'],
@@ -5108,7 +5596,7 @@ export default function POSSales() {
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-7 gap-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
           {[
             {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCashVal} />,icon:<Wallet className="h-4 w-4" />},
             {label:'Total Sales',value:<CurrencyAmount amount={totalSales} />,icon:<TrendingUp className="h-4 w-4" />},
@@ -5127,7 +5615,7 @@ export default function POSSales() {
         </div>
 
         {/* Two-column layout */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* LEFT COLUMN */}
           <div>
             {/* Section 1: Denomination Count */}
@@ -5156,7 +5644,8 @@ export default function POSSales() {
                             min="0"
                             value={reportDenominations[k] || 0}
                             onChange={e => setClosingDenominations({...closingDenominations, [k]: parseInt(e.target.value)||0})}
-                            className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]"
+                            disabled={isSessionClosed}
+                            className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                           />
                         </td>
                         <td className="px-2 py-1.5 text-right text-[#1E293B]">
@@ -5231,9 +5720,12 @@ export default function POSSales() {
 
             {/* Section 13: Manual Actions */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const discountCount = xInvoices.filter(i => (Number(i.billDiscountAmount) || 0) > 0).length;
-              const discountTotal = xInvoices.reduce((s, i) => s + (Number(i.billDiscountAmount) || 0), 0);
+              // Reuses the same backend-computed bill-discount figures as Section 8
+              // (no separate client recompute of the same number), and sources
+              // "Session Reopened" from the audit log rather than a hardcoded '0'.
+              const discountCount = xSummary.billDiscountCount ?? 0;
+              const discountTotal = xSummary.billDiscount ?? 0;
+              const reopenedCount = xSummary.sessionReopenedCount ?? 0;
               return (
                 <XRTable
                   title="13. Manual Actions / Exception Summary"
@@ -5242,38 +5734,53 @@ export default function POSSales() {
                   rows={[
                     ['Manual Discount', String(discountCount), discountTotal > 0 ? formatCurrencyStr(discountTotal) : '—'],
                     ['Item Void', String(xSummary.voidItemCount ?? 0), xSummary.voidItemCount > 0 ? `${xSummary.voidItemCount} items` : '—'],
-                    ['Session Reopened','0','—'],
+                    ['Session Reopened', String(reopenedCount), reopenedCount > 0 ? `${reopenedCount} time(s)` : '—'],
                   ]}
                 />
               );
             })()}
 
-            {/* Section 14: Checklist */}
+            {/* Section 14: Checklist — every flag below is derived live from real
+                session/cash/card/hold-bill state, never from user input. Cashiers
+                cannot tick these; they reflect actual validation outcomes. */}
             <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
                 <span className="text-[#327F74]"><CheckCircle className="h-4 w-4" /></span>
                 <span className="text-sm text-[#1E293B]">14. Close Session Confirmation</span>
               </div>
               <div className="p-4 space-y-2">
-                {([
-                  ['cashCount','Cash Count Completed'],
-                  ['varianceReviewed','Variance Reviewed'],
-                  ['cardSettlement','Card Settlement Verified'],
-                  ['holdBills','Pending Hold Bills Checked'],
-                  ['supervisorApproval','Supervisor Approval'],
-                  ['sessionClosed','Session Closed Successfully'],
-                ]).map(([key,label]) => (
-                  <label key={key} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={xReportChecklist[key]}
-                      onChange={e => setXReportChecklist({...xReportChecklist,[key]:e.target.checked})}
-                      className="h-3.5 w-3.5 accent-[#327F74] rounded"
-                    />
-                    <span className={`text-xs ${xReportChecklist[key]?'text-green-700 line-through':'text-[#1E293B]'}`}>{label}</span>
-                    {xReportChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
-                  </label>
-                ))}
+                {(() => {
+                  const sessionStatusNow = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+                  const supervisorApprovalRequired = !isBalanced && actualCash > 0;
+                  const closeChecklist = {
+                    cashCount: actualCash > 0,
+                    varianceReviewed: actualCash > 0 && (isBalanced || xReportVarianceRemarks.trim().length > 0),
+                    cardSettlement: xReportCardVerified,
+                    holdBills: (heldSales || []).length === 0,
+                    supervisorApproval: !supervisorApprovalRequired,
+                    sessionClosed: sessionStatusNow === 'CLOSED',
+                  };
+                  return [
+                    ['cashCount', 'Cash Count Completed'],
+                    ['varianceReviewed', 'Variance Reviewed'],
+                    ['cardSettlement', 'Card Settlement Verified'],
+                    ['holdBills', 'Pending Hold Bills Checked'],
+                    ['supervisorApproval', 'Supervisor Approval'],
+                    ['sessionClosed', 'Session Closed Successfully'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 cursor-not-allowed">
+                      <input
+                        type="checkbox"
+                        checked={closeChecklist[key]}
+                        disabled
+                        readOnly
+                        className="h-3.5 w-3.5 accent-[#327F74] rounded cursor-not-allowed disabled:opacity-100"
+                      />
+                      <span className={`text-xs transition-colors duration-200 ${closeChecklist[key] ? 'text-green-700 line-through' : 'text-[#1E293B]'}`}>{label}</span>
+                      {closeChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
+                    </label>
+                  ));
+                })()}
               </div>
             </div>
           </div>
@@ -5289,36 +5796,37 @@ export default function POSSales() {
                 ['Cash', xSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="cs4" amount={cashSales} />],
                 ['Card', xSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="cd4" amount={cardSales} />],
                 ['Credit', xSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="cr4" amount={creditSales} />],
+                ...((xSummary.otherSales ?? 0) > 0
+                  ? [['Other', xSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="ot4" amount={xSummary.otherSales} />]]
+                  : []),
               ].filter(r => r[2] !== undefined)}
-              footerRow={['Total Collection', String(invoiceCount), <CurrencyAmount key="tc4" amount={totalSales} />]}
+              // Total Collection = actual tender taken across every mode (cash+card+credit+other),
+              // not the invoice count/value — they can differ (e.g. credit notes, rounding).
+              footerRow={['Total Collection', String(xSummary.totalTenderCount ?? invoiceCount), <CurrencyAmount key="tc4" amount={xSummary.totalPaid ?? totalSales} />]}
             />
 
             {/* Section 5: Card / Bank Settlement */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const cardInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('card') || m.includes('credit card');
-              });
-              const bankInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('bank') || m.includes('transfer');
-              });
-              const onlineInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('online') || m.includes('wallet');
-              });
-              const cardPayTotal = cardInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
-              const refundTotal = Number(xReportData?.session?.totalRefunds ?? 0);
-              const netCardSettle = cardPayTotal - refundTotal;
-              const bankTotal = bankInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
-              const onlineTotal = onlineInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
+              // Sourced from the same authoritative tender aggregate as the "Card Sales" KPI
+              // and Section 4 (xSummary.cardSales/cardInvoiceCount) — not re-derived from
+              // invoice.paymentMode text-matching, which double-counted split payments and
+              // could disagree with the rest of the report. Refunds come from real refund
+              // Payment rows for this session (xSummary.cardRefundSales/cardRefundCount),
+              // not the unrelated item-void counter.
+              const cardPayTotal = Number(cardSales) || 0;
+              const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
+              const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
+              const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
+              const netCardSettle = cardPayTotal - cardRefundTotal;
+              const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
+              const bankTotal = Number(xSummary.bankTransferSales ?? 0);
+              const onlineTotal = Number(xSummary.walletSales ?? 0);
               const cardRows = [
-                ['Card Payments', String(cardInvoices.length), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
-                ['Card Refunds', String(xReportData?.session?.totalVoids ?? 0), refundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(refundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
-                ['Net Card Settlement', String(Math.max(0, cardInvoices.length - (xReportData?.session?.totalVoids ?? 0))), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
-                ...(bankTotal > 0 ? [['Bank Transfer Payments', String(bankInvoices.length), <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
-                ...(onlineTotal > 0 ? [['Online / Wallet Payments', String(onlineInvoices.length), <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
+                ['Card Payments', String(cardPayCount), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
+                ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(cardRefundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
+                ['Net Card Settlement', String(netCardCount), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
+                ...(bankTotal > 0 ? [['Bank Transfer Payments', '—', <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
+                ...(onlineTotal > 0 ? [['Online / Wallet Payments', '—', <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
               ];
               return (
                 <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
@@ -5382,10 +5890,17 @@ export default function POSSales() {
 
             {/* Section 8: Discount & Promotion Summary */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const billDiscountCount = xInvoices.filter(i => (Number(i.billDiscountAmount) || 0) > 0).length;
-              const billDiscountTotal = xInvoices.reduce((s, i) => s + (Number(i.billDiscountAmount) || 0), 0);
-              const totalDiscount = xSummary.totalDiscount ?? billDiscountTotal;
+              // Sourced entirely from the backend's authoritative discount aggregation
+              // (xSummary.billDiscount/lineDiscount + counts) instead of recomputing only
+              // the bill-level figure from raw invoices client-side — that left line-item
+              // discounts silently missing, so the footer (which used totalDiscount, bill+line)
+              // never matched the sum of the rows actually shown.
+              const billDiscountCount = xSummary.billDiscountCount ?? 0;
+              const billDiscountTotal = xSummary.billDiscount ?? 0;
+              const lineDiscountCount = xSummary.lineDiscountCount ?? 0;
+              const lineDiscountTotal = xSummary.lineDiscount ?? 0;
+              const totalDiscount = xSummary.totalDiscount ?? (billDiscountTotal + lineDiscountTotal);
+              const totalDiscountCount = billDiscountCount + lineDiscountCount;
               return (
                 <XRTable
                   title="8. Discount Summary"
@@ -5393,8 +5908,9 @@ export default function POSSales() {
                   cols={['Discount Type','Count','Amount']}
                   rows={[
                     ['Bill Level Discount', String(billDiscountCount), <CurrencyAmount key="d8b" amount={billDiscountTotal} />],
+                    ['Line Item Discount', String(lineDiscountCount), <CurrencyAmount key="d8l" amount={lineDiscountTotal} />],
                   ]}
-                  footerRow={['Total Discount', String(billDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
+                  footerRow={['Total Discount', String(totalDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
                 />
               );
             })()}
@@ -5405,7 +5921,7 @@ export default function POSSales() {
               icon={<RotateCcw className="h-4 w-4" />}
               cols={['Description','Count','Amount']}
               rows={[
-                ['Total Refunds', String(xReportData?.session?.totalVoids ?? 0), <CurrencyAmount key="r9r" amount={xReportData?.session?.totalRefunds ?? 0} />],
+                ['Total Refunds', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
               ]}
             />
 
@@ -5467,7 +5983,7 @@ export default function POSSales() {
                 <p className="text-xs text-gray-600 mb-3 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
                   I confirm that the above sales, collections, refunds, cash drawer balance, and denomination count have been verified for this POS session.
                 </p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-gray-500">Cashier Name</label>
                     <input value={xReportCashierName} onChange={e=>setXReportCashierName(e.target.value)} className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -5519,12 +6035,12 @@ export default function POSSales() {
           <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
           <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
           {!isBalanced && actualCash > 0 ? (
-            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
           ) : (
-            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
           )}
           <button
-            onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }}
+            onClick={openCloseSessionDialog}
             disabled={currentSession?.status !== 'OPEN'}
             className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-5 py-2 rounded flex items-center gap-1">
             <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
@@ -5572,6 +6088,7 @@ export default function POSSales() {
   };
 
   const openQuickCustomerModal = useCallback((searchValue = '') => {
+    quickCustomerCreditCtxRef.current = false;
     const str = (searchValue || '').trim();
     let name = '';
     let mobile = '';
@@ -5649,6 +6166,11 @@ export default function POSSales() {
       const newCust = await createCustomer(payload);
       await loadPosCustomers();
       setSelectedCustomer(newCust.id);
+      if (quickCustomerCreditCtxRef.current) {
+        setCheckoutCreditCustomer(newCust.id);
+        setCheckoutCreditCustomerSearch('');
+        quickCustomerCreditCtxRef.current = false;
+      }
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
         if (newCust.billingAddress || newCust.address) {
@@ -5747,7 +6269,7 @@ export default function POSSales() {
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
-    activeLayawayId, activeLayawayDeposit,
+    activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
     classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
@@ -5757,7 +6279,7 @@ export default function POSSales() {
     cartViewDetailed, cartLineDetails,
     setShowPaymentDialog, setTenderedAmount, setCheckoutPhase, setCheckoutKeypadMode,
     setCheckoutKeypadTarget, setCheckoutKeypadVisible,
-    setShowPOSConfig, setShowCashDropDialog, setShowCloseSessionDialog, setShowLastReceiptDialog,
+    setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway,
     setShowOrdersListDialog: async () => {
       setOrdersListLoading(true);
@@ -5942,7 +6464,7 @@ export default function POSSales() {
                   <span className="text-xs font-medium text-slate-500 uppercase">Bank Notes</span>
                   <div className="h-px flex-1 bg-slate-200"></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
                     <div key={note} className="flex items-center space-x-3">
                       <DenominationLabel value={note} />
@@ -5974,7 +6496,7 @@ export default function POSSales() {
                   <span className="text-xs font-medium text-amber-600 uppercase">Coins</span>
                   <div className="h-px flex-1 bg-amber-200"></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {['1', '0.50', '0.25'].map((coin) => (
                     <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                       <DenominationLabel value={coin} />
@@ -6066,7 +6588,7 @@ export default function POSSales() {
                       <span className="text-xs font-medium text-slate-500 uppercase">Bank Notes</span>
                       <div className="h-px flex-1 bg-slate-200"></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
                         <div key={note} className="flex items-center space-x-3">
                           <DenominationLabel value={note} />
@@ -6090,7 +6612,7 @@ export default function POSSales() {
                       <span className="text-xs font-medium text-[#F5C742] uppercase">Coins</span>
                       <div className="h-px flex-1 bg-[#F5C742]/40"></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {['1', '0.50', '0.25'].map((coin) => (
                         <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                           <DenominationLabel value={coin} />
@@ -6110,7 +6632,18 @@ export default function POSSales() {
 
                 <div className="space-y-2">
                   {(() => {
-                    const sessionExpectedCash = (Number(currentSession?.openingCash) || 0) + (Number(currentSession?.totalCashSales) || 0);
+                    // Same source as the X-Report page: prefer the backend's authoritative
+                    // expectedCash (live tender + cash drops), falling back to the identical
+                    // formula only while xReportData hasn't loaded yet — never the old
+                    // simplified opening+totalCashSales calc, which ignored cash drops and
+                    // caused the modal to disagree with the X-Report.
+                    const xSummaryModal = xReportData?.summary || {};
+                    const sessionExpectedCash = xSummaryModal.expectedCash ?? (
+                      (Number(currentSession?.openingCash) || 0)
+                      + (Number(xSummaryModal.cashSales) || 0)
+                      + (Number(xSummaryModal.cashDropIn) || 0)
+                      - (Number(xSummaryModal.cashDropOut) || 0)
+                    );
                     const actualCounted = calculateDenominationTotal(closingDenominations);
                     const variance = actualCounted - sessionExpectedCash;
                     return (
@@ -6141,7 +6674,7 @@ export default function POSSales() {
               <div className="space-y-4 pt-2">
                 {/* Session card summary */}
                 {(() => {
-                  const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                  const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                   return (
                     <div className="rounded-xl border border-[#327F74]/30 bg-[#327F74]/5 p-4">
                       <p className="text-xs font-bold uppercase tracking-wide text-[#327F74] mb-3">Session Card Totals</p>
@@ -6196,7 +6729,7 @@ export default function POSSales() {
 
                   {/* Variance */}
                   {(() => {
-                    const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                    const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                     const settled = parseFloat(cardSettlementAmount) || 0;
                     const cardVariance = settled - sessionCardTotal;
                     return cardSettlementAmount ? (
@@ -6220,7 +6753,7 @@ export default function POSSales() {
 
                 {/* Quick-fill */}
                 {(() => {
-                  const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                  const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                   return (
                     <button type="button"
                       onClick={() => setCardSettlementAmount(sessionCardTotal.toFixed(2))}
@@ -6342,7 +6875,7 @@ export default function POSSales() {
                           if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
                             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
                           }
-                          const { html, text } = await buildThermalReceiptArtifacts({
+                          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
@@ -6354,6 +6887,7 @@ export default function POSSales() {
                             full,
                             html,
                             text,
+                            escPosBase64,
                             title: `Receipt ${full.invoiceNumber || ''}`.trim(),
                           });
                         }
@@ -6378,7 +6912,8 @@ export default function POSSales() {
           );
         }
 
-        const grandTotal = currentInvoice.total;
+        const shippingChargeNum = Number(shippingCharge) || 0;
+        const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
         const subtotal = currentInvoice.subtotal;
         const totalDisc = currentInvoice.totalDiscount;
         const totalVat = currentInvoice.tax;
@@ -6426,7 +6961,7 @@ export default function POSSales() {
           <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
 
             {/* ══ LEFT: Invoice Preview ════════════════════════════════ */}
-            <div className="w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
+            <div className="w-[280px] lg:w-[340px] xl:w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
               {checkoutPreviewBlobUrl ? (
                 <ThermalScaledPreview src={checkoutPreviewBlobUrl} />
               ) : (
@@ -6465,10 +7000,43 @@ export default function POSSales() {
               <div className="flex-1 overflow-y-auto">
                 <div className="p-4 space-y-3">
 
+                  {/* ── Settlement summary (shipping and/or layaway-hold deposit) ── */}
+                  {(depositAmt > 0 || shippingChargeNum > 0) && (
+                    <div className="bg-white rounded-2xl border border-[#F5C742]/50 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Settlement Summary</p>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between text-gray-600">
+                          <span>Items Total</span>
+                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={currentInvoice.total || 0} /></span>
+                        </div>
+                        {shippingChargeNum > 0 && (
+                          <div className="flex justify-between text-gray-600">
+                            <span>Shipping</span>
+                            <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={shippingChargeNum} /></span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[#1E293B] border-t border-gray-100 pt-1.5">
+                          <span className="font-semibold">Order Total</span>
+                          <span className="font-semibold"><CurrencyAmount amount={grandTotal} /></span>
+                        </div>
+                        {depositAmt > 0 && (
+                          <div className="flex justify-between text-green-700">
+                            <span>Deposit Paid</span>
+                            <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t border-gray-100 pt-1.5 text-[#1E293B]">
+                          <span className="font-bold">{depositAmt > 0 ? 'Balance Due Now' : 'Total Payable'}</span>
+                          <span className="font-black text-[#F5C742]"><CurrencyAmount amount={effectiveDue} /></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ── Pay Mode ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Payment Mode</p>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                       {([
                         ['cash',  'Cash',   Banknote,   '#16a34a'],
                         ['card',  'Card',   CreditCard, '#2563eb'],
@@ -6551,7 +7119,7 @@ export default function POSSales() {
                   {checkoutPayMode === 'card' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         {['Visa','Mastercard','Amex','Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setCheckoutCardType(ct)}
                             className={`py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
@@ -6624,14 +7192,14 @@ export default function POSSales() {
                       )}
                       {/* Add new customer shortcut */}
                       {!creditCustomerData && (
-                        <button type="button" onClick={() => setShowAddCustomerDialog(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
+                        <button type="button" onClick={() => { openQuickCustomerModal(checkoutCreditCustomerSearch); quickCustomerCreditCtxRef.current = true; }} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
                           <UserPlus className="h-4 w-4" />
                           Add New Customer
                         </button>
                       )}
                       {/* Credit terms */}
                       {creditCustomerData && (
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] font-bold text-gray-400 uppercase">Credit Terms (Days)</label>
                             <select value={checkoutCreditTerms} onChange={e => setCheckoutCreditTerms(e.target.value)} className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-[#F5C742]">
@@ -6655,7 +7223,7 @@ export default function POSSales() {
                   {checkoutPayMode === 'mixed' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment — Cash + Card</p>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount</label>
                           <div className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center justify-between cursor-pointer ${checkoutKeypadTarget==='mixed-cash'?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 bg-gray-50'}`}
@@ -6673,7 +7241,7 @@ export default function POSSales() {
                           </div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         {['Visa','Mastercard','Amex','Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setMixedCardType(ct)}
                             className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${mixedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
@@ -6831,7 +7399,7 @@ export default function POSSales() {
               {/* ── Settlement footer ── */}
               <div className="bg-white border-t-2 border-[#F5C742]/30 px-5 py-4 shrink-0">
                 {/* Summary row */}
-                <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                   <div className="bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl p-3 text-center">
                     <p className="text-[9px] text-gray-500 uppercase font-bold">{depositAmt > 0 ? 'Balance Due' : 'Total'}</p>
                     <p className="text-base font-black text-[#1E293B]"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
@@ -7165,7 +7733,7 @@ export default function POSSales() {
                   if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
                     try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
                   }
-                  const { html, text } = await buildThermalReceiptArtifacts({
+                  const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
                     cashGiven: lastPaidInvoice?.paidAmount,
@@ -7179,6 +7747,7 @@ export default function POSSales() {
                     full,
                     html,
                     text,
+                    escPosBase64,
                     title: `Reprint ${full.invoiceNumber || ''}`.trim(),
                   });
                 }
@@ -7270,7 +7839,7 @@ export default function POSSales() {
               {/* Main body: list + preview */}
               <div className="flex flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col ${selected ? 'w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
                     <span className="text-xs text-[#327F74]">Latest first</span>
@@ -7304,7 +7873,7 @@ export default function POSSales() {
                                 {inv.reprints > 0 && <span className="ml-1 text-[9px] bg-amber-100 text-amber-600 rounded px-1">×{inv.reprints} reprint</span>}
                               </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{inv.date}&nbsp;{inv.time}</td>
-                              <td className="px-3 py-2 text-[#1E293B] max-w-[100px] truncate">{inv.customer}</td>
+                              <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{inv.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{inv.cashier}</td>
                               <td className="px-3 py-2 text-gray-500">{inv.terminal}</td>
                               <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${payModeColor(inv.payMode)}`}>{inv.payMode}</span></td>
@@ -7331,7 +7900,7 @@ export default function POSSales() {
 
                 {/* Receipt Preview Panel */}
                 {selected && (
-                  <div className="w-[45%] flex flex-col overflow-hidden bg-white">
+                  <div className="w-1/2 lg:w-[45%] flex flex-col overflow-hidden bg-white">
                     <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -7347,7 +7916,7 @@ export default function POSSales() {
                           <p className="font-bold text-[#1E293B] text-sm">{selected._raw?.branchName || currentTerminal?.branchName || 'BillBull Retail'}</p>
                           <p className="text-gray-500">{selected._raw?.branchCode || ''}</p>
                         </div>
-                        <div className="grid grid-cols-2 gap-1 border-b border-gray-100 pb-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 border-b border-gray-100 pb-3">
                           {[['Invoice No.',selected.id],['Date',selected.date || ''],['Time',selected.time],['Cashier',selected.cashier],['Terminal',selected.terminal],['Customer',selected.customer]].map(([k,v])=>(
                             <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                           ))}
@@ -7377,6 +7946,19 @@ export default function POSSales() {
                         <div className="border-t border-gray-100 pt-2 space-y-0.5">
                           <div className="flex justify-between"><span className="text-gray-400">Payment Mode</span><span className="font-semibold">{selected.payMode}</span></div>
                         </div>
+                        {reprintPreviewCredit && (
+                          <div className="border-t border-gray-100 pt-2 space-y-0.5">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">Credit Account</p>
+                            {[
+                              ['Previous Balance', (reprintPreviewCredit.previousBalance || 0).toFixed(2)],
+                              ['Invoice Credit', (0).toFixed(2)],
+                              ['Amount Paid', (selected._raw?.invoiceTotal || 0).toFixed(2)],
+                              ['Updated Balance', (reprintPreviewCredit.previousBalance || 0).toFixed(2)],
+                            ].map(([l, v]) => (
+                              <div key={l} className="flex justify-between"><span className="text-gray-400">{l}</span><span className="text-[#1E293B]">{v}</span></div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {/* Audit Info */}
                       <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
@@ -7951,71 +8533,148 @@ export default function POSSales() {
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
-            <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
+            <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
                 <div>
-                  <div className="flex items-center gap-2"><Search className="h-4 w-4 text-cyan-600" /><span className="text-base font-semibold text-[#1E293B]">Price Check</span></div>
-                  <p className="text-xs text-gray-500 mt-0.5">Scan or search an item to check price, stock, barcode, and product details.</p>
+                  <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Price Check</span></div>
+                  <p className="text-sm text-gray-500 mt-1">Scan or search an item to check price, stock, barcode, and product details.</p>
                 </div>
-                <button onClick={() => setShowPriceCheck(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowPriceCheck(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
               </div>
               {/* Search */}
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0">
-                <input value={priceCheckQuery} onChange={e => setPriceCheckQuery(e.target.value)} onKeyDown={e => e.key==='Enter' && doSearch()}
-                  placeholder="Scan barcode or type item name / code..." className="flex-1 border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
-                <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
+              <div className="bg-white border-b border-gray-100 px-6 py-4 flex gap-3 shrink-0">
+                <div className="relative flex-1">
+                  <AsyncSearchableDropdown
+                    value={null}
+                    inputValue={priceCheckQuery}
+                    onInputChange={setPriceCheckQuery}
+                    placeholder="Scan barcode or type item name / code..."
+                    fetchOptions={async (query) => {
+                      if (!query) return [];
+                      try {
+                        const resolved = await resolvePosEntry(query);
+                        if (resolved?.type === 'PRODUCT' && resolved.product) {
+                          return [mapPosProductAggregateItem(resolved.product, query)];
+                        }
+                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true);
+                        if (Array.isArray(searchData?.content)) {
+                          return searchData.content.map(p => mapPosProductListItem(p));
+                        }
+                      } catch { return []; }
+                      return [];
+                    }}
+                    renderOption={(opt, active) => (
+                      <div className="flex items-center gap-3 p-2">
+                        {opt.image ? (
+                           <img src={opt.image.startsWith('data:') || opt.image.startsWith('http') ? opt.image : `data:image/jpeg;base64,${opt.image}`} alt="" className="w-10 h-10 object-cover rounded" />
+                        ) : (
+                           <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center shrink-0"><Search className="h-5 w-5 text-gray-400" /></div>
+                        )}
+                        <div className="flex-1 overflow-hidden">
+                          <p className="font-bold text-sm text-gray-900 leading-tight truncate">{opt.name}</p>
+                          <p className="text-xs text-gray-500 leading-tight truncate">{opt.code} {opt.barcode ? `| ${opt.barcode}` : ''}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-bold text-[#327F74] text-sm">{opt.price} AED</p>
+                          <p className="text-[10px] text-gray-500">Stock: {opt.stock}</p>
+                        </div>
+                      </div>
+                    )}
+                    onSelect={(opt) => {
+                      if (opt) {
+                        setPriceCheckQuery(opt.name || opt.code || '');
+                        setPriceCheckResult(opt);
+                      }
+                    }}
+                    className="w-full text-base"
+                    debounceMs={300}
+                  />
+                </div>
+                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 transition-colors shrink-0"><Search className="h-4 w-4" />Search</button>
+                <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shrink-0">Clear</button>
               </div>
-              <div className="overflow-auto flex-1 p-5">
+              <div className="overflow-auto flex-1 p-6">
                 {priceCheckResult === null && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <Search className="h-10 w-10 text-gray-200 mb-3" />
-                    <p className="text-sm text-gray-400">Scan a barcode or type an item name to check price and availability.</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <Search className="h-12 w-12 text-gray-300 mb-4" />
+                    <p className="text-sm font-medium text-gray-500">Scan a barcode or type an item name to check price and availability.</p>
                   </div>
                 )}
                 {priceCheckResult === 'searching' && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" />
-                    <p className="text-sm text-gray-400">Searching...</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
+                    <p className="text-sm font-medium text-gray-500">Searching...</p>
                   </div>
                 )}
                 {priceCheckResult === 'notfound' && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <AlertCircle className="h-10 w-10 text-gray-300 mb-3" />
-                    <p className="text-sm text-gray-500">No item found for the scanned barcode or search keyword.</p>
+                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                    <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
+                    <p className="text-sm font-medium text-gray-500">No item found for the scanned barcode or search keyword.</p>
                   </div>
                 )}
                 {foundProduct && (
                   <div className="space-y-4">
-                    {/* Item Card */}
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 flex gap-4 shadow-sm">
-                      {foundProduct.image
-                        ? <img src={foundProduct.image} className="w-20 h-20 rounded-lg object-cover shrink-0" alt={foundProduct.name} />
-                        : <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 text-gray-300 text-xs">IMG</div>}
-                      <div className="flex-1 grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                        {[['Item Code',foundProduct.code],['Barcode',foundProduct.barcode],['Item Name',foundProduct.name],['Department',foundProduct.departmentName||'—']].map(([k,v])=>(
-                          <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
-                        ))}
+                    <div className="bg-white border border-[#327F74]/20 rounded-2xl p-5 flex flex-col md:flex-row gap-6 shadow-sm">
+                      {/* Left: Image & Details */}
+                      <div className="flex flex-1 gap-5">
+                        <div className="w-28 h-28 shrink-0 rounded-xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                          {foundProduct.image
+                            ? <img src={foundProduct.image} className="w-full h-full object-cover" alt={foundProduct.name} />
+                            : <ShoppingCart className="w-8 h-8 text-gray-300" />}
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center space-y-3">
+                          <div>
+                            <h3 className="text-lg font-bold text-[#1E293B] leading-tight">{foundProduct.name}</h3>
+                            <p className="text-sm text-gray-500 mt-1">{foundProduct.departmentName || 'General Department'}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
+                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Item Code</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.code}</span></div>
+                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Barcode</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.barcode}</span></div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="shrink-0 text-right space-y-1">
-                        <div className="text-2xl font-bold text-[#327F74]"><CurrencyAmount amount={finalPrice} /></div>
-                        <div className="text-xs text-gray-400">Base: <DirhamSymbol /> {basePrice.toFixed(2)}</div>
-                        {discountPct > 0 && <div className="text-xs text-orange-500">Disc {discountPct}%: −<DirhamSymbol /> {(basePrice - discountedPrice).toFixed(2)}</div>}
-                        <div className="text-xs text-gray-400">VAT {vatRate}% included</div>
-                        <div className="mt-2"><span className={`text-xs rounded px-2 py-0.5 ${foundProduct.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>{foundProduct.stock > 0 ? `In Stock: ${foundProduct.stock}` : 'Out of Stock'}</span></div>
+                      
+                      {/* Right: Pricing & Stock */}
+                      <div className="md:w-64 shrink-0 bg-gray-50 rounded-xl p-4 flex flex-col justify-center border border-gray-100 relative">
+                        <div className="absolute -top-3 right-4">
+                          <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full shadow-sm border ${foundProduct.stock > 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                            {foundProduct.stock > 0 ? `${foundProduct.stock} in Stock` : 'Out of Stock'}
+                          </span>
+                        </div>
+                        
+                        <div className="text-center mt-3 mb-4">
+                          <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">Selling Price</p>
+                          <div className="text-3xl font-black text-[#327F74] flex items-center justify-center gap-1">
+                            <DirhamSymbol /> {finalPrice.toFixed(2)}
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1.5 font-medium">VAT {vatRate}% Included</p>
+                        </div>
+                        
+                        <div className="space-y-1.5 pt-3 border-t border-gray-200">
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span className="text-gray-500">Base Price:</span>
+                            <span className="text-[#1E293B]"><DirhamSymbol /> {basePrice.toFixed(2)}</span>
+                          </div>
+                          {discountPct > 0 && (
+                            <div className="flex justify-between text-[11px] text-orange-600 font-bold">
+                              <span>Discount ({discountPct}%):</span>
+                              <span>−<DirhamSymbol /> {(basePrice - discountedPrice).toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end gap-3 shrink-0">
+                <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
                 {foundProduct && (
                   <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
-                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" />Add to Cart
+                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-colors">
+                    <Plus className="h-4 w-4" />Add to Cart
                   </button>
                 )}
-                <button onClick={() => setShowPriceCheck(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
           </div>
@@ -8067,14 +8726,14 @@ export default function POSSales() {
                         </div>
                         <span className={`text-xs rounded px-2 py-0.5 ${data.customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{data.customer.status || '—'}</span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                         {[['Mobile', data.customer.mobile||'—'], ['Email', data.customer.email||'—'], ['Type', data.customer.groupType||'—']].map(([k,v])=>(
                           <div key={k}><span className="text-gray-400">{k}:</span><span className="ml-1 text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                     </div>
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {[
                         {label:'Outstanding',val:<CurrencyAmount amount={toNumber(data.outstanding,0)} />,sub:'unpaid invoices',color:'text-red-600'},
                         {label:'Credit Limit',val:<CurrencyAmount amount={toNumber(data.creditLimit,0)} />,sub:'approved limit',color:'text-[#327F74]'},
@@ -8134,6 +8793,7 @@ export default function POSSales() {
             due: l.dueDate || '—',
             status: STATUS_ENUM_TO_LABEL[eff] || eff,
             isOpen: eff === 'ACTIVE' || eff === 'PARTIALLY_PAID' || eff === 'READY_TO_CONVERT',
+            hold: !!l.hold,
             raw: l,
           };
         });
@@ -8164,7 +8824,7 @@ export default function POSSales() {
                 <button onClick={()=>{setShowLayawaysList(false);setShowSaveLayaway(true);}} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
               </div>
               <div className="flex flex-1 min-h-0">
-                <div className={`flex flex-col overflow-hidden ${selected?'w-[55%]':'w-full'} border-r border-[#327F74]/10`}>
+                <div className={`flex flex-col overflow-hidden ${selected?'w-1/2 lg:w-[55%]':'w-full'} border-r border-[#327F74]/10`}>
                   <div className="overflow-auto flex-1">
                     {layawaysLoading ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
@@ -8181,9 +8841,12 @@ export default function POSSales() {
                           {filtered.map(l=>(
                             <tr key={l.entityId} onClick={()=>setSelectedLayawayId(l.entityId===selectedLayawayId?null:l.entityId)}
                               className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status==='Expired'?'bg-red-50/30':''} ${l.entityId===selectedLayawayId?'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]':'hover:bg-white'}`}>
-                              <td className="px-3 py-2 font-semibold text-[#1E293B]">{l.id}</td>
+                              <td className="px-3 py-2 font-semibold text-[#1E293B] whitespace-nowrap">
+                                {l.id}
+                                {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
+                              </td>
                               <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.date}</td>
-                              <td className="px-3 py-2 text-[#1E293B] max-w-[90px] truncate">{l.customer}</td>
+                              <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{l.customer}</td>
                               <td className="px-3 py-2 text-gray-500">{l.cashier}</td>
                               <td className="px-3 py-2 text-right">{l.items}</td>
                               <td className="px-3 py-2 text-right font-semibold"><CurrencyAmount amount={l.saleAmt} /></td>
@@ -8205,13 +8868,13 @@ export default function POSSales() {
                   </div>
                 </div>
                 {selected && (
-                  <div className="w-[45%] flex flex-col bg-white overflow-hidden">
+                  <div className="w-1/2 lg:w-[45%] flex flex-col bg-white overflow-hidden">
                     <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
                       <button onClick={()=>setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="overflow-auto flex-1 p-4 space-y-3 text-xs">
-                      <div className="grid grid-cols-2 gap-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                         {[['Customer',selected.customer],['Cashier',selected.cashier],['Sale Amount',<CurrencyAmount amount={selected.saleAmt} />],['Deposit Paid',<CurrencyAmount amount={selected.deposit} />],['Balance Due',<CurrencyAmount amount={selected.balance} />],['Due Date',selected.due],['Status',selected.status],['Created',selected.date+' '+selected.time]].map(([k,v])=>(
                           <div key={k} className="flex gap-1"><span className="text-gray-400 w-24 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
                         ))}
@@ -8290,7 +8953,7 @@ export default function POSSales() {
                 <button onClick={()=>setShowSaveLayaway(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               <div className="overflow-auto flex-1">
-                <div className="grid grid-cols-2 gap-4 p-5">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
                   {/* LEFT */}
                   <div className="space-y-4">
                     {/* Customer */}
@@ -8309,6 +8972,7 @@ export default function POSSales() {
                     {/* Cart Items */}
                     <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Cart Items</div>
+                      <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead><tr className="text-gray-400 border-b border-gray-100">{['Item','Qty','Rate','Disc','VAT','Total'].map(h=><th key={h} className={`px-3 py-1.5 text-left ${h!=='Item'?'text-right':''}`}>{h}</th>)}</tr></thead>
                         <tbody>
@@ -8329,6 +8993,7 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   </div>
                   {/* RIGHT */}
@@ -8500,7 +9165,11 @@ export default function POSSales() {
               .filter(it => (returnSelectedItems[it.itemCode] || 0) > 0)
               .map(it => {
                 const qty = returnSelectedItems[it.itemCode] || 0;
-                const itemStatus = (returnItemConditions[it.itemCode] || 'Good') === 'Damaged' ? 'Damaged/Scrap' : 'Good/Restock';
+                // Send the raw condition ('Good' / 'Damaged') — the backend's restock/COGS-reversal
+                // logic does an exact match against "Good"; the display-style "Good/Restock" /
+                // "Damaged/Scrap" strings this used to send never matched, so every POS-originated
+                // return was silently treated as scrap (no stock restored, no COGS reversed).
+                const itemStatus = returnItemConditions[it.itemCode] || 'Good';
                 const itemTotal = qty * parseFloat(it.unitPrice || 0) * (1 + parseFloat(it.taxRate || 5) / 100);
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
@@ -8543,6 +9212,26 @@ export default function POSSales() {
                   batchNumber: i.batches?.[0]?.batchNumber || '',
                 })),
               };
+              const returnA4Data = {
+                title: 'CREDIT NOTE',
+                docNo: saved.returnNumber || '',
+                date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
+                customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
+                items: itemsPayload.map(i => ({
+                  code: i.itemCode || '',
+                  name: i.itemName,
+                  desc: `Orig. Invoice: ${inv.invoiceNumber}`,
+                  qty: i.returnQty,
+                  price: i.price,
+                  disc: 0,
+                  tax: i.taxRate || 5,
+                  taxAmt: i.taxAmount || 0,
+                  total: i.total,
+                  batchNumber: i.batches?.[0]?.batchNumber || '',
+                })),
+                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
+                meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
+              };
               if (tplReturnPaper === 'A4') {
                 const returnA4Template = buildPosA4Template(tplReturnFooter, {
                   showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
@@ -8553,32 +9242,28 @@ export default function POSSales() {
                   colItemCode: tplReturnColItemCode, colBatchNo: tplReturnColBatchNo,
                   colDiscount: tplReturnColDiscount, colVatPct: tplReturnColVatPct, colVatAmt: tplReturnColVatAmt,
                 }, 'Sales Return');
-                const returnA4Data = {
-                  title: 'CREDIT NOTE',
-                  docNo: saved.returnNumber || '',
-                  date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
-                  customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
-                  items: itemsPayload.map(i => ({
-                    code: i.itemCode || '',
-                    name: i.itemName,
-                    desc: `Orig. Invoice: ${inv.invoiceNumber}`,
-                    qty: i.returnQty,
-                    price: i.price,
-                    disc: 0,
-                    tax: i.taxRate || 5,
-                    taxAmt: i.taxAmount || 0,
-                    total: i.total,
-                    batchNumber: i.batches?.[0]?.batchNumber || '',
-                  })),
-                  totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
-                  meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
-                };
                 const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
                 printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
               } else {
                 const qrContent = buildQrContent(returnA4Data, tplOutletName);
                 const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
-                printHtml(buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement }));
+                const returnHtml = buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement });
+                const returnPrinter = resolvePrinterForContext(printerConfigs, {
+                  deviceType: 'RECEIPT_PRINTER',
+                  branchId: inv.branchId || currentTerminal?.branchId || null,
+                  terminalId: currentTerminal?.terminalId || null,
+                });
+                if (!returnPrinter) {
+                  printHtml(returnHtml);
+                } else {
+                  try {
+                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone });
+                    await sendReceiptToConfiguredPrinter(returnPrinter, { receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
+                  } catch (err) {
+                    console.warn('Configured printer failed for return receipt, falling back to browser print', err);
+                    printHtml(returnHtml);
+                  }
+                }
               }
             }
             syncPosData();
@@ -8620,12 +9305,43 @@ export default function POSSales() {
                   <div className="max-w-lg mx-auto space-y-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
                       <p className="text-sm font-semibold text-[#1E293B]">Scan / Search Invoice</p>
-                      <input value={returnInvoiceQuery}
-                        onChange={e=>{setReturnInvoiceQuery(e.target.value);setReturnInvoiceFound(null);setReturnInvoiceError('');}}
-                        onKeyDown={e=>e.key==='Enter'&&doSearchInvoice()}
+                      <AsyncSearchableDropdown
+                        value={null}
+                        inputValue={returnInvoiceQuery}
+                        onInputChange={(val) => { setReturnInvoiceQuery(val); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
                         placeholder="Scan invoice barcode or enter invoice number..."
-                        className="w-full border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                      <div className="grid grid-cols-2 gap-2">
+                        fetchOptions={async (query) => {
+                          if (!query) return [];
+                          try {
+                            const res = await getSalesInvoicesPage({ search: query, size: 5 });
+                            if (res && res.content) {
+                              return res.content;
+                            }
+                          } catch { return []; }
+                          return [];
+                        }}
+                        renderOption={(opt, active) => (
+                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
+                            <div>
+                              <p className="font-bold text-sm text-[#1E293B]">{opt.invoiceNumber}</p>
+                              <p className="text-xs text-gray-500">{opt.customerName || 'Walk-in'}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-[#327F74] text-sm">{opt.grandTotal} AED</p>
+                              <p className="text-[10px] text-gray-400">{opt.invoiceDate ? new Date(opt.invoiceDate).toLocaleDateString() : ''}</p>
+                            </div>
+                          </div>
+                        )}
+                        onSelect={(opt) => {
+                          if (opt) {
+                            setReturnInvoiceQuery(opt.invoiceNumber);
+                            // Give state a moment to update before running doSearchInvoice, which reads from returnInvoiceQuery state
+                            setTimeout(() => document.getElementById('searchInvoiceBtn')?.click(), 50);
+                          }
+                        }}
+                        className="w-full"
+                      />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-gray-400 block mb-0.5">Customer Mobile</label>
                           <input value={returnCustomerMobile}
@@ -8640,7 +9356,7 @@ export default function POSSales() {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={doSearchInvoice} disabled={returnInvoiceLoading||(!returnInvoiceQuery.trim()&&!returnCustomerMobile.trim())}
+                        <button id="searchInvoiceBtn" onClick={doSearchInvoice} disabled={returnInvoiceLoading||(!returnInvoiceQuery.trim()&&!returnCustomerMobile.trim())}
                           className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded flex items-center gap-1">
                           <Search className="h-3.5 w-3.5" />{returnInvoiceLoading?'Searching…':'Search Invoice'}
                         </button>
@@ -8890,7 +9606,7 @@ export default function POSSales() {
             </div>
             <div>
               <Label>Shipping Method</Label>
-              <div className="grid grid-cols-3 gap-2 mt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
                 {[{id:'standard',label:'Standard',price:'15'},{id:'express',label:'Express',price:'35'},{id:'same-day',label:'Same Day',price:'60'}].map(m => (
                   <button key={m.id} type="button" onClick={() => { setShippingMethod(m.id); setShippingCost(m.price); }}
                     className={`p-2 rounded-lg border-2 text-center transition-colors ${shippingMethod === m.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200'}`}>
@@ -8909,20 +9625,11 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setShowAddShippingDialog(false)}>Cancel</Button>
             <Button className="bg-teal-500 hover:bg-teal-600 text-white" onClick={() => {
               const cost = parseFloat(shippingCost) || 0;
-              if (cost > 0) {
-                const shippingId = '__SHIPPING__';
-                setCurrentInvoice(prev => {
-                  const filtered = prev.items.filter(i => i.id !== shippingId);
-                  const shippingLine = {
-                    id: shippingId, productId: null, name: `Shipping (${shippingMethod.charAt(0).toUpperCase() + shippingMethod.slice(1)})`,
-                    nameAr: '', barcode: 'SHIPPING', code: 'SHIPPING', image: null,
-                    price: cost, quantity: 1, discount: 0, taxRate: 0, total: cost,
-                    isShipping: true,
-                  };
-                  return recalculateInvoice([...filtered, shippingLine], prev.billDiscountAmount || 0);
-                });
-                showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
-              }
+              // Shipping is a separate (untaxed) totals line, not a cart product — the
+              // cart keeps only real products. Stored as state and added at the total.
+              setShippingCharge(cost);
+              if (cost > 0) showFeedback('success', `Shipping ${shippingMethod} added — AED ${cost}`);
+              else showFeedback('success', 'Shipping charge cleared');
               setShowAddShippingDialog(false);
             }}>
               <CheckCircle className="h-4 w-4 mr-2" />Add Shipping
@@ -9029,23 +9736,136 @@ export default function POSSales() {
                 <>
                   {/* Search */}
                   <div className="bg-white border-b border-gray-100 px-5 py-3 space-y-2 shrink-0">
-                    <input value={serialBatchQuery} onChange={e=>setSerialBatchQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                      placeholder="Scan batch number..." autoFocus
-                      className="w-full border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                    <AsyncSearchableDropdown
+                        value={null}
+                        inputValue={serialBatchQuery}
+                        onInputChange={setSerialBatchQuery}
+                        placeholder="Scan or search batch number..."
+                        fetchOptions={async (query) => {
+                          if (!query) return [];
+                          try {
+                            const res = await posBatchCheck({ batchNumber: query, invoiceNumber: serialBatchInvoiceNo, itemCode: serialBatchItemCode, customerMobile: serialBatchCustomerMobile });
+                            if (res && res.results) {
+                              return res.results;
+                            }
+                          } catch { return []; }
+                          return [];
+                        }}
+                        renderOption={(opt, active) => (
+                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
+                            <div>
+                              <p className="font-bold text-sm text-[#1E293B]">{opt.batchNumber}</p>
+                              <p className="text-xs text-gray-500">{opt.itemName}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-xs text-gray-700">Inv: {opt.invoiceNumber}</p>
+                              <p className="text-[10px] text-gray-400">Qty: {opt.soldQty}</p>
+                            </div>
+                          </div>
+                        )}
+                        onSelect={(opt) => {
+                          if (opt) {
+                            setSerialBatchQuery(opt.batchNumber || '');
+                            if (opt.invoiceNumber) setSerialBatchInvoiceNo(opt.invoiceNumber);
+                            if (opt.itemCode) setSerialBatchItemCode(opt.itemCode);
+                            setTimeout(() => doBatchSearch(), 50);
+                          }
+                        }}
+                        className="w-full text-sm"
+                        debounceMs={400}
+                    />
                     <div className="flex flex-wrap gap-2">
-                      <input value={serialBatchItemCode} onChange={e=>setSerialBatchItemCode(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Item code / barcode" className="flex-1 min-w-[140px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <input value={serialBatchInvoiceNo} onChange={e=>setSerialBatchInvoiceNo(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Invoice number" className="flex-1 min-w-[140px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <input value={serialBatchCustomerMobile} onChange={e=>setSerialBatchCustomerMobile(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doBatchSearch()}
-                        placeholder="Customer mobile" className="flex-1 min-w-[120px] border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      <button onClick={doBatchSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                      <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
+                      <div className="flex-1 min-w-[140px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchItemCode}
+                          onInputChange={setSerialBatchItemCode}
+                          placeholder="Item code / barcode"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true);
+                              return res?.content || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex flex-col py-1">
+                              <span className="font-medium text-xs">{opt.itemName}</span>
+                              <span className="text-[10px] text-gray-500">{opt.itemCode} {opt.barcode ? `| ${opt.barcode}` : ''}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchItemCode(opt.itemCode || opt.barcode || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[140px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchInvoiceNo}
+                          onInputChange={setSerialBatchInvoiceNo}
+                          placeholder="Invoice number"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await getSalesInvoicesPage({ search: query, size: 5 });
+                              return res?.content || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex justify-between py-1">
+                              <span className="font-medium text-xs">{opt.invoiceNumber}</span>
+                              <span className="text-[10px] text-gray-500">{opt.customerName || 'Walk-in'}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchInvoiceNo(opt.invoiceNumber || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <AsyncSearchableDropdown
+                          value={null}
+                          inputValue={serialBatchCustomerMobile}
+                          onInputChange={setSerialBatchCustomerMobile}
+                          placeholder="Customer mobile"
+                          fetchOptions={async (query) => {
+                            if (!query) return [];
+                            try {
+                              const res = await searchCustomersAllFields(query);
+                              return res || [];
+                            } catch { return []; }
+                          }}
+                          renderOption={(opt) => (
+                            <div className="flex flex-col py-1">
+                              <span className="font-medium text-xs">{opt.name}</span>
+                              <span className="text-[10px] text-gray-500">{opt.mobile || opt.email || ''}</span>
+                            </div>
+                          )}
+                          onSelect={(opt) => {
+                            if (opt) {
+                              setSerialBatchCustomerMobile(opt.mobile || opt.name || '');
+                              setTimeout(() => doBatchSearch(), 50);
+                            }
+                          }}
+                          className="w-full text-xs"
+                        />
+                      </div>
+                      <button onClick={doBatchSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1 shrink-0"><Search className="h-3 w-3" />Search</button>
+                      <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1 shrink-0"><RotateCcw className="h-3 w-3" />Reset</button>
                     </div>
                   </div>
                   <div className="flex flex-1 min-h-0 overflow-hidden">
                     {/* Results list */}
-                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
+                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-1/2 lg:w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
                       <div className="overflow-auto flex-1 p-5">
                         {serialBatchResult === null && (
                           <div className="flex flex-col items-center justify-center h-48 text-center"><Hash className="h-12 w-12 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan or enter a batch number or invoice to search sold items.</p></div>
@@ -9068,7 +9888,7 @@ export default function POSSales() {
                                   </div>
                                   <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5 shrink-0">{item.status}</span>
                                 </div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-xs">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-xs">
                                   <div><span className="text-gray-400">Invoice: </span><span className="text-[#1E293B]">{item.invoiceNumber}</span></div>
                                   <div><span className="text-gray-400">Date: </span><span className="text-[#1E293B]">{fmtDate(item.invoiceDate)}</span></div>
                                   <div><span className="text-gray-400">Customer: </span><span className="text-[#1E293B]">{item.customerName || '—'}</span></div>
@@ -9140,7 +9960,7 @@ export default function POSSales() {
                     </div>
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
                       <p className="text-sm font-semibold text-[#1E293B]">Return Details</p>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Return Quantity (max: {selectedItem?.soldQty ?? 1})</label>
                           <input type="number" min={1} max={selectedItem?.soldQty ?? 1} value={serialBatchReturnQty} onChange={e=>setSerialBatchReturnQty(Math.min(selectedItem?.soldQty??1,Math.max(1,parseInt(e.target.value)||1)))} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -9208,7 +10028,7 @@ export default function POSSales() {
                         <label className="text-xs text-gray-500 block mb-1">Customer Reported Problem</label>
                         <textarea placeholder="Describe the issue reported by customer..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -9307,7 +10127,7 @@ export default function POSSales() {
                   <p className="text-xs text-gray-500">Manage warranty checks, repair intake, service jobs, spare parts usage, customer approvals, service invoices, and delivery status.</p>
                 </div>
                 {/* KPIs */}
-                <div className="grid grid-cols-7 gap-3 mb-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
                   {kpis.map(k=>(
                     <div key={k.label} className={`${k.bg} border border-[#327F74]/10 rounded-lg p-3 flex flex-col gap-1`}>
                       <div className={`flex items-center gap-1 ${k.color}`}>{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
@@ -9353,7 +10173,7 @@ export default function POSSales() {
                           <td className="px-3 py-2 font-semibold text-[#327F74] cursor-pointer hover:underline" onClick={()=>setServiceView('detail')}>{j.no}</td>
                           <td className="px-3 py-2 text-gray-500">{j.date}</td>
                           <td className="px-3 py-2 text-[#1E293B]">{j.customer}</td>
-                          <td className="px-3 py-2 text-[#1E293B] max-w-[120px] truncate">{j.item}</td>
+                          <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{j.item}</td>
                           <td className="px-3 py-2 text-gray-400 font-mono text-[10px]">{j.serial}</td>
                           <td className="px-3 py-2"><span className={`text-[10px] font-medium ${warrantyColor(j.warranty)}`}>{j.warranty}</span></td>
                           <td className="px-3 py-2 text-gray-500">{j.problem}</td>
@@ -9396,7 +10216,7 @@ export default function POSSales() {
                   {serviceJobStep===1&&(
                     <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
                       <div className="flex items-center gap-2 mb-1"><Users className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">A. Customer Details</p></div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {[{l:'Customer Name',ph:'Full name'},{l:'Mobile Number',ph:'+971 XX XXX XXXX'},{l:'Email',ph:'email@example.com'},{l:'Customer Code',ph:'CUS-XXXXX'},{l:'Address',ph:'Street, City, Emirate'}].map(f=>(
                           <div key={f.l} className={f.l==='Address'?'col-span-2':''}>
                             <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -9412,7 +10232,7 @@ export default function POSSales() {
                     <div className="max-w-2xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">B. Product / Item Details</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {[{l:'Invoice Number',ph:'SI-POS-...'},{l:'Serial Number',ph:'SXXXXX-XXXXX'},{l:'Batch Number',ph:'BT-XXXX'},{l:'Item Code',ph:'PRD-...'},{l:'Item Name',ph:'Product name'},{l:'Brand',ph:'Brand name'},{l:'Model',ph:'Model No.'},{l:'Category',ph:'Category'}].map(f=>(
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -9428,7 +10248,7 @@ export default function POSSales() {
                           <p className="text-sm font-semibold text-green-800 flex items-center gap-1"><Shield className="h-4 w-4" />Warranty Check Result</p>
                           <span className="text-xs bg-green-100 text-green-700 border border-green-300 rounded px-2 py-0.5">Free Repair Eligible</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-1 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
                           {[['Warranty Status','Under Warranty'],['Start Date','12 Mar 2026'],['Expiry Date','12 Mar 2027'],['Warranty Period','12 Months'],['Covered','Yes'],['Repair Charge','AED 0.00']].map(([k,v])=>(
                             <div key={k} className="flex gap-1"><span className="text-green-600 w-28 shrink-0">{k}:</span><span className="text-green-800 font-medium">{renderAED(v)}</span></div>
                           ))}
@@ -9445,7 +10265,7 @@ export default function POSSales() {
                         <label className="text-xs text-gray-500 block mb-0.5">Customer Reported Problem</label>
                         <textarea placeholder="Describe the issue..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-20 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-0.5">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -9485,7 +10305,7 @@ export default function POSSales() {
                     <div className="max-w-3xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Wrench className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">E. Technician Diagnosis</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-xs text-gray-500 block mb-0.5">Technician</label>
                             <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
@@ -9576,7 +10396,7 @@ export default function POSSales() {
                     <div className="max-w-lg mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Truck className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">I. Delivery / Completion</p></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {[{l:'Ready for Delivery Date',t:'date'},{l:'Delivered Date',t:'date'},{l:'Delivered By',t:'text',ph:'Staff name'},{l:'Received By (Customer)',t:'text',ph:'Customer name'}].map(f=>(
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
@@ -9637,7 +10457,7 @@ export default function POSSales() {
                   ))}
                 </div>
                 {serviceDetailTab==='overview'&&(
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <p className="text-sm font-semibold text-[#1E293B] mb-3">Job Timeline</p>
                       <div className="space-y-3">
@@ -9687,7 +10507,7 @@ export default function POSSales() {
                   <button onClick={()=>setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back</button>
                   <h1 className="text-xl text-[#1E293B]">Service &amp; Repair Settings</h1>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {[
                     {title:'1. Warranty Rules',icon:<Shield className="h-4 w-4 text-[#327F74]" />,fields:['Default warranty period','Warranty by product category','Warranty by brand','Allow warranty without invoice: Yes/No','Warranty validation based on invoice date']},
                     {title:'2. Service Charges',icon:<DollarSign className="h-4 w-4 text-[#327F74]" />,fields:['Default inspection charge (AED)','Default labour charge (AED)','Urgent service charge (AED)','Minimum repair charge (AED)','VAT applicable: Yes/No']},
@@ -9743,31 +10563,6 @@ export default function POSSales() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
-              {/* Service & Repair Quick Access */}
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Modules</h3>
-                <button onClick={() => { setShowServiceRepair(true); setServiceView('list'); setShowPOSConfig(false); }} className="w-full flex items-center gap-3 p-3 bg-teal-50 border-2 border-teal-300 rounded-xl hover:bg-teal-100 transition-colors text-left">
-                  <div className="w-10 h-10 rounded-xl bg-[#327F74] flex items-center justify-center shrink-0">
-                    <Wrench className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-[#1E293B]">Service &amp; Repair Management</p>
-                    <p className="text-[10px] text-teal-700 mt-0.5">Warranty checks, repair jobs, invoices &amp; delivery</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-teal-500" />
-                </button>
-                <button onClick={() => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setShowPOSConfig(false); setShowSerialBatch(true); }} className="w-full flex items-center gap-3 p-3 bg-[#F5C742]/10 border-2 border-[#F5C742]/50 rounded-xl hover:bg-[#F5C742]/20 transition-colors text-left mt-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#F5C742] flex items-center justify-center shrink-0">
-                    <Hash className="h-5 w-5 text-[#1E293B]" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-[#1E293B]">Serial / Batch Check</p>
-                    <p className="text-[10px] text-amber-700 mt-0.5">Search sold items, view invoice &amp; warranty details</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-amber-500" />
-                </button>
-              </div>
-
               {/* Layout Toggles */}
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Panel Visibility</h3>
@@ -9994,7 +10789,7 @@ export default function POSSales() {
               </div>
 
               {/* Delivery Schedule (Date & Time Slot) */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date <span className="text-red-500">*</span></label>
                   <input type="date" value={deliveryDate} onChange={e => { setDeliveryDate(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, date: '' })); }}
@@ -10021,7 +10816,7 @@ export default function POSSales() {
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Charge (AED)</label>
                   <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden focus-within:border-[#327F74]">
@@ -10208,7 +11003,7 @@ export default function POSSales() {
                                 </div>
                                 <p className="text-base font-black text-[#1E293B]">Total Due <span className="text-[#327F74]">AED {selBalance.toFixed(2)}</span></p>
                               </div>
-                              <div className="grid grid-cols-4 gap-2 mb-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                                 {[
                                   { label: 'Invoice Amt',     val: o.invoiceAmt,     highlight: false, red: false },
                                   { label: 'Delivery Charge', val: o.deliveryCharge, highlight: false, red: false },
@@ -10242,7 +11037,7 @@ export default function POSSales() {
 
                               {deliverySettlePayMode === 'Mix' && (
                                 <div className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                                  <div className="grid grid-cols-2 gap-3 mb-2">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
                                     <div>
                                       <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Cash (AED)</label>
                                       <input type="number" min="0" step="0.01" value={deliverySettleMixCash}

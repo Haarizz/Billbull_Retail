@@ -625,10 +625,22 @@ public class SalesReturnService {
         boolean revenueWasRecognized = resolveRevenueRecognized(salesReturn);
 
         // --- 2. Calculate COGS using actual product cost ---
-        BigDecimal costOfGoodsReturned = resolveActualCogs(salesReturn);
+        CogsResolution cogs = resolveActualCogs(salesReturn);
+
+        // Fail fast with the specific item(s) at fault — PostingEngineService's guard would
+        // otherwise reject with a generic "no product cost" message that forces a cashier to
+        // dig through logs to find out which line is actually missing a Cost Price.
+        if (cogs.total.compareTo(BigDecimal.ZERO) <= 0 && !cogs.missingCostItemCodes.isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Cannot approve " + salesReturn.getReturnNumber() + ": no Cost Price is set for "
+                    + String.join(", ", cogs.missingCostItemCodes)
+                    + ". Set the Cost Price under Inventory → Products → Pricing for "
+                    + (cogs.missingCostItemCodes.size() > 1 ? "these items" : "this item") + ", then retry.");
+        }
 
         // --- 3. Post ---
-        postingEngineService.createJournalFromSalesReturn(salesReturn, costOfGoodsReturned, revenueWasRecognized);
+        postingEngineService.createJournalFromSalesReturn(salesReturn, cogs.total, revenueWasRecognized);
     }
 
     /**
@@ -665,23 +677,52 @@ public class SalesReturnService {
     /**
      * Resolves the COGS to reverse for an approved sales return.
      *
-     * Priority order (PDF §8 / Phase 3.3):
+     * Priority order:
      *   1. Original DN delivery cost snapshot (DeliveryNoteBatchConsumption rows) — exact
      *      batch/WAC cost at the time of the original sale; prevents WAC distortion.
-     *   2. Product master cost (ProductPricing.cost) — fallback when no DN history
-     *      exists (legacy rows or before Phase 3.3 was deployed).
+     *   2. Cost-at-sale snapshot on the original invoice line (SalesInvoiceItem.cost) — set
+     *      at checkout for POS sales (and at order/delivery time for SO/DN sales). Survives
+     *      the product's cost later being changed or cleared in the product master.
+     *   3. Current product master cost (ProductPricing.cost) — last-resort fallback for
+     *      legacy rows from before either snapshot existed.
      *
      * Damaged returns are excluded — no stock is restored, so COGS stays on the books.
      */
-    private BigDecimal resolveActualCogs(SalesReturn salesReturn) {
+    private static final class CogsResolution {
+        final BigDecimal total;
+        final List<String> missingCostItemCodes;
+        CogsResolution(BigDecimal total, List<String> missingCostItemCodes) {
+            this.total = total;
+            this.missingCostItemCodes = missingCostItemCodes;
+        }
+    }
+
+    private CogsResolution resolveActualCogs(SalesReturn salesReturn) {
         if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) {
-            return BigDecimal.ZERO;
+            return new CogsResolution(BigDecimal.ZERO, List.of());
         }
 
         // Resolve source DN id once (may be null for non-DN-linked returns)
         Long sourceDnId = resolveSourceDnId(salesReturn);
 
+        // Resolve the original invoice's line items once, keyed by item code, for the
+        // cost-at-sale fallback (tier 2).
+        Map<String, BigDecimal> invoiceCostByCode = new java.util.HashMap<>();
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice != null && !linkedInvoice.isBlank()) {
+            salesInvoiceRepository.findByInvoiceNumber(linkedInvoice).ifPresent(inv -> {
+                if (inv.getItems() != null) {
+                    inv.getItems().forEach(ii -> {
+                        if (ii.getItemCode() != null && ii.getCost() != null && ii.getCost().compareTo(BigDecimal.ZERO) > 0) {
+                            invoiceCostByCode.putIfAbsent(ii.getItemCode(), ii.getCost());
+                        }
+                    });
+                }
+            });
+        }
+
         BigDecimal totalCogs = BigDecimal.ZERO;
+        List<String> missingCostItemCodes = new ArrayList<>();
 
         for (SalesReturnItem item : salesReturn.getItems()) {
             String itemCode  = item.getItemCode();
@@ -716,12 +757,23 @@ public class SalesReturnService {
                 }
             }
 
-            // 2. Fall back to product-master cost
+            // 2. Fall back to the original invoice line's cost-at-sale snapshot
+            if (itemCogs.compareTo(BigDecimal.ZERO) == 0) {
+                BigDecimal saleCost = invoiceCostByCode.get(itemCode);
+                if (saleCost != null) {
+                    itemCogs = saleCost.multiply(BigDecimal.valueOf(returnQty));
+                    log.info("[SalesReturn] {} — item '{}' using invoice cost-at-sale: qty={} unitCost={} itemCogs={}",
+                            salesReturn.getReturnNumber(), itemCode, returnQty, saleCost, itemCogs);
+                }
+            }
+
+            // 3. Last resort: current product-master cost
             if (itemCogs.compareTo(BigDecimal.ZERO) == 0) {
                 Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(itemCode);
                 if (productOpt.isEmpty()) {
                     log.warn("[SalesReturn] {} — item '{}' not in product master; COGS=0, post manual journal.",
                             salesReturn.getReturnNumber(), itemCode);
+                    missingCostItemCodes.add(itemCode);
                     continue;
                 }
                 Optional<com.billbull.backend.inventory.product.ProductPricing> pricingOpt =
@@ -729,11 +781,12 @@ public class SalesReturnService {
                 if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null) {
                     log.warn("[SalesReturn] {} — no cost for product '{}'; COGS=0, post manual journal.",
                             salesReturn.getReturnNumber(), itemCode);
+                    missingCostItemCodes.add(itemCode);
                     continue;
                 }
                 BigDecimal unitCost = pricingOpt.get().getCost();
                 itemCogs = unitCost.multiply(BigDecimal.valueOf(returnQty));
-                log.warn("[SalesReturn] {} — item '{}' using product-master cost (no DN history): unitCost={} itemCogs={}",
+                log.warn("[SalesReturn] {} — item '{}' using product-master cost (no DN history or invoice snapshot): unitCost={} itemCogs={}",
                         salesReturn.getReturnNumber(), itemCode, unitCost, itemCogs);
             }
 
@@ -744,7 +797,7 @@ public class SalesReturnService {
             log.warn("[SalesReturn] {} — COGS resolved to ZERO. Review cost records.",
                     salesReturn.getReturnNumber());
         }
-        return totalCogs;
+        return new CogsResolution(totalCogs, missingCostItemCodes);
     }
 
     /** Returns the delivery note id linked to the return's source invoice, or null. */

@@ -49,8 +49,14 @@ export const getActivePosSession = async (terminalId = "") => {
   return res.data; // null / undefined if 204
 };
 
-export const closePosSession = async (sessionId, { closingCash, notes, closingDenominations } = {}) => {
-  const res = await api.post(`${BASE}/sessions/${sessionId}/close`, { closingCash, notes, closingDenominations });
+export const closePosSession = async (sessionId, {
+  closingCash, notes, closingDenominations, supervisorApproved,
+  cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+} = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
+    closingCash, notes, closingDenominations, supervisorApproved,
+    cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+  });
   return res.data;
 };
 
@@ -95,6 +101,17 @@ export const getPosXReport = async (sessionId) => {
   return res.data;
 };
 
+/**
+ * Explicitly generate (and mark complete) the X-Report for an open session.
+ * Stamps the session so the end-of-day Z-Report gate sees this terminal as done.
+ * Use this when the cashier deliberately runs their X-Report; the read-only
+ * getPosXReport above is for the dashboard preview and does NOT mark completion.
+ */
+export const generatePosXReport = async (sessionId) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/x-report/generate`);
+  return res.data;
+};
+
 export const getAllPosTerminals = async (branchId) => {
   const res = await api.get(`${BASE}/terminals/branch/${branchId}/all`);
   return res.data;
@@ -121,6 +138,14 @@ export const getPosZReport = async (branchId, date) => {
   });
   return res.data;
 };
+
+export const closePosDay = async (branchId, date) => {
+  const res = await api.post(`${BASE}/sessions/close-day`, null, {
+    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+  });
+  return res.data;
+};
+
 
 // ── Unified search / scan resolver ─────────────────────────────────────────
 
