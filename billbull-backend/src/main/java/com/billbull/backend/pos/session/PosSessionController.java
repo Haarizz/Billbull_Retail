@@ -57,7 +57,13 @@ public class PosSessionController {
         String notes = body != null ? (String) body.get("notes") : null;
         boolean supervisorApproved = body != null && Boolean.TRUE.equals(body.get("supervisorApproved"));
         String closingDenominationsJson = toJson(body != null ? body.get("closingDenominations") : null);
-        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson));
+        String cardBatchNo = body != null ? (String) body.get("cardBatchNo") : null;
+        Boolean cardSettlementVerified = body != null ? (Boolean) body.get("cardSettlementVerified") : null;
+        String closingCashierName = body != null ? (String) body.get("closingCashierName") : null;
+        String closingSupervisorName = body != null ? (String) body.get("closingSupervisorName") : null;
+        String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
+        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
+                cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks));
     }
 
     private String toJson(Object value) {

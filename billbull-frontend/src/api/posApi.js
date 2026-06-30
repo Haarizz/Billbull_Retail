@@ -49,8 +49,14 @@ export const getActivePosSession = async (terminalId = "") => {
   return res.data; // null / undefined if 204
 };
 
-export const closePosSession = async (sessionId, { closingCash, notes, closingDenominations } = {}) => {
-  const res = await api.post(`${BASE}/sessions/${sessionId}/close`, { closingCash, notes, closingDenominations });
+export const closePosSession = async (sessionId, {
+  closingCash, notes, closingDenominations, supervisorApproved,
+  cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+} = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
+    closingCash, notes, closingDenominations, supervisorApproved,
+    cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+  });
   return res.data;
 };
 

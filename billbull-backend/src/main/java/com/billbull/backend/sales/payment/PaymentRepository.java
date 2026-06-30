@@ -89,4 +89,18 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             + "AND p.linkedInvoice IN :invoiceNumbers "
             + "ORDER BY p.id DESC")
     List<Payment> findTenderForInvoices(@Param("invoiceNumbers") java.util.Collection<String> invoiceNumbers);
+
+    /**
+     * Actual refunded tender (paymentType = MADE) for a set of invoice numbers, grouped by
+     * raw payment mode — mirrors {@link #sumTenderByModeForInvoices} for the refund side.
+     * Returns rows of [paymentMode, SUM(amount), COUNT].
+     */
+    @Query("SELECT COALESCE(p.paymentMode, 'Cash'), COALESCE(SUM(p.amount), 0), COUNT(p) "
+            + "FROM Payment p "
+            + "WHERE p.paymentType = com.billbull.backend.sales.payment.PaymentType.MADE "
+            + "AND p.status NOT IN (com.billbull.backend.sales.payment.PaymentStatus.CANCELLED, "
+            + "com.billbull.backend.sales.payment.PaymentStatus.FAILED) "
+            + "AND p.linkedInvoice IN :invoiceNumbers "
+            + "GROUP BY p.paymentMode")
+    List<Object[]> sumRefundByModeForInvoices(@Param("invoiceNumbers") java.util.Collection<String> invoiceNumbers);
 }

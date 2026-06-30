@@ -116,6 +116,21 @@ public class PosSession extends BaseEntity {
     @Column(name = "closing_denominations_json", columnDefinition = "TEXT")
     private String closingDenominationsJson;
 
+    @Column(name = "card_batch_no")
+    private String cardBatchNo;
+
+    @Column(name = "card_settlement_verified")
+    private Boolean cardSettlementVerified = false;
+
+    @Column(name = "closing_cashier_name")
+    private String closingCashierName;
+
+    @Column(name = "closing_supervisor_name")
+    private String closingSupervisorName;
+
+    @Column(name = "closing_remarks", length = 1000)
+    private String closingRemarks;
+
     @JsonIgnore
     @OneToMany(mappedBy = "posSession", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<PosCashMovement> cashMovements = new ArrayList<>();
@@ -223,6 +238,21 @@ public class PosSession extends BaseEntity {
 
     public String getClosingDenominationsJson() { return closingDenominationsJson; }
     public void setClosingDenominationsJson(String closingDenominationsJson) { this.closingDenominationsJson = closingDenominationsJson; }
+
+    public String getCardBatchNo() { return cardBatchNo; }
+    public void setCardBatchNo(String cardBatchNo) { this.cardBatchNo = cardBatchNo; }
+
+    public Boolean getCardSettlementVerified() { return cardSettlementVerified; }
+    public void setCardSettlementVerified(Boolean cardSettlementVerified) { this.cardSettlementVerified = cardSettlementVerified; }
+
+    public String getClosingCashierName() { return closingCashierName; }
+    public void setClosingCashierName(String closingCashierName) { this.closingCashierName = closingCashierName; }
+
+    public String getClosingSupervisorName() { return closingSupervisorName; }
+    public void setClosingSupervisorName(String closingSupervisorName) { this.closingSupervisorName = closingSupervisorName; }
+
+    public String getClosingRemarks() { return closingRemarks; }
+    public void setClosingRemarks(String closingRemarks) { this.closingRemarks = closingRemarks; }
 
     public List<PosCashMovement> getCashMovements() { return cashMovements; }
     public void setCashMovements(List<PosCashMovement> cashMovements) { this.cashMovements = cashMovements; }

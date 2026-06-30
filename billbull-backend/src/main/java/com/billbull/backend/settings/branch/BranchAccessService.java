@@ -35,7 +35,15 @@ public class BranchAccessService {
         }
 
         User user = userRepository.findByUsername(authentication.getName()).orElse(null);
-        return user != null ? user.getBranch() : null;
+        if (user == null || user.getBranch() == null) {
+            return null;
+        }
+        // User.branch is @ManyToOne(LAZY) — re-fetch a fully-initialized Branch instead of
+        // returning the raw proxy. Callers commonly stamp this onto an entity that gets
+        // persisted and returned straight to the client (e.g. SalesReturn.branch); once this
+        // read-only transaction's session closes, Jackson serializing an uninitialized proxy
+        // throws LazyInitializationException ("could not initialize proxy - no session").
+        return branchRepository.findById(user.getBranch().getId()).orElse(null);
     }
 
     public Branch getRequiredCurrentUserBranch() {
