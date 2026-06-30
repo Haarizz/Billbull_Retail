@@ -127,6 +127,99 @@ const printTextToNetworkPrinter = async ({ ipAddress, portNumber = 9100, text })
     socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
   });
 
+// Sends a raw ESC/POS byte buffer straight to a network-attached printer's
+// socket (no text re-encoding, no driver involved). Many thermal controllers
+// (and Bluetooth-to-serial bridges) need the cut command's bytes to actually
+// reach the print head before the socket closes, so we wait for the kernel
+// send buffer to drain and give the controller a short grace period before
+// tearing the connection down — closing immediately after write() can truncate
+// the tail of the job (the cut command itself) on slower controllers.
+const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataBase64 }) =>
+  new Promise((resolve, reject) => {
+    const buffer = Buffer.from(String(dataBase64 ?? ""), "base64");
+    const socket = net.createConnection({ host: ipAddress, port: Number(portNumber) }, () => {
+      socket.write(buffer, () => {
+        setTimeout(() => socket.end(), 150);
+      });
+    });
+
+    socket.on("close", () => resolve({ ok: true, message: "ESC/POS print job sent successfully." }));
+    socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
+  });
+
+// Sends a raw ESC/POS byte buffer to a Windows-installed printer queue using
+// the RAW datatype via the Win32 spooler (OpenPrinter/StartDocPrinter/
+// WritePrinter). This bypasses GDI entirely, so it carries our density/heat/
+// font/raster-image commands intact regardless of whether the queue is backed
+// by USB, Bluetooth (paired as a printer port), or a generic/text driver —
+// none of which is possible through System.Drawing.Printing (that path always
+// rasterizes through the driver, which is what loses ESC/POS control).
+const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "BillBull ESC/POS Receipt" }) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "billbull-print-"));
+  const dataFile = path.join(tempDir, "job.bin");
+  await fs.writeFile(dataFile, Buffer.from(String(dataBase64 ?? ""), "base64"));
+  const script = `
+    Add-Type -Name RawPrinter -Namespace BillBull -MemberDefinition @'
+      [DllImport("winspool.drv", CharSet=CharSet.Auto, SetLastError=true)]
+      public static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
+      [DllImport("winspool.drv", SetLastError=true)]
+      public static extern bool ClosePrinter(IntPtr hPrinter);
+      [DllImport("winspool.drv", CharSet=CharSet.Auto, SetLastError=true)]
+      public static extern bool StartDocPrinter(IntPtr hPrinter, int level, ref DOCINFOA pDocInfo);
+      [DllImport("winspool.drv", SetLastError=true)]
+      public static extern bool EndDocPrinter(IntPtr hPrinter);
+      [DllImport("winspool.drv", SetLastError=true)]
+      public static extern bool StartPagePrinter(IntPtr hPrinter);
+      [DllImport("winspool.drv", SetLastError=true)]
+      public static extern bool EndPagePrinter(IntPtr hPrinter);
+      [DllImport("winspool.drv", SetLastError=true)]
+      public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
+
+      [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]
+      public struct DOCINFOA {
+        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+      }
+'@ -UsingNamespace System.Runtime.InteropServices
+
+    $printerName = '${escapeSingleQuotes(printerName)}'
+    $bytes = [System.IO.File]::ReadAllBytes('${escapeSingleQuotes(dataFile)}')
+    $hPrinter = [IntPtr]::Zero
+    if (-not [BillBull.RawPrinter]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
+      throw "Unable to open printer: $printerName"
+    }
+    try {
+      $docInfo = New-Object BillBull.RawPrinter+DOCINFOA
+      $docInfo.pDocName = '${escapeSingleQuotes(title)}'
+      $docInfo.pDataType = "RAW"
+      if (-not [BillBull.RawPrinter]::StartDocPrinter($hPrinter, 1, [ref]$docInfo)) {
+        throw "StartDocPrinter failed for $printerName"
+      }
+      try {
+        if (-not [BillBull.RawPrinter]::StartPagePrinter($hPrinter)) { throw "StartPagePrinter failed" }
+        $written = 0
+        if (-not [BillBull.RawPrinter]::WritePrinter($hPrinter, $bytes, $bytes.Length, [ref]$written)) {
+          throw "WritePrinter failed for $printerName"
+        }
+        [BillBull.RawPrinter]::EndPagePrinter($hPrinter) | Out-Null
+      } finally {
+        [BillBull.RawPrinter]::EndDocPrinter($hPrinter) | Out-Null
+      }
+    } finally {
+      [BillBull.RawPrinter]::ClosePrinter($hPrinter) | Out-Null
+    }
+    Write-Output '{"ok":true}'
+  `;
+
+  try {
+    await runPowerShell(script);
+    return { ok: true, message: "ESC/POS print job sent successfully." };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
 const resolveBrowserPrintBase = async () => {
   for (const base of BROWSER_PRINT_BASES) {
     try {
@@ -200,6 +293,38 @@ const server = http.createServer(async (req, res) => {
           printerName: body.printerName,
           text: body.text,
           title: body.title || "BillBull POS Receipt",
+        });
+      }
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/print/escpos") {
+      const body = await readJsonBody(req);
+      if (!body?.dataBase64) {
+        sendJson(res, 400, { ok: false, message: "dataBase64 is required." });
+        return;
+      }
+      let result;
+      if (body.connectionType === "NETWORK_IP" || body.ipAddress) {
+        if (!body.ipAddress || !body.portNumber) {
+          sendJson(res, 400, { ok: false, message: "ipAddress and portNumber are required for network printers." });
+          return;
+        }
+        result = await printEscPosToNetworkPrinter({
+          ipAddress: body.ipAddress,
+          portNumber: body.portNumber,
+          dataBase64: body.dataBase64,
+        });
+      } else {
+        if (!body.printerName) {
+          sendJson(res, 400, { ok: false, message: "printerName is required for workstation printers." });
+          return;
+        }
+        result = await printEscPosToPrinterQueue({
+          printerName: body.printerName,
+          dataBase64: body.dataBase64,
+          title: body.title || "BillBull ESC/POS Receipt",
         });
       }
       sendJson(res, 200, result);

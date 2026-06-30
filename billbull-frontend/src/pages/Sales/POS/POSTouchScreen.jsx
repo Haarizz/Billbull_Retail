@@ -294,66 +294,70 @@ const POSTouchScreen = React.memo((props) => {
               )}
             </div>
 
-            {/* Cart table header */}
-            <div className="bg-[#F5C742]/10 border-b border-[#327F74]/20 flex-shrink-0 grid grid-cols-12 gap-1 px-3 py-2">
-              <span className="col-span-6 text-[10px] font-bold uppercase tracking-wide text-gray-500">Item</span>
-              <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-center">Qty</span>
-              <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Rate</span>
-              <span className="col-span-1 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Amt</span>
-              <span className="col-span-1"></span>
-            </div>
+            {/* Cart table header + rows — horizontal scroll is the safety net on narrow
+                widths so the 12-col grid degrades to scrollable instead of clipping. */}
+            <div className="flex-1 flex flex-col overflow-x-auto overflow-y-hidden min-h-0">
+              {/* Cart table header */}
+              <div className="bg-[#F5C742]/10 border-b border-[#327F74]/20 flex-shrink-0 grid grid-cols-12 gap-1 px-3 py-2 min-w-[360px]">
+                <span className="col-span-6 text-[10px] font-bold uppercase tracking-wide text-gray-500">Item</span>
+                <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-center">Qty</span>
+                <span className="col-span-2 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Rate</span>
+                <span className="col-span-1 text-[10px] font-bold uppercase tracking-wide text-gray-500 text-right">Amt</span>
+                <span className="col-span-1"></span>
+              </div>
 
-            {/* Cart rows */}
-            <div className="flex-1 overflow-y-auto">
-              {currentInvoice.items.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-300">
-                  <ShoppingCart className="h-14 w-14 mb-3" />
-                  <p className="text-sm font-medium text-gray-400">Scan a barcode to begin</p>
-                </div>
-              ) : (
-                currentInvoice.items.map((item, idx) => {
-                  return (
-                    <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
-                      className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
-                      <div className="col-span-6 min-w-0">
-                        <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                        {item.isVoided
-                          ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
-                          : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null}
-                        {!item.isVoided && (cartViewDetailed ? (
-                          <div className="mt-0.5 space-y-px">
-                            {cartLineDetails(item).map(d => (
-                              <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
-                                <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
-                              </p>
-                            ))}
-                          </div>
-                        ) : (
-                          <>
-                            <p className="text-[9px] font-mono text-[#F5C742] mt-0.5">{item.barcode || item.code || item.id}</p>
-                            {item.pinnedBatchNumber && (
-                              <span className="inline-block mt-0.5 px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
-                            )}
-                          </>
-                        ))}
+              {/* Cart rows */}
+              <div className="flex-1 overflow-y-auto min-w-[360px]">
+                {currentInvoice.items.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-300">
+                    <ShoppingCart className="h-14 w-14 mb-3" />
+                    <p className="text-sm font-medium text-gray-400">Scan a barcode to begin</p>
+                  </div>
+                ) : (
+                  currentInvoice.items.map((item, idx) => {
+                    return (
+                      <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
+                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
+                        <div className="col-span-6 min-w-0">
+                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                          {item.isVoided
+                            ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
+                            : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null}
+                          {!item.isVoided && (cartViewDetailed ? (
+                            <div className="mt-0.5 space-y-px">
+                              {cartLineDetails(item).map(d => (
+                                <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
+                                  <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
+                                </p>
+                              ))}
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-[9px] font-mono text-[#F5C742] mt-0.5">{item.barcode || item.code || item.id}</p>
+                              {item.pinnedBatchNumber && (
+                                <span className="inline-block mt-0.5 px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
+                              )}
+                            </>
+                          ))}
+                        </div>
+                        <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
+                          {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
+                            className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
+                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                          {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                            className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
+                        </div>
+                        <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
+                        <span className={`col-span-1 text-xs font-bold text-right pt-1 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#F5C742]'}`}>{formatCurrency(item.total)}</span>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                          className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
+                          <XCircle className="h-3.5 w-3.5" />
+                        </button>
                       </div>
-                      <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
-                        {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
-                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
-                        {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                          className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
-                      </div>
-                      <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
-                      <span className={`col-span-1 text-xs font-bold text-right pt-1 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#F5C742]'}`}>{formatCurrency(item.total)}</span>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
-                        className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
-                        <XCircle className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
             </div>
 
             {/* Cart footer — items count + invoice counter */}
@@ -382,7 +386,7 @@ const POSTouchScreen = React.memo((props) => {
           <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
 
             {/* Last scanned item panel */}
-            <div className="border-b border-[#327F74]/20 flex-shrink-0 min-h-[220px] flex flex-col justify-center bg-white">
+            <div className="border-b border-[#327F74]/20 flex-shrink-0 min-h-[140px] lg:min-h-[220px] flex flex-col justify-center bg-white">
               {lastScannedItem ? (
                 (() => {
                   const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
@@ -795,7 +799,7 @@ const POSTouchScreen = React.memo((props) => {
       <div className="flex-1 flex overflow-hidden bg-[#F7F7FA]">
 
         {/* ══ COL 1: CART ════════════════════════════════════════ */}
-        <div className="w-[440px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
+        <div className="w-[260px] lg:w-[340px] xl:w-[440px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
 
           {/* Customer bar — gold, matches Cart Focus */}
           <div className="bg-[#F5C742] px-3 py-2.5 shrink-0 relative border-b border-[#e6b838]">
@@ -872,66 +876,70 @@ const POSTouchScreen = React.memo((props) => {
             </div>
           </div>
 
-          {/* Cart table header */}
-          <div className="grid grid-cols-12 gap-1 px-3 py-1.5 border-b border-gray-100 bg-gray-50 shrink-0">
-            <span className="col-span-5 text-[9px] font-bold uppercase tracking-wide text-gray-400">Item</span>
-            <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-center">Qty</span>
-            <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right">Rate</span>
-            <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right pr-2">Amt</span>
-            <span className="col-span-1"></span>
-          </div>
+          {/* Cart table header + rows — horizontal scroll is the safety net on narrow
+              widths so the 12-col grid degrades to scrollable instead of clipping. */}
+          <div className="flex-1 flex flex-col overflow-x-auto overflow-y-hidden min-h-0">
+            {/* Cart table header */}
+            <div className="grid grid-cols-12 gap-1 px-3 py-1.5 border-b border-gray-100 bg-gray-50 shrink-0 min-w-[360px]">
+              <span className="col-span-5 text-[9px] font-bold uppercase tracking-wide text-gray-400">Item</span>
+              <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-center">Qty</span>
+              <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right">Rate</span>
+              <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right pr-2">Amt</span>
+              <span className="col-span-1"></span>
+            </div>
 
-          {/* Cart item rows */}
-          <div className="flex-1 overflow-y-auto">
-            {currentInvoice.items.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
-                <ShoppingCart className="h-10 w-10" />
-                <p className="text-xs font-medium">Cart is empty</p>
-                <p className="text-[10px]">Tap items to add</p>
-              </div>
-            ) : (
-              currentInvoice.items.map((item, idx) => (
-                <div key={item.id}
-                  className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                  onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
-                  <div className="col-span-5 min-w-0 pr-1">
-                    <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                    {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
-                    {!item.isVoided && (cartViewDetailed ? (
-                      cartLineDetails(item).map(d => (
-                        <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
-                          <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
-                        </p>
-                      ))
-                    ) : (
-                      item.pinnedBatchNumber && (
-                        <span className="inline-block px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
-                      )
-                    ))}
-                    {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
-                  </div>
-                  <div className="col-span-2 flex items-center justify-center gap-0.5">
-                    {!item.isVoided && !item.batchControlled && <>
-                      <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                        className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
-                        <Minus className="h-2.5 w-2.5" />
-                      </button>
-                    </>}
-                    <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
-                    {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                      className="w-5 h-5 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
-                      <Plus className="h-2.5 w-2.5" />
-                    </button>}
-                  </div>
-                  <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-500'}`}>{item.price.toFixed(0)}</span>
-                  <span className={`col-span-2 text-[11px] font-bold text-right pr-2 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{formatCurrency(item.total)}</span>
-                  <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
-                    className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
-                    <XCircle className="h-3 w-3" />
-                  </button>
+            {/* Cart item rows */}
+            <div className="flex-1 overflow-y-auto min-w-[360px]">
+              {currentInvoice.items.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
+                  <ShoppingCart className="h-10 w-10" />
+                  <p className="text-xs font-medium">Cart is empty</p>
+                  <p className="text-[10px]">Tap items to add</p>
                 </div>
-              ))
-            )}
+              ) : (
+                currentInvoice.items.map((item, idx) => (
+                  <div key={item.id}
+                    className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
+                    onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
+                    <div className="col-span-5 min-w-0 pr-1">
+                      <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
+                      {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
+                      {!item.isVoided && (cartViewDetailed ? (
+                        cartLineDetails(item).map(d => (
+                          <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
+                            <span className="text-gray-400">{d.label}:</span> <span className="text-[#327F74] font-semibold">{d.value}</span>
+                          </p>
+                        ))
+                      ) : (
+                        item.pinnedBatchNumber && (
+                          <span className="inline-block px-1 py-px rounded bg-[#327F74]/10 text-[8px] font-mono font-bold text-[#327F74]">⛓ {item.pinnedBatchNumber}</span>
+                        )
+                      ))}
+                      {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
+                    </div>
+                    <div className="col-span-2 flex items-center justify-center gap-0.5">
+                      {!item.isVoided && !item.batchControlled && <>
+                        <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
+                          className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
+                          <Minus className="h-2.5 w-2.5" />
+                        </button>
+                      </>}
+                      <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                      {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
+                        className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
+                        <Plus className="h-2.5 w-2.5" />
+                      </button>}
+                    </div>
+                    <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-500'}`}>{item.price.toFixed(0)}</span>
+                    <span className={`col-span-2 text-[11px] font-bold text-right pr-2 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{formatCurrency(item.total)}</span>
+                    <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                      className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
+                      <XCircle className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           {/* Cart totals */}
@@ -1014,7 +1022,7 @@ const POSTouchScreen = React.memo((props) => {
 
           {/* Category sidebar */}
           {!hideCategoriesPanel && (
-            <div className="w-[148px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+            <div className="w-[110px] lg:w-[130px] xl:w-[148px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
               <div className="p-2.5">
                 <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pb-1.5">Categories</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -1085,7 +1093,7 @@ const POSTouchScreen = React.memo((props) => {
                     {posProductsError}
                   </div>
                 )}
-                <div className="grid grid-cols-5 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
                   {filteredProducts.map(product => {
                     const isFav = favouriteProductIds.has(product.id);
                     return (
@@ -1155,7 +1163,7 @@ const POSTouchScreen = React.memo((props) => {
                   })}
                 </div>
                 {posProductsLoading && (
-                  <div className="grid grid-cols-5 gap-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
                     {Array.from({ length: 10 }).map((_, index) => (
                       <div key={index} className="h-44 animate-pulse rounded-xl border border-gray-200 bg-white">
                         <div className="h-28 rounded-t-xl bg-gray-100" />
@@ -1210,7 +1218,7 @@ const POSTouchScreen = React.memo((props) => {
         </div>
 
         {/* ══ COL 3: FUNCTIONS (Cart Focus style) ════════════════ */}
-        <div className="w-[250px] shrink-0 bg-white border-l-2 border-[#F5C742]/30 flex flex-col overflow-hidden">
+        <div className="w-[180px] lg:w-[210px] xl:w-[250px] shrink-0 bg-white border-l-2 border-[#F5C742]/30 flex flex-col overflow-hidden">
 
           {/* Tab bar */}
           <div className="flex border-b border-gray-100 shrink-0">

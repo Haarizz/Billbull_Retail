@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull Retail ERP - Customer Demo Account Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+
+    :root {
+        --bg-body: #f1f5f9;
+        --bg-card: #ffffff;
+        --text-main: #334155;
+        --text-muted: #64748b;
+        --heading: #0f172a;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --border-color: #e2e8f0;
+        --code-bg: #0f172a;
+        --code-text: #e2e8f0;
+        --inline-code-bg: #f1f5f9;
+        --inline-code-text: #ec4899;
+        --accent: #3b82f6;
+        --warn-bg: #fffbeb;
+        --warn-border: #fde68a;
+        --warn-text: #92400e;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        line-height: 1.7;
+        color: var(--text-main);
+        background-color: var(--bg-body);
+        background-image: radial-gradient(#cbd5e1 1px, transparent 0);
+        background-size: 24px 24px;
+        margin: 0;
+        padding: 60px 20px;
+    }
+
+    .container {
+        max-width: 960px;
+        margin: 0 auto;
+        background-color: var(--bg-card);
+        padding: 60px 80px;
+        border-radius: 24px;
+        box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.02);
+    }
+
+    /* Typography */
+    h1, h2, h3, h4 {
+        color: var(--heading);
+        margin-top: 2em;
+        margin-bottom: 0.75em;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    h1 {
+        font-size: 2.8em;
+        font-weight: 800;
+        line-height: 1.2;
+        margin-top: 0;
+        text-align: center;
+        background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.4em;
+    }
+
+    .meta-info {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.95em;
+        margin-bottom: 3em;
+        padding-bottom: 2.5em;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 15px 30px;
+    }
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .meta-item strong {
+        color: var(--heading);
+        font-weight: 600;
+    }
+
+    h2 {
+        font-size: 1.8em;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        margin-top: 2.5em;
+    }
+    h2::after {
+        content: '';
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        width: 80px;
+        height: 3px;
+        background-color: var(--primary);
+        border-radius: 3px;
+    }
+
+    h3 {
+        font-size: 1.3em;
+        color: #1e293b;
+        margin-top: 2em;
+    }
+
+    a {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 600;
+        transition: color 0.2s;
+    }
+    a:hover { color: var(--primary-hover); text-decoration: underline; }
+
+    p, ul, ol { margin-bottom: 1.5em; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin-bottom: 0.6em; }
+
+    /* Code blocks */
+    .code-wrapper {
+        margin: 2em 0;
+        border-radius: 12px;
+        background-color: var(--code-bg);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+    }
+    .code-header {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .mac-dots {
+        display: flex;
+        gap: 8px;
+    }
+    .mac-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+    }
+    .mac-dot.red { background-color: #ff5f56; box-shadow: 0 0 0 1px rgba(224, 68, 62, 0.5); }
+    .mac-dot.yellow { background-color: #ffbd2e; box-shadow: 0 0 0 1px rgba(222, 161, 35, 0.5); }
+    .mac-dot.green { background-color: #27c93f; box-shadow: 0 0 0 1px rgba(26, 171, 41, 0.5); }
+
+    .code-lang {
+        margin-left: auto;
+        color: #94a3b8;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 600;
+    }
+
+    pre {
+        margin: 0;
+        padding: 24px 20px;
+        overflow-x: auto;
+    }
+
+    code {
+        font-family: 'Fira Code', monospace;
+        background-color: var(--inline-code-bg);
+        color: var(--inline-code-text);
+        padding: 0.2em 0.5em;
+        border-radius: 6px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+
+    pre code {
+        background-color: transparent;
+        color: var(--code-text);
+        padding: 0;
+        font-size: 0.9em;
+        line-height: 1.6;
+        font-weight: 400;
+    }
+
+    /* Checklists */
+    .task-list {
+        list-style-type: none;
+        padding-left: 0;
+        margin-top: 1.5em;
+    }
+    .task-list li {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+        background: #f8fafc;
+        padding: 16px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s ease;
+        font-weight: 500;
+    }
+    .task-list li:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px -4px rgba(0,0,0,0.05);
+        border-color: #cbd5e1;
+        background: #ffffff;
+    }
+    .task-list input[type="checkbox"] {
+        margin-right: 16px;
+        width: 20px;
+        height: 20px;
+        accent-color: var(--accent);
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    /* Table of Contents specific styling */
+    #table-of-contents + ol {
+        background: #f8fafc;
+        padding: 30px 30px 30px 60px;
+        border-radius: 16px;
+        border: 1px solid var(--border-color);
+        box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+    }
+    #table-of-contents + ol li {
+        margin-bottom: 10px;
+    }
+    #table-of-contents + ol li::marker {
+        color: var(--primary);
+        font-weight: 700;
+    }
+
+    /* Status table */
+    .status-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 2em 0;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+    }
+    .status-table th, .status-table td {
+        text-align: left;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .status-table th {
+        background: #f8fafc;
+        color: var(--heading);
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .status-table tr:last-child td { border-bottom: none; }
+    .status-table td.done { color: #15803d; font-weight: 600; }
+
+    /* Callout / warning box */
+    .callout {
+        background: var(--warn-bg);
+        border: 1px solid var(--warn-border);
+        color: var(--warn-text);
+        padding: 18px 22px;
+        border-radius: 12px;
+        margin: 1.5em 0;
+        font-size: 0.95em;
+    }
+    .callout strong { color: #78350f; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        body { padding: 20px 10px; }
+        .container {
+            padding: 40px 24px;
+            border-radius: 16px;
+        }
+        h1 { font-size: 2.2em; }
+        .meta-info { flex-direction: column; gap: 10px; align-items: center; }
+    }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1 id="billbull-retail-erp---customer-demo-account-setup">BillBull Retail ERP</h1>
+<div class="meta-info">
+    <div class="meta-item"><strong>Date:</strong> June 2026</div>
+    <div class="meta-item"><strong>Version:</strong> 1.0</div>
+    <div class="meta-item"><strong>Domain:</strong> demo.billbull.app</div>
+    <div class="meta-item"><strong>Target:</strong> Customer Demo Account (BB-DEMO-RETAIL-001)</div>
+</div>
+
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#overview">Overview &amp; Account Details</a></li>
+<li><a href="#current-status">Current Status</a></li>
+<li><a href="#database-setup">Database Setup</a></li>
+<li><a href="#build-deploy">Pull &amp; Build on the VPS</a></li>
+<li><a href="#systemd-service">Systemd Service</a></li>
+<li><a href="#nginx-block">Nginx Server Block</a></li>
+<li><a href="#ssl-certificate">SSL Certificate</a></li>
+<li><a href="#first-login">First Login &amp; Seeders</a></li>
+<li><a href="#in-app-config">In-App Configuration</a></li>
+<li><a href="#sample-data">Sample Data</a></li>
+<li><a href="#resettable">Making It Resettable</a></li>
+<li><a href="#checklist">Final Checklist</a></li>
+</ol>
+
+<h2 id="overview">Overview &amp; Account Details</h2>
+<p>This guide deploys a dedicated, isolated demo environment so prospects and customers can experience BillBull Retail Enterprise OS's full application flow, UI, and feature set — without any risk to live client data. The demo runs on its own Postgres database (<code>billbull_demo</code>) and its own backend instance (port <code>8083</code>), following the exact same per-client isolation pattern already used for <code>royaltools</code>, <code>leroyalflowers</code>, and <code>leroyalgifts</code>.</p>
+<h3>Requested Account Details</h3>
+<table class="status-table">
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td>Account Code</td><td><code>BB-DEMO-RETAIL-001</code></td></tr>
+<tr><td>Username / Email</td><td><code>app.demo@billbull.app</code></td></tr>
+<tr><td>Password</td><td><code>bb1234</code></td></tr>
+<tr><td>Company Name</td><td>BillBull Retail Enterprise OS</td></tr>
+<tr><td>Industry</td><td>Retail</td></tr>
+<tr><td>Branch</td><td>Main Store</td></tr>
+<tr><td>Country</td><td>UAE</td></tr>
+<tr><td>Currency</td><td>AED</td></tr>
+<tr><td>TRN</td><td>(placeholder — see note in <a href="#in-app-config">In-App Configuration</a>)</td></tr>
+<tr><td>Address</td><td>Dubai, UAE</td></tr>
+<tr><td>Phone</td><td>+971 123456789</td></tr>
+</table>
+<div class="callout">
+<strong>Note:</strong> <code>Account Code</code> and <code>Industry</code> have no corresponding field anywhere in the BillBull schema (confirmed by repo search) — they're internal/CRM reference labels only, not values you'll enter into the app itself.
+</div>
+
+<h2 id="current-status">Current Status</h2>
+<p>Most of the groundwork is already in place in the codebase and DNS — no backend code changes are required before deploying.</p>
+<table class="status-table">
+<tr><th>Piece</th><th>Status</th></tr>
+<tr><td>DNS — <code>demo.billbull.app</code> → <code>62.72.59.119</code></td><td class="done">✅ Already exists</td></tr>
+<tr><td>CORS — <code>https://demo.billbull.app</code> origin</td><td class="done">✅ Already in <code>CorsConfig.java</code></td></tr>
+<tr><td><code>application-demo.properties</code> (port 8083, db <code>billbull_demo</code>)</td><td class="done">✅ Already exists</td></tr>
+<tr><td>Database <code>billbull_demo</code></td><td>⬜ Not yet created</td></tr>
+<tr><td>Systemd service <code>billbull-demo</code></td><td>⬜ Not yet created</td></tr>
+<tr><td>Nginx server block + SSL</td><td>⬜ Not yet created</td></tr>
+<tr><td>Company profile / branch / demo user</td><td>⬜ Not yet configured</td></tr>
+</table>
+
+<h2 id="database-setup">Database Setup</h2>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql</code></pre>
+</div>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">SQL</div>
+    </div>
+    <pre><code class="language-sql">CREATE DATABASE billbull_demo;
+GRANT ALL PRIVILEGES ON DATABASE billbull_demo TO postgres;
+\q</code></pre>
+</div>
+
+<h2 id="build-deploy">Pull &amp; Build on the VPS</h2>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cd /root/billbull
+git pull origin main
+cd billbull-backend
+mvn clean package -DskipTests
+mkdir -p /root/billbull/uploads/demo</code></pre>
+</div>
+<p><strong>Expected:</strong> Jar created at <code>target/billbull-backend-0.0.1-SNAPSHOT.jar</code></p>
+
+<h2 id="systemd-service">Systemd Service</h2>
+<p>Profile <code>demo</code>, port <code>8083</code> — matches <code>application-demo.properties</code> already in the repo.</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-demo.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Demo
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+Environment=ADMIN_INITIAL_PASSWORD=&lt;set-a-strong-temp-password-here&gt;
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=demo
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable billbull-demo
+systemctl start billbull-demo
+systemctl status billbull-demo</code></pre>
+</div>
+<div class="callout">
+<strong>Why set ADMIN_INITIAL_PASSWORD:</strong> on first boot, <code>RBACInitializer</code> auto-creates a default <code>admin</code> user (role ADMIN) plus a default branch ("Main Branch" / <code>BR-01</code>) if none exist. Without this env var it generates a random password and only prints it to the journal — set it explicitly so you control it from the start.
+</div>
+
+<h2 id="nginx-block">Nginx Server Block</h2>
+<p>Append to the existing <code>/etc/nginx/sites-available/billbull</code> (same pattern as the other 3 clients), and add <code>demo.billbull.app</code> to the <code>listen 80</code> redirect block's <code>server_name</code>.</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">NGINX</div>
+    </div>
+    <pre><code class="language-nginx">server {
+    listen 443 ssl;
+    server_name demo.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/demo.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/demo.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8083/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}</code></pre>
+</div>
+
+<h2 id="ssl-certificate">SSL Certificate</h2>
+<p>Nginx is already live for the other 3 domains, so use the <code>nginx</code> certbot plugin instead of <code>standalone</code> — it doesn't require stopping the running server.</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">certbot --nginx -d demo.billbull.app
+nginx -t
+systemctl reload nginx</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>nginx: configuration file /etc/nginx/nginx.conf test is successful</code></p>
+
+<h2 id="first-login">First Login &amp; Seeders</h2>
+<p>Visit <code>https://demo.billbull.app</code> and log in as <code>admin</code> with the password set in <a href="#systemd-service">the systemd unit</a>. On first boot the backend auto-seeds the following — no action needed:</p>
+<ul>
+<li>8 default roles (ADMIN, BRANCH_ADMIN, MANAGER, SALES, INVENTORY_MANAGER, ACCOUNTANT, HR, DELIVERY_PERSON)</li>
+<li>Default branch ("Main Branch" / <code>BR-01</code>)</li>
+<li>Chart of Accounts (GL codes)</li>
+<li>UAE 5% VAT tax config</li>
+<li>Fiscal years &amp; monthly accounting periods</li>
+<li>Base currency <strong>AED</strong> — already matches the requirement</li>
+</ul>
+
+<h2 id="in-app-config">In-App Configuration</h2>
+<p>These steps are done through the application UI, not infrastructure:</p>
+<h3>Step 1: Rename the Branch</h3>
+<p><strong>Settings → Branches</strong> — rename the auto-created default branch from "Main Branch" to <strong>"Main Store"</strong>.</p>
+<h3>Step 2: Set the Company Profile</h3>
+<p><strong>Settings → Company Profile</strong>:</p>
+<ul>
+<li>Company Name: <code>BillBull Retail Enterprise OS</code></li>
+<li>Country: <code>United Arab Emirates</code></li>
+<li>Address: <code>Dubai, UAE</code></li>
+<li>Phone: <code>+971 123456789</code></li>
+<li>Email: <code>app.demo@billbull.app</code></li>
+<li>TRN: a real-looking 15-digit dummy (e.g. <code>100000000000003</code>) — the requested value <code>xxxxxxxxxxxxxxxx</code> is a placeholder and will look wrong on invoice/print templates shown to prospects</li>
+<li>Currency: <code>AED</code> (already default)</li>
+</ul>
+<h3>Step 3: Create the Demo User</h3>
+<p><strong>User Management → Add User</strong>:</p>
+<ul>
+<li>Username / Email: <code>app.demo@billbull.app</code></li>
+<li>Full Name: <code>BillBull Demo</code></li>
+<li>Password: <code>bb1234</code></li>
+<li>Branch: <code>Main Store</code></li>
+<li>Role: <code>ADMIN</code> (so prospects can see the full feature set)</li>
+</ul>
+<h3>Step 4: Lock Down the Seeded Admin Account</h3>
+<p>Change the auto-created <code>admin</code> password to something private and strong — it's a separate, more powerful credential than the one handed to prospects and shouldn't be published alongside the demo login.</p>
+
+<h2 id="sample-data">Sample Data</h2>
+<p>A fresh database only has system seed data — no products, customers, or transactions — so the demo will look empty otherwise. Log in as the demo user and create a small, realistic dataset so every major screen has something to show:</p>
+<ul>
+<li>A handful of products and categories</li>
+<li>A couple of customers and vendors</li>
+<li>One sales invoice</li>
+<li>One purchase order</li>
+<li>One stock-take</li>
+</ul>
+
+<h2 id="resettable">Making It Resettable</h2>
+<p>Take a "golden" snapshot <strong>after</strong> the in-app configuration and sample data are in place, so resets restore the fully-configured demo state rather than the bare seed.</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">mkdir -p /root/billbull/backups
+pg_dump -U postgres billbull_demo > /root/billbull/backups/demo_golden.sql</code></pre>
+</div>
+<h3>Reset Script</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /root/billbull/scripts/reset_demo.sh &lt;&lt; 'EOF'
+#!/bin/bash
+set -e
+systemctl stop billbull-demo
+sudo -u postgres dropdb billbull_demo
+sudo -u postgres createdb billbull_demo -O postgres
+sudo -u postgres psql -d billbull_demo -f /root/billbull/backups/demo_golden.sql
+systemctl start billbull-demo
+echo "Demo reset complete: $(date)"
+EOF
+chmod +x /root/billbull/scripts/reset_demo.sh</code></pre>
+</div>
+<p>Run it manually before each demo, or schedule it (e.g. nightly at 3am Gulf time):</p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div>
+        <div class="code-lang">CRON</div>
+    </div>
+    <pre><code class="language-cron">0 3 * * * /root/billbull/scripts/reset_demo.sh >> /var/log/billbull-demo-reset.log 2>&1</code></pre>
+</div>
+<div class="callout">
+<strong>Isolation guarantee:</strong> this app is multi-tenant by separate database (same pattern as royaltools / leroyalflowers / leroyalgifts). <code>billbull_demo</code> is fully isolated — there is no code path by which demo activity could touch real client data.
+</div>
+
+<h2 id="checklist">Final Checklist</h2>
+<ul class="task-list">
+<li><input type="checkbox" disabled> Database <code>billbull_demo</code> created</li>
+<li><input type="checkbox" disabled> Backend built and <code>billbull-demo</code> service active (running)</li>
+<li><input type="checkbox" disabled> Nginx block added, <code>nginx -t</code> passes, reloaded</li>
+<li><input type="checkbox" disabled> SSL certificate issued for <code>demo.billbull.app</code></li>
+<li><input type="checkbox" disabled> <code>https://demo.billbull.app</code> loads the login page</li>
+<li><input type="checkbox" disabled> Branch renamed to "Main Store"</li>
+<li><input type="checkbox" disabled> Company Profile filled in (name, country, currency, TRN, address, phone, email)</li>
+<li><input type="checkbox" disabled> Demo user <code>app.demo@billbull.app</code> / <code>bb1234</code> created with ADMIN role</li>
+<li><input type="checkbox" disabled> Seeded <code>admin</code> account password changed and kept private</li>
+<li><input type="checkbox" disabled> Sample products, customers, invoice, purchase order created</li>
+<li><input type="checkbox" disabled> Golden snapshot taken (<code>demo_golden.sql</code>)</li>
+<li><input type="checkbox" disabled> Reset script tested manually at least once</li>
+<li><input type="checkbox" disabled> Login confirmed end-to-end with demo credentials, no console/500 errors</li>
+</ul>
+
+<div style="text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px dashed var(--border-color); color: var(--text-muted);">
+    <strong>End of Demo Account Setup Guide</strong>
+</div>
+
+</div>
+</body>
+</html>

@@ -224,7 +224,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
             <ChevronRight className="h-4 w-4 rotate-180" /> Back to Dashboard
           </button>
         </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'Total Customers',       val: posCustomersLoading ? '…' : realCustomers.length,  icon: <Users className="h-4 w-4" />,      color: 'bg-[#327F74]/5 border-[#327F74]/20',  text: 'text-[#327F74]',   ic: 'text-[#327F74]' },
             { label: 'Outstanding Balance',    val: posCustomersLoading ? '…' : <span className="inline-flex items-center gap-0.5"><DirhamSymbol />{totalOutstanding.toFixed(2)}</span>, icon: <DollarSign className="h-4 w-4" />, color: 'bg-[#F5C742]/10 border-[#F5C742]/30', text: 'text-[#9A7B00]', ic: 'text-[#9A7B00]' },
@@ -241,7 +241,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
 
       {/* Tab Nav + Content */}
       <div className="bg-white border-b border-gray-200 px-8">
-        <div className="flex gap-1">
+        <div className="flex gap-1 overflow-x-auto">
           {[
             { id: 'list',      label: 'Customer List',      icon: <Users className="h-4 w-4" /> },
             { id: 'receipt',   label: 'Customer Receipt',   icon: <Receipt className="h-4 w-4" /> },
@@ -278,6 +278,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-[#F7F7FA] border-b border-gray-100">
@@ -331,6 +332,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   ))}
                 </tbody>
               </table>
+              </div>
               <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between bg-[#F7F7FA]/60">
                 <span className="text-xs text-gray-500">
                   {posCustomersLoading ? 'Loading…' : filtered.length === 0 ? '0 customers' : `${pageStart + 1}–${Math.min(pageStart + CUST_PAGE_SIZE, filtered.length)} of ${filtered.length} customer${filtered.length !== 1 ? 's' : ''}`}
@@ -379,7 +381,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                       <CheckCircle className="h-4 w-4 shrink-0" />{receiptSuccess}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-700">Payment Amount (<DirhamSymbol />)</label>
                       <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span><Input type="number" placeholder="0.00" className="pl-8 h-10 border-gray-200" value={receiptAmount} onChange={e => setReceiptAmount(e.target.value)} /></div>
@@ -430,7 +432,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                       <CheckCircle className="h-4 w-4 shrink-0" />{advSuccess}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-700">Advance Amount (<DirhamSymbol />)</label>
                       <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span><Input type="number" placeholder="0.00" className="pl-8 h-10 border-gray-200" value={advAmount} onChange={e => setAdvAmount(e.target.value)} /></div>
@@ -476,11 +478,11 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                     <label className="text-xs font-semibold text-gray-700">Select Customer <span className="text-red-500">*</span></label>
                     <CustomerPicker customers={realCustomers} value={statementCust} onChange={setStatementCust} />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5"><label className="text-xs font-semibold text-gray-700">From Date</label><Input type="date" className="h-10 border-gray-200" value={stmtFromDate} onChange={e => setStmtFromDate(e.target.value)} /></div>
                     <div className="space-y-1.5"><label className="text-xs font-semibold text-gray-700">To Date</label><Input type="date" className="h-10 border-gray-200" value={stmtToDate} onChange={e => setStmtToDate(e.target.value)} /></div>
                   </div>
-                  <div className="grid grid-cols-3 gap-3 bg-[#F7F7FA] rounded-lg p-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-[#F7F7FA] rounded-lg p-4">
                     {[
                       { label: 'Opening Balance', value: stmtData ? Number(stmtData.openingBalance ?? 0).toFixed(2) : '0.00' },
                       { label: 'Total Invoiced',  value: stmtData ? Number(stmtData.totalInvoiced ?? stmtData.totalDebits ?? 0).toFixed(2) : '0.00' },
@@ -500,6 +502,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   </div>
                   {stmtEntries.length > 0 && (
                     <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden">
+                      <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="bg-[#F7F7FA] border-b border-gray-100">
@@ -522,6 +525,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>
