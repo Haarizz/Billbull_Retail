@@ -3193,6 +3193,12 @@ function CustomerSalesSummaryReport() {
 // Cashier Performance Report
 function CashierPerformanceReport() {
   useDataRevision();
+  const totalBills = mockCashierPerformanceData.reduce((s, r) => s + r.bills, 0);
+  const totalSalesCashier = mockCashierPerformanceData.reduce((s, r) => s + r.totalSales, 0);
+  const totalAvgBill = totalBills > 0 ? totalSalesCashier / totalBills : 0;
+  const totalVoids = mockCashierPerformanceData.reduce((s, r) => s + r.voidCount, 0);
+  const totalReturns = mockCashierPerformanceData.reduce((s, r) => s + r.returnCount, 0);
+  const totalVariance = mockCashierPerformanceData.reduce((s, r) => s + r.variance, 0);
   useReportView("pos_cashier_performance", {
     sections: [
       {
@@ -3271,6 +3277,18 @@ function CashierPerformanceReport() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
+                <tr>
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right">{totalBills}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalSalesCashier.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalAvgBill.toFixed(2)}</td>
+                  <td className="px-3 py-2"></td>
+                  <td className="px-3 py-2 text-right">{totalVoids}</td>
+                  <td className="px-3 py-2 text-right">{totalReturns}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalVariance}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </CardContent>
@@ -3282,6 +3300,10 @@ function CashierPerformanceReport() {
 // POS Transaction Report
 function POSTransactionReport() {
   useDataRevision();
+  const totalGross = mockPOSTransactionData.reduce((s, r) => s + r.grossAmt, 0);
+  const totalDiscount = mockPOSTransactionData.reduce((s, r) => s + r.discount, 0);
+  const totalNetAmt = mockPOSTransactionData.reduce((s, r) => s + r.netAmt, 0);
+  const totalItems = mockPOSTransactionData.reduce((s, r) => s + r.items, 0);
   const statusColor = (s: string) => {
     if (s === "Completed") return "text-emerald-600 bg-emerald-50 border-emerald-200";
     if (s === "Voided") return "text-red-600 bg-red-50 border-red-200";
@@ -3385,6 +3407,16 @@ function POSTransactionReport() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
+                <tr>
+                  <td colSpan={4} className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right">{totalItems}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalGross.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalDiscount.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalNetAmt.toFixed(2)}</td>
+                  <td colSpan={2} className="px-3 py-2"></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </CardContent>
@@ -3397,6 +3429,11 @@ function POSTransactionReport() {
 function POSItemSalesReport() {
   useDataRevision();
   const totalNet = mockPOSItemSalesData.reduce((s, r) => s + r.netAmt, 0);
+  const totalOrdered = mockPOSItemSalesData.reduce((s, r) => s + r.qtyOrdered, 0);
+  const totalSold = mockPOSItemSalesData.reduce((s, r) => s + r.qtySold, 0);
+  const totalReturnsItem = mockPOSItemSalesData.reduce((s, r) => s + r.returns, 0);
+  const totalGrossItem = mockPOSItemSalesData.reduce((s, r) => s + r.grossAmt, 0);
+  const totalDiscountItem = mockPOSItemSalesData.reduce((s, r) => s + r.discount, 0);
   useReportView("pos_item_sales", {
     sections: [
       {
@@ -3511,7 +3548,12 @@ function POSItemSalesReport() {
               </tbody>
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
-                  <td colSpan={8} className="px-3 py-2">TOTAL</td>
+                  <td colSpan={3} className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right">{totalOrdered}</td>
+                  <td className="px-3 py-2 text-right">{totalSold}</td>
+                  <td className="px-3 py-2 text-right">{totalReturnsItem}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalGrossItem.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalDiscountItem.toFixed(2)}</td>
                   <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalNet.toFixed(2)}</td>
                   <td className="px-3 py-2 text-right">100%</td>
                 </tr>
@@ -3529,6 +3571,9 @@ function POSPaymentModeReport() {
   useDataRevision();
   const COLORS = ['#F5C742', '#3b82f6', '#10b981', '#8b5cf6', '#f97316'];
   const total = mockPOSPaymentData.reduce((s, r) => s + r.netAmount, 0);
+  const totalTransactions = mockPOSPaymentData.reduce((s, r) => s + r.transactions, 0);
+  const totalGrossAmount = mockPOSPaymentData.reduce((s, r) => s + r.amount, 0);
+  const totalRefunds = mockPOSPaymentData.reduce((s, r) => s + r.refunds, 0);
   useReportView("pos_payment_mode", {
     sections: [
       {
@@ -3632,7 +3677,10 @@ function POSPaymentModeReport() {
               </tbody>
               <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
                 <tr>
-                  <td colSpan={4} className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right">{totalTransactions}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalGrossAmount.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalRefunds.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right"><CurrencySymbol /> {total.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">100%</td>
                 </tr>
@@ -3737,6 +3785,13 @@ function POSVoidReport() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
+                <tr>
+                  <td colSpan={3} className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right"><CurrencySymbol /> {totalValue.toFixed(2)}</td>
+                  <td colSpan={3} className="px-3 py-2"></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </CardContent>
