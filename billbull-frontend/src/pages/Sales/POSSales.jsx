@@ -385,7 +385,7 @@ export default function POSSales() {
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
   const [xReportCardVerified, setXReportCardVerified] = useState(false);
-  const [xReportCashierName, setXReportCashierName] = useState('Ahmad Al-Farsi');
+  const [xReportCashierName, setXReportCashierName] = useState('');
   const [xReportSupervisorName, setXReportSupervisorName] = useState('');
   const [xReportClosingRemarks, setXReportClosingRemarks] = useState('');
 
@@ -1410,6 +1410,24 @@ export default function POSSales() {
     return closingDenominations;
   }, [closingDenominations, currentSession?.closingDenominationsJson, xReportData?.sessionInfo?.closingDenominationsJson, xReportData?.session?.closingDenominationsJson]);
 
+  // Hydrate Declaration & Card Settlement fields from the backend the first time a
+  // session's report data loads (not on every refresh, so in-progress edits aren't
+  // clobbered by a Refresh/modal-open re-fetch of the same session). Re-fires only
+  // when the session id itself changes, so values never leak across sessions and
+  // persisted values reappear correctly when an already-closed session is reopened.
+  useEffect(() => {
+    const sessId = xReportData?.session?.id;
+    if (!sessId) return;
+    const info = xReportData?.sessionInfo || {};
+    setXReportCashierName(info.closingCashierName || xReportData?.session?.openedBy || '');
+    setXReportSupervisorName(info.closingSupervisorName || '');
+    setXReportClosingRemarks(info.closingRemarks || '');
+    setXReportVarianceRemarks(info.varianceRemarks || '');
+    setXReportCardBatchNo(info.cardBatchNo || '');
+    setXReportCardVerified(!!info.cardSettlementVerified);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xReportData?.session?.id]);
+
   useEffect(() => {
     const isActive = currentSession?.status === 'OPEN' || currentSession?.status === 'active';
     if (!isActive || !currentSession?.openedAt) {
@@ -1459,7 +1477,16 @@ export default function POSSales() {
       try {
         if (currentSession.id && typeof currentSession.id === 'number') {
           const closingTotal = calculateDenominationTotal(closingDenominations);
-          const closed = await closePosSession(currentSession.id, { closingCash: closingTotal, closingDenominations });
+          const closed = await closePosSession(currentSession.id, {
+            closingCash: closingTotal,
+            closingDenominations,
+            notes: xReportVarianceRemarks,
+            cardBatchNo: xReportCardBatchNo,
+            cardSettlementVerified: xReportCardVerified,
+            closingCashierName: xReportCashierName,
+            closingSupervisorName: xReportSupervisorName,
+            closingRemarks: xReportClosingRemarks,
+          });
           setCurrentSession(closed);
         } else {
           setCurrentSession({ ...currentSession, status: 'CLOSED' });
@@ -1472,6 +1499,16 @@ export default function POSSales() {
       setSessionNowMs(Date.now());
       setCurrentView('x-report');
       syncPosData();
+    }
+  };
+
+  // Single entry point for opening the Close Session modal: always refreshes
+  // xReportData first so the modal's Expected/Actual/Variance match the X-Report
+  // page exactly, instead of relying on a possibly-stale cached xReportData.
+  const openCloseSessionDialog = () => {
+    if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
+      setShowCloseSessionDialog(true);
+      loadXReport();
     }
   };
 
@@ -3753,10 +3790,13 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
-        {/* Z-Report Tile */}
+        {/* Z-Report Tile — a cross-session, end-of-day report keyed by branch/date, not
+            by this terminal's own session, so it must stay reachable after this
+            terminal's session is closed (that's normally exactly when a cashier wants
+            to check Z-Report eligibility or pull the day's consolidated report). */}
         <Card
-          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
-          onClick={() => { if (isSessionActive) setCurrentView('z-report'); }}
+          className={`${posDashboardTileClass}${currentTerminal?.branchId ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => { if (currentTerminal?.branchId) setCurrentView('z-report'); }}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
@@ -3769,9 +3809,9 @@ export default function POSSales() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">
-              {isSessionActive
+              {currentTerminal?.branchId
                 ? 'Consolidated end-of-day report (all terminals must run X-Report first)'
-                : 'Start a session to access the Z-Report'}
+                : 'Register a terminal to access the Z-Report'}
             </p>
           </CardContent>
         </Card>
@@ -3781,11 +3821,7 @@ export default function POSSales() {
           className={`${posDashboardTileClass} ${
             currentSession?.status !== 'active' && currentSession?.status !== 'OPEN' ? 'opacity-50' : ''
           }`}
-          onClick={() => {
-            if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
-              setShowCloseSessionDialog(true);
-            }
-          }}
+          onClick={openCloseSessionDialog}
         >
           <CardHeader>
             <div className="bg-gradient-to-r from-[#E63946] to-[#ff6b6b] p-4 rounded-lg w-fit">
@@ -4136,18 +4172,31 @@ export default function POSSales() {
           rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
         },
         {
-          title: '8. Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
+          title: '8. Returns / Refund Summary', type: 'table',
+          cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
-            ['Net Quantity Sold', String(itemsSoldV), fmt(totalSalesV)],
+            ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${fmt(zSummary.salesReturnTotal)})` : fmt(0)],
+            ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
+            ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
+            ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
           ],
         },
         {
-          title: '10. Cashier / Session Wise Summary', type: 'table',
+          title: '9. Product / Item Movement Summary', type: 'table',
+          cols: ['Description', 'Quantity', 'Amount'],
+          rows: [
+            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
+            ['Total Items Returned', String(zSummary.totalItemsReturned ?? 0), (zSummary.totalItemsReturned ?? 0) > 0 ? `(${fmt(zSummary.salesReturnTotal ?? 0)})` : fmt(0)],
+            ['Net Quantity Sold', String(zSummary.netQuantitySold ?? itemsSoldV), fmt(totalSalesV)],
+            ...((Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map(it =>
+              [`  Top Seller: ${it.itemCode || '—'} — ${it.itemName || '—'}`, String(it.quantity ?? 0), fmt(it.amount ?? 0)])),
+          ],
+        },
+        {
+          title: '10. Cashier Wise Summary', type: 'table',
           cols: ['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit'],
-          rows: zSessions.length > 0
-            ? zSessions.map(s => [s.openedBy || '—', String(s.invoiceCount || 0), fmt(s.totalSales ?? 0), fmt(s.totalCashSales ?? 0), fmt(s.totalCardSales ?? 0), fmt(s.totalCreditSales ?? 0)])
+          rows: (Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).length > 0
+            ? zReportData.cashierWiseSummary.map(c => [c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
             : [['—', '0', fmt(0), fmt(0), fmt(0), fmt(0)]],
           footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
         },
@@ -4259,15 +4308,27 @@ export default function POSSales() {
       { Section: '',                        Description: 'VAT 5% — Tax Amount',     Count: '',         Amount: totalTaxV },
       { Section: '',                        Description: 'Total Inc. VAT',           Count: '',         Amount: totalSalesV },
       { Section: 'Discount',                Description: 'Total Discount',           Count: '',         Amount: discountV },
+      { Section: 'Returns / Refund',        Description: 'Sales Returns',            Count: zSummary.salesReturnCount ?? 0, Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '',                        Description: 'Refunds Processed',        Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
+      { Section: '',                        Description: 'Credit Notes Issued',      Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
+      { Section: '',                        Description: 'Exchange Transactions',    Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
       { Section: 'Item Movement',           Description: 'Total Items Sold',         Count: String(itemsSold), Amount: totalSalesV },
+      { Section: '',                        Description: 'Total Items Returned',     Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '',                        Description: 'Net Quantity Sold',        Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
+      ...(Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map((it, i) => ({
+        Section: i === 0 ? 'Top Selling Items' : '',
+        Description: `${it.itemCode || '—'} — ${it.itemName || '—'}`,
+        Count: it.quantity ?? 0,
+        Amount: fmt(it.amount ?? 0),
+      })),
       { Section: 'Customer Credit',         Description: 'Credit Sales',             Count: creditInvoices.length, Amount: creditTotal },
       { Section: 'Invoice Range',           Description: 'First Invoice',            Count: invNums[0] || '—', Amount: '' },
       { Section: '',                        Description: 'Last Invoice',             Count: invNums[invNums.length - 1] || '—', Amount: '' },
-      ...zSessions.map((s, i) => ({
+      ...(Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).map((c, i) => ({
         Section: i === 0 ? 'Cashier Wise' : '',
-        Description: s.openedBy || '—',
-        Count: s.invoiceCount || 0,
-        Amount: fmt(s.totalSales ?? 0),
+        Description: c.cashier || '—',
+        Count: c.invoiceCount || 0,
+        Amount: fmt(c.netSales ?? 0),
       })),
     ];
   };
@@ -4299,9 +4360,13 @@ export default function POSSales() {
     const denomKeys   = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
 
-    const cardInvoices   = xInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('card'));
-    const refundTotal    = Number(xSummary.totalRefunds ?? sess?.totalRefunds ?? 0);
-    const netCardSettle  = Math.max(0, cardSalesV - refundTotal);
+    const cardPayCount   = Number(xSummary.cardInvoiceCount ?? 0);
+    const refundTotal    = Number(xSummary.totalRefunds ?? 0);
+    const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
+    const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
+    const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
+    const netCardSettle  = cardSalesV - cardRefundTotal;
+    const netCardCount   = Math.max(0, cardPayCount - cardRefundCount);
     const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
     // Detailed void/removal data from the backend audit trail + persisted voided lines.
     const postedVoids    = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
@@ -4397,17 +4462,22 @@ export default function POSSales() {
             ['Cash',   String(xSummary.cashInvoiceCount   ?? '—'), fmt(cashSalesV)],
             ['Card',   String(xSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
             ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
+            ...((xSummary.otherSales ?? 0) > 0
+              ? [['Other', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
+              : []),
           ],
-          // Total Collected = actual tender taken, not invoice value.
-          footer: ['Total Collected', String(invoiceCount), fmt(totalPaidV)],
+          // Total Collected = actual tender taken across every mode, not invoice count/value.
+          footer: ['Total Collected', String(xSummary.totalTenderCount ?? invoiceCount), fmt(totalPaidV)],
         },
         {
           title: '4. Card / Bank Settlement Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Card Sales',          String(cardInvoices.length), fmt(cardSalesV)],
-            ['Card Refunds',        String(totalVoids),          refundTotal > 0 ? `(${fmt(refundTotal)})` : fmt(0)],
-            ['Net Card Settlement', String(Math.max(0, cardInvoices.length - totalVoids)), fmt(netCardSettle)],
+            ['Card Sales',          String(cardPayCount),   fmt(cardSalesV)],
+            ['Card Refunds',        String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
+            ['Net Card Settlement', String(netCardCount),    fmt(netCardSettle)],
+            ['Card Machine Batch No.', sessInfo.cardBatchNo || xReportCardBatchNo || '—', ''],
+            ['Card Settlement Verified', (sessInfo.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No', ''],
           ],
         },
         {
@@ -4429,15 +4499,18 @@ export default function POSSales() {
         {
           title: '7. Discount Summary', type: 'table',
           cols: ['Description', 'Amount'],
-          rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
+          rows: [
+            ['Bill Level Discount', fmt(xSummary.billDiscount ?? 0)],
+            ['Line Item Discount', fmt(xSummary.lineDiscount ?? 0)],
+          ],
+          footer: ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
         },
         {
           title: '8. Return / Refund Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Refunds',  String(totalVoids), fmt(refundTotal)],
-            ['Card Refunds',   String(totalVoids), fmt(refundTotal)],
-            ['Cash Refunds',   '0',                fmt(0)],
+            ['Total Refunds',  String(totalRefundCount), fmt(refundTotal)],
+            ['Card Refunds',   String(cardRefundCount),  fmt(cardRefundTotal)],
           ],
         },
         {
@@ -4513,8 +4586,13 @@ export default function POSSales() {
     const reportDenominations = getReportClosingDenominations();
     const actualCash      = fmt(calculateDenominationTotal(reportDenominations));
     const variance        = fmt(actualCash - expectedCash);
-    const refundTotal     = fmt(sess?.totalRefunds ?? 0);
-    const totalVoids      = sess?.totalVoids ?? 0;
+    const refundTotal     = fmt(xSummary.totalRefunds ?? 0);
+    const totalRefundCount = xSummary.totalRefundCount ?? 0;
+    const cardRefundTotal = fmt(xSummary.cardRefundSales ?? 0);
+    const cardRefundCount = xSummary.cardRefundCount ?? 0;
+    const otherSalesV     = fmt(xSummary.otherSales ?? 0);
+    const totalPaidV      = fmt(xSummary.totalPaid ?? totalSalesV);
+    const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
     const denomKeys       = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
     const denomLabels     = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
 
@@ -4535,13 +4613,19 @@ export default function POSSales() {
       { Section: 'Payment Tender',  Description: 'Cash',                        Count: xSummary.cashInvoiceCount   ?? 0, Amount: cashSalesV },
       { Section: '',                Description: 'Card',                        Count: xSummary.cardInvoiceCount   ?? 0, Amount: cardSalesV },
       { Section: '',                Description: 'Credit',                      Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      { Section: '',                Description: 'Total',                       Count: invoiceCount, Amount: totalSalesV },
+      ...(otherSalesV > 0 ? [{ Section: '', Description: 'Other', Count: xSummary.otherInvoiceCount ?? 0, Amount: otherSalesV }] : []),
+      { Section: '',                Description: 'Total',                       Count: totalTenderCountV, Amount: totalPaidV },
       { Section: 'VAT / Tax',       Description: 'VAT 5% — Taxable Amount',    Count: '',  Amount: salesExTaxV },
       { Section: '',                Description: 'VAT 5% — Tax Amount',        Count: '',  Amount: totalTaxV },
       { Section: '',                Description: 'Total Inc. VAT',              Count: '',  Amount: totalSalesV },
-      { Section: 'Discount',        Description: 'Total Discount',              Count: '',  Amount: discountV },
-      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalVoids, Amount: refundTotal },
-      { Section: 'Card Settlement', Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - totalVoids), Amount: fmt(Math.max(0, cardSalesV - refundTotal)) },
+      { Section: 'Discount',        Description: 'Bill Level Discount',         Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
+      { Section: '',                Description: 'Line Item Discount',          Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
+      { Section: '',                Description: 'Total Discount',              Count: '',  Amount: discountV },
+      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalRefundCount, Amount: refundTotal },
+      { Section: 'Card Settlement', Description: 'Card Refunds',                Count: cardRefundCount, Amount: cardRefundTotal },
+      { Section: '',                Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
+      { Section: '',                Description: 'Card Machine Batch No.',      Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
+      { Section: '',                Description: 'Card Settlement Verified',    Count: '', Amount: (sess?.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No' },
       { Section: 'Invoice Count',   Description: 'Total Invoices',              Count: invoiceCount, Amount: totalSalesV },
       ...xInvoices.slice(0, 200).map((inv, i) => ({
         Section: i === 0 ? 'Invoice List' : '',
@@ -4959,30 +5043,99 @@ export default function POSSales() {
         ]}
       />
 
-      {/* Section 8: Item Movement Summary */}
+      {/* Section 8: Returns / Refund Summary */}
       <ZRTable
-        title="8. Item Movement Summary"
-        icon={<Package className="h-4 w-4" />}
-        cols={['Description', 'Quantity', 'Amount']}
+        title="8. Returns / Refund Summary"
+        icon={<RotateCcw className="h-4 w-4" />}
+        cols={['Description', 'Count', 'Amount']}
         rows={[
-          ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z8s" amount={zTotalSales} />],
-          ['Net Quantity Sold', String(zTotalItemsSold), <CurrencyAmount key="z8n" amount={zTotalSales} />],
+          ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount key="z8sr" amount={0} />],
+          ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
+          ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
+          ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
         ]}
       />
 
-      {/* Section 10: Cashier Wise Summary (derived from sessions) */}
+      {/* Section 9: Item Movement Summary */}
       {(() => {
-        const cashierRows = zSessions.map(s => [
-          s.openedBy || '—',
-          String(s.invoiceCount || 0),
-          <CurrencyAmount key={`c10ns${s.id}`} amount={s.totalSales ?? 0} />,
-          <CurrencyAmount key={`c10ca${s.id}`} amount={s.totalCashSales ?? 0} />,
-          <CurrencyAmount key={`c10cd${s.id}`} amount={s.totalCardSales ?? 0} />,
-          <CurrencyAmount key={`c10cr${s.id}`} amount={s.totalCreditSales ?? 0} />,
+        const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
+        const itemsReturned = zSummary.totalItemsReturned ?? 0;
+        const netQty = zSummary.netQuantitySold ?? zTotalItemsSold;
+        return (
+          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+              <span className="text-[#327F74]"><Package className="h-4 w-4" /></span>
+              <span className="text-sm text-[#1E293B]">9. Product / Item Movement Summary</span>
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-[#F7F7FA] text-gray-500">
+                  <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
+                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Quantity</th>
+                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z9s" amount={zTotalSales} />],
+                  ['Total Items Returned', String(itemsReturned), itemsReturned > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal ?? 0)})` : <CurrencyAmount key="z9rt" amount={0} />],
+                  ['Net Quantity Sold', String(netQty), <CurrencyAmount key="z9n" amount={zTotalSales} />],
+                ].map(([d, q, a], i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                    <td className="px-4 py-2 text-[#1E293B]">{d}</td>
+                    <td className="px-4 py-2 text-right text-[#1E293B]">{q}</td>
+                    <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {topItems.length > 0 && (
+              <div className="px-4 py-3 border-t border-[#327F74]/10">
+                <p className="text-xs font-semibold text-[#1E293B] mb-2">Top Selling Items</p>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500">
+                      <th className="px-2 py-1 text-left font-medium">Item Code</th>
+                      <th className="px-2 py-1 text-left font-medium">Item Name</th>
+                      <th className="px-2 py-1 text-right font-medium">Qty</th>
+                      <th className="px-2 py-1 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topItems.map((it, i) => (
+                      <tr key={i} className="border-t border-gray-50">
+                        <td className="px-2 py-1 text-[#327F74]">{it.itemCode || '—'}</td>
+                        <td className="px-2 py-1 text-[#1E293B]">{it.itemName || '—'}</td>
+                        <td className="px-2 py-1 text-right text-[#1E293B]">{it.quantity ?? 0}</td>
+                        <td className="px-2 py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.amount ?? 0} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Section 10: Cashier Wise Summary — backend-aggregated per session owner, with
+          cash/card/credit split from actual tender (sales_payments), so a split
+          Cash+Card sale correctly shows in both columns instead of landing nowhere
+          (the per-session totalCashSales/totalCardSales counters never see "mixed"
+          sales — those are bucketed into a separate totalMixedSales counter only). */}
+      {(() => {
+        const cashierWise = Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : [];
+        const cashierRows = cashierWise.map((c, i) => [
+          c.cashier || '—',
+          String(c.invoiceCount || 0),
+          <CurrencyAmount key={`c10ns${i}`} amount={c.netSales ?? 0} />,
+          <CurrencyAmount key={`c10ca${i}`} amount={c.cash ?? 0} />,
+          <CurrencyAmount key={`c10cd${i}`} amount={c.card ?? 0} />,
+          <CurrencyAmount key={`c10cr${i}`} amount={c.credit ?? 0} />,
         ]);
         return (
           <ZRTable
-            title="10. Cashier / Session Wise Summary"
+            title="10. Cashier Wise Summary"
             icon={<Users className="h-4 w-4" />}
             cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
             rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
@@ -5108,6 +5261,10 @@ export default function POSSales() {
     const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
+    // Once closed, reportDenominations comes from the immutable backend snapshot and
+    // ignores further local edits — disable the inputs so they can't be edited with
+    // no visible effect.
+    const isSessionClosed = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase() === 'CLOSED';
 
     // Pull live figures from xReportData when available, fall back to session state
     const xSummary = xReportData?.summary || {};
@@ -5184,7 +5341,7 @@ export default function POSSales() {
               {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
             </button>
             <button
-              onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }}
+              onClick={openCloseSessionDialog}
               disabled={currentSession?.status !== 'OPEN'}
               className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
               <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
@@ -5323,7 +5480,8 @@ export default function POSSales() {
                             min="0"
                             value={reportDenominations[k] || 0}
                             onChange={e => setClosingDenominations({...closingDenominations, [k]: parseInt(e.target.value)||0})}
-                            className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]"
+                            disabled={isSessionClosed}
+                            className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                           />
                         </td>
                         <td className="px-2 py-1.5 text-right text-[#1E293B]">
@@ -5398,9 +5556,12 @@ export default function POSSales() {
 
             {/* Section 13: Manual Actions */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const discountCount = xInvoices.filter(i => (Number(i.billDiscountAmount) || 0) > 0).length;
-              const discountTotal = xInvoices.reduce((s, i) => s + (Number(i.billDiscountAmount) || 0), 0);
+              // Reuses the same backend-computed bill-discount figures as Section 8
+              // (no separate client recompute of the same number), and sources
+              // "Session Reopened" from the audit log rather than a hardcoded '0'.
+              const discountCount = xSummary.billDiscountCount ?? 0;
+              const discountTotal = xSummary.billDiscount ?? 0;
+              const reopenedCount = xSummary.sessionReopenedCount ?? 0;
               return (
                 <XRTable
                   title="13. Manual Actions / Exception Summary"
@@ -5409,7 +5570,7 @@ export default function POSSales() {
                   rows={[
                     ['Manual Discount', String(discountCount), discountTotal > 0 ? formatCurrencyStr(discountTotal) : '—'],
                     ['Item Void', String(xSummary.voidItemCount ?? 0), xSummary.voidItemCount > 0 ? `${xSummary.voidItemCount} items` : '—'],
-                    ['Session Reopened','0','—'],
+                    ['Session Reopened', String(reopenedCount), reopenedCount > 0 ? `${reopenedCount} time(s)` : '—'],
                   ]}
                 />
               );
@@ -5471,36 +5632,37 @@ export default function POSSales() {
                 ['Cash', xSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="cs4" amount={cashSales} />],
                 ['Card', xSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="cd4" amount={cardSales} />],
                 ['Credit', xSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="cr4" amount={creditSales} />],
+                ...((xSummary.otherSales ?? 0) > 0
+                  ? [['Other', xSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="ot4" amount={xSummary.otherSales} />]]
+                  : []),
               ].filter(r => r[2] !== undefined)}
-              footerRow={['Total Collection', String(invoiceCount), <CurrencyAmount key="tc4" amount={totalSales} />]}
+              // Total Collection = actual tender taken across every mode (cash+card+credit+other),
+              // not the invoice count/value — they can differ (e.g. credit notes, rounding).
+              footerRow={['Total Collection', String(xSummary.totalTenderCount ?? invoiceCount), <CurrencyAmount key="tc4" amount={xSummary.totalPaid ?? totalSales} />]}
             />
 
             {/* Section 5: Card / Bank Settlement */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const cardInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('card') || m.includes('credit card');
-              });
-              const bankInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('bank') || m.includes('transfer');
-              });
-              const onlineInvoices = xInvoices.filter(inv => {
-                const m = (inv.paymentMode || '').toLowerCase();
-                return m.includes('online') || m.includes('wallet');
-              });
-              const cardPayTotal = cardInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
-              const refundTotal = Number(xReportData?.session?.totalRefunds ?? 0);
-              const netCardSettle = cardPayTotal - refundTotal;
-              const bankTotal = bankInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
-              const onlineTotal = onlineInvoices.reduce((s,i)=>s+(Number(i.invoiceTotal)||0),0);
+              // Sourced from the same authoritative tender aggregate as the "Card Sales" KPI
+              // and Section 4 (xSummary.cardSales/cardInvoiceCount) — not re-derived from
+              // invoice.paymentMode text-matching, which double-counted split payments and
+              // could disagree with the rest of the report. Refunds come from real refund
+              // Payment rows for this session (xSummary.cardRefundSales/cardRefundCount),
+              // not the unrelated item-void counter.
+              const cardPayTotal = Number(cardSales) || 0;
+              const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
+              const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
+              const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
+              const netCardSettle = cardPayTotal - cardRefundTotal;
+              const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
+              const bankTotal = Number(xSummary.bankTransferSales ?? 0);
+              const onlineTotal = Number(xSummary.walletSales ?? 0);
               const cardRows = [
-                ['Card Payments', String(cardInvoices.length), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
-                ['Card Refunds', String(xReportData?.session?.totalVoids ?? 0), refundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(refundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
-                ['Net Card Settlement', String(Math.max(0, cardInvoices.length - (xReportData?.session?.totalVoids ?? 0))), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
-                ...(bankTotal > 0 ? [['Bank Transfer Payments', String(bankInvoices.length), <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
-                ...(onlineTotal > 0 ? [['Online / Wallet Payments', String(onlineInvoices.length), <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
+                ['Card Payments', String(cardPayCount), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
+                ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(cardRefundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
+                ['Net Card Settlement', String(netCardCount), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
+                ...(bankTotal > 0 ? [['Bank Transfer Payments', '—', <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
+                ...(onlineTotal > 0 ? [['Online / Wallet Payments', '—', <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
               ];
               return (
                 <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
@@ -5564,10 +5726,17 @@ export default function POSSales() {
 
             {/* Section 8: Discount & Promotion Summary */}
             {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const billDiscountCount = xInvoices.filter(i => (Number(i.billDiscountAmount) || 0) > 0).length;
-              const billDiscountTotal = xInvoices.reduce((s, i) => s + (Number(i.billDiscountAmount) || 0), 0);
-              const totalDiscount = xSummary.totalDiscount ?? billDiscountTotal;
+              // Sourced entirely from the backend's authoritative discount aggregation
+              // (xSummary.billDiscount/lineDiscount + counts) instead of recomputing only
+              // the bill-level figure from raw invoices client-side — that left line-item
+              // discounts silently missing, so the footer (which used totalDiscount, bill+line)
+              // never matched the sum of the rows actually shown.
+              const billDiscountCount = xSummary.billDiscountCount ?? 0;
+              const billDiscountTotal = xSummary.billDiscount ?? 0;
+              const lineDiscountCount = xSummary.lineDiscountCount ?? 0;
+              const lineDiscountTotal = xSummary.lineDiscount ?? 0;
+              const totalDiscount = xSummary.totalDiscount ?? (billDiscountTotal + lineDiscountTotal);
+              const totalDiscountCount = billDiscountCount + lineDiscountCount;
               return (
                 <XRTable
                   title="8. Discount Summary"
@@ -5575,8 +5744,9 @@ export default function POSSales() {
                   cols={['Discount Type','Count','Amount']}
                   rows={[
                     ['Bill Level Discount', String(billDiscountCount), <CurrencyAmount key="d8b" amount={billDiscountTotal} />],
+                    ['Line Item Discount', String(lineDiscountCount), <CurrencyAmount key="d8l" amount={lineDiscountTotal} />],
                   ]}
-                  footerRow={['Total Discount', String(billDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
+                  footerRow={['Total Discount', String(totalDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
                 />
               );
             })()}
@@ -5587,7 +5757,7 @@ export default function POSSales() {
               icon={<RotateCcw className="h-4 w-4" />}
               cols={['Description','Count','Amount']}
               rows={[
-                ['Total Refunds', String(xReportData?.session?.totalVoids ?? 0), <CurrencyAmount key="r9r" amount={xReportData?.session?.totalRefunds ?? 0} />],
+                ['Total Refunds', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
               ]}
             />
 
@@ -5701,12 +5871,12 @@ export default function POSSales() {
           <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
           <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
           {!isBalanced && actualCash > 0 ? (
-            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
           ) : (
-            <button onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
+            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
           )}
           <button
-            onClick={() => { if (currentSession?.status === 'OPEN') setShowCloseSessionDialog(true); }}
+            onClick={openCloseSessionDialog}
             disabled={currentSession?.status !== 'OPEN'}
             className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-5 py-2 rounded flex items-center gap-1">
             <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
@@ -6298,7 +6468,18 @@ export default function POSSales() {
 
                 <div className="space-y-2">
                   {(() => {
-                    const sessionExpectedCash = (Number(currentSession?.openingCash) || 0) + (Number(currentSession?.totalCashSales) || 0);
+                    // Same source as the X-Report page: prefer the backend's authoritative
+                    // expectedCash (live tender + cash drops), falling back to the identical
+                    // formula only while xReportData hasn't loaded yet — never the old
+                    // simplified opening+totalCashSales calc, which ignored cash drops and
+                    // caused the modal to disagree with the X-Report.
+                    const xSummaryModal = xReportData?.summary || {};
+                    const sessionExpectedCash = xSummaryModal.expectedCash ?? (
+                      (Number(currentSession?.openingCash) || 0)
+                      + (Number(xSummaryModal.cashSales) || 0)
+                      + (Number(xSummaryModal.cashDropIn) || 0)
+                      - (Number(xSummaryModal.cashDropOut) || 0)
+                    );
                     const actualCounted = calculateDenominationTotal(closingDenominations);
                     const variance = actualCounted - sessionExpectedCash;
                     return (
@@ -6329,7 +6510,7 @@ export default function POSSales() {
               <div className="space-y-4 pt-2">
                 {/* Session card summary */}
                 {(() => {
-                  const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                  const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                   return (
                     <div className="rounded-xl border border-[#327F74]/30 bg-[#327F74]/5 p-4">
                       <p className="text-xs font-bold uppercase tracking-wide text-[#327F74] mb-3">Session Card Totals</p>
@@ -6384,7 +6565,7 @@ export default function POSSales() {
 
                   {/* Variance */}
                   {(() => {
-                    const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                    const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                     const settled = parseFloat(cardSettlementAmount) || 0;
                     const cardVariance = settled - sessionCardTotal;
                     return cardSettlementAmount ? (
@@ -6408,7 +6589,7 @@ export default function POSSales() {
 
                 {/* Quick-fill */}
                 {(() => {
-                  const sessionCardTotal = Number(currentSession?.totalCardSales) || 0;
+                  const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                   return (
                     <button type="button"
                       onClick={() => setCardSettlementAmount(sessionCardTotal.toFixed(2))}
@@ -8726,7 +8907,11 @@ export default function POSSales() {
               .filter(it => (returnSelectedItems[it.itemCode] || 0) > 0)
               .map(it => {
                 const qty = returnSelectedItems[it.itemCode] || 0;
-                const itemStatus = (returnItemConditions[it.itemCode] || 'Good') === 'Damaged' ? 'Damaged/Scrap' : 'Good/Restock';
+                // Send the raw condition ('Good' / 'Damaged') — the backend's restock/COGS-reversal
+                // logic does an exact match against "Good"; the display-style "Good/Restock" /
+                // "Damaged/Scrap" strings this used to send never matched, so every POS-originated
+                // return was silently treated as scrap (no stock restored, no COGS reversed).
+                const itemStatus = returnItemConditions[it.itemCode] || 'Good';
                 const itemTotal = qty * parseFloat(it.unitPrice || 0) * (1 + parseFloat(it.taxRate || 5) / 100);
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
@@ -8769,6 +8954,26 @@ export default function POSSales() {
                   batchNumber: i.batches?.[0]?.batchNumber || '',
                 })),
               };
+              const returnA4Data = {
+                title: 'CREDIT NOTE',
+                docNo: saved.returnNumber || '',
+                date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
+                customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
+                items: itemsPayload.map(i => ({
+                  code: i.itemCode || '',
+                  name: i.itemName,
+                  desc: `Orig. Invoice: ${inv.invoiceNumber}`,
+                  qty: i.returnQty,
+                  price: i.price,
+                  disc: 0,
+                  tax: i.taxRate || 5,
+                  taxAmt: i.taxAmount || 0,
+                  total: i.total,
+                  batchNumber: i.batches?.[0]?.batchNumber || '',
+                })),
+                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
+                meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
+              };
               if (tplReturnPaper === 'A4') {
                 const returnA4Template = buildPosA4Template(tplReturnFooter, {
                   showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
@@ -8779,26 +8984,6 @@ export default function POSSales() {
                   colItemCode: tplReturnColItemCode, colBatchNo: tplReturnColBatchNo,
                   colDiscount: tplReturnColDiscount, colVatPct: tplReturnColVatPct, colVatAmt: tplReturnColVatAmt,
                 }, 'Sales Return');
-                const returnA4Data = {
-                  title: 'CREDIT NOTE',
-                  docNo: saved.returnNumber || '',
-                  date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
-                  customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
-                  items: itemsPayload.map(i => ({
-                    code: i.itemCode || '',
-                    name: i.itemName,
-                    desc: `Orig. Invoice: ${inv.invoiceNumber}`,
-                    qty: i.returnQty,
-                    price: i.price,
-                    disc: 0,
-                    tax: i.taxRate || 5,
-                    taxAmt: i.taxAmount || 0,
-                    total: i.total,
-                    batchNumber: i.batches?.[0]?.batchNumber || '',
-                  })),
-                  totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
-                  meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
-                };
                 const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
                 printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
               } else {

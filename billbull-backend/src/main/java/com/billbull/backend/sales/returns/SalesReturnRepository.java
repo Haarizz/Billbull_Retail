@@ -18,6 +18,13 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);
 
+    /** Z-Report Returns/Refund Summary: a single business day's returns for a branch,
+     *  with line items fetched so quantities can be summed without N+1 lazy loads. */
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items " +
+           "WHERE r.returnDate = :date AND (:branchId IS NULL OR r.branch.id = :branchId)")
+    List<SalesReturn> findByReturnDateAndBranchWithItems(@Param("date") LocalDate date,
+                                                          @Param("branchId") Long branchId);
+
     // ARCHFIX §1.6: items is now LAZY — these JOIN FETCH it for the read paths that serialize the
     // full return (list + by-id). The nested SalesReturnItem.batches load via @BatchSize. DISTINCT
     // collapses the row duplication from the one-to-many join.

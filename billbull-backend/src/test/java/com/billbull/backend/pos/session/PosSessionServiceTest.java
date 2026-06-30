@@ -29,6 +29,7 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
 import com.billbull.backend.sales.payment.PaymentRepository;
+import com.billbull.backend.sales.returns.SalesReturnRepository;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -62,6 +63,7 @@ class PosSessionServiceTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private PosAuditLogRepository auditLogRepository;
     @Mock private PosTerminalRepository terminalRepository;
+    @Mock private SalesReturnRepository returnRepository;
 
     private PosSessionService service;
 
@@ -69,13 +71,14 @@ class PosSessionServiceTest {
     void setUp() {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
-                terminalRepository);
+                terminalRepository, returnRepository);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no tender / audit rows unless a test stubs them.
         lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
         lenient().when(paymentRepository.findTenderForInvoices(any())).thenReturn(List.of());
         lenient().when(auditLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         lenient().when(terminalRepository.findByTerminalId(any())).thenReturn(java.util.Optional.empty());
+        lenient().when(returnRepository.findByReturnDateAndBranchWithItems(any(), any())).thenReturn(List.of());
     }
 
     // ---------------------------------------------------------------------
@@ -86,12 +89,16 @@ class PosSessionServiceTest {
     void closeSessionComputesExpectedCashAndDifference() {
         PosSession session = openSession();
         session.setOpeningCash(bd("100"));
-        session.setTotalCashSales(bd("250"));
         session.getCashMovements().add(cashMovement("DROP_IN", bd("50")));
         session.getCashMovements().add(cashMovement("DROP_OUT", bd("20")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        // closeSession() now derives expected cash from actual cash tender collected
+        // (same formula as getXReport()), not the session.totalCashSales counter.
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(250.0, 0.0)));
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
 
-        // expected = opening(100) + cashSales(250) + (dropIn 50 - dropOut 20) = 380
+        // expected = opening(100) + cashTender(250) + (dropIn 50 - dropOut 20) = 380
         PosSession closed = service.closeSession(1L, bd("400"), "ok");
 
         assertMoney("380", closed.getExpectedCash());
@@ -99,6 +106,31 @@ class PosSessionServiceTest {
         assertMoney("20", closed.getCashDifference());
         assertMoney("400", closed.getClosingCash());
         assertEquals(PosSessionStatus.CLOSED, closed.getStatus());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void closeSessionAndXReportAgreeOnExpectedCashForNonStandardPaymentMode() {
+        // Regression test for the modal/X-Report desync: a payment mode that isn't a
+        // literal "cash"/"card"/"credit" match (e.g. a voucher tender row) must still
+        // produce the SAME expected cash from closeSession() and getXReport(), since
+        // both now share computeExpectedCash()/aggregateTender() instead of diverging
+        // (one via the session.totalCashSales counter, the other via a live query).
+        PosSession session = openSession();
+        session.setOpeningCash(bd("100"));
+        session.getCashMovements().add(cashMovement("DROP_IN", bd("50")));
+        session.getCashMovements().add(cashMovement("DROP_OUT", bd("20")));
+        when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(250.0, 0.0)));
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
+
+        Map<String, Object> report = service.getXReport(1L);
+        Map<String, Object> summary = (Map<String, Object>) report.get("summary");
+        PosSession closed = service.closeSession(1L, bd("400"), "ok");
+
+        assertMoney("380", (BigDecimal) summary.get("expectedCash"));
+        assertMoney("380", closed.getExpectedCash());
     }
 
     @Test

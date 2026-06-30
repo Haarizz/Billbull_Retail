@@ -20,6 +20,8 @@ import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.sales.payment.Payment;
+import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
@@ -60,6 +62,7 @@ public class PosCheckoutController {
     private final RolePermissionService permissionService;
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
+    private final PaymentRepository paymentRepository;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -69,7 +72,8 @@ public class PosCheckoutController {
                                   ProductPricingRepository pricingRepository,
                                   RolePermissionService permissionService,
                                   ProductService productService,
-                                  EmployeeRepository employeeRepository) {
+                                  EmployeeRepository employeeRepository,
+                                  PaymentRepository paymentRepository) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -82,6 +86,7 @@ public class PosCheckoutController {
         this.permissionService = permissionService;
         this.productService = productService;
         this.employeeRepository = employeeRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     @PostMapping
@@ -254,7 +259,7 @@ public class PosCheckoutController {
      * returning the best match (latest first).
      */
     @GetMapping("/invoices/lookup")
-    @PreAuthorize("hasPermission(null, 'sales', 'view')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> lookupInvoiceForReturn(
             @RequestParam(required = false) String invoiceNumber,
             @RequestParam(required = false) String customerMobile,
@@ -262,17 +267,17 @@ public class PosCheckoutController {
             @RequestParam(required = false) Long branchId) {
 
         if (invoiceNumber != null && !invoiceNumber.isBlank()) {
-            Optional<SalesInvoice> found = invoiceRepository.findByInvoiceNumber(invoiceNumber.trim().toUpperCase());
+            // Items are eagerly fetched in the query itself — the repository call's own
+            // transaction/session is closed by the time the controller body runs, so a
+            // post-hoc inv.getItems().size() here throws LazyInitializationException.
+            Optional<SalesInvoice> found = invoiceRepository.findByInvoiceNumberWithItems(invoiceNumber.trim().toUpperCase());
             if (found.isEmpty()) {
                 // Try prefix search — return first (latest) match
                 List<SalesInvoice> byPrefix = invoiceRepository.findByInvoiceNumberPrefixWithItems(invoiceNumber.trim().toUpperCase());
                 if (byPrefix.isEmpty()) return ResponseEntity.notFound().build();
                 return ResponseEntity.ok(byPrefix.get(0));
             }
-            SalesInvoice inv = found.get();
-            // Eagerly initialize items to avoid lazy-load issues in serialization
-            if (inv.getItems() != null) inv.getItems().size();
-            return ResponseEntity.ok(inv);
+            return ResponseEntity.ok(found.get());
         }
 
         if (customerMobile != null && !customerMobile.isBlank()) {
@@ -284,9 +289,14 @@ public class PosCheckoutController {
             String code = customer.get().getCode();
             LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now().minusDays(90);
             List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, LocalDate.now(), branchId);
-            return invoices.stream()
+            Optional<String> matchedInvoiceNumber = invoices.stream()
                     .filter(i -> code.equalsIgnoreCase(i.getCustomerCode()))
                     .findFirst()
+                    .map(SalesInvoice::getInvoiceNumber);
+            if (matchedInvoiceNumber.isEmpty()) return ResponseEntity.notFound().build();
+            // Re-fetch with items eagerly fetched (findPosInvoicesByDateRange is a
+            // summary-only projection — see its own doc comment).
+            return invoiceRepository.findByInvoiceNumberWithItems(matchedInvoiceNumber.get())
                     .map(ResponseEntity::ok)
                     .orElse(ResponseEntity.notFound().build());
         }
@@ -306,7 +316,36 @@ public class PosCheckoutController {
             @RequestParam(required = false) Long branchId) {
         LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now();
         LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : LocalDate.now();
-        return invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
+        List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
+        applyActualPaymentMode(invoices);
+        return invoices;
+    }
+
+    /** Overrides each invoice's stored {@code paymentMode} text with a label built from the
+     *  actual recorded payment legs (e.g. "Cash + Visa") whenever more than one distinct mode
+     *  was used. The stored field is set once at invoice creation (or, for delivery orders,
+     *  never updated after settlement) and can drift out of sync with reality whenever a sale
+     *  is split or its balance is settled later — the {@code sales_payments} ledger is the only
+     *  place split/late-settled tender is reliably recorded, so it's the source of truth here. */
+    private void applyActualPaymentMode(List<SalesInvoice> invoices) {
+        List<String> numbers = invoices.stream()
+                .map(SalesInvoice::getInvoiceNumber)
+                .filter(n -> n != null && !n.isBlank())
+                .toList();
+        if (numbers.isEmpty()) return;
+
+        Map<String, java.util.LinkedHashSet<String>> modesByInvoice = new java.util.HashMap<>();
+        for (Payment p : paymentRepository.findTenderForInvoices(numbers)) {
+            if (p.getLinkedInvoice() == null || p.getPaymentMode() == null) continue;
+            modesByInvoice.computeIfAbsent(p.getLinkedInvoice(), k -> new java.util.LinkedHashSet<>())
+                    .add(p.getPaymentMode());
+        }
+        for (SalesInvoice inv : invoices) {
+            java.util.LinkedHashSet<String> modes = modesByInvoice.get(inv.getInvoiceNumber());
+            if (modes != null && modes.size() > 1) {
+                inv.setPaymentMode(String.join(" + ", modes));
+            }
+        }
     }
 
     /**
@@ -525,6 +564,14 @@ public class PosCheckoutController {
         }
         inv.setTaxInclusive(Boolean.TRUE.equals(req.getTaxInclusive()));
 
+        // Batch-loaded product pricings, keyed by item code — used both for the price-override
+        // gate below and to snapshot each line's cost-at-sale (see the items-mapping loop
+        // further down), the same way DeliveryNoteService/SalesOrderService already do for
+        // non-POS sales. Without this snapshot, a Sales Return against a POS sale has no cost
+        // to reverse if the product's cost is ever cleared/changed after the sale — Returns
+        // approval then refuses to post (an unbalanced COGS/Inventory entry is worse than none).
+        Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
+
         // §2.4 Price override gate: batch-load product pricings and verify that any
         // below-list-price sale is made by a user with the pos_price_override permission.
         if (req.getItems() != null && !req.getItems().isEmpty()) {
@@ -533,7 +580,6 @@ public class PosCheckoutController {
                     .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
                     .distinct().collect(Collectors.toList());
             if (!codes.isEmpty()) {
-                Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
                 productRepository.findByCodeIn(codes).forEach(p -> {
                     pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
                 });
@@ -565,6 +611,10 @@ public class PosCheckoutController {
                 si.setPrice(item.getPrice() != null ? java.math.BigDecimal.valueOf(item.getPrice()) : null);
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
                 si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
+                // Cost-at-sale snapshot, so a later Sales Return can reverse COGS/Inventory
+                // even if the product's cost is changed/cleared after this sale.
+                ProductPricing itemPricing = item.getItemCode() != null ? pricingByCode.get(item.getItemCode()) : null;
+                if (itemPricing != null) si.setCost(itemPricing.getCost());
                 si.setVoided(Boolean.TRUE.equals(item.getVoided()));
                 if (si.isVoided()) {
                     si.setVoidReason(item.getVoidReason());
