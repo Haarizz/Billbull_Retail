@@ -385,7 +385,6 @@ export default function POSSales() {
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
   const [xReportCardVerified, setXReportCardVerified] = useState(false);
-  const [xReportChecklist, setXReportChecklist] = useState({cashCount: false, varianceReviewed: false, cardSettlement: false, holdBills: false, supervisorApproval: false, sessionClosed: false});
   const [xReportCashierName, setXReportCashierName] = useState('Ahmad Al-Farsi');
   const [xReportSupervisorName, setXReportSupervisorName] = useState('');
   const [xReportClosingRemarks, setXReportClosingRemarks] = useState('');
@@ -5416,32 +5415,47 @@ export default function POSSales() {
               );
             })()}
 
-            {/* Section 14: Checklist */}
+            {/* Section 14: Checklist — every flag below is derived live from real
+                session/cash/card/hold-bill state, never from user input. Cashiers
+                cannot tick these; they reflect actual validation outcomes. */}
             <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
                 <span className="text-[#327F74]"><CheckCircle className="h-4 w-4" /></span>
                 <span className="text-sm text-[#1E293B]">14. Close Session Confirmation</span>
               </div>
               <div className="p-4 space-y-2">
-                {([
-                  ['cashCount','Cash Count Completed'],
-                  ['varianceReviewed','Variance Reviewed'],
-                  ['cardSettlement','Card Settlement Verified'],
-                  ['holdBills','Pending Hold Bills Checked'],
-                  ['supervisorApproval','Supervisor Approval'],
-                  ['sessionClosed','Session Closed Successfully'],
-                ]).map(([key,label]) => (
-                  <label key={key} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={xReportChecklist[key]}
-                      onChange={e => setXReportChecklist({...xReportChecklist,[key]:e.target.checked})}
-                      className="h-3.5 w-3.5 accent-[#327F74] rounded"
-                    />
-                    <span className={`text-xs ${xReportChecklist[key]?'text-green-700 line-through':'text-[#1E293B]'}`}>{label}</span>
-                    {xReportChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
-                  </label>
-                ))}
+                {(() => {
+                  const sessionStatusNow = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+                  const supervisorApprovalRequired = !isBalanced && actualCash > 0;
+                  const closeChecklist = {
+                    cashCount: actualCash > 0,
+                    varianceReviewed: actualCash > 0 && (isBalanced || xReportVarianceRemarks.trim().length > 0),
+                    cardSettlement: xReportCardVerified,
+                    holdBills: (heldSales || []).length === 0,
+                    supervisorApproval: !supervisorApprovalRequired,
+                    sessionClosed: sessionStatusNow === 'CLOSED',
+                  };
+                  return [
+                    ['cashCount', 'Cash Count Completed'],
+                    ['varianceReviewed', 'Variance Reviewed'],
+                    ['cardSettlement', 'Card Settlement Verified'],
+                    ['holdBills', 'Pending Hold Bills Checked'],
+                    ['supervisorApproval', 'Supervisor Approval'],
+                    ['sessionClosed', 'Session Closed Successfully'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 cursor-not-allowed">
+                      <input
+                        type="checkbox"
+                        checked={closeChecklist[key]}
+                        disabled
+                        readOnly
+                        className="h-3.5 w-3.5 accent-[#327F74] rounded cursor-not-allowed disabled:opacity-100"
+                      />
+                      <span className={`text-xs transition-colors duration-200 ${closeChecklist[key] ? 'text-green-700 line-through' : 'text-[#1E293B]'}`}>{label}</span>
+                      {closeChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
+                    </label>
+                  ));
+                })()}
               </div>
             </div>
           </div>

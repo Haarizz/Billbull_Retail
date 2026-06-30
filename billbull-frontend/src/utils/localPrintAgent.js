@@ -1,4 +1,5 @@
 import { printZplBatch } from "./zebraZpl";
+import { createPrintJob, dispatchPrintJob, reportPrintJobResult } from "../api/posPrintJobApi";
 
 const PRINT_AGENT_BASES = [
   "http://127.0.0.1:19777",
@@ -119,7 +120,22 @@ export const testConfiguredPrinter = async (printer, { testText, labelPayload } 
   });
 };
 
-export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title }) => {
+// Phase B (Device Manager print-job spine): every receipt print is also recorded as a backend
+// pos_print_jobs row for audit/queue visibility, in addition to the existing direct call below.
+// Job bookkeeping is strictly best-effort and must never block or fail an actual print — until
+// the external Local Device Agent executable is updated to poll the job queue itself, the browser
+// remains the one actually invoking the agent for receipts. See
+// docs/pos-device-architecture-specification-v2-2026-06-30.md §10.3 for the documented interim state.
+const trackPrintJobSafely = async (fn, label) => {
+  try {
+    return await fn();
+  } catch (err) {
+    console.warn(`[print-job] ${label} failed (non-blocking):`, err);
+    return null;
+  }
+};
+
+export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title, sourceType, sourceRefId } = {}) => {
   if (!printer) {
     throw new Error("Printer configuration is missing.");
   }
@@ -130,16 +146,40 @@ export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, tit
   } else if (isBlank(printer.systemPrinterName)) {
     throw new Error("Configured printer does not have a system printer name.");
   }
-  return printReceiptThroughAgent({
-    printerName: printer.systemPrinterName,
-    text: receiptText,
-    title: title || "BillBull POS Receipt",
-    paperWidthMm: paperWidthToMm(printer.paperSize),
-    connectionType: printer.connectionType,
-    ipAddress: printer.ipAddress,
-    portNumber: printer.portNumber,
-    deviceIdentifier: printer.deviceIdentifier,
-  });
+
+  const job = printer.id
+    ? await trackPrintJobSafely(() => createPrintJob({
+        printerId: printer.id,
+        jobType: "RECEIPT",
+        sourceType: sourceType || null,
+        sourceRefId: sourceRefId || null,
+        payload: receiptText,
+      }), "create print job")
+    : null;
+  if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+
+  try {
+    const result = await printReceiptThroughAgent({
+      printerName: printer.systemPrinterName,
+      text: receiptText,
+      title: title || "BillBull POS Receipt",
+      paperWidthMm: paperWidthToMm(printer.paperSize),
+      connectionType: printer.connectionType,
+      ipAddress: printer.ipAddress,
+      portNumber: printer.portNumber,
+      deviceIdentifier: printer.deviceIdentifier,
+    });
+    if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
+    return result;
+  } catch (err) {
+    if (job) {
+      await trackPrintJobSafely(
+        () => reportPrintJobResult(job.id, { success: false, errorMessage: err?.message || "Print failed." }),
+        "report print job failure",
+      );
+    }
+    throw err;
+  }
 };
 
 export const runtimeStatusFromPrintError = (error) => {
