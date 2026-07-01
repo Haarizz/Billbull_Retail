@@ -10,6 +10,8 @@ import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
 import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
+import { assignTerminalCounter } from '../../../api/posApi';
+import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 
@@ -93,6 +95,7 @@ const POSConsole = React.memo((props) => {
       notes: '',
     });
 
+    const [counterList, setCounterList] = useState([]);
     const [printerDialogOpen, setPrinterDialogOpen] = useState(false);
     const [editingPrinter, setEditingPrinter] = useState(null);
     const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
@@ -116,6 +119,13 @@ const POSConsole = React.memo((props) => {
       if (consoleTab !== 'devices') return;
       loadPrinterConfigs?.();
     }, [consoleTab, loadPrinterConfigs, currentTerminal?.branchId]);
+
+    useEffect(() => {
+      if (consoleTab !== 'terminals') return;
+      const branchId = currentTerminal?.branchId;
+      if (!branchId) return;
+      getActiveCounters(branchId).then(data => setCounterList(Array.isArray(data) ? data : [])).catch(() => {});
+    }, [consoleTab, currentTerminal?.branchId]);
 
     const refreshAgentPrinters = async () => {
       setAgentLoading(true);
@@ -254,8 +264,7 @@ const POSConsole = React.memo((props) => {
       { id:'devices',   label:'Devices',        icon:<Printer className="h-4 w-4" /> },
       { id:'dashboard', label:'Dashboard',      icon:<LayoutDashboard className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
-      { id:'terminals', label:'Terminals',      icon:<Hash className="h-4 w-4" /> },
-      { id:'counters',  label:'Counters',       icon:<Layers className="h-4 w-4" /> },
+      { id:'terminals', label:'Terminals & Counters', icon:<Hash className="h-4 w-4" /> },
     ];
 
     const loadTerminals = async () => {
@@ -1636,6 +1645,7 @@ const POSConsole = React.memo((props) => {
           {/* ══ TERMINALS ══ */}
           {consoleTab === 'terminals' && (() => {
             const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
+
             const activeCount = terminalList.filter(t => t.status === 'ACTIVE').length;
             const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
             const inactiveCount = terminalList.filter(t => t.status === 'INACTIVE').length;
@@ -1868,7 +1878,29 @@ const POSConsole = React.memo((props) => {
                                 <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                                   <span className="flex items-center gap-1 text-xs text-gray-500">
                                     <Hash className="h-3 w-3 text-gray-300" />
-                                    <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                    {counterList.length > 0 ? (
+                                      <select
+                                        value={t.counterId ?? ''}
+                                        onChange={async (e) => {
+                                          const counterId = e.target.value ? Number(e.target.value) : null;
+                                          try {
+                                            const updated = await assignTerminalCounter(t.id, counterId);
+                                            setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? { ...x, counterId: updated.counterId, counterName: updated.counterName } : x));
+                                            if (currentTerminal?.terminalId === t.terminalId) {
+                                              setCurrentTerminal(prev => ({ ...prev, counterId: updated.counterId, counterName: updated.counterName }));
+                                            }
+                                          } catch (e) { console.warn('Counter assign failed', e); }
+                                        }}
+                                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 bg-white focus:outline-none focus:border-[#F5C742]"
+                                      >
+                                        <option value="">— No Counter —</option>
+                                        {counterList.map(c => (
+                                          <option key={c.id} value={c.id}>{c.counterName} ({c.counterCode})</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                    )}
                                   </span>
                                   {t.registeredBy && (
                                     <span className="flex items-center gap-1 text-xs text-gray-400">
@@ -2024,14 +2056,27 @@ const POSConsole = React.memo((props) => {
                   <span className="text-[#b8920e] font-semibold flex items-center gap-1"><Star className="h-3 w-3 fill-current" />{terminalList.filter(t => t.isMainPos).length} main POS</span>
                 </div>
               )}
+
+              {/* ── Counter Management (embedded) ── */}
+              <div className="border-t border-gray-200 pt-6 mt-2">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center">
+                    <Layers className="h-4 w-4 text-[#b8920e]" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-[#1E293B] leading-none">Counter Management</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">Create and manage POS counters for this branch</p>
+                  </div>
+                </div>
+                <POSCounters onCounterChange={() => {
+                  const branchId = currentTerminal?.branchId;
+                  if (branchId) getActiveCounters(branchId).then(data => setCounterList(Array.isArray(data) ? data : [])).catch(() => {});
+                }} />
+              </div>
+
             </div>
             );
           })()}
-
-          {/* ══ COUNTERS ══ */}
-          {consoleTab === 'counters' && (
-            <POSCounters />
-          )}
 
         </div>
       </div>

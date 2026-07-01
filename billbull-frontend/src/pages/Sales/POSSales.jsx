@@ -707,6 +707,7 @@ export default function POSSales() {
   // Configure: which right-panel buttons are visible
   // BillBull Console
   const [consoleTab, setConsoleTab] = useState('layout');
+
   const [templateSubTab, setTemplateSubTab] = useState('receipt');
   const [terminalList, setTerminalList] = useState([]);
   const [terminalsLoading, setTerminalsLoading] = useState(false);
@@ -1762,6 +1763,17 @@ export default function POSSales() {
       setHandoverEmail('');
       setHandoverPassword('');
       setTerminalLockedBy(null);
+
+      // Handover unlocks the terminal but the ongoing session (owned by the
+      // previous cashier) still exists — resume it rather than falling through
+      // to "Start Session".
+      if (currentTerminal?.terminalId) {
+        try {
+          const active = await getActivePosSession(currentTerminal.terminalId);
+          if (active?.id) setCurrentSession(active);
+        } catch { /* no active session to resume */ }
+      }
+
       showFeedback(
         `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
         'success'
@@ -6370,30 +6382,30 @@ export default function POSSales() {
 
       {/* ─── TERMINAL LOCKED BY ACTIVE CASHIER (SHIFT HANDOVER OVERLAY) ─── */}
       {terminalLockedBy && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100">
-            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-8 text-center text-white relative">
-              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-4 border border-white/20 shadow-inner">
-                <Lock className="h-10 w-10 text-white animate-pulse" />
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <Lock className="h-7 w-7 sm:h-10 sm:w-10 text-white animate-pulse" />
               </div>
-              <h2 className="text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
-              <p className="text-white/80 text-sm font-medium">This POS Terminal has an ongoing session</p>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">This POS Terminal has an ongoing session</p>
             </div>
-            <div className="p-8 space-y-6">
-              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 flex items-center gap-4 shadow-sm">
-                <div className="w-12 h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-                  <UserCheck className="h-6 w-6" />
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4 shadow-sm">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                  <UserCheck className="h-5 w-5 sm:h-6 sm:w-6" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Current Occupant</p>
-                  <p className="text-lg font-extrabold text-slate-800">{terminalLockedBy}</p>
+                  <p className="text-base sm:text-lg font-extrabold text-slate-800 break-words">{terminalLockedBy}</p>
                   <p className="text-xs text-slate-500 mt-0.5">Session is strictly isolated to prevent multi-device collision.</p>
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-5 space-y-3">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5 space-y-3">
                 <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                  <Shield className="h-5 w-5 text-amber-600" />
+                  <Shield className="h-5 w-5 text-amber-600 shrink-0" />
                   <span>Supervisor Override &amp; Shift Handover</span>
                 </div>
                 <p className="text-xs text-amber-700 leading-relaxed">
@@ -6410,7 +6422,7 @@ export default function POSSales() {
                       value={handoverEmail}
                       onChange={(e) => { setHandoverEmail(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   <div>
@@ -6422,7 +6434,7 @@ export default function POSSales() {
                       value={handoverPassword}
                       onChange={(e) => { setHandoverPassword(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   {handoverError && (
@@ -6433,7 +6445,7 @@ export default function POSSales() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -6443,7 +6455,7 @@ export default function POSSales() {
                     setTerminalLockedBy(null);
                     showFeedback('Viewing dashboard in read-only mode', 'info');
                   }}
-                  className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
                 >
                   Dismiss (Read-Only)
                 </button>
@@ -6451,7 +6463,7 @@ export default function POSSales() {
                   type="button"
                   disabled={handoverBusy}
                   onClick={handleHandoverSubmit}
-                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <CheckCircle className="h-4 w-4" />
                   {handoverBusy ? 'Verifying…' : 'Authorize Handover'}

@@ -121,6 +121,15 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
         });
+
+        // SUPERVISOR: POS floor oversight — authorizes cashier shift handovers/takeovers,
+        // read access to sales + dashboard, no finance/inventory management.
+        roleRepository.findByName("SUPERVISOR").ifPresent(role -> {
+            seedIfAbsent(role, "sales",        true,  false, false, true,  false);
+            seedIfAbsent(role, "customer",     true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
+        });
         roleRepository.findByName("BRANCH_ADMIN").ifPresent(role -> {
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
