@@ -39,6 +39,7 @@ public class RBACInitializer {
             createRoleIfNotExists(roleRepository, "ADMIN");
             createRoleIfNotExists(roleRepository, "BRANCH_ADMIN");
             createRoleIfNotExists(roleRepository, "MANAGER");
+            createRoleIfNotExists(roleRepository, "SUPERVISOR");
             createRoleIfNotExists(roleRepository, "SALES");
             createRoleIfNotExists(roleRepository, "INVENTORY_MANAGER");
             createRoleIfNotExists(roleRepository, "ACCOUNTANT");

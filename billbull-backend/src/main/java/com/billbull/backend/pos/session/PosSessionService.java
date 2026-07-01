@@ -183,6 +183,24 @@ public class PosSessionService {
         return saved;
     }
 
+    /**
+     * Reassigns the open session on a terminal to a new cashier after a supervisor-authorized
+     * shift handover, so the incoming cashier can resume the existing session (its cash drawer,
+     * invoices, etc.) instead of being forced into "Start Session".
+     */
+    @Transactional
+    public void reassignSessionOwner(String terminalId, String newOwnerUsername) {
+        if (terminalId == null || terminalId.isBlank() || newOwnerUsername == null || newOwnerUsername.isBlank()) {
+            return;
+        }
+        Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+        repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
+                .ifPresent(session -> {
+                    session.setOpenedBy(newOwnerUsername);
+                    repo.save(session);
+                });
+    }
+
     @Transactional(readOnly = true)
     public Optional<PosSession> getActiveSession(String terminalId) {
         if (terminalId != null && !terminalId.isBlank()) {

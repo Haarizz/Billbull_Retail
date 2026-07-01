@@ -19,7 +19,9 @@ function timeAgo(iso) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function POSTerminals({ branchId }) {
+export default function POSTerminals({ branchId: branchIdProp }) {
+  const { activeBranchId, defaultBranch } = useBranch();
+  const branchId = branchIdProp ?? (activeBranchId !== "ALL" ? activeBranchId : null) ?? defaultBranch?.id;
   const [terminals, setTerminals] = useState([]);
   const [pending, setPending] = useState([]);
   const [counters, setCounters] = useState([]);

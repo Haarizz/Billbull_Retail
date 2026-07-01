@@ -21,40 +21,42 @@ function CounterForm({ initial, onSave, onCancel, saving }) {
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const inputCls = "mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors";
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-gray-600">Counter Code</label>
-          <input value={form.counterCode} onChange={set("counterCode")} placeholder="Auto" className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Counter Code</label>
+          <input value={form.counterCode} onChange={set("counterCode")} placeholder="Auto" className={inputCls} />
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-600">Counter Name *</label>
-          <input value={form.counterName} onChange={set("counterName")} placeholder="e.g. Counter 1" className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Counter Name *</label>
+          <input value={form.counterName} onChange={set("counterName")} placeholder="e.g. Counter 1" className={inputCls} />
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-gray-600">Description</label>
-        <input value={form.description} onChange={set("description")} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Description</label>
+        <input value={form.description} onChange={set("description")} className={inputCls} />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-gray-600">Cash Drawer</label>
-          <input value={form.defaultCashDrawer} onChange={set("defaultCashDrawer")} placeholder="Device ID" className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Cash Drawer</label>
+          <input value={form.defaultCashDrawer} onChange={set("defaultCashDrawer")} placeholder="Device ID" className={inputCls} />
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-600">Receipt Printer</label>
-          <input value={form.defaultReceiptPrinter} onChange={set("defaultReceiptPrinter")} placeholder="Device ID" className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Receipt Printer</label>
+          <input value={form.defaultReceiptPrinter} onChange={set("defaultReceiptPrinter")} placeholder="Device ID" className={inputCls} />
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-gray-600">Display Order</label>
-        <input type="number" value={form.displayOrder} onChange={set("displayOrder")} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Display Order</label>
+        <input type="number" value={form.displayOrder} onChange={set("displayOrder")} className={inputCls} />
       </div>
       <div className="flex justify-end gap-2 pt-2">
-        <button onClick={onCancel} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+        <button onClick={onCancel} className="px-5 py-2 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 font-semibold text-gray-500 transition-colors">Cancel</button>
         <button onClick={() => onSave(form)} disabled={saving || !form.counterName}
-          className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
+          className="px-5 py-2 text-sm bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold rounded-xl disabled:opacity-50 transition-colors">
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
@@ -62,7 +64,7 @@ function CounterForm({ initial, onSave, onCancel, saving }) {
   );
 }
 
-export default function POSCounters() {
+export default function POSCounters({ onCounterChange }) {
   const [counters, setCounters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -98,6 +100,7 @@ export default function POSCounters() {
       }
       setShowForm(false);
       setEditing(null);
+      onCounterChange?.();
     } catch (e) {
       setActionError(e?.response?.data?.message || "Save failed.");
     } finally {
@@ -110,6 +113,7 @@ export default function POSCounters() {
     try {
       const updated = await setCounterStatus(counter.id, newStatus);
       setCounters((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      onCounterChange?.();
     } catch (e) {
       setActionError(e?.response?.data?.message || "Status update failed.");
     }
@@ -120,21 +124,19 @@ export default function POSCounters() {
     try {
       await deleteCounter(id);
       setCounters((prev) => prev.filter((c) => c.id !== id));
+      onCounterChange?.();
     } catch (e) {
       setActionError(e?.response?.data?.message || "Delete failed.");
     }
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800">Counter Management</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Manage POS counters for this branch</p>
-        </div>
+    <div className="max-w-4xl">
+      <div className="flex items-center justify-between mb-4">
+        <div />
         <button
           onClick={() => { setEditing(null); setShowForm(true); setActionError(null); }}
-          className="px-4 py-2 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600"
+          className="px-4 py-2 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm font-bold rounded-xl transition-colors"
         >
           + New Counter
         </button>
@@ -147,23 +149,26 @@ export default function POSCounters() {
       )}
 
       {(showForm && !editing) && (
-        <div className="mb-6 bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+        <div className="mb-6 bg-white rounded-2xl p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">New Counter</h2>
           <CounterForm onSave={handleSave} onCancel={() => setShowForm(false)} saving={saving} />
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Loading counters…</div>
+        <div className="text-center py-10 text-gray-400 text-sm">Loading counters…</div>
       ) : error ? (
-        <div className="text-center py-16 text-red-500 text-sm">{error}</div>
+        <div className="text-center py-10 text-red-500 text-sm">{error}</div>
       ) : counters.length === 0 ? (
-        <div className="text-center py-16 text-gray-400 text-sm">No counters yet. Create your first counter above.</div>
+        <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-10 text-center">
+          <p className="text-gray-400 font-medium text-sm">No counters yet</p>
+          <p className="text-xs text-gray-300 mt-1">Click "+ New Counter" to create your first counter.</p>
+        </div>
       ) : (
         <div className="space-y-3">
           {counters.map((c) => (
-            <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-4 shadow-sm">
-              <div className="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
+            <div key={c.id} className="bg-white border border-gray-200 rounded-2xl p-4 flex items-start gap-4 shadow-sm">
+              <div className="w-10 h-10 rounded-xl bg-[#F5C742]/15 flex items-center justify-center text-[#b8920e] font-black text-sm shrink-0">
                 {c.displayOrder || "#"}
               </div>
               <div className="flex-1 min-w-0">
@@ -173,9 +178,9 @@ export default function POSCounters() {
                 ) : (
                   <>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-gray-800 text-sm">{c.counterName}</span>
-                      <span className="text-xs text-gray-400">{c.counterCode}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-500"}`}>
+                      <span className="font-bold text-[#1E293B] text-sm">{c.counterName}</span>
+                      <span className="text-[10px] font-mono text-gray-400 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-lg">{c.counterCode}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-500"}`}>
                         {c.status}
                       </span>
                     </div>
@@ -191,17 +196,17 @@ export default function POSCounters() {
                 )}
               </div>
               {editing?.id !== c.id && (
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button onClick={() => handleStatusToggle(c)}
-                    className="px-2.5 py-1 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
+                    className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 font-semibold transition-colors">
                     {c.status === "ACTIVE" ? "Deactivate" : "Activate"}
                   </button>
                   <button onClick={() => { setEditing(c); setShowForm(false); setActionError(null); }}
-                    className="px-2.5 py-1 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
+                    className="px-2.5 py-1 text-xs border border-[#F5C742]/50 text-[#b8920e] rounded-lg hover:bg-[#F5C742]/10 font-semibold transition-colors">
                     Edit
                   </button>
                   <button onClick={() => handleDelete(c.id)}
-                    className="px-2.5 py-1 text-xs border border-red-200 text-red-500 rounded-lg hover:bg-red-50">
+                    className="px-2.5 py-1 text-xs border border-red-200 text-red-500 rounded-lg hover:bg-red-50 font-semibold transition-colors">
                     Delete
                   </button>
                 </div>
