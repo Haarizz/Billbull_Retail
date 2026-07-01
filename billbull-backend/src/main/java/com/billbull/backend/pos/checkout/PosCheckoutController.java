@@ -562,7 +562,11 @@ public class PosCheckoutController {
         if (req.getShippingCharge() != null && req.getShippingCharge() > 0) {
             inv.setShippingCharge(java.math.BigDecimal.valueOf(req.getShippingCharge()));
         }
-        inv.setTaxInclusive(Boolean.TRUE.equals(req.getTaxInclusive()));
+        boolean taxInclusive = Boolean.TRUE.equals(req.getTaxInclusive());
+        inv.setTaxInclusive(taxInclusive);
+        inv.setVatMode(taxInclusive
+                ? com.billbull.backend.sales.common.VatMode.INCLUSIVE
+                : com.billbull.backend.sales.common.VatMode.EXCLUSIVE);
 
         // Batch-loaded product pricings, keyed by item code — used both for the price-override
         // gate below and to snapshot each line's cost-at-sale (see the items-mapping loop

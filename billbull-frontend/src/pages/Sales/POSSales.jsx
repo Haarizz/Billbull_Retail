@@ -1600,7 +1600,7 @@ export default function POSSales() {
           price: unitPrice,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
-          taxRate: toNumber(product.salesTax, 5),
+          taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
@@ -1843,6 +1843,8 @@ export default function POSSales() {
       cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
       cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
       cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
+      taxInclusive: !!posSettings?.taxInclusive,
+      defaultTaxRate: posSettings?.defaultTaxRate ?? 5,
     });
   };
 
@@ -1975,12 +1977,12 @@ export default function POSSales() {
         unit: 'Each',
         price: item.price,
         discount: item.discount || 0,
-        taxRate: toNumber(item.taxRate, 5),
+        taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
         serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
       }));
-  }, [posSettings?.voidMode]);
+  }, [posSettings?.voidMode, posSettings?.defaultTaxRate]);
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
@@ -2763,7 +2765,7 @@ export default function POSSales() {
           unit: 'Each',
           price: item.price,
           discount: item.discount || 0,
-          taxRate: toNumber(item.taxRate, 5),
+          taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
           batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
           serialNumber: item.isVoided ? null : (item.serialNumber || null),
           voided: !!item.isVoided,
@@ -6786,6 +6788,7 @@ export default function POSSales() {
             setCheckoutSettling(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
+            setSelectedCustomer(WALK_IN_CUSTOMER.id);
           };
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

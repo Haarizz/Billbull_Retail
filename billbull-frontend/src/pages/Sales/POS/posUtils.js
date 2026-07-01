@@ -17,7 +17,7 @@ export const mapPosProductListItem = (d = {}) => ({
   departmentId: d.departmentId || null,
   departmentName: d.departmentName || '',
   productType: d.productType || '',
-  salesTax: toNumber(d.salesTax, 5),
+  salesTax: (d.salesTax != null && d.salesTax !== '') ? toNumber(d.salesTax) : null,
   defaultDiscount: toNumber(d.maxDiscount ?? d.defaultDiscount, 0),
   // Inventory control flags — drive POS one-batch-one-unit enforcement.
   // The /api/products/list and /api/pos/resolve payloads both carry these.
@@ -45,7 +45,7 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     departmentId: product.department?.id,
     departmentName: product.department?.name,
     productType: product.productType,
-    salesTax: entry.tax?.salesTax || product.tax?.salesTax,
+    salesTax: entry.tax?.salesTax ?? product.tax?.salesTax,
     maxDiscount: product.maxDiscount,
     isBatch: product.isBatch,
     isSerial: product.isSerial,
