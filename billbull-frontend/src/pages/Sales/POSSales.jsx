@@ -150,6 +150,10 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
+import { useHeartbeat } from '../../hooks/useHeartbeat';
+import { useIdleTimeout } from '../../hooks/useIdleTimeout';
+import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
+import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendReceiptToConfiguredPrinter, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 import { buildEscPosReceiptBase64 } from '../../utils/escPosReceipt';
 
@@ -336,6 +340,8 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  const [isIdleLocked, setIsIdleLocked] = useState(false);
+  const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
   // Sidebar's display-name derivation: strip the @domain then title-case.
   const cashierDisplayName = useMemo(() => {
@@ -949,6 +955,21 @@ export default function POSSales() {
       tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Heartbeat — keeps the terminal ACTIVE on the server
+  useHeartbeat(
+    currentTerminal?.terminalId,
+    (posSettings?.heartbeatIntervalSeconds ?? 60) * 1000,
+  );
+
+  // Idle timeout — auto-lock the screen when no activity
+  useIdleTimeout({
+    timeoutMs: isSessionActive && posSettings?.sessionIdleTimeoutMinutes > 0
+      ? posSettings.sessionIdleTimeoutMinutes * 60_000 : 0,
+    touchIntervalMs: 30_000,
+    sessionId: currentSession?.id,
+    onIdle: () => { if (isSessionActive) setIsIdleLocked(true); },
+  });
 
   // Fetch the selected customer's outstanding balance for the checkout preview's
   // Credit Account section — same lookup used at actual print time.
@@ -6311,6 +6332,42 @@ export default function POSSales() {
 
   return (
     <div className="min-h-screen bg-[#F7F7FA]">
+      {/* ─── IDLE LOCK OVERLAY ─── */}
+      {isIdleLocked && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-100 text-center p-8 space-y-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <Lock className="h-8 w-8 text-amber-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-800">Session Locked</h2>
+            <p className="text-sm text-gray-500">This terminal was locked due to inactivity.</p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={() => setIsIdleLocked(false)}
+                className="w-full py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600"
+              >
+                Resume My Session
+              </button>
+              <button
+                onClick={() => { setIsIdleLocked(false); setShowTakeoverDialog(true); }}
+                className="w-full py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-gray-50"
+              >
+                Supervisor Takeover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SUPERVISOR TAKEOVER DIALOG ─── */}
+      {showTakeoverDialog && currentSession?.id && (
+        <SupervisorTakeoverDialog
+          sessionId={currentSession.id}
+          onSuccess={(session) => { setCurrentSession(session); setShowTakeoverDialog(false); }}
+          onCancel={() => setShowTakeoverDialog(false)}
+        />
+      )}
+
       {/* ─── TERMINAL LOCKED BY ACTIVE CASHIER (SHIFT HANDOVER OVERLAY) ─── */}
       {terminalLockedBy && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">

@@ -4,11 +4,50 @@ const BASE = "/api/pos";
 
 // ── Terminal registration ──────────────────────────────────────────────────
 
-export const registerPosTerminal = async ({ terminalId, deviceFingerprint, deviceInfo, terminalName, counterName }) => {
+export const registerPosTerminal = async ({
+  terminalId, deviceFingerprint, deviceInfo, terminalName, counterName,
+  operatingSystem, browser,
+}) => {
   const res = await api.post(`${BASE}/terminals/register`, {
     terminalId, deviceFingerprint, deviceInfo, terminalName, counterName,
+    operatingSystem, browser,
   });
-  return res.data; // { terminal, isNew }
+  return res.data; // { terminal, isNew, pending }
+};
+
+export const heartbeatPosTerminal = async (terminalId) => {
+  const res = await api.post(`${BASE}/terminals/${terminalId}/heartbeat`);
+  return res.data; // { terminalId, status, lastHeartbeatAt }
+};
+
+export const approvePosTerminal = async (id) => {
+  const res = await api.post(`${BASE}/terminals/${id}/approve`);
+  return res.data;
+};
+
+export const rejectPosTerminal = async (id, reason) => {
+  const res = await api.post(`${BASE}/terminals/${id}/reject`, { reason });
+  return res.data;
+};
+
+export const archivePosTerminal = async (id, reason) => {
+  const res = await api.post(`${BASE}/terminals/${id}/archive`, { reason });
+  return res.data;
+};
+
+export const restorePosTerminal = async (id) => {
+  const res = await api.post(`${BASE}/terminals/${id}/restore`);
+  return res.data;
+};
+
+export const assignTerminalCounter = async (id, counterId) => {
+  const res = await api.post(`${BASE}/terminals/${id}/assign-counter`, { counterId });
+  return res.data;
+};
+
+export const getPendingTerminals = async (branchId) => {
+  const res = await api.get(`${BASE}/terminals/branch/${branchId}/pending`);
+  return res.data;
 };
 
 // ── POS Settings ───────────────────────────────────────────────────────────
@@ -47,6 +86,25 @@ export const openPosSession = async ({ terminalId, counterName, openingCash = 0 
 export const getActivePosSession = async (terminalId = "") => {
   const res = await api.get(`${BASE}/sessions/active`, { params: { terminalId } });
   return res.data; // null / undefined if 204
+};
+
+export const suspendPosSession = async (sessionId) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/suspend`);
+  return res.data;
+};
+
+export const resumePosSession = async (sessionId) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/resume`);
+  return res.data;
+};
+
+export const supervisorTakeoverSession = async (sessionId, supervisorPin) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/supervisor-takeover`, { supervisorPin });
+  return res.data;
+};
+
+export const touchSessionActivity = async (sessionId) => {
+  await api.post(`${BASE}/sessions/${sessionId}/touch-activity`);
 };
 
 export const closePosSession = async (sessionId, {

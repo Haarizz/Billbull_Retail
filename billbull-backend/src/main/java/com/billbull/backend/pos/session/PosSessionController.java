@@ -117,4 +117,35 @@ public class PosSessionController {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
         return ResponseEntity.ok(service.closeDay(branchId, reportDate));
     }
+
+    // -------------------------------------------------------------------------
+    // Session lifecycle: suspend / resume / supervisor takeover / touch activity
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/{id}/suspend")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSession> suspend(@PathVariable Long id) {
+        return ResponseEntity.ok(service.suspendSession(id));
+    }
+
+    @PostMapping("/{id}/resume")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSession> resume(@PathVariable Long id) {
+        return ResponseEntity.ok(service.resumeSession(id));
+    }
+
+    @PostMapping("/{id}/supervisor-takeover")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSession> supervisorTakeover(@PathVariable Long id,
+                                                          @RequestBody Map<String, Object> body) {
+        String pin = body.get("supervisorPin") != null ? body.get("supervisorPin").toString() : null;
+        return ResponseEntity.ok(service.supervisorTakeover(id, pin));
+    }
+
+    @PostMapping("/{id}/touch-activity")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> touchActivity(@PathVariable Long id) {
+        service.touchActivity(id);
+        return ResponseEntity.noContent().build();
+    }
 }
