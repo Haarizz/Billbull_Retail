@@ -289,6 +289,10 @@
 <li><strong>royaltools.billbull.app</strong> → Backend port 8080 → Database: <code>billbull_royaltools</code></li>
 <li><strong>leroyalflowers.billbull.app</strong> → Backend port 8081 → Database: <code>billbull_leroyalflowers</code></li>
 <li><strong>leroyalgifts.billbull.app</strong> → Backend port 8082 → Database: <code>billbull_leroyalgifts</code></li>
+<li><strong>geebu.billbull.app</strong> → Backend port 8083 → Database: <code>billbull_geebu</code></li>
+<li><strong>agi.billbull.app</strong> → Backend port 8084 → Database: <code>billbull_agi</code></li>
+<li><strong>max.billbull.app</strong> → Backend port 8085 → Database: <code>billbull_max</code></li>
+<li><strong>demo.billbull.app</strong> → Backend port 8086 → Database: <code>billbull_demo</code></li>
 </ul>
 <h3 id="prerequisites">Prerequisites</h3>
 <ul>
@@ -437,10 +441,18 @@ systemctl start nginx</code></pre>
 CREATE DATABASE billbull_royaltools;
 CREATE DATABASE billbull_leroyalflowers;
 CREATE DATABASE billbull_leroyalgifts;
+CREATE DATABASE billbull_geebu;
+CREATE DATABASE billbull_agi;
+CREATE DATABASE billbull_max;
+CREATE DATABASE billbull_demo;
 
 GRANT ALL PRIVILEGES ON DATABASE billbull_royaltools TO billbull;
 GRANT ALL PRIVILEGES ON DATABASE billbull_leroyalflowers TO billbull;
 GRANT ALL PRIVILEGES ON DATABASE billbull_leroyalgifts TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_geebu TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_agi TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_max TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_demo TO billbull;
 
 \l
 \q</code></pre>
@@ -536,7 +548,11 @@ cp -r /root/billbull/billbull-frontend/dist/* /var/www/billbull/</code></pre>
     </div>
     <pre><code class="language-java">"https://royaltools.billbull.app",
 "https://leroyalflowers.billbull.app",
-"https://leroyalgifts.billbull.app"</code></pre>
+"https://leroyalgifts.billbull.app",
+"https://geebu.billbull.app",
+"https://agi.billbull.app",
+"https://max.billbull.app",
+"https://demo.billbull.app"</code></pre>
 </div>
 <h3>Step 2: Create Client-Specific Properties Files</h3>
 <p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-royaltools.properties</code></p>
@@ -617,6 +633,110 @@ financials.jv.approval-threshold-aed=10000
 
 spring.flyway.enabled=false</code></pre>
 </div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-geebu.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-geebu
+server.port=8083
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_geebu
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/geebu/
+
+jwt.secret=${JWT_SECRET_GEEBU:geebu-secret-key-32chars-minimum!!!!!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-agi.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-agi
+server.port=8084
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_agi
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/agi/
+
+jwt.secret=${JWT_SECRET_AGI:agi-secret-key-32chars-minimum!!!!!!!!!!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-max.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-max
+server.port=8085
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_max
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/max/
+
+jwt.secret=${JWT_SECRET_MAX:max-secret-key-32chars-minimum!!!!!!!!!!!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+<p><strong>File:</strong> <code>billbull-backend/src/main/resources/application-demo.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">PROPERTIES</div>
+    </div>
+    <pre><code class="language-properties">spring.application.name=billbull-backend-demo
+server.port=8086
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_demo
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/demo/
+
+jwt.secret=${JWT_SECRET_DEMO:demo-secret-key-32chars-minimum!!!!!!!!!!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
 <h3>Step 3: Commit &amp; Push Changes</h3>
 <div class="code-wrapper">
     <div class="code-header">
@@ -629,7 +749,7 @@ spring.flyway.enabled=false</code></pre>
     </div>
     <pre><code class="language-bash">cd /root/billbull
 git add -A
-git commit -m "Add CORS for new clients + application property files for royaltools, leroyalflowers, leroyalgifts"
+git commit -m "Add CORS for new clients + application property files for royaltools, leroyalflowers, leroyalgifts, geebu, agi, max, demo"
 git push origin main</code></pre>
 </div>
 <h3>Step 4: Build Backend JAR</h3>
@@ -662,7 +782,11 @@ mvn clean package -DskipTests</code></pre>
     </div>
     <pre><code class="language-bash">mkdir -p /root/billbull/uploads/royaltools
 mkdir -p /root/billbull/uploads/leroyalflowers
-mkdir -p /root/billbull/uploads/leroyalgifts</code></pre>
+mkdir -p /root/billbull/uploads/leroyalgifts
+mkdir -p /root/billbull/uploads/geebu
+mkdir -p /root/billbull/uploads/agi
+mkdir -p /root/billbull/uploads/max
+mkdir -p /root/billbull/uploads/demo</code></pre>
 </div>
 <h3>Step 2: Create Systemd Service - Royal Tools</h3>
 <div class="code-wrapper">
@@ -748,7 +872,119 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF</code></pre>
 </div>
-<h3>Step 5: Enable and Start Services</h3>
+<h3>Step 5: Create Systemd Service - Geebu</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-geebu.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Geebu
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=geebu
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 6: Create Systemd Service - AGI</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-agi.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - AGI
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=agi
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 7: Create Systemd Service - Max</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-max.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Max
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=max
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 8: Create Systemd Service - Demo</h3>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">cat > /etc/systemd/system/billbull-demo.service &lt;&lt; 'EOF'
+[Unit]
+Description=BillBull - Demo
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=demo
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+<h3>Step 9: Enable and Start Services</h3>
 <div class="code-wrapper">
     <div class="code-header">
         <div class="mac-dots">
@@ -759,10 +995,10 @@ EOF</code></pre>
         <div class="code-lang">BASH</div>
     </div>
     <pre><code class="language-bash">systemctl daemon-reload
-systemctl enable billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts
-systemctl start billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+systemctl enable billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo
+systemctl start billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
-<h3>Step 6: Verify Services Running</h3>
+<h3>Step 10: Verify Services Running</h3>
 <div class="code-wrapper">
     <div class="code-header">
         <div class="mac-dots">
@@ -772,10 +1008,10 @@ systemctl start billbull-royaltools billbull-leroyalflowers billbull-leroyalgift
         </div>
         <div class="code-lang">BASH</div>
     </div>
-    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
-<p><strong>Expected:</strong> All three show <code>active (running)</code></p>
-<h3>Step 7: Check Backend Logs</h3>
+<p><strong>Expected:</strong> All seven show <code>active (running)</code></p>
+<h3>Step 11: Check Backend Logs</h3>
 <div class="code-wrapper">
     <div class="code-header">
         <div class="mac-dots">
@@ -830,7 +1066,7 @@ openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048</code></pre>
     <pre><code class="language-bash">cat > /etc/nginx/sites-available/billbull &lt;&lt; 'EOF'
 server {
     listen 80;
-    server_name royaltools.billbull.app leroyalflowers.billbull.app leroyalgifts.billbull.app;
+    server_name royaltools.billbull.app leroyalflowers.billbull.app leroyalgifts.billbull.app geebu.billbull.app agi.billbull.app max.billbull.app demo.billbull.app;
     return 301 https://$host$request_uri;
 }
 
@@ -911,6 +1147,110 @@ server {
         proxy_set_header Authorization $http_authorization;
     }
 }
+
+server {
+    listen 443 ssl;
+    server_name geebu.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/geebu.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/geebu.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8083/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name agi.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/agi.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/agi.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8084/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8084;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name max.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/max.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/max.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8085/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8085;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name demo.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate /etc/letsencrypt/live/demo.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/demo.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8086/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8086;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
 EOF</code></pre>
 </div>
 <h3>Step 3: Enable Nginx Configuration</h3>
@@ -941,7 +1281,11 @@ rm -f /etc/nginx/sites-enabled/default</code></pre>
     </div>
     <pre><code class="language-bash">certbot certonly --standalone -d royaltools.billbull.app
 certbot certonly --standalone -d leroyalflowers.billbull.app
-certbot certonly --standalone -d leroyalgifts.billbull.app</code></pre>
+certbot certonly --standalone -d leroyalgifts.billbull.app
+certbot certonly --standalone -d geebu.billbull.app
+certbot certonly --standalone -d agi.billbull.app
+certbot certonly --standalone -d max.billbull.app
+certbot certonly --standalone -d demo.billbull.app</code></pre>
 </div>
 <p><strong>During prompt:</strong></p>
 <ul>
@@ -961,11 +1305,15 @@ certbot certonly --standalone -d leroyalgifts.billbull.app</code></pre>
     </div>
     <pre><code class="language-bash">ls -la /etc/letsencrypt/live/</code></pre>
 </div>
-<p>Should show 3 directories:</p>
+<p>Should show 7 directories:</p>
 <ul>
 <li><code>royaltools.billbull.app/</code></li>
 <li><code>leroyalflowers.billbull.app/</code></li>
 <li><code>leroyalgifts.billbull.app/</code></li>
+<li><code>geebu.billbull.app/</code></li>
+<li><code>agi.billbull.app/</code></li>
+<li><code>max.billbull.app/</code></li>
+<li><code>demo.billbull.app/</code></li>
 </ul>
 <p>Each containing: <code>fullchain.pem</code>, <code>privkey.pem</code></p>
 <h3>Step 3: Test Nginx Configuration</h3>
@@ -1038,6 +1386,54 @@ systemctl status nginx</code></pre>
     </div>
     <pre><code class="language-bash">sudo -u postgres psql -d billbull_leroyalgifts -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
 </div>
+<p><strong>Geebu (billbull_geebu):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_geebu -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<p><strong>AGI (billbull_agi):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_agi -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<p><strong>Max (billbull_max):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_max -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
+<p><strong>Demo (billbull_demo):</strong></p>
+<div class="code-wrapper">
+    <div class="code-header">
+        <div class="mac-dots">
+            <div class="mac-dot red"></div>
+            <div class="mac-dot yellow"></div>
+            <div class="mac-dot green"></div>
+        </div>
+        <div class="code-lang">BASH</div>
+    </div>
+    <pre><code class="language-bash">sudo -u postgres psql -d billbull_demo -c "UPDATE users SET password = '\$2a\$12\$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS' WHERE username = 'admin';"</code></pre>
+</div>
 <h3>Step 3: Restart Backends to Pick Up Changes</h3>
 <div class="code-wrapper">
     <div class="code-header">
@@ -1048,7 +1444,7 @@ systemctl status nginx</code></pre>
         </div>
         <div class="code-lang">BASH</div>
     </div>
-    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
 <p>Wait 10 seconds for services to restart.</p>
 
@@ -1059,6 +1455,10 @@ systemctl status nginx</code></pre>
 <li><a href="https://royaltools.billbull.app">https://royaltools.billbull.app</a> → Should load login page</li>
 <li><a href="https://leroyalflowers.billbull.app">https://leroyalflowers.billbull.app</a> → Should load login page</li>
 <li><a href="https://leroyalgifts.billbull.app">https://leroyalgifts.billbull.app</a> → Should load login page</li>
+<li><a href="https://geebu.billbull.app">https://geebu.billbull.app</a> → Should load login page</li>
+<li><a href="https://agi.billbull.app">https://agi.billbull.app</a> → Should load login page</li>
+<li><a href="https://max.billbull.app">https://max.billbull.app</a> → Should load login page</li>
+<li><a href="https://demo.billbull.app">https://demo.billbull.app</a> → Should load login page</li>
 </ul>
 <h3>Step 2: Test Admin Login</h3>
 <p>On any of the above URLs:</p>
@@ -1088,7 +1488,7 @@ systemctl status nginx</code></pre>
         </div>
         <div class="code-lang">BASH</div>
     </div>
-    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+    <pre><code class="language-bash">systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
 <p>All should show <code>active (running)</code> with no recent errors.</p>
 
@@ -1111,43 +1511,43 @@ systemctl status nginx</code></pre>
 <h3>Database</h3>
 <ul class="task-list">
 <li><input type="checkbox" disabled> PostgreSQL user "billbull" created</li>
-<li><input type="checkbox" disabled> 3 databases created (royaltools, leroyalflowers, leroyalgifts)</li>
+<li><input type="checkbox" disabled> 7 databases created (royaltools, leroyalflowers, leroyalgifts, geebu, agi, max, demo)</li>
 <li><input type="checkbox" disabled> Permissions granted to billbull user</li>
 </ul>
 <h3>Code</h3>
 <ul class="task-list">
 <li><input type="checkbox" disabled> Repository cloned to /root/billbull</li>
 <li><input type="checkbox" disabled> CORS config updated with new domains</li>
-<li><input type="checkbox" disabled> 3 application-*.properties files created</li>
+<li><input type="checkbox" disabled> 7 application-*.properties files created</li>
 <li><input type="checkbox" disabled> Changes committed and pushed to main</li>
 <li><input type="checkbox" disabled> Frontend built and copied to /var/www/billbull</li>
 <li><input type="checkbox" disabled> Backend JAR built successfully</li>
 </ul>
 <h3>Services</h3>
 <ul class="task-list">
-<li><input type="checkbox" disabled> 3 systemd service files created</li>
+<li><input type="checkbox" disabled> 7 systemd service files created</li>
 <li><input type="checkbox" disabled> Services enabled and started</li>
-<li><input type="checkbox" disabled> All 3 services show "active (running)"</li>
+<li><input type="checkbox" disabled> All 7 services show "active (running)"</li>
 <li><input type="checkbox" disabled> Backend logs show successful startup</li>
 </ul>
 <h3>Nginx &amp; SSL</h3>
 <ul class="task-list">
 <li><input type="checkbox" disabled> Nginx config created</li>
-<li><input type="checkbox" disabled> SSL certificates obtained from Let's Encrypt</li>
+<li><input type="checkbox" disabled> SSL certificates obtained from Let's Encrypt (all 7 domains)</li>
 <li><input type="checkbox" disabled> Nginx test passes (<code>nginx -t</code>)</li>
 <li><input type="checkbox" disabled> Nginx reloaded</li>
-<li><input type="checkbox" disabled> HTTPS accessible on all 3 domains</li>
+<li><input type="checkbox" disabled> HTTPS accessible on all 7 domains</li>
 </ul>
 <h3>Admin Access</h3>
 <ul class="task-list">
-<li><input type="checkbox" disabled> Admin password hash updated for all 3 databases</li>
+<li><input type="checkbox" disabled> Admin password hash updated for all 7 databases</li>
 <li><input type="checkbox" disabled> Backends restarted</li>
 <li><input type="checkbox" disabled> Login successful with admin/admin123</li>
 </ul>
 <h3>Final Testing</h3>
 <ul class="task-list">
-<li><input type="checkbox" disabled> All 3 domains load login page</li>
-<li><input type="checkbox" disabled> Admin can log in on all 3 domains</li>
+<li><input type="checkbox" disabled> All 7 domains load login page</li>
+<li><input type="checkbox" disabled> Admin can log in on all 7 domains</li>
 <li><input type="checkbox" disabled> Database tables created on login</li>
 <li><input type="checkbox" disabled> No 500 errors in logs</li>
 <li><input type="checkbox" disabled> API endpoints responding (check network tab)</li>
@@ -1214,7 +1614,7 @@ curl http://127.0.0.1:8080/api/auth/login</code></pre>
         </div>
         <div class="code-lang">BASH</div>
     </div>
-    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+    <pre><code class="language-bash">systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
 
 <h2 id="monitoring--maintenance">Monitoring &amp; Maintenance</h2>
@@ -1229,12 +1629,16 @@ curl http://127.0.0.1:8080/api/auth/login</code></pre>
         <div class="code-lang">BASH</div>
     </div>
     <pre><code class="language-bash"># Check all services running
-systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts
+systemctl status billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo
 
 # Check for recent errors
 journalctl -u billbull-royaltools -n 20 --no-pager
 journalctl -u billbull-leroyalflowers -n 20 --no-pager
 journalctl -u billbull-leroyalgifts -n 20 --no-pager
+journalctl -u billbull-geebu -n 20 --no-pager
+journalctl -u billbull-agi -n 20 --no-pager
+journalctl -u billbull-max -n 20 --no-pager
+journalctl -u billbull-demo -n 20 --no-pager
 
 # Check Nginx
 systemctl status nginx</code></pre>
@@ -1265,7 +1669,11 @@ systemctl status nginx</code></pre>
     <pre><code class="language-bash"># Backup all databases
 pg_dump -U postgres billbull_royaltools > /backups/royaltools_$(date +%Y%m%d).sql
 pg_dump -U postgres billbull_leroyalflowers > /backups/leroyalflowers_$(date +%Y%m%d).sql
-pg_dump -U postgres billbull_leroyalgifts > /backups/leroyalgifts_$(date +%Y%m%d).sql</code></pre>
+pg_dump -U postgres billbull_leroyalgifts > /backups/leroyalgifts_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_geebu > /backups/geebu_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_agi > /backups/agi_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_max > /backups/max_$(date +%Y%m%d).sql
+pg_dump -U postgres billbull_demo > /backups/demo_$(date +%Y%m%d).sql</code></pre>
 </div>
 <h3>Deploying Updates</h3>
 <div class="code-wrapper">
@@ -1281,7 +1689,7 @@ pg_dump -U postgres billbull_leroyalgifts > /backups/leroyalgifts_$(date +%Y%m%d
 git pull origin main
 cd billbull-backend
 mvn clean package -DskipTests
-systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts</code></pre>
+systemctl restart billbull-royaltools billbull-leroyalflowers billbull-leroyalgifts billbull-geebu billbull-agi billbull-max billbull-demo</code></pre>
 </div>
 
 <h2 id="support">Support</h2>
