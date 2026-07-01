@@ -439,15 +439,28 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); if (!disabled) setOpen(o => !o); }}
                     disabled={disabled}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border transition-all
+                    className={`inline-flex ${selected ? 'flex-row rounded-full items-center px-2 py-1' : 'flex-col items-center justify-center p-1.5 rounded-lg'} text-[10px] font-bold border transition-all
                         ${selected
-                            ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
-                            : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100 hover:text-slate-600'}
+                            ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'
+                            : 'bg-red-50/50 border-red-200 text-red-600 hover:bg-red-100'}
                         ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${selected ? 'bg-amber-400' : 'bg-slate-300'}`} />
-                    {selected ? selected.code : 'Assign'}
-                    {!disabled && <ChevronDown className="h-2.5 w-2.5 opacity-60" />}
+                    {selected ? (
+                        <>
+                            <span>🟢</span>
+                            <span>{selected.code}</span>
+                            {!disabled && <ChevronDown className="h-2.5 w-2.5 opacity-60 ml-1" />}
+                        </>
+                    ) : (
+                        <>
+                            <span className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-red-500">
+                                <AlertTriangle className="h-3 w-3" /> Bin Required
+                            </span>
+                            <span className="bg-white border border-red-200 text-red-600 px-2 py-0.5 rounded shadow-sm hover:bg-red-50 transition-colors mt-1">
+                                [ Assign Bin ]
+                            </span>
+                        </>
+                    )}
                 </button>
 
                 {open && (
@@ -1105,6 +1118,10 @@ const SessionView = ({
 
     const openCountModal = (item) => {
         if (selectedSession?.status !== 'In Progress') return;
+        if (!item.binId && !item._fromSearch) {
+            showNotif('warning', 'Bin Required', 'Please assign a bin to this item before counting.');
+            return;
+        }
         if (isInventoryCounting) {
             const coverage = coverageProducts.find(p => String(p.productId) === String(item.productId));
             setCoverageProduct?.(coverage ? { ...coverage, item } : { item, productName: item.productName, productId: item.productId });
@@ -1363,6 +1380,15 @@ const SessionView = ({
                                     className="pl-7 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] outline-none focus:ring-1 focus:ring-amber-400 w-36 transition-all"
                                 />
                             </div>
+                            {items.filter(i => !i.binId).length > 0 && (
+                                <button
+                                    onClick={() => setIsBulkBinModalOpen(true)}
+                                    disabled={selectedSession?.status !== 'In Progress'}
+                                    className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <PackageSearch className="h-4 w-4" /> Bulk Assign Bins
+                                </button>
+                            )}
                             <button
                                 onClick={() => setIsCsvModalOpen(true)}
                                 disabled={selectedSession?.status !== 'In Progress'}
@@ -1393,7 +1419,7 @@ const SessionView = ({
                             {items.length > 0 ? (
                                 <tbody className="divide-y divide-slate-100">
                                     {items.map((item, idx) => (
-                                        <tr key={item.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => openCountModal(item)}>
+                                        <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${!item.binId ? 'bg-red-50/30' : ''}`} onClick={() => openCountModal(item)}>
                                             <td className="px-4 py-2.5 text-[10px] text-slate-400 font-medium">{idx + 1}</td>
                                             <td className="px-4 py-2.5">
                                                 <div className="flex items-center gap-3">
@@ -1433,8 +1459,8 @@ const SessionView = ({
                                                         type="number"
                                                         value={item.countedQty === null ? '' : item.countedQty}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                        disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled}
-                                                        title={(item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
+                                                        disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled || !item.binId}
+                                                        title={!item.binId ? 'Assign a bin before counting' : (item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
                                                         placeholder="0"
                                                         className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
                                                             binCapacityViolations.some(v => v.itemId === item.id)
@@ -1450,7 +1476,7 @@ const SessionView = ({
                                             <td className="px-4 py-2.5 text-center font-bold">
                                                 {item.variance !== undefined && item.variance !== null ? (
                                                     item.variance > 0 ? (
-                                                        <div className="flex items-center justify-center gap-1.5 text-blue-600">
+                                                        <div className="flex items-center justify-center gap-1.5 text-orange-500">
                                                             <PlusCircle className="h-3.5 w-3.5" />
                                                             <span>+{item.variance}</span>
                                                         </div>
@@ -1458,6 +1484,11 @@ const SessionView = ({
                                                         <div className="flex items-center justify-center gap-1.5 text-red-500">
                                                             <MinusCircle className="h-3.5 w-3.5" />
                                                             <span>{Math.abs(item.variance)}</span>
+                                                        </div>
+                                                    ) : item.countedQty !== null ? (
+                                                        <div className="flex items-center justify-center gap-1.5 text-green-500">
+                                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                                            <span>0</span>
                                                         </div>
                                                     ) : (
                                                         <span className="text-slate-400">-</span>
@@ -1538,6 +1569,16 @@ const SessionView = ({
                                     </div>
                                 </>
                             )}
+                            
+                            {items.filter(i => !i.binId).length > 0 && (
+                                <div className="flex justify-between items-center text-red-600 bg-red-50 p-2 rounded-lg mt-2 mb-2 border border-red-100">
+                                    <span className="flex items-center gap-1.5 text-[11px] font-bold">
+                                        <AlertTriangle className="h-3.5 w-3.5" /> Missing Bins
+                                    </span>
+                                    <span className="text-base font-black tracking-tight">{items.filter(i => !i.binId).length}</span>
+                                </div>
+                            )}
+
                             <div className="flex justify-between items-center text-slate-900 pt-1">
                                 <span className="text-[11px] font-bold opacity-80">Total Items</span>
                                 <span className="text-base font-black tracking-tight">{items.length}</span>
@@ -1963,6 +2004,7 @@ const StockTaking = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
     const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+    const [isBulkBinModalOpen, setIsBulkBinModalOpen] = useState(false);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [lastScannedItem, setLastScannedItem] = useState(null);
     const [lastScannedAt, setLastScannedAt] = useState(null);
@@ -2463,6 +2505,57 @@ const StockTaking = () => {
         }
     };
 
+    const handleBulkAssignBin = async (binId) => {
+        const binIdNum = binId ? Number(binId) : null;
+        if (!binIdNum || !selectedSession) return;
+        
+        const bin = warehouseBins.find(b => String(b.id) === String(binIdNum));
+        const itemsToUpdate = (selectedSession.items || []).filter(item => !item.binId);
+        
+        if (itemsToUpdate.length === 0) {
+            showNotif('info', 'No Items', 'No items require bin assignment.');
+            setIsBulkBinModalOpen(false);
+            return;
+        }
+
+        setIsLoading(true);
+        setIsBulkBinModalOpen(false);
+
+        setSelectedSession(prev => ({
+            ...prev,
+            items: prev.items.map(item => !item.binId ? { ...item, binId: binIdNum, binCode: bin?.code || null } : item)
+        }));
+
+        let successCount = 0;
+        let failCount = 0;
+
+        try {
+            await Promise.all(itemsToUpdate.map(async (item) => {
+                try {
+                    await updateApiBin(item.id, binIdNum);
+                    successCount++;
+                } catch (e) {
+                    console.error("Failed bulk assign for item", item.id, e);
+                    failCount++;
+                }
+            }));
+            
+            await refreshSelectedSession();
+            
+            if (failCount > 0) {
+                showNotif('warning', 'Partial Success', `Assigned ${successCount} items, but failed on ${failCount} items.`);
+            } else {
+                showNotif('success', 'Bulk Assign Successful', `Successfully assigned ${successCount} items to ${bin?.code || 'Bin'}.`);
+            }
+        } catch (error) {
+            console.error("Bulk assign failed:", error);
+            showNotif('error', 'Bulk Assign Failed', 'An error occurred during bulk bin assignment.');
+            await refreshSelectedSession();
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleBinChange = async (itemId, binId) => {
         if (!selectedSession) return;
         if (isInventoryCountingSession(selectedSession)) {
@@ -2804,6 +2897,11 @@ const StockTaking = () => {
                 i => i.sku === scanned || i.barcode === scanned
             );
             if (existingItem) {
+                if (!existingItem.binId) {
+                    showNotif('error', 'Bin Required', 'This item must be assigned to a Bin before counting.');
+                    setBarcodeInput('');
+                    return;
+                }
                 setBarcodeInput('');
                 setSelectedItemForCount(existingItem);
                 if (existingItem.batchEnabled || existingItem.expiryEnabled) {
@@ -3659,6 +3757,37 @@ const StockTaking = () => {
                                     {isLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin mx-auto" /> : 'Process Import'}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk Assign Bin Modal */}
+            {isBulkBinModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-0">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]" onClick={() => setIsBulkBinModalOpen(false)}></div>
+                    <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ overflow: 'visible' }}>
+                        <div className="flex items-center justify-between p-4 border-b border-slate-100">
+                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                <PackageSearch className="h-4 w-4 text-slate-400" />
+                                Bulk Assign Bin
+                            </h3>
+                            <button onClick={() => setIsBulkBinModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+                        </div>
+                        <div className="p-4 space-y-4 text-center">
+                            <p className="text-[11px] text-slate-500 text-left">Assign a single bin to all {selectedSession?.items?.filter(item => !item.binId).length || 0} unassigned items.</p>
+                            <div className="inline-block relative">
+                                <BinSelector
+                                    itemId="bulk"
+                                    binId={null}
+                                    bins={warehouseBins}
+                                    onBinChange={(_, binId) => handleBulkAssignBin(binId)}
+                                    disabled={false}
+                                />
+                            </div>
+                        </div>
+                        <div className="p-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                            <button onClick={() => setIsBulkBinModalOpen(false)} className="px-4 py-2 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
                         </div>
                     </div>
                 </div>
