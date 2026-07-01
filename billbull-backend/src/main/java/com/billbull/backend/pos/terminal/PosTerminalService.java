@@ -1,5 +1,7 @@
 package com.billbull.backend.pos.terminal;
 
+import com.billbull.backend.pos.counter.PosCounter;
+import com.billbull.backend.pos.counter.PosCounterRepository;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.settings.branch.Branch;
@@ -22,13 +24,16 @@ public class PosTerminalService {
 
     private final PosTerminalRepository repo;
     private final PosSettingsRepository settingsRepo;
+    private final PosCounterRepository counterRepo;
     private final BranchAccessService branchAccessService;
 
     public PosTerminalService(PosTerminalRepository repo,
                               PosSettingsRepository settingsRepo,
+                              PosCounterRepository counterRepo,
                               BranchAccessService branchAccessService) {
         this.repo = repo;
         this.settingsRepo = settingsRepo;
+        this.counterRepo = counterRepo;
         this.branchAccessService = branchAccessService;
     }
 
@@ -40,85 +45,238 @@ public class PosTerminalService {
     /**
      * Register or refresh a terminal. If the device fingerprint already exists and is active,
      * returns the existing terminal (idempotent). Otherwise creates a new one.
+     * When PosSettings.requireTerminalApproval is true, new terminals start as PENDING_REGISTRATION.
      */
     @Transactional
     public Map<String, Object> registerOrRefresh(String terminalId, String deviceFingerprint, String deviceInfo,
-                                                  String requestedTerminalName, String counterName) {
+                                                  String requestedTerminalName, String counterName,
+                                                  String operatingSystem, String browser, String ipAddress) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
 
-        // 1. Zero-Trust LocalStorage verification
+        // 1. Lookup by terminalId claim from localStorage
         if (terminalId != null && !terminalId.isBlank()) {
             Optional<PosTerminal> byId = repo.findByTerminalId(terminalId);
             if (byId.isPresent()) {
                 PosTerminal t = byId.get();
-                // Validate Branch Scope & Authorization
                 if (t.getBranchId().equals(branchId)) {
-                    // Reject the terminalId claim if the device fingerprint doesn't match —
-                    // this means a different physical device is presenting a stale or copied
-                    // terminalId from localStorage. Fall through to fingerprint-based lookup.
                     boolean fingerprintMismatch = deviceFingerprint != null && !deviceFingerprint.isBlank()
                             && t.getDeviceFingerprint() != null
                             && !deviceFingerprint.equals(t.getDeviceFingerprint());
-                    if (fingerprintMismatch) {
-                        // Different device — do not reuse this terminal; fall through below
-                    } else {
-                        // Validate Physical Lifecycle Status (Ensure not BLOCKED, MAINTENANCE, or DECOMMISSIONED)
-                        if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+                    if (!fingerprintMismatch) {
+                        if (t.getStatus() == PosTerminalStatus.BLOCKED
+                                || t.getStatus() == PosTerminalStatus.MAINTENANCE
+                                || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
+                                || t.getStatus() == PosTerminalStatus.ARCHIVED) {
                             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
                         }
                         t.setLastSeenAt(LocalDateTime.now());
+                        t.setLastHeartbeatAt(LocalDateTime.now());
                         if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
-                        // Strict Immutability: Do NOT automatically overwrite deviceFingerprint
+                        if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
+                        if (browser != null) t.setBrowser(browser);
+                        if (ipAddress != null) t.setIpAddress(ipAddress);
                         repo.save(t);
-                        return Map.of("terminal", t, "isNew", false);
+                        boolean pending = "PENDING".equals(t.getRegistrationStatus());
+                        return Map.of("terminal", t, "isNew", false, "pending", pending);
                     }
                 }
             }
         }
 
-        // 2. Fallback to lookup by deviceFingerprint (Ensuring branch match)
+        // 2. Fallback to lookup by deviceFingerprint
         Optional<PosTerminal> existing = repo.findByDeviceFingerprint(deviceFingerprint);
         if (existing.isPresent()) {
             PosTerminal t = existing.get();
             if (t.getBranchId().equals(branchId)) {
-                if (t.getStatus() == PosTerminalStatus.BLOCKED || t.getStatus() == PosTerminalStatus.MAINTENANCE || t.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+                if (t.getStatus() == PosTerminalStatus.BLOCKED
+                        || t.getStatus() == PosTerminalStatus.MAINTENANCE
+                        || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
+                        || t.getStatus() == PosTerminalStatus.ARCHIVED) {
                     throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
                 }
                 t.setLastSeenAt(LocalDateTime.now());
+                t.setLastHeartbeatAt(LocalDateTime.now());
                 if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
+                if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
+                if (browser != null) t.setBrowser(browser);
+                if (ipAddress != null) t.setIpAddress(ipAddress);
                 repo.save(t);
-                return Map.of("terminal", t, "isNew", false);
+                boolean pending = "PENDING".equals(t.getRegistrationStatus());
+                return Map.of("terminal", t, "isNew", false, "pending", pending);
             }
         }
 
-        // Check max terminals
+        // 3. New terminal — check limit (non-archived)
         PosSettings settings = settingsRepo.findByBranchId(branchId).orElse(new PosSettings());
         int max = settings.getMaxTerminalsPerBranch() != null ? settings.getMaxTerminalsPerBranch() : 5;
-        int active = repo.countByBranchIdAndStatus(branchId, PosTerminalStatus.ACTIVE);
-        if (active >= max) {
+        long current = repo.countActiveLimitByBranchId(branchId);
+        if (current >= max) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Maximum number of terminals (" + max + ") reached for this branch.");
         }
 
-        String newTerminalId = "T" + String.format("%03d", active + 1) + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+        boolean requireApproval = Boolean.TRUE.equals(settings.getRequireTerminalApproval());
+        int seq = (int) current + 1;
+        String newTerminalId = "T" + String.format("%03d", seq) + "-"
+                + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
 
         PosTerminal terminal = new PosTerminal();
         terminal.setBranchId(branchId);
         terminal.setBranchName(branch.getName());
         terminal.setTerminalId(newTerminalId);
-        terminal.setTerminalName(requestedTerminalName != null ? requestedTerminalName : "Terminal " + (active + 1));
-        terminal.setCounterName(counterName != null ? counterName : "Counter " + (active + 1));
+        terminal.setTerminalName(requestedTerminalName != null ? requestedTerminalName : "Terminal " + seq);
+        terminal.setCounterName(counterName != null ? counterName : "Counter " + seq);
         terminal.setDeviceFingerprint(deviceFingerprint);
         terminal.setDeviceInfo(deviceInfo);
-        terminal.setIsMainPos(active == 0); // First terminal is the main POS
+        terminal.setOperatingSystem(operatingSystem);
+        terminal.setBrowser(browser);
+        terminal.setIpAddress(ipAddress);
+        terminal.setIsMainPos(current == 0);
         terminal.setRegisteredBy(currentUser());
         terminal.setLastSeenAt(LocalDateTime.now());
-        terminal.setStatus(PosTerminalStatus.ACTIVE);
+        terminal.setLastHeartbeatAt(LocalDateTime.now());
+
+        if (requireApproval) {
+            terminal.setStatus(PosTerminalStatus.PENDING_REGISTRATION);
+            terminal.setRegistrationStatus("PENDING");
+        } else {
+            terminal.setStatus(PosTerminalStatus.ACTIVE);
+            terminal.setRegistrationStatus("APPROVED");
+        }
 
         PosTerminal saved = repo.save(terminal);
-        return Map.of("terminal", saved, "isNew", true);
+        return Map.of("terminal", saved, "isNew", true, "pending", requireApproval);
     }
+
+    /** Convenience overload for callers that don't pass device metadata. */
+    @Transactional
+    public Map<String, Object> registerOrRefresh(String terminalId, String deviceFingerprint,
+                                                  String deviceInfo, String terminalName, String counterName) {
+        return registerOrRefresh(terminalId, deviceFingerprint, deviceInfo, terminalName, counterName, null, null, null);
+    }
+
+    // -------------------------------------------------------------------------
+    // Heartbeat
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosTerminal heartbeat(String terminalId, String ipAddress) {
+        PosTerminal terminal = repo.findByTerminalId(terminalId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
+
+        if (terminal.getStatus() == PosTerminalStatus.ARCHIVED
+                || terminal.getStatus() == PosTerminalStatus.DECOMMISSIONED
+                || terminal.getStatus() == PosTerminalStatus.BLOCKED) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + terminal.getStatus());
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        terminal.setLastHeartbeatAt(now);
+        terminal.setLastSeenAt(now);
+        if (ipAddress != null && !ipAddress.isBlank()) terminal.setIpAddress(ipAddress);
+
+        // Transition OFFLINE → ACTIVE on heartbeat
+        if (terminal.getStatus() == PosTerminalStatus.OFFLINE) {
+            terminal.setStatus(
+                    terminal.getCurrentOpenSessionId() != null ? PosTerminalStatus.ACTIVE : PosTerminalStatus.IDLE);
+        }
+
+        return repo.save(terminal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Registration approval
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosTerminal approve(Long terminalPk) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (terminal.getStatus() != PosTerminalStatus.PENDING_REGISTRATION) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terminal is not pending registration.");
+        }
+        terminal.setStatus(PosTerminalStatus.ACTIVE);
+        terminal.setRegistrationStatus("APPROVED");
+        return repo.save(terminal);
+    }
+
+    @Transactional
+    public PosTerminal reject(Long terminalPk, String reason) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (terminal.getStatus() != PosTerminalStatus.PENDING_REGISTRATION) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terminal is not pending registration.");
+        }
+        terminal.setStatus(PosTerminalStatus.INACTIVE);
+        terminal.setRegistrationStatus("REJECTED");
+        if (reason != null) terminal.setArchiveReason(reason);
+        return repo.save(terminal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Orphan / archive management
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosTerminal archive(Long terminalPk, String reason) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (terminal.getCurrentOpenSessionId() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Terminal has an open session. Close the session before archiving.");
+        }
+        terminal.setStatus(PosTerminalStatus.ARCHIVED);
+        terminal.setArchivedAt(LocalDateTime.now());
+        terminal.setArchiveReason(reason);
+        terminal.setActive(false);
+        return repo.save(terminal);
+    }
+
+    @Transactional
+    public PosTerminal restore(Long terminalPk) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (terminal.getStatus() != PosTerminalStatus.ARCHIVED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terminal is not archived.");
+        }
+        // Re-check limit before restore
+        PosSettings settings = settingsRepo.findByBranchId(terminal.getBranchId()).orElse(new PosSettings());
+        int max = settings.getMaxTerminalsPerBranch() != null ? settings.getMaxTerminalsPerBranch() : 5;
+        long current = repo.countActiveLimitByBranchId(terminal.getBranchId());
+        if (current >= max) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Cannot restore: terminal limit (" + max + ") would be exceeded.");
+        }
+        terminal.setStatus(PosTerminalStatus.INACTIVE);
+        terminal.setArchivedAt(null);
+        terminal.setArchiveReason(null);
+        terminal.setActive(true);
+        return repo.save(terminal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Counter assignment
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosTerminal assignCounter(Long terminalPk, Long counterId) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (counterId != null) {
+            PosCounter counter = counterRepo.findById(counterId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Counter not found: " + counterId));
+            terminal.setCounterId(counter.getId());
+            terminal.setCounterName(counter.getCounterName());
+        } else {
+            terminal.setCounterId(null);
+        }
+        return repo.save(terminal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Existing read/mutation methods
+    // -------------------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public List<PosTerminal> getForBranch(Long branchId) {
@@ -128,6 +286,11 @@ public class PosTerminalService {
     @Transactional(readOnly = true)
     public List<PosTerminal> getAllForBranch(Long branchId) {
         return repo.findByBranchIdOrderByTerminalIdAsc(branchId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PosTerminal> getPendingApproval(Long branchId) {
+        return repo.findByBranchIdAndRegistrationStatus(branchId, "PENDING");
     }
 
     @Transactional
@@ -151,7 +314,6 @@ public class PosTerminalService {
     public PosTerminal setMainPos(String terminalId) {
         PosTerminal target = repo.findByTerminalId(terminalId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
-        // Clear main flag from all terminals in this branch, then set on target
         repo.findByBranchIdOrderByTerminalIdAsc(target.getBranchId())
                 .forEach(t -> {
                     if (Boolean.TRUE.equals(t.getIsMainPos())) {

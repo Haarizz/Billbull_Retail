@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, LayoutDashboard } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, LayoutDashboard, Layers } from 'lucide-react';
+import POSCounters from '../POSCounters';
 import DeviceDashboardPanel from './DeviceDashboardPanel';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
@@ -254,6 +255,7 @@ const POSConsole = React.memo((props) => {
       { id:'dashboard', label:'Dashboard',      icon:<LayoutDashboard className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
       { id:'terminals', label:'Terminals',      icon:<Hash className="h-4 w-4" /> },
+      { id:'counters',  label:'Counters',       icon:<Layers className="h-4 w-4" /> },
     ];
 
     const loadTerminals = async () => {
@@ -2025,6 +2027,11 @@ const POSConsole = React.memo((props) => {
             </div>
             );
           })()}
+
+          {/* ══ COUNTERS ══ */}
+          {consoleTab === 'counters' && (
+            <POSCounters />
+          )}
 
         </div>
       </div>

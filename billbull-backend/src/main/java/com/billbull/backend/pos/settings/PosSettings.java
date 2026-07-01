@@ -124,6 +124,30 @@ public class PosSettings extends BaseEntity {
     @Column(name = "cash_variance_threshold", precision = 15, scale = 2)
     private java.math.BigDecimal cashVarianceThreshold = java.math.BigDecimal.ZERO;
 
+    // Terminal lifecycle
+    @Column(name = "require_terminal_approval")
+    private Boolean requireTerminalApproval = false;
+
+    @Column(name = "orphan_archive_days")
+    private Integer orphanArchiveDays = 90;
+
+    // Session lifecycle
+    @Column(name = "session_idle_timeout_minutes")
+    private Integer sessionIdleTimeoutMinutes = 0; // 0 = disabled
+
+    @Column(name = "session_max_duration_hours")
+    private Integer sessionMaxDurationHours = 0; // 0 = disabled
+
+    // Heartbeat
+    @Column(name = "heartbeat_interval_seconds")
+    private Integer heartbeatIntervalSeconds = 60;
+
+    @Column(name = "offline_threshold_minutes")
+    private Integer offlineThresholdMinutes = 15;
+
+    @Column(name = "idle_threshold_minutes")
+    private Integer idleThresholdMinutes = 5;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -224,4 +248,25 @@ public class PosSettings extends BaseEntity {
     public void setCashVarianceThreshold(java.math.BigDecimal cashVarianceThreshold) {
         this.cashVarianceThreshold = cashVarianceThreshold;
     }
+
+    public Boolean getRequireTerminalApproval() { return requireTerminalApproval; }
+    public void setRequireTerminalApproval(Boolean requireTerminalApproval) { this.requireTerminalApproval = requireTerminalApproval; }
+
+    public Integer getOrphanArchiveDays() { return orphanArchiveDays; }
+    public void setOrphanArchiveDays(Integer orphanArchiveDays) { this.orphanArchiveDays = orphanArchiveDays; }
+
+    public Integer getSessionIdleTimeoutMinutes() { return sessionIdleTimeoutMinutes; }
+    public void setSessionIdleTimeoutMinutes(Integer sessionIdleTimeoutMinutes) { this.sessionIdleTimeoutMinutes = sessionIdleTimeoutMinutes; }
+
+    public Integer getSessionMaxDurationHours() { return sessionMaxDurationHours; }
+    public void setSessionMaxDurationHours(Integer sessionMaxDurationHours) { this.sessionMaxDurationHours = sessionMaxDurationHours; }
+
+    public Integer getHeartbeatIntervalSeconds() { return heartbeatIntervalSeconds; }
+    public void setHeartbeatIntervalSeconds(Integer heartbeatIntervalSeconds) { this.heartbeatIntervalSeconds = heartbeatIntervalSeconds; }
+
+    public Integer getOfflineThresholdMinutes() { return offlineThresholdMinutes; }
+    public void setOfflineThresholdMinutes(Integer offlineThresholdMinutes) { this.offlineThresholdMinutes = offlineThresholdMinutes; }
+
+    public Integer getIdleThresholdMinutes() { return idleThresholdMinutes; }
+    public void setIdleThresholdMinutes(Integer idleThresholdMinutes) { this.idleThresholdMinutes = idleThresholdMinutes; }
 }
