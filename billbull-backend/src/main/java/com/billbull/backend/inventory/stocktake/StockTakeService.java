@@ -458,6 +458,10 @@ public class StockTakeService {
             throw new IllegalStateException("Counted quantity for batch-enabled items is derived from batch entries");
         }
 
+        if (item.getBinId() == null) {
+            throw new IllegalStateException("Cannot update count for an item without an assigned bin.");
+        }
+
         // Refresh system qty scoped to the item's bin (or unlocated stock) to avoid comparing
         // a bin-level count against the warehouse-wide total.
         BigDecimal available;
@@ -705,7 +709,8 @@ public class StockTakeService {
 
         // Tracked items (batch and/or expiry) start without an initial count —
         // their countedQty is the sum of batch-grid entries.
-        Integer effectiveCount = tracked ? null : initialCount;
+        // Additionally, if no bin is assigned, we enforce assigning one before counting.
+        Integer effectiveCount = (tracked || binId == null) ? null : initialCount;
         item.setCountedQty(effectiveCount);
         item.setVariance(effectiveCount != null ? effectiveCount - item.getSystemQty() : 0 - item.getSystemQty());
         item.setVarianceValue(item.getPrice() != null ?
@@ -1134,6 +1139,9 @@ public class StockTakeService {
         if (!(item.isBatchEnabled() || item.isExpiryEnabled())) {
             throw new IllegalStateException("Item is not batch-enabled");
         }
+        if (item.getBinId() == null) {
+            throw new IllegalStateException("Cannot add batch for an item without an assigned bin.");
+        }
         if (quantity == null || quantity <= 0) {
             throw new IllegalArgumentException("Quantity must be positive");
         }
@@ -1173,6 +1181,9 @@ public class StockTakeService {
         StockTakeItem item = batch.getItem();
         if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
             throw new IllegalStateException("Session is not in progress");
+        }
+        if (item.getBinId() == null) {
+            throw new IllegalStateException("Cannot update batch for an item without an assigned bin.");
         }
         if (quantity != null && quantity <= 0) {
             throw new IllegalArgumentException("Quantity must be positive");
