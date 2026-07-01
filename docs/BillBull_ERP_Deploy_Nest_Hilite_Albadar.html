@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP - Deployment Guide: Nest, Hilite, Albadar, Helenz, QA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+
+    :root {
+        --bg-body: #f1f5f9;
+        --bg-card: #ffffff;
+        --text-main: #334155;
+        --text-muted: #64748b;
+        --heading: #0f172a;
+        --primary: #f59e0b;
+        --primary-hover: #d97706;
+        --border-color: #e2e8f0;
+        --code-bg: #0f172a;
+        --code-text: #e2e8f0;
+        --inline-code-bg: #fef3c7;
+        --inline-code-text: #92400e;
+        --accent: #f59e0b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        line-height: 1.7;
+        color: var(--text-main);
+        background-color: var(--bg-body);
+        background-image: radial-gradient(#cbd5e1 1px, transparent 0);
+        background-size: 24px 24px;
+        margin: 0;
+        padding: 60px 20px;
+    }
+
+    .container {
+        max-width: 980px;
+        margin: 0 auto;
+        background-color: var(--bg-card);
+        padding: 60px 80px;
+        border-radius: 24px;
+        box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.02);
+    }
+
+    h1, h2, h3, h4 {
+        color: var(--heading);
+        margin-top: 2em;
+        margin-bottom: 0.75em;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    h1 {
+        font-size: 2.8em;
+        font-weight: 800;
+        line-height: 1.2;
+        margin-top: 0;
+        text-align: center;
+        background: linear-gradient(135deg, #0f172a 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.4em;
+    }
+
+    .meta-info {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.95em;
+        margin-bottom: 3em;
+        padding-bottom: 2.5em;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 15px 30px;
+    }
+    .meta-item { display: flex; align-items: center; gap: 8px; }
+    .meta-item strong { color: var(--heading); font-weight: 600; }
+
+    h2 {
+        font-size: 1.8em;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        margin-top: 2.5em;
+    }
+    h2::after {
+        content: '';
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        width: 80px;
+        height: 3px;
+        background-color: var(--primary);
+        border-radius: 3px;
+    }
+
+    h3 { font-size: 1.3em; color: #1e293b; margin-top: 2em; }
+
+    a { color: var(--primary); text-decoration: none; font-weight: 600; transition: color 0.2s; }
+    a:hover { color: var(--primary-hover); text-decoration: underline; }
+
+    p, ul, ol { margin-bottom: 1.5em; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin-bottom: 0.6em; }
+
+    .code-wrapper {
+        margin: 2em 0;
+        border-radius: 12px;
+        background-color: var(--code-bg);
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+        overflow: hidden;
+    }
+    .code-header {
+        background: rgba(255,255,255,0.05);
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .mac-dots { display: flex; gap: 8px; }
+    .mac-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .mac-dot.red   { background-color: #ff5f56; }
+    .mac-dot.yellow{ background-color: #ffbd2e; }
+    .mac-dot.green { background-color: #27c93f; }
+    .code-lang {
+        margin-left: auto;
+        color: #94a3b8;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 600;
+    }
+
+    pre { margin: 0; padding: 24px 20px; overflow-x: auto; }
+    code {
+        font-family: 'Fira Code', monospace;
+        background-color: var(--inline-code-bg);
+        color: var(--inline-code-text);
+        padding: 0.2em 0.5em;
+        border-radius: 6px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    pre code {
+        background-color: transparent;
+        color: var(--code-text);
+        padding: 0;
+        font-size: 0.9em;
+        line-height: 1.6;
+        font-weight: 400;
+    }
+
+    /* client mapping table */
+    .client-table { width: 100%; border-collapse: collapse; margin: 1.5em 0; font-size: 0.95em; }
+    .client-table th {
+        background: #f8fafc;
+        padding: 12px 16px;
+        text-align: left;
+        font-weight: 700;
+        color: #1e293b;
+        border: 1px solid var(--border-color);
+    }
+    .client-table td {
+        padding: 12px 16px;
+        border: 1px solid var(--border-color);
+        vertical-align: middle;
+    }
+    .client-table tr:nth-child(even) td { background: #f8fafc; }
+    .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 0.8em;
+        font-weight: 700;
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .task-list { list-style-type: none; padding-left: 0; margin-top: 1.5em; }
+    .task-list li {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+        background: #f8fafc;
+        padding: 16px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s ease;
+        font-weight: 500;
+    }
+    .task-list li:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px -4px rgba(0,0,0,0.05);
+        border-color: #cbd5e1;
+        background: #ffffff;
+    }
+    .task-list input[type="checkbox"] {
+        margin-right: 16px;
+        width: 20px;
+        height: 20px;
+        accent-color: var(--accent);
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    #table-of-contents + ol {
+        background: #f8fafc;
+        padding: 30px 30px 30px 60px;
+        border-radius: 16px;
+        border: 1px solid var(--border-color);
+    }
+    #table-of-contents + ol li { margin-bottom: 10px; }
+    #table-of-contents + ol li::marker { color: var(--primary); font-weight: 700; }
+
+    .note {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-left: 4px solid #f59e0b;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin: 1.5em 0;
+        font-size: 0.95em;
+    }
+    .note strong { color: #92400e; }
+
+    @media (max-width: 768px) {
+        body { padding: 20px 10px; }
+        .container { padding: 40px 24px; border-radius: 16px; }
+        h1 { font-size: 2.2em; }
+        .meta-info { flex-direction: column; gap: 10px; align-items: center; }
+    }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>BillBull ERP — Multi-Client Deployment</h1>
+<div class="meta-info">
+    <div class="meta-item"><strong>Date:</strong> July 2026</div>
+    <div class="meta-item"><strong>Version:</strong> 1.0</div>
+    <div class="meta-item"><strong>Platform:</strong> Ubuntu 24.04 LTS</div>
+    <div class="meta-item"><strong>Clients:</strong> Nest · Hilite · Albadar · Helenz · QA</div>
+</div>
+
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+    <li><a href="#client-map">Client Map (Ports &amp; Databases)</a></li>
+    <li><a href="#initial-setup">Initial Setup</a></li>
+    <li><a href="#database-setup">Database Setup</a></li>
+    <li><a href="#code-deployment">Code Deployment</a></li>
+    <li><a href="#backend-config">Backend Configuration</a></li>
+    <li><a href="#systemd-services">Systemd Services</a></li>
+    <li><a href="#nginx">Nginx Reverse Proxy</a></li>
+    <li><a href="#ssl">SSL Certificates</a></li>
+    <li><a href="#admin-setup">Admin User Setup</a></li>
+    <li><a href="#testing">Testing</a></li>
+    <li><a href="#checklist">Deployment Checklist</a></li>
+    <li><a href="#updates">Deploying Updates</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+</ol>
+
+<!-- ======================================================== -->
+<h2 id="client-map">1 · Client Map (Ports &amp; Databases)</h2>
+
+<table class="client-table">
+    <thead>
+        <tr>
+            <th>Client</th>
+            <th>Domain</th>
+            <th>Backend Port</th>
+            <th>Database</th>
+            <th>Spring Profile</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><strong>Nest</strong></td>
+            <td>nest.billbull.app</td>
+            <td><span class="badge">8080</span></td>
+            <td>billbull_nest</td>
+            <td>nest</td>
+        </tr>
+        <tr>
+            <td><strong>Hilite</strong></td>
+            <td>hilite.billbull.app</td>
+            <td><span class="badge">8081</span></td>
+            <td>billbull_hilite</td>
+            <td>hilite</td>
+        </tr>
+        <tr>
+            <td><strong>Albadar</strong></td>
+            <td>albadar.billbull.app</td>
+            <td><span class="badge">8082</span></td>
+            <td>billbull_albadar</td>
+            <td>albadar</td>
+        </tr>
+        <tr>
+            <td><strong>Helenz</strong></td>
+            <td>helenz.billbull.app</td>
+            <td><span class="badge">8083</span></td>
+            <td>billbull_helenz</td>
+            <td>helenz</td>
+        </tr>
+        <tr>
+            <td><strong>QA</strong></td>
+            <td>qa.billbull.app</td>
+            <td><span class="badge">8084</span></td>
+            <td>billbull_qa</td>
+            <td>qa</td>
+        </tr>
+    </tbody>
+</table>
+
+<div class="note">
+    <strong>Architecture recap:</strong> One shared React build served by Nginx · Five independent Spring Boot JAR instances (one per client) · One PostgreSQL server with five separate databases · Nginx routes each subdomain to the correct backend port.
+</div>
+
+<!-- ======================================================== -->
+<h2 id="initial-setup">2 · Initial Setup</h2>
+
+<h3>Step 1 — Update System</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt update && apt upgrade -y
+apt install -y ufw curl wget git unzip</code></pre>
+</div>
+
+<h3>Step 2 — Configure Firewall</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw enable</code></pre>
+</div>
+
+<h3>Step 3 — Install Java 17</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt install -y openjdk-17-jdk
+java -version</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>openjdk version "17.0.x"</code></p>
+
+<h3>Step 4 — Install Maven</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt install -y maven
+mvn -version</code></pre>
+</div>
+
+<h3>Step 5 — Install PostgreSQL</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt install -y postgresql postgresql-contrib
+systemctl enable postgresql
+systemctl start postgresql</code></pre>
+</div>
+
+<h3>Step 6 — Install Node.js 22 (frontend build)</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt install -y nodejs
+node -v && npm -v</code></pre>
+</div>
+
+<h3>Step 7 — Install Nginx</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt install -y nginx
+systemctl enable nginx
+systemctl start nginx</code></pre>
+</div>
+
+<h3>Step 8 — Install Certbot</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>apt install -y certbot python3-certbot-nginx</code></pre>
+</div>
+
+<!-- ======================================================== -->
+<h2 id="database-setup">3 · Database Setup</h2>
+
+<h3>Step 1 — Connect to PostgreSQL</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>sudo -u postgres psql</code></pre>
+</div>
+
+<h3>Step 2 — Create Databases and User</h3>
+<p>Run inside psql:</p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">SQL</div></div>
+    <pre><code>CREATE USER billbull WITH PASSWORD 'root';
+
+CREATE DATABASE billbull_nest;
+CREATE DATABASE billbull_hilite;
+CREATE DATABASE billbull_albadar;
+CREATE DATABASE billbull_helenz;
+CREATE DATABASE billbull_qa;
+
+GRANT ALL PRIVILEGES ON DATABASE billbull_nest     TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_hilite   TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_albadar  TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_helenz   TO billbull;
+GRANT ALL PRIVILEGES ON DATABASE billbull_qa       TO billbull;
+
+\l
+\q</code></pre>
+</div>
+<p><strong>Verify:</strong> All 5 databases listed. Each owned by postgres with billbull having privileges.</p>
+
+<!-- ======================================================== -->
+<h2 id="code-deployment">4 · Code Deployment</h2>
+
+<h3>Step 1 — Clone Repository</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root
+git clone https://github.com/Haarizz/Billbull_Retail.git billbull
+cd billbull</code></pre>
+</div>
+
+<h3>Step 2 — Verify Branch</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>git status
+git log --oneline -5</code></pre>
+</div>
+<p>Ensure you are on <code>main</code> (or the release branch with the latest code).</p>
+
+<h3>Step 3 — Build React Frontend</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root/billbull/billbull-frontend
+npm install
+npm run build</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>dist/</code> folder created containing <code>index.html</code> and <code>assets/</code></p>
+
+<h3>Step 4 — Copy Frontend to Web Root</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>mkdir -p /var/www/billbull
+cp -r /root/billbull/billbull-frontend/dist/* /var/www/billbull/
+ls /var/www/billbull/</code></pre>
+</div>
+<p>Should show: <code>index.html</code>, <code>assets/</code></p>
+
+<!-- ======================================================== -->
+<h2 id="backend-config">5 · Backend Configuration</h2>
+
+<h3>Step 1 — Update CORS Config</h3>
+<p>File: <code>billbull-backend/src/main/java/com/billbull/backend/config/CorsConfig.java</code></p>
+<p>Add all 5 client domains to <code>setAllowedOrigins(List.of(...))</code>:</p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">JAVA</div></div>
+    <pre><code>"https://nest.billbull.app",
+"https://hilite.billbull.app",
+"https://albadar.billbull.app",
+"https://helenz.billbull.app",
+"https://qa.billbull.app"</code></pre>
+</div>
+
+<h3>Step 2 — Create Properties File: Nest (port 8080)</h3>
+<p>File: <code>billbull-backend/src/main/resources/application-nest.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">PROPERTIES</div></div>
+    <pre><code>spring.application.name=billbull-backend-nest
+server.port=8080
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_nest
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/nest/
+
+jwt.secret=${JWT_SECRET_NEST:nest-billbull-secret-key-32chars-min!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+
+<h3>Step 3 — Create Properties File: Hilite (port 8081)</h3>
+<p>File: <code>billbull-backend/src/main/resources/application-hilite.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">PROPERTIES</div></div>
+    <pre><code>spring.application.name=billbull-backend-hilite
+server.port=8081
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_hilite
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/hilite/
+
+jwt.secret=${JWT_SECRET_HILITE:hilite-billbull-secret-key-32chars-min!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+
+<h3>Step 4 — Create Properties File: Albadar (port 8082)</h3>
+<p>File: <code>billbull-backend/src/main/resources/application-albadar.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">PROPERTIES</div></div>
+    <pre><code>spring.application.name=billbull-backend-albadar
+server.port=8082
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_albadar
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/albadar/
+
+jwt.secret=${JWT_SECRET_ALBADAR:albadar-billbull-secret-key-32chars-min!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+
+<h3>Step 5 — Create Properties File: Helenz (port 8083)</h3>
+<p>File: <code>billbull-backend/src/main/resources/application-helenz.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">PROPERTIES</div></div>
+    <pre><code>spring.application.name=billbull-backend-helenz
+server.port=8083
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_helenz
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/helenz/
+
+jwt.secret=${JWT_SECRET_HELENZ:helenz-billbull-secret-key-32chars-min!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+
+<h3>Step 6 — Create Properties File: QA (port 8084)</h3>
+<p>File: <code>billbull-backend/src/main/resources/application-qa.properties</code></p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">PROPERTIES</div></div>
+    <pre><code>spring.application.name=billbull-backend-qa
+server.port=8084
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/billbull_qa
+spring.datasource.username=postgres
+spring.datasource.password=root
+
+upload.path=uploads/qa/
+
+jwt.secret=${JWT_SECRET_QA:qa-billbull-secret-key-32chars-minimum!!!}
+jwt.expiration=86400000
+
+financials.jv.approval-threshold-aed=10000
+
+spring.flyway.enabled=false</code></pre>
+</div>
+
+<h3>Step 7 — Commit &amp; Push Changes</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root/billbull
+git add -A
+git commit -m "Add CORS + application property files for nest, hilite, albadar, helenz, qa"
+git push origin main</code></pre>
+</div>
+
+<h3>Step 8 — Build Backend JAR</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root/billbull
+git pull origin main
+cd billbull-backend
+mvn clean package -DskipTests</code></pre>
+</div>
+<p><strong>Expected:</strong> <code>target/billbull-backend-0.0.1-SNAPSHOT.jar</code> (~80 MB+)</p>
+
+<!-- ======================================================== -->
+<h2 id="systemd-services">6 · Systemd Services</h2>
+
+<h3>Step 1 — Create Upload Directories</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>mkdir -p /root/billbull/uploads/nest
+mkdir -p /root/billbull/uploads/hilite
+mkdir -p /root/billbull/uploads/albadar
+mkdir -p /root/billbull/uploads/helenz
+mkdir -p /root/billbull/uploads/qa</code></pre>
+</div>
+
+<h3>Step 2 — Service: Nest</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/systemd/system/billbull-nest.service << 'EOF'
+[Unit]
+Description=BillBull - Nest
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=nest
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+
+<h3>Step 3 — Service: Hilite</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/systemd/system/billbull-hilite.service << 'EOF'
+[Unit]
+Description=BillBull - Hilite
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=hilite
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+
+<h3>Step 4 — Service: Albadar</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/systemd/system/billbull-albadar.service << 'EOF'
+[Unit]
+Description=BillBull - Albadar
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=albadar
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+
+<h3>Step 5 — Service: Helenz</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/systemd/system/billbull-helenz.service << 'EOF'
+[Unit]
+Description=BillBull - Helenz
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=helenz
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+
+<h3>Step 6 — Service: QA</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/systemd/system/billbull-qa.service << 'EOF'
+[Unit]
+Description=BillBull - QA
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/root/billbull/billbull-backend
+ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=qa
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+</div>
+
+<h3>Step 7 — Enable &amp; Start All Services</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>systemctl daemon-reload
+systemctl enable billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa
+systemctl start  billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa</code></pre>
+</div>
+
+<h3>Step 8 — Verify Services Running</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>systemctl status billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa</code></pre>
+</div>
+<p><strong>Expected:</strong> All 5 show <code>active (running)</code></p>
+
+<h3>Step 9 — Tail Logs to Confirm Startup</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code># Check each one (Ctrl+C to exit)
+journalctl -u billbull-nest    -n 50 -f
+journalctl -u billbull-hilite  -n 50 -f
+journalctl -u billbull-albadar -n 50 -f
+journalctl -u billbull-helenz  -n 50 -f
+journalctl -u billbull-qa      -n 50 -f</code></pre>
+</div>
+<p>Look for: <code>Tomcat initialized with port 808X</code> and <code>Started BillbullBackendApplication</code> — no DB ERROR lines.</p>
+
+<!-- ======================================================== -->
+<h2 id="nginx">7 · Nginx Reverse Proxy</h2>
+
+<h3>Step 1 — Create Temporary SSL Options File</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>mkdir -p /etc/letsencrypt
+
+cat > /etc/letsencrypt/options-ssl-nginx.conf << 'EOF'
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers on;
+ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+ssl_session_cache shared:le_nginx_SSL:10m;
+ssl_session_timeout 1440m;
+ssl_session_tickets off;
+EOF
+
+openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048</code></pre>
+</div>
+
+<h3>Step 2 — Create Nginx Config</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cat > /etc/nginx/sites-available/billbull << 'EOF'
+# HTTP → HTTPS redirect for all clients
+server {
+    listen 80;
+    server_name nest.billbull.app hilite.billbull.app albadar.billbull.app helenz.billbull.app qa.billbull.app;
+    return 301 https://$host$request_uri;
+}
+
+# ── NEST (port 8080) ─────────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name nest.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate     /etc/letsencrypt/live/nest.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/nest.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8080/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+# ── HILITE (port 8081) ───────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name hilite.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate     /etc/letsencrypt/live/hilite.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hilite.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8081/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+# ── ALBADAR (port 8082) ──────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name albadar.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate     /etc/letsencrypt/live/albadar.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/albadar.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8082/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+# ── HELENZ (port 8083) ───────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name helenz.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate     /etc/letsencrypt/live/helenz.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/helenz.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8083/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+
+# ── QA (port 8084) ───────────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name qa.billbull.app;
+    root /var/www/billbull;
+    index index.html;
+    client_max_body_size 300M;
+
+    ssl_certificate     /etc/letsencrypt/live/qa.billbull.app/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/qa.billbull.app/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / { try_files $uri $uri/ /index.html; }
+    location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }
+    location /uploads/ { proxy_pass http://127.0.0.1:8084/uploads/; }
+    location /api/ {
+        proxy_pass http://127.0.0.1:8084;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+    }
+}
+EOF</code></pre>
+</div>
+
+<h3>Step 3 — Enable Nginx Config</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>ln -s /etc/nginx/sites-available/billbull /etc/nginx/sites-enabled/billbull
+rm -f /etc/nginx/sites-enabled/default</code></pre>
+</div>
+
+<!-- ======================================================== -->
+<h2 id="ssl">8 · SSL Certificates</h2>
+
+<h3>Step 1 — Stop Nginx Temporarily (standalone mode)</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>systemctl stop nginx</code></pre>
+</div>
+
+<h3>Step 2 — Obtain Certificates</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>certbot certonly --standalone -d nest.billbull.app
+certbot certonly --standalone -d hilite.billbull.app
+certbot certonly --standalone -d albadar.billbull.app
+certbot certonly --standalone -d helenz.billbull.app
+certbot certonly --standalone -d qa.billbull.app</code></pre>
+</div>
+<p>During each prompt: enter email, agree to terms (<code>Y</code>).</p>
+
+<h3>Step 3 — Verify Certificates</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>ls -la /etc/letsencrypt/live/</code></pre>
+</div>
+<p>Should show 5 directories — one per domain — each containing <code>fullchain.pem</code> and <code>privkey.pem</code>.</p>
+
+<h3>Step 4 — Test &amp; Reload Nginx</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>nginx -t
+systemctl start nginx
+systemctl status nginx</code></pre>
+</div>
+<p><strong>Expected:</strong> config test successful · nginx <code>active (running)</code></p>
+
+<!-- ======================================================== -->
+<h2 id="admin-setup">9 · Admin User Setup</h2>
+
+<h3>Step 1 — Generate Bcrypt Hash</h3>
+<p>For password <code>admin123</code> use:</p>
+<p><code>$2a$12$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS</code></p>
+<p>Or generate your own hash via an online bcrypt tool / <code>htpasswd</code>.</p>
+
+<h3>Step 2 — Set Admin Password for All 5 Databases</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>HASH='$2a$12$2TQT8Cs6a4fRh5bPEcEr1e/1aD7eWUWR9sqZyMNYpOSsiRrX66VkS'
+
+for DB in billbull_nest billbull_hilite billbull_albadar billbull_helenz billbull_qa; do
+  sudo -u postgres psql -d "$DB" -c \
+    "UPDATE users SET password = '$HASH' WHERE username = 'admin';"
+  echo "Updated $DB"
+done</code></pre>
+</div>
+
+<h3>Step 3 — Restart All Backends</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>systemctl restart billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa</code></pre>
+</div>
+<p>Wait ~15 seconds for all 5 instances to boot.</p>
+
+<!-- ======================================================== -->
+<h2 id="testing">10 · Testing</h2>
+
+<h3>Step 1 — Verify Frontend Loads</h3>
+<p>Open each URL in a browser — all should show the BillBull login page:</p>
+<ul>
+    <li>https://nest.billbull.app</li>
+    <li>https://hilite.billbull.app</li>
+    <li>https://albadar.billbull.app</li>
+    <li>https://helenz.billbull.app</li>
+    <li>https://qa.billbull.app</li>
+</ul>
+
+<h3>Step 2 — Login Test</h3>
+<p><strong>Username:</strong> <code>admin</code> &nbsp; <strong>Password:</strong> <code>admin123</code></p>
+<p>Do this on each domain. Expect redirect to dashboard with no errors.</p>
+
+<h3>Step 3 — Confirm DB Tables Created</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>for DB in billbull_nest billbull_hilite billbull_albadar billbull_helenz billbull_qa; do
+  echo "=== $DB ==="
+  sudo -u postgres psql -d "$DB" -c "\dt" | grep -c 'table'
+done</code></pre>
+</div>
+<p>Each should report 50+ tables.</p>
+
+<h3>Step 4 — Quick API Health Curl</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/auth/login   # nest
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8081/api/auth/login   # hilite
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8082/api/auth/login   # albadar
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8083/api/auth/login   # helenz
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8084/api/auth/login   # qa</code></pre>
+</div>
+<p>Expect <code>400</code> (missing body) or <code>200</code> — either confirms the backend is responding. <code>000</code> means the service is down.</p>
+
+<!-- ======================================================== -->
+<h2 id="checklist">11 · Deployment Checklist</h2>
+
+<h3>Pre-flight</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> VPS provisioned (Ubuntu 24.04 LTS)</li>
+    <li><input type="checkbox"> SSH root access confirmed</li>
+    <li><input type="checkbox"> DNS A records for all 5 domains point to VPS IP</li>
+    <li><input type="checkbox"> Firewall: ports 22, 80, 443 open</li>
+</ul>
+
+<h3>Installation</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> Java 17 installed</li>
+    <li><input type="checkbox"> Maven installed</li>
+    <li><input type="checkbox"> Node.js 22 installed</li>
+    <li><input type="checkbox"> PostgreSQL installed and running</li>
+    <li><input type="checkbox"> Nginx installed</li>
+    <li><input type="checkbox"> Certbot installed</li>
+</ul>
+
+<h3>Database</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> PostgreSQL user "billbull" created</li>
+    <li><input type="checkbox"> 5 databases created (nest, hilite, albadar, helenz, qa)</li>
+    <li><input type="checkbox"> Privileges granted to billbull user on all 5</li>
+</ul>
+
+<h3>Code</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> Repository cloned to /root/billbull</li>
+    <li><input type="checkbox"> CORS config updated with 5 client domains</li>
+    <li><input type="checkbox"> 5 application-*.properties files created and committed</li>
+    <li><input type="checkbox"> Frontend built → dist/ copied to /var/www/billbull</li>
+    <li><input type="checkbox"> Backend JAR built (mvn clean package -DskipTests)</li>
+</ul>
+
+<h3>Services</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> Upload directories created for all 5 clients</li>
+    <li><input type="checkbox"> 5 systemd service files created</li>
+    <li><input type="checkbox"> Services enabled and started</li>
+    <li><input type="checkbox"> All 5 show "active (running)"</li>
+    <li><input type="checkbox"> Backend logs show "Started BillbullBackendApplication" for each</li>
+</ul>
+
+<h3>Nginx &amp; SSL</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> dhparam file generated</li>
+    <li><input type="checkbox"> Nginx config created for 5 clients</li>
+    <li><input type="checkbox"> Config symlinked to sites-enabled; default removed</li>
+    <li><input type="checkbox"> 5 SSL certs obtained from Let's Encrypt</li>
+    <li><input type="checkbox"> nginx -t passes</li>
+    <li><input type="checkbox"> Nginx started / reloaded</li>
+    <li><input type="checkbox"> HTTPS accessible on all 5 domains</li>
+</ul>
+
+<h3>Admin &amp; Final Tests</h3>
+<ul class="task-list">
+    <li><input type="checkbox"> Admin password hash updated in all 5 databases</li>
+    <li><input type="checkbox"> All backends restarted</li>
+    <li><input type="checkbox"> Login works (admin / admin123) on all 5 domains</li>
+    <li><input type="checkbox"> DB tables present (50+) in each database</li>
+    <li><input type="checkbox"> No 500 errors in logs</li>
+    <li><input type="checkbox"> API endpoints responding</li>
+</ul>
+
+<!-- ======================================================== -->
+<h2 id="updates">12 · Deploying Updates</h2>
+
+<h3>Backend Update (code change only)</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root/billbull
+git pull origin main
+cd billbull-backend
+mvn clean package -DskipTests
+systemctl restart billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa</code></pre>
+</div>
+
+<h3>Frontend Update (UI change)</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>cd /root/billbull
+git pull origin main
+cd billbull-frontend
+npm install
+npm run build
+cp -r dist/* /var/www/billbull/</code></pre>
+</div>
+<p>No Nginx reload needed — static files are served directly.</p>
+
+<h3>SSL Certificate Renewal (auto via cron)</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>certbot renew --dry-run</code></pre>
+</div>
+
+<h3>Database Backups</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>mkdir -p /backups
+for DB in billbull_nest billbull_hilite billbull_albadar billbull_helenz billbull_qa; do
+  pg_dump -U postgres "$DB" > /backups/${DB}_$(date +%Y%m%d).sql
+  echo "Backed up $DB"
+done</code></pre>
+</div>
+
+<!-- ======================================================== -->
+<h2 id="troubleshooting">13 · Troubleshooting</h2>
+
+<h3>Backend Won't Start</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>journalctl -u billbull-nest -n 100 --no-pager</code></pre>
+</div>
+<ul>
+    <li><strong>DB connection failed</strong> → Check PostgreSQL is running: <code>systemctl status postgresql</code></li>
+    <li><strong>Port already in use</strong> → Change port in the matching <code>application-*.properties</code></li>
+    <li><strong>Flyway migration error</strong> → Ensure <code>spring.flyway.enabled=false</code> is present</li>
+    <li><strong>JAR not found</strong> → Re-run <code>mvn clean package -DskipTests</code></li>
+</ul>
+
+<h3>Nginx 502 Bad Gateway</h3>
+<p>Backend not responding on that port.</p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code># Example for nest (port 8080)
+systemctl status billbull-nest
+curl -v http://127.0.0.1:8080/api/auth/login</code></pre>
+</div>
+
+<h3>SSL Certificate Not Found</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>ls -la /etc/letsencrypt/live/
+# Re-run certbot for missing domains
+certbot certonly --standalone -d missing.billbull.app</code></pre>
+</div>
+
+<h3>Password Not Working After Update</h3>
+<p>Backend cached user in memory. Fix: restart the service.</p>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code>systemctl restart billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa</code></pre>
+</div>
+
+<h3>Daily Health Check</h3>
+<div class="code-wrapper">
+    <div class="code-header"><div class="mac-dots"><div class="mac-dot red"></div><div class="mac-dot yellow"></div><div class="mac-dot green"></div></div><div class="code-lang">BASH</div></div>
+    <pre><code># All services
+systemctl status billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa
+
+# Recent errors per service
+for SVC in billbull-nest billbull-hilite billbull-albadar billbull-helenz billbull-qa; do
+  echo "=== $SVC ==="
+  journalctl -u "$SVC" -n 20 --no-pager | grep -i error || echo "no errors"
+done
+
+# Nginx
+systemctl status nginx
+tail -n 30 /var/log/nginx/error.log</code></pre>
+</div>
+
+<div style="text-align:center; margin-top:4em; padding-top:2em; border-top:1px dashed var(--border-color); color:var(--text-muted);">
+    <strong>End of Deployment Guide — Nest · Hilite · Albadar · Helenz · QA</strong>
+</div>
+
+</div>
+</body>
+</html>

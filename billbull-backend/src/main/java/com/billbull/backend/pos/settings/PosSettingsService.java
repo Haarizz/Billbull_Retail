@@ -1,8 +1,11 @@
 package com.billbull.backend.pos.settings;
 
+import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.user.UserRepository;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,15 +20,17 @@ public class PosSettingsService {
     private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;
+    private final PosSessionService posSessionService;
 
     public PosSettingsService(PosSettingsRepository repo, BranchAccessService branchAccessService,
                               PasswordEncoder passwordEncoder, UserRepository userRepository,
-                              AuditLogService auditLogService) {
+                              AuditLogService auditLogService, PosSessionService posSessionService) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
         this.auditLogService = auditLogService;
+        this.posSessionService = posSessionService;
     }
 
     /** A stored PIN already BCrypt-hashed? BCrypt hashes start with $2a/$2b/$2y. */
@@ -138,7 +143,7 @@ public class PosSettingsService {
 
     /**
      * Verify supervisor identity by email/username + password and role membership.
-     * Roles that qualify as supervisor: ADMIN, BRANCH_ADMIN, MANAGER.
+     * Roles that qualify as supervisor: ADMIN, BRANCH_ADMIN, MANAGER, SUPERVISOR.
      * On success, logs a SUPERVISOR_HANDOVER domain event for audit trail.
      */
     @Transactional
@@ -166,7 +171,7 @@ public class PosSettingsService {
         }
 
         boolean hasSupervisorRole = user.getRoles().stream()
-                .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER").contains(r.getName()));
+                .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR").contains(r.getName()));
 
         if (!hasSupervisorRole) {
             auditLogService.logDomainEvent("POS_TERMINAL", terminalId,
@@ -183,6 +188,15 @@ public class PosSettingsService {
                 "SUPERVISOR_HANDOVER",
                 String.format("Supervisor '%s' (%s) authorized shift handover from cashier '%s'.",
                         displayName, user.getUsername(), lockedBy));
+
+        // Reassign the open session to whoever is actually logged into this browser
+        // (the incoming cashier), so they resume the existing session instead of
+        // being forced into "Start Session".
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String incomingCashier = auth != null ? auth.getName() : null;
+        if (incomingCashier != null) {
+            posSessionService.reassignSessionOwner(terminalId, incomingCashier);
+        }
 
         return SupervisorAuthResult.valid(displayName, user.getUsername());
     }

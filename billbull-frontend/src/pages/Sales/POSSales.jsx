@@ -150,6 +150,10 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
+import { useHeartbeat } from '../../hooks/useHeartbeat';
+import { useIdleTimeout } from '../../hooks/useIdleTimeout';
+import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
+import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendReceiptToConfiguredPrinter, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 import { buildEscPosReceiptBase64 } from '../../utils/escPosReceipt';
 
@@ -336,6 +340,8 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  const [isIdleLocked, setIsIdleLocked] = useState(false);
+  const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
   // Sidebar's display-name derivation: strip the @domain then title-case.
   const cashierDisplayName = useMemo(() => {
@@ -701,6 +707,7 @@ export default function POSSales() {
   // Configure: which right-panel buttons are visible
   // BillBull Console
   const [consoleTab, setConsoleTab] = useState('layout');
+
   const [templateSubTab, setTemplateSubTab] = useState('receipt');
   const [terminalList, setTerminalList] = useState([]);
   const [terminalsLoading, setTerminalsLoading] = useState(false);
@@ -949,6 +956,21 @@ export default function POSSales() {
       tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Heartbeat — keeps the terminal ACTIVE on the server
+  useHeartbeat(
+    currentTerminal?.terminalId,
+    (posSettings?.heartbeatIntervalSeconds ?? 60) * 1000,
+  );
+
+  // Idle timeout — auto-lock the screen when no activity
+  useIdleTimeout({
+    timeoutMs: isSessionActive && posSettings?.sessionIdleTimeoutMinutes > 0
+      ? posSettings.sessionIdleTimeoutMinutes * 60_000 : 0,
+    touchIntervalMs: 30_000,
+    sessionId: currentSession?.id,
+    onIdle: () => { if (isSessionActive) setIsIdleLocked(true); },
+  });
 
   // Fetch the selected customer's outstanding balance for the checkout preview's
   // Credit Account section — same lookup used at actual print time.
@@ -1600,7 +1622,7 @@ export default function POSSales() {
           price: unitPrice,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
-          taxRate: toNumber(product.salesTax, 5),
+          taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
@@ -1741,6 +1763,17 @@ export default function POSSales() {
       setHandoverEmail('');
       setHandoverPassword('');
       setTerminalLockedBy(null);
+
+      // Handover unlocks the terminal but the ongoing session (owned by the
+      // previous cashier) still exists — resume it rather than falling through
+      // to "Start Session".
+      if (currentTerminal?.terminalId) {
+        try {
+          const active = await getActivePosSession(currentTerminal.terminalId);
+          if (active?.id) setCurrentSession(active);
+        } catch { /* no active session to resume */ }
+      }
+
       showFeedback(
         `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
         'success'
@@ -1843,6 +1876,8 @@ export default function POSSales() {
       cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
       cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
       cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
+      taxInclusive: !!posSettings?.taxInclusive,
+      defaultTaxRate: posSettings?.defaultTaxRate ?? 5,
     });
   };
 
@@ -1975,12 +2010,12 @@ export default function POSSales() {
         unit: 'Each',
         price: item.price,
         discount: item.discount || 0,
-        taxRate: toNumber(item.taxRate, 5),
+        taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
         serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
       }));
-  }, [posSettings?.voidMode]);
+  }, [posSettings?.voidMode, posSettings?.defaultTaxRate]);
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
@@ -2763,7 +2798,7 @@ export default function POSSales() {
           unit: 'Each',
           price: item.price,
           discount: item.discount || 0,
-          taxRate: toNumber(item.taxRate, 5),
+          taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
           batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
           serialNumber: item.isVoided ? null : (item.serialNumber || null),
           voided: !!item.isVoided,
@@ -6309,32 +6344,68 @@ export default function POSSales() {
 
   return (
     <div className="min-h-screen bg-[#F7F7FA]">
+      {/* ─── IDLE LOCK OVERLAY ─── */}
+      {isIdleLocked && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-100 text-center p-8 space-y-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <Lock className="h-8 w-8 text-amber-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-800">Session Locked</h2>
+            <p className="text-sm text-gray-500">This terminal was locked due to inactivity.</p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={() => setIsIdleLocked(false)}
+                className="w-full py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600"
+              >
+                Resume My Session
+              </button>
+              <button
+                onClick={() => { setIsIdleLocked(false); setShowTakeoverDialog(true); }}
+                className="w-full py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-gray-50"
+              >
+                Supervisor Takeover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SUPERVISOR TAKEOVER DIALOG ─── */}
+      {showTakeoverDialog && currentSession?.id && (
+        <SupervisorTakeoverDialog
+          sessionId={currentSession.id}
+          onSuccess={(session) => { setCurrentSession(session); setShowTakeoverDialog(false); }}
+          onCancel={() => setShowTakeoverDialog(false)}
+        />
+      )}
+
       {/* ─── TERMINAL LOCKED BY ACTIVE CASHIER (SHIFT HANDOVER OVERLAY) ─── */}
       {terminalLockedBy && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100">
-            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-8 text-center text-white relative">
-              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-4 border border-white/20 shadow-inner">
-                <Lock className="h-10 w-10 text-white animate-pulse" />
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <Lock className="h-7 w-7 sm:h-10 sm:w-10 text-white animate-pulse" />
               </div>
-              <h2 className="text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
-              <p className="text-white/80 text-sm font-medium">This POS Terminal has an ongoing session</p>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">This POS Terminal has an ongoing session</p>
             </div>
-            <div className="p-8 space-y-6">
-              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 flex items-center gap-4 shadow-sm">
-                <div className="w-12 h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-                  <UserCheck className="h-6 w-6" />
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4 shadow-sm">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                  <UserCheck className="h-5 w-5 sm:h-6 sm:w-6" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Current Occupant</p>
-                  <p className="text-lg font-extrabold text-slate-800">{terminalLockedBy}</p>
+                  <p className="text-base sm:text-lg font-extrabold text-slate-800 break-words">{terminalLockedBy}</p>
                   <p className="text-xs text-slate-500 mt-0.5">Session is strictly isolated to prevent multi-device collision.</p>
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-5 space-y-3">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5 space-y-3">
                 <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                  <Shield className="h-5 w-5 text-amber-600" />
+                  <Shield className="h-5 w-5 text-amber-600 shrink-0" />
                   <span>Supervisor Override &amp; Shift Handover</span>
                 </div>
                 <p className="text-xs text-amber-700 leading-relaxed">
@@ -6351,7 +6422,7 @@ export default function POSSales() {
                       value={handoverEmail}
                       onChange={(e) => { setHandoverEmail(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   <div>
@@ -6363,7 +6434,7 @@ export default function POSSales() {
                       value={handoverPassword}
                       onChange={(e) => { setHandoverPassword(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   {handoverError && (
@@ -6374,7 +6445,7 @@ export default function POSSales() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -6384,7 +6455,7 @@ export default function POSSales() {
                     setTerminalLockedBy(null);
                     showFeedback('Viewing dashboard in read-only mode', 'info');
                   }}
-                  className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
                 >
                   Dismiss (Read-Only)
                 </button>
@@ -6392,7 +6463,7 @@ export default function POSSales() {
                   type="button"
                   disabled={handoverBusy}
                   onClick={handleHandoverSubmit}
-                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <CheckCircle className="h-4 w-4" />
                   {handoverBusy ? 'Verifying…' : 'Authorize Handover'}
@@ -6786,6 +6857,7 @@ export default function POSSales() {
             setCheckoutSettling(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
+            setSelectedCustomer(WALK_IN_CUSTOMER.id);
           };
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

@@ -123,16 +123,22 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
         }
 
-        // Check if there is already an open session for this terminal
+        // Resolve terminal entity for the DB-level lock
+        PosTerminal terminal = terminalRepository.findByTerminalId(terminalId).orElse(null);
+
+        // App-level duplicate check: if same user returns to their own session, hand it back
         Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
             }
-            // Return existing open session instead of throwing — cashier may have refreshed
             return existing.get();
         }
 
+        // Snapshot settings for idle / hard-limit timeout
+        PosSettings settings = posSettingsRepository.findByBranchId(branchId).orElse(new PosSettings());
+
+        LocalDateTime now = LocalDateTime.now();
         PosSession session = new PosSession();
         session.setBranchId(branchId);
         session.setBranchName(branch.getName());
@@ -140,7 +146,8 @@ public class PosSessionService {
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
         session.setSessionDate(LocalDate.now());
-        session.setOpenedAt(LocalDateTime.now());
+        session.setOpenedAt(now);
+        session.setLastActivityAt(now);
         session.setDurationSeconds(null);
         session.setStatus(PosSessionStatus.OPEN);
         session.setOpeningCash(openingCash != null ? openingCash : BigDecimal.ZERO);
@@ -150,9 +157,48 @@ public class PosSessionService {
         session.setTotalCreditSales(BigDecimal.ZERO);
         session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
+
+        if (terminal != null) {
+            session.setTerminalPk(terminal.getId());
+            if (terminal.getCounterId() != null) session.setCounterId(terminal.getCounterId());
+        }
+        Integer idleTimeout = settings.getSessionIdleTimeoutMinutes();
+        if (idleTimeout != null && idleTimeout > 0) session.setIdleTimeoutMinutes(idleTimeout);
+        Integer maxHours = settings.getSessionMaxDurationHours();
+        if (maxHours != null && maxHours > 0) session.setSessionTimeoutAt(now.plusHours(maxHours));
+
         PosSession saved = repo.save(session);
+
+        // Atomically acquire terminal lock (DB partial unique index is the concurrency safety net)
+        if (terminal != null) {
+            int acquired = terminalRepository.setOpenSession(terminal.getId(), saved.getId());
+            if (acquired == 0) {
+                repo.delete(saved);
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Terminal is already occupied by another session.");
+            }
+        }
+
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         return saved;
+    }
+
+    /**
+     * Reassigns the open session on a terminal to a new cashier after a supervisor-authorized
+     * shift handover, so the incoming cashier can resume the existing session (its cash drawer,
+     * invoices, etc.) instead of being forced into "Start Session".
+     */
+    @Transactional
+    public void reassignSessionOwner(String terminalId, String newOwnerUsername) {
+        if (terminalId == null || terminalId.isBlank() || newOwnerUsername == null || newOwnerUsername.isBlank()) {
+            return;
+        }
+        Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+        repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
+                .ifPresent(session -> {
+                    session.setOpenedBy(newOwnerUsername);
+                    repo.save(session);
+                });
     }
 
     @Transactional(readOnly = true)
@@ -199,8 +245,11 @@ public class PosSessionService {
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks) {
         PosSession session = getById(sessionId);
-        if (session.getStatus() != PosSessionStatus.OPEN) {
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
+        }
+        if (session.getStatus() != PosSessionStatus.OPEN && session.getStatus() != PosSessionStatus.SUSPENDED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session cannot be closed from status: " + session.getStatus());
         }
 
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
@@ -262,6 +311,11 @@ public class PosSessionService {
 
         PosSession closed = repo.save(session);
 
+        // Release terminal lock so the terminal can accept a new session
+        if (closed.getTerminalPk() != null) {
+            terminalRepository.clearOpenSession(closed.getTerminalPk(), closed.getId());
+        }
+
         // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
         try {
             Branch branch = closed.getBranchId() != null
@@ -283,6 +337,69 @@ public class PosSessionService {
     @Transactional
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
         return closeSession(sessionId, closingCash, notes, false);
+    }
+
+    // -------------------------------------------------------------------------
+    // Session suspend / resume / supervisor takeover
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosSession suspendSession(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only OPEN sessions can be suspended.");
+        }
+        session.setStatus(PosSessionStatus.SUSPENDED);
+        return repo.save(session);
+    }
+
+    @Transactional
+    public PosSession resumeSession(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.SUSPENDED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only SUSPENDED sessions can be resumed.");
+        }
+        session.setStatus(PosSessionStatus.OPEN);
+        session.setLastActivityAt(LocalDateTime.now());
+        return repo.save(session);
+    }
+
+    /**
+     * Supervisor takeover: verifies the supervisor PIN then transfers the session's
+     * openedBy to the current user so they become the session owner.
+     */
+    @Transactional
+    public PosSession supervisorTakeover(Long sessionId, String supervisorPin) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot take over a closed session.");
+        }
+
+        // Validate supervisor PIN (BCrypt)
+        if (session.getBranchId() != null) {
+            PosSettings settings = posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null);
+            if (settings != null && settings.isSupervisorPinSet()) {
+                org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder =
+                        new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+                if (supervisorPin == null || !encoder.matches(supervisorPin, settings.getSupervisorPin())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid supervisor PIN.");
+                }
+            }
+        }
+
+        session.setOpenedBy(currentUser());
+        session.setStatus(PosSessionStatus.OPEN);
+        session.setLastActivityAt(LocalDateTime.now());
+        PosSession updated = repo.save(session);
+
+        auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
+        return updated;
+    }
+
+    /** Touch lastActivityAt — called by the sales/payment path to reset the idle clock. */
+    @Transactional
+    public void touchActivity(Long sessionId) {
+        repo.touchLastActivity(sessionId, LocalDateTime.now());
     }
 
     private String buildZReportSnapshot(PosSession s, BigDecimal expectedCash, BigDecimal closingCash) {
@@ -371,6 +488,8 @@ public class PosSessionService {
 
         // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
         repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, voidDelta);
+        // Reset the idle clock so a cashier actively ringing sales is never auto-suspended.
+        repo.touchLastActivity(sessionId, LocalDateTime.now());
     }
 
     /** Explicit shift X-Report run by an open terminal. Stamps {@code xReportGeneratedAt}
