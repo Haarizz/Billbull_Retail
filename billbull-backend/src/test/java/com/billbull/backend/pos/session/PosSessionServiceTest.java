@@ -177,7 +177,7 @@ class PosSessionServiceTest {
 
     @Test
     void recordInvoiceClassifiesCashSale() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(105.0, "Cash"));
 
@@ -188,12 +188,13 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(BigDecimal.ZERO),  // creditDelta
                 eq(BigDecimal.ZERO),  // mixedDelta
+                eq(BigDecimal.ZERO),  // onlineDelta
                 eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceClassifiesMixedWhenCashAndCard() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(200.0, "Cash + Card"));
 
@@ -204,12 +205,13 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(BigDecimal.ZERO),  // creditDelta
                 eq(bd("200.0")),      // mixedDelta
+                eq(BigDecimal.ZERO),  // onlineDelta
                 eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceClassifiesCreditSale() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(75.0, "Credit"));
 
@@ -220,12 +222,13 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),  // cardDelta
                 eq(bd("75.0")),       // creditDelta
                 eq(BigDecimal.ZERO),  // mixedDelta
+                eq(BigDecimal.ZERO),  // onlineDelta
                 eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceUnknownModeFallsBackToCash() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(33.0, "Voucher"));
 
@@ -236,19 +239,20 @@ class PosSessionServiceTest {
                 eq(BigDecimal.ZERO),
                 eq(BigDecimal.ZERO),
                 eq(BigDecimal.ZERO),
+                eq(BigDecimal.ZERO),  // onlineDelta
                 eq(0));               // voidDelta
     }
 
     @Test
     void recordInvoiceAccumulatesAcrossInvoices() {
-        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(100.25, "Cash"));
         service.recordInvoiceOnSession(1L, invoice(50.50, "Cash"));
 
         // Two separate atomic increments — each fires one UPDATE.
         verify(repo, org.mockito.Mockito.times(2))
-                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt());
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
@@ -256,7 +260,7 @@ class PosSessionServiceTest {
         // Null sessionId — no DB call should be made.
         service.recordInvoiceOnSession(null, invoice(100.0, "Cash"));
         verify(repo, org.mockito.Mockito.never())
-                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), anyInt());
+                .incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     // ---------------------------------------------------------------------
@@ -315,12 +319,16 @@ class PosSessionServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void zReportAggregatesAcrossSessions() {
+        // Z-Report only aggregates CLOSED sessions (generateDynamicZReport filters on
+        // PosSessionStatus.CLOSED) — openSession() defaults to OPEN, so override here.
         PosSession s1 = openSession();
+        s1.setStatus(PosSessionStatus.CLOSED);
         s1.setTotalSales(bd("200"));
         s1.setTotalCashSales(bd("120"));
         s1.setInvoiceCount(2);
         PosSession s2 = openSession();
         s2.setId(2L);
+        s2.setStatus(PosSessionStatus.CLOSED);
         s2.setTotalSales(bd("100"));
         s2.setTotalCashSales(bd("80"));
         s2.setInvoiceCount(1);
