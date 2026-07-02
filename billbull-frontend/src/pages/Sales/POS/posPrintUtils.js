@@ -204,7 +204,12 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const subTotal = invoice.subTotal || 0;
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
-  // Total discount = sum of line discounts + bill-level discount (§3A).
+  // Total discount = sum of line discounts + bill-level discount (§3A). Note:
+  // on a persisted invoice, subTotal is already net of per-item discounts (only
+  // the bill/footer-level discount is added back into it) — so this is NOT an
+  // "item + bill" total in that case, just whatever remains between subTotal
+  // and the taxable base. Deriving it from gross-vs-net item prices here would
+  // double-subtract the per-item discount and break Taxable+Tax=Total.
   const discountTotal = parseFloat(
     invoice.discountTotal != null ? invoice.discountTotal
       : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
@@ -296,7 +301,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
   // ── Totals (§3): Subtotal, Discount (if any), VAT (no hardcoded %), TOTAL ──
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
-  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
+  if (discountTotal > 0) {
+    html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(subTotal - discountTotal)}</span></div>`;
+  }
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
   if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
@@ -590,9 +598,17 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   });
 
   lines.push(hr);
+  // Note: on a persisted invoice, subTotal is already net of per-item discounts
+  // (only the bill/footer-level discount is added back into it), so this only
+  // resolves to the bill-level discount there — see buildThermalReceiptHtml.
+  const resolvedDiscountTotal = parseFloat(
+    invoice.discountTotal != null ? invoice.discountTotal
+      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
+  ) || 0;
   lines.push(buildFixedWidthLine('Subtotal', fmt(invoice.subTotal), width));
-  if (parseFloat(invoice.discountTotal || 0) > 0) {
-    lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
+  if (resolvedDiscountTotal > 0) {
+    lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
+    lines.push(buildFixedWidthLine('Taxable Amount', fmt(parseFloat(invoice.subTotal || 0) - resolvedDiscountTotal), width));
   }
   lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
@@ -1046,6 +1062,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += D;
   html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');
   if (!isReturn)         html += srow('Discount:', 'AED 0.00');
+  if (!isReturn)         html += srow('Taxable Amount:', 'AED 89.00');
   if (showServiceCharge) html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
   if (showVatSummary)    html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
   html += D;
