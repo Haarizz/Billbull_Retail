@@ -1042,14 +1042,17 @@ public class PostingEngineService {
          * already recognized (DN was delivered) or is still deferred:
          *
          *   revenueWasRecognized = true  (DN already delivered):
-         *     Dr Sales Revenue (4101) [subTotal]
+         *     Dr Sales Revenue (4101) [subTotal - discount]
          *     Dr VAT Output (2102)    [taxAmount]  (if > 0)
          *     Cr Accounts Receivable (1110) [totalAmount]
          *
          *   revenueWasRecognized = false (DN not yet delivered / revenue deferred):
-         *     Dr Deferred Revenue (2107) [subTotal]
+         *     Dr Deferred Revenue (2107) [subTotal - discount]
          *     Dr VAT Output (2102)       [taxAmount]  (if > 0)
          *     Cr Accounts Receivable (1110) [totalAmount]
+         *
+         * discount is derived as subTotal + taxAmount - totalAmount so the entry always
+         * balances regardless of any item-level discount breakdown.
          *
          * COGS reversal (only if costOfGoodsReturned > 0):
          *   Dr Inventory (1120) / Cr COGS (5101)
@@ -1073,11 +1076,16 @@ public class PostingEngineService {
                 BigDecimal subTotal   = nz(salesReturn.getSubTotal());
                 BigDecimal taxAmount  = nz(salesReturn.getTaxAmount());
                 BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
+                // subTotal is gross (pre-discount); totalAmount = subTotal - discount + tax.
+                // Derive the discount as the residual so the entry balances however the
+                // caller computed totalAmount, without needing a header-level discount field.
+                BigDecimal discountAmount = subTotal.add(taxAmount).subtract(totalAmount).max(BigDecimal.ZERO);
+                BigDecimal netRevenue = subTotal.subtract(discountAmount);
 
-                // Debit the correct revenue account
+                // Debit the correct revenue account (net of discount)
                 String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE     : ACC_DEFERRED_REVENUE;
                 String revenueAccountName = revenueWasRecognized ? "Sales Revenue"        : "Deferred Revenue";
-                addLine(entry, revenueAccountName, revenueAccount, "Return Revenue Reversal", subTotal, BigDecimal.ZERO);
+                addLine(entry, revenueAccountName, revenueAccount, "Return Revenue Reversal", netRevenue, BigDecimal.ZERO);
 
                 if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT Refund", taxAmount, BigDecimal.ZERO);

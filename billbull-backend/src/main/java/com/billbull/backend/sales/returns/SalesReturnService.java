@@ -181,7 +181,57 @@ public class SalesReturnService {
             salesReturn.getItems().forEach(item -> item.setSalesReturn(salesReturn));
         }
 
+        prorateDiscountFromInvoice(salesReturn);
+
         return salesReturnRepository.save(salesReturn);
+    }
+
+    /**
+     * Backfills discountPercent/discountAmount on each return line from the matching line
+     * on the linked original invoice (matched by itemCode), prorating the invoice line's
+     * discount amount by returnQty/soldQty so partial returns carry a proportional discount.
+     * Leaves any discount already supplied by the caller untouched.
+     */
+    private void prorateDiscountFromInvoice(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice == null || linkedInvoice.isBlank()) return;
+
+        Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(linkedInvoice);
+        if (invoiceOpt.isEmpty() || invoiceOpt.get().getItems() == null) return;
+
+        Map<String, SalesInvoiceItem> invoiceItemByCode = new HashMap<>();
+        for (SalesInvoiceItem ii : invoiceOpt.get().getItems()) {
+            if (ii.getItemCode() != null) {
+                invoiceItemByCode.putIfAbsent(ii.getItemCode(), ii);
+            }
+        }
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getDiscountAmount() != null) continue; // caller already supplied a value
+            SalesInvoiceItem invoiceItem = invoiceItemByCode.get(item.getItemCode());
+            if (invoiceItem == null) continue;
+
+            item.setDiscountPercent(invoiceItem.getDiscount());
+
+            int soldQty = invoiceItem.getQuantity() != null ? invoiceItem.getQuantity() : 0;
+            int returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
+            BigDecimal invoiceLineDiscountAmt = invoiceItem.getPrice() != null && invoiceItem.getDiscount() != null
+                    ? invoiceItem.getPrice()
+                            .multiply(BigDecimal.valueOf(soldQty))
+                            .multiply(BigDecimal.valueOf(invoiceItem.getDiscount() / 100.0)
+                                    .setScale(6, java.math.RoundingMode.HALF_UP))
+                    : BigDecimal.ZERO;
+
+            if (soldQty > 0 && returnQty > 0) {
+                BigDecimal proratedDiscount = invoiceLineDiscountAmt
+                        .multiply(BigDecimal.valueOf(returnQty))
+                        .divide(BigDecimal.valueOf(soldQty), 2, java.math.RoundingMode.HALF_UP);
+                item.setDiscountAmount(proratedDiscount);
+            } else {
+                item.setDiscountAmount(BigDecimal.ZERO);
+            }
+        }
     }
 
     @Transactional
@@ -408,6 +458,19 @@ public class SalesReturnService {
             }
         }
 
+        List<SalesReturn> existingReturns = salesReturnRepository.findByLinkedInvoiceWithItems(invoiceNumber);
+        Map<String, Integer> alreadyReturnedByCode = new HashMap<>();
+        for (SalesReturn r : existingReturns) {
+            if ("DRAFT".equals(r.getStatus()) || "REJECTED".equals(r.getStatus())) continue;
+            if (r.getItems() == null) continue;
+            for (com.billbull.backend.sales.returns.SalesReturnItem ri : r.getItems()) {
+                if (ri.getItemCode() != null) {
+                    alreadyReturnedByCode.put(ri.getItemCode(), 
+                        alreadyReturnedByCode.getOrDefault(ri.getItemCode(), 0) + (ri.getReturnQty() != null ? ri.getReturnQty() : 0));
+                }
+            }
+        }
+
         List<ReturnableBatchResponse> out = new ArrayList<>();
         for (BatchAllocation a : allocations) {
             int already = batchSelectionService.sumAlreadyReturned(a.getId());
@@ -434,6 +497,26 @@ public class SalesReturnService {
             }
             out.add(r);
         }
+
+        for (SalesInvoiceItem ii : itemByCode.values()) {
+            boolean hasAllocation = out.stream().anyMatch(r -> r.itemCode != null && r.itemCode.equals(ii.getItemCode()));
+            if (!hasAllocation) {
+                int already = alreadyReturnedByCode.getOrDefault(ii.getItemCode(), 0);
+                int qty = ii.getQuantity() != null ? ii.getQuantity() : 0;
+                int returnable = Math.max(0, qty - already);
+                if (returnable > 0) {
+                    ReturnableBatchResponse r = new ReturnableBatchResponse();
+                    r.itemCode = ii.getItemCode();
+                    r.itemName = ii.getDescription() != null ? ii.getDescription() : ii.getItemCode();
+                    r.unit = ii.getUnit();
+                    r.originalQty = qty;
+                    r.alreadyReturnedQty = already;
+                    r.returnableQty = returnable;
+                    out.add(r);
+                }
+            }
+        }
+        
         return out;
     }
 

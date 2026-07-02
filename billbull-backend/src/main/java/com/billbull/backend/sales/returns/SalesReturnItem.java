@@ -24,6 +24,11 @@ public class SalesReturnItem {
 
     @Column(precision = 15, scale = 2)
     private BigDecimal price;
+    /** Discount PERCENTAGE rate carried over from the original invoice line (not money). */
+    private Double discountPercent;
+    /** Discount amount prorated to returnQty/soldQty from the original invoice line. */
+    @Column(precision = 15, scale = 2)
+    private BigDecimal discountAmount;
     /** Tax PERCENTAGE rate (not money). */
     private Double taxRate;
     @Column(precision = 15, scale = 2)
@@ -108,6 +113,22 @@ public class SalesReturnItem {
 
     public void setPrice(BigDecimal price) {
         this.price = price;
+    }
+
+    public Double getDiscountPercent() {
+        return discountPercent;
+    }
+
+    public void setDiscountPercent(Double discountPercent) {
+        this.discountPercent = discountPercent;
+    }
+
+    public BigDecimal getDiscountAmount() {
+        return discountAmount;
+    }
+
+    public void setDiscountAmount(BigDecimal discountAmount) {
+        this.discountAmount = discountAmount;
     }
 
     public Double getTaxRate() {

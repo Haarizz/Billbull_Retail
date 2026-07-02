@@ -14,6 +14,9 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     Optional<SalesReturn> findByReturnNumber(String returnNumber);
 
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.linkedInvoice = :invoiceNumber")
+    List<SalesReturn> findByLinkedInvoiceWithItems(@Param("invoiceNumber") String invoiceNumber);
+
     Optional<SalesReturn> findTopByOrderByReturnNumberDesc();
 
     List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);

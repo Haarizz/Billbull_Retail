@@ -31,7 +31,7 @@ import {
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
 } from '../../api/posApi';
-import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
+import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
@@ -835,6 +835,7 @@ export default function POSSales() {
   const [tplReturnShowNotes, setTplReturnShowNotes] = useState(false);
   const [tplReturnShowQRCode, setTplReturnShowQRCode] = useState(false);
   const [tplReturnShowSignature, setTplReturnShowSignature] = useState(false);
+  const [tplReturnShowCreditBalance, setTplReturnShowCreditBalance] = useState(false);
   // Job Card A4 extras
   const [tplJobCardShowLogo, setTplJobCardShowLogo] = useState(true);
   const [tplJobCardShowTrn, setTplJobCardShowTrn] = useState(true);
@@ -1227,6 +1228,19 @@ export default function POSSales() {
               if (tpl.returnShowLogo != null) setTplReturnShowLogo(tpl.returnShowLogo);
               if (tpl.returnShowTrn != null) setTplReturnShowTrn(tpl.returnShowTrn);
               if (tpl.returnShowStamp != null) setTplReturnShowStamp(tpl.returnShowStamp);
+              if (tpl.returnShowCompanyDetails != null) setTplReturnShowCompanyDetails(tpl.returnShowCompanyDetails);
+              if (tpl.returnShowCustomerDetails != null) setTplReturnShowCustomerDetails(tpl.returnShowCustomerDetails);
+              if (tpl.returnColItemCode != null) setTplReturnColItemCode(tpl.returnColItemCode);
+              if (tpl.returnColBatchNo != null) setTplReturnColBatchNo(tpl.returnColBatchNo);
+              if (tpl.returnColDiscount != null) setTplReturnColDiscount(tpl.returnColDiscount);
+              if (tpl.returnColVatPct != null) setTplReturnColVatPct(tpl.returnColVatPct);
+              if (tpl.returnColVatAmt != null) setTplReturnColVatAmt(tpl.returnColVatAmt);
+              if (tpl.returnShowGrandTotalBanner != null) setTplReturnShowGrandTotalBanner(tpl.returnShowGrandTotalBanner);
+              if (tpl.returnShowTerms != null) setTplReturnShowTerms(tpl.returnShowTerms);
+              if (tpl.returnShowNotes != null) setTplReturnShowNotes(tpl.returnShowNotes);
+              if (tpl.returnShowQRCode != null) setTplReturnShowQRCode(tpl.returnShowQRCode);
+              if (tpl.returnShowSignature != null) setTplReturnShowSignature(tpl.returnShowSignature);
+              if (tpl.returnShowCreditBalance != null) setTplReturnShowCreditBalance(tpl.returnShowCreditBalance);
               if (tpl.jobCardFooter != null) setTplJobCardFooter(tpl.jobCardFooter);
               if (tpl.jobCardPaper != null) setTplJobCardPaper(tpl.jobCardPaper);
               if (tpl.jobCardShowLogo != null) setTplJobCardShowLogo(tpl.jobCardShowLogo);
@@ -6197,7 +6211,7 @@ export default function POSSales() {
     tplReturnHeader, setTplReturnHeader, tplReturnFooter, setTplReturnFooter, tplReturnPaper, setTplReturnPaper,
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails,
     tplReturnColItemCode, tplReturnColBatchNo, tplReturnColDiscount, tplReturnColVatPct, tplReturnColVatAmt,
-    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature,
+    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, tplReturnShowCreditBalance,
     tplJobCardFooter, setTplJobCardFooter, tplJobCardPaper, setTplJobCardPaper,
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails,
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
@@ -6209,7 +6223,7 @@ export default function POSSales() {
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
-    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt,
+    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
@@ -9482,11 +9496,17 @@ export default function POSSales() {
           const qty = returnSelectedItems[it.itemCode] || 0;
           return s + qty * parseFloat(it.unitPrice || 0);
         }, 0);
+        const returnDiscount = returnableItems.reduce((s, it) => {
+          const qty = returnSelectedItems[it.itemCode] || 0;
+          return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.discountPercent || 0) / 100);
+        }, 0);
         const returnVAT = returnableItems.reduce((s, it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
-          return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.taxRate || 5) / 100);
+          const gross = qty * parseFloat(it.unitPrice || 0);
+          const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
+          return s + (gross - disc) * (parseFloat(it.taxRate || 5) / 100);
         }, 0);
-        const returnNet = returnSubtotal + returnVAT;
+        const returnNet = returnSubtotal - returnDiscount + returnVAT;
         const anyItemSelected = activeItems.length > 0;
 
         const doSearchInvoice = async () => {
@@ -9520,31 +9540,51 @@ export default function POSSales() {
           setReturnItemsLoading(true);
           try {
             const batches = await getReturnableBatches(returnInvoiceFound.invoiceNumber);
+            const pastReturnsPage = await getSalesReturnsPage({ search: returnInvoiceFound.invoiceNumber, size: 100 });
+            const pastReturns = pastReturnsPage?.content || [];
+            
+            const alreadyReturnedMap = {};
+            pastReturns.forEach(ret => {
+              if (ret.status === 'DRAFT' || ret.status === 'REJECTED') return;
+              (ret.items || []).forEach(ri => {
+                if (ri.itemCode) {
+                  alreadyReturnedMap[ri.itemCode] = (alreadyReturnedMap[ri.itemCode] || 0) + (Number(ri.returnQty) || 0);
+                }
+              });
+            });
+
             const grouped = {};
             (batches || []).forEach(b => {
               const key = b.itemCode;
               if (!grouped[key]) {
                 grouped[key] = { itemCode: b.itemCode, itemName: b.itemName, unit: b.unit,
-                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 5, batches: [] };
+                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 5, discountPercent: 0, batches: [] };
               }
               grouped[key].soldQty += parseFloat(b.originalQty || 0);
-              grouped[key].alreadyReturned += parseFloat(b.alreadyReturnedQty || 0);
-              grouped[key].returnable += parseFloat(b.returnableQty || 0);
               grouped[key].batches.push(b);
             });
             const invoiceItems = returnInvoiceFound.items || [];
-            Object.values(grouped).forEach(g => {
-              const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
-              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 5); }
-            });
+            
             invoiceItems.forEach(invItem => {
               if (!grouped[invItem.itemCode] && !invItem.voided) {
                 grouped[invItem.itemCode] = { itemCode: invItem.itemCode, itemName: invItem.itemName,
                   unit: invItem.unit || 'Each', soldQty: parseFloat(invItem.quantity || 0),
-                  alreadyReturned: 0, returnable: parseFloat(invItem.quantity || 0),
-                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 5), batches: [] };
+                  alreadyReturned: 0, returnable: 0,
+                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 5),
+                  discountPercent: parseFloat(invItem.discount || 0), batches: [] };
               }
             });
+
+            Object.values(grouped).forEach(g => {
+              const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
+              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 5); g.discountPercent = parseFloat(invItem.discount || 0); }
+              
+              const totalSold = g.soldQty;
+              const alreadyRet = alreadyReturnedMap[g.itemCode] || 0;
+              g.alreadyReturned = alreadyRet;
+              g.returnable = Math.max(0, totalSold - alreadyRet);
+            });
+
             setReturnableItems(Object.values(grouped));
           } catch { setReturnableItems([]); } finally { setReturnItemsLoading(false); }
         };
@@ -9565,14 +9605,19 @@ export default function POSSales() {
                 // "Damaged/Scrap" strings this used to send never matched, so every POS-originated
                 // return was silently treated as scrap (no stock restored, no COGS reversed).
                 const itemStatus = returnItemConditions[it.itemCode] || 'Good';
-                const itemTotal = qty * parseFloat(it.unitPrice || 0) * (1 + parseFloat(it.taxRate || 5) / 100);
+                const grossAmt = qty * parseFloat(it.unitPrice || 0);
+                const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
+                const netAmt = grossAmt - discountAmt;
+                const taxAmt = netAmt * (parseFloat(it.taxRate || 5) / 100);
+                const itemTotal = netAmt + taxAmt;
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
                   batchNumber: b.batchNumber, binCode: b.binCode, quantity: 1, expiryDate: b.expiryDate,
                 }));
                 return { itemCode: it.itemCode, itemName: it.itemName, unit: it.unit,
                   soldQty: it.soldQty, returnQty: qty, price: it.unitPrice, taxRate: it.taxRate,
-                  taxAmount: qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.taxRate || 5) / 100),
+                  discountPercent: it.discountPercent || 0, discountAmount: discountAmt,
+                  taxAmount: taxAmt,
                   total: itemTotal, itemStatus, reason: returnReasons[it.itemCode] || '', batches: batchesForItem };
               });
             const payload = {
@@ -9597,6 +9642,7 @@ export default function POSSales() {
                 customerPhone: inv.customerPhone || '',
                 paymentMode: returnRefundMethod,
                 subTotal: returnSubtotal,
+                discountTotal: returnDiscount,
                 taxTotal: returnVAT,
                 invoiceTotal: returnNet,
                 items: itemsPayload.map(i => ({
@@ -9618,13 +9664,14 @@ export default function POSSales() {
                   desc: `Orig. Invoice: ${inv.invoiceNumber}`,
                   qty: i.returnQty,
                   price: i.price,
-                  disc: 0,
+                  discountPercent: i.discountPercent || 0,
+                  discountAmount: i.discountAmount || 0,
                   tax: i.taxRate || 5,
                   taxAmt: i.taxAmount || 0,
                   total: i.total,
                   batchNumber: i.batches?.[0]?.batchNumber || '',
                 })),
-                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
+                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, itemDiscountAmount: returnDiscount, billDiscountAmount: 0 },
                 meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
               };
               if (tplReturnPaper === 'A4') {
@@ -9642,7 +9689,28 @@ export default function POSSales() {
               } else {
                 const qrContent = buildQrContent(returnA4Data, tplOutletName);
                 const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
-                const returnHtml = buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, showCreditBalance: false, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement });
+                const returnHtml = buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, { 
+                  companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, 
+                  showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true, 
+                  logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl, 
+                  stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                  showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails, 
+                  outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, 
+                  showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, 
+                  showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode, 
+                  showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes, 
+                  showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms, 
+                  currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                  cashierName: cashierDisplayName,
+                  terminalId: currentTerminal?.terminalId,
+                  counterName: currentTerminal?.counterName,
+                  customerPhone: returnInvoiceFound?.customerPhone,
+                  customerEmail: returnInvoiceFound?.customerEmail,
+                  creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
+                  creditInvoiceCredit: returnNet,
+                  creditAmountPaid: 0,
+                  creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null)
+                });
                 const returnPrinter = resolvePrinterForContext(printerConfigs, {
                   deviceType: 'RECEIPT_PRINTER',
                   branchId: inv.branchId || currentTerminal?.branchId || null,
@@ -9814,7 +9882,9 @@ export default function POSSales() {
                                 {returnableItems.map(it=>{
                                   const returnable=parseFloat(it.returnable||0);
                                   const selQty=returnSelectedItems[it.itemCode]||0;
-                                  const lineAmt=selQty*parseFloat(it.unitPrice||0)*(1+parseFloat(it.taxRate||5)/100);
+                                  const lineGross=selQty*parseFloat(it.unitPrice||0);
+                                  const lineDisc=lineGross*(parseFloat(it.discountPercent||0)/100);
+                                  const lineAmt=(lineGross-lineDisc)*(1+parseFloat(it.taxRate||5)/100);
                                   return (
                                     <tr key={it.itemCode} className={`border-b border-gray-50 ${returnable===0?'bg-gray-50 opacity-60':''}`}>
                                       <td className="px-2 py-2 text-gray-500">{it.itemCode}</td>
@@ -9922,27 +9992,56 @@ export default function POSSales() {
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                       <div>Every return is recorded in the audit log. Stock will be updated based on return condition. VAT will be reversed correctly.</div>
                     </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Return Receipt Preview</div>
-                      <div className="p-3 text-[10px] space-y-0.5">
-                        <p className="text-center font-bold text-sm">{returnInvoiceFound?.branchName||'BillBull'}</p>
-                        <p className="text-center text-purple-600 font-bold border-t border-b border-gray-100 py-1 my-1">SALES RETURN / CREDIT NOTE</p>
-                        {[
-                          ['Original Invoice', returnInvoiceFound?.invoiceNumber||'—'],
-                          ['Customer', returnInvoiceFound?.customerName||'Walk-in'],
-                          ['Refund Method', returnRefundMethod],
-                          ['Net Refund', <CurrencyAmount amount={returnNet} />],
-                        ].map(([k,v])=>(
-                          <div key={k} className="flex justify-between"><span className="text-gray-400">{k}</span><span className="text-[#1E293B]">{v}</span></div>
-                        ))}
-                        <div className="border-t border-gray-100 mt-1 pt-1 space-y-0.5">
-                          {activeItems.map(it=>(
-                            <div key={it.itemCode} className="flex justify-between">
-                              <span className="text-gray-500">{it.itemName} ×{returnSelectedItems[it.itemCode]}</span>
-                              <CurrencyAmount amount={(returnSelectedItems[it.itemCode]||0)*parseFloat(it.unitPrice||0)*(1+parseFloat(it.taxRate||5)/100)} />
-                            </div>
-                          ))}
-                        </div>
+                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden flex flex-col">
+                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B] flex-shrink-0">Return Receipt Preview</div>
+                      <div className="bg-[#f0f0f3] flex-1 min-h-[300px] flex items-center justify-center p-4">
+                        <iframe
+                          title="return-preview"
+                          srcDoc={buildThermalReceiptHtml(tplReturnPaper, {
+                            invoiceNumber: returnInvoiceFound?.invoiceNumber || 'PREVIEW',
+                            invoiceDate: new Date().toISOString(),
+                            customerName: returnInvoiceFound?.customerName || 'Walk-in Customer',
+                            paymentMode: returnRefundMethod,
+                            subTotal: returnSubtotal,
+                            discountTotal: returnDiscount,
+                            taxTotal: returnVAT,
+                            invoiceTotal: returnNet,
+                            items: activeItems.map(it => {
+                              const returnQty = returnSelectedItems[it.itemCode] || 0;
+                              return {
+                                itemName: it.itemName,
+                                quantity: returnQty,
+                                unitPrice: it.unitPrice,
+                                netAmount: returnQty * (parseFloat(it.unitPrice)||0) * (1 + (parseFloat(it.taxRate)||0)/100),
+                              };
+                            }).filter(i => i.quantity > 0)
+                          }, {
+                            companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
+                            showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
+                            logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
+                            stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                            showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
+                            showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
+                            showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
+                            showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                            cashierName: cashierDisplayName,
+                            terminalId: currentTerminal?.terminalId,
+                            counterName: currentTerminal?.counterName,
+                            customerPhone: returnInvoiceFound?.customerPhone,
+                            customerEmail: returnInvoiceFound?.customerEmail,
+                            creditPreviousBalance: tplReturnShowCreditBalance ? 0 : null,
+                            creditInvoiceCredit: tplReturnShowCreditBalance ? returnNet : null,
+                            creditAmountPaid: 0,
+                            creditUpdatedBalance: tplReturnShowCreditBalance ? returnNet : null
+                          })}
+                          style={{
+                            width: tplReturnPaper === '58mm' ? '240px' : '320px',
+                            height: '400px',
+                            border: 'none',
+                            background: '#fff',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
