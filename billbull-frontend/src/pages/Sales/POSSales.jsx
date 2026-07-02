@@ -655,6 +655,8 @@ export default function POSSales() {
   // Hold (persisted, session-scoped)
   const [heldSales, setHeldSales] = useState([]);
   const [holdBusy, setHoldBusy] = useState(false);
+  // Confirmation modal (replaces window.confirm for delete/cancel actions)
+  const [confirmAction, setConfirmAction] = useState(null); // { title, message, onConfirm, busy }
   // Save Layaway modal
   const [showSaveLayaway, setShowSaveLayaway] = useState(false);
   const [saveLayawayDepositReq, setSaveLayawayDepositReq] = useState(true);
@@ -2309,6 +2311,33 @@ export default function POSSales() {
     }
   };
 
+  // Delete a held bill: cancel the underlying layaway (releases reserved stock)
+  // and refresh the held-sales list so the pill disappears.
+  const deleteHeldBill = (id) => {
+    const heldBill = heldSales.find(h => h.id === id);
+    setConfirmAction({
+      title: 'Delete Held Bill',
+      message: `Delete ${heldBill?.label || 'this held bill'}? Reserved stock will be released.`,
+      onConfirm: async () => {
+        setConfirmAction(prev => ({ ...prev, busy: true }));
+        try {
+          await cancelLayaway(id);
+          await loadHeldSales();
+          syncPosData();
+          setConfirmAction(null);
+        } catch (err) {
+          const status = err?.response?.status;
+          setConfirmAction(prev => ({
+            ...prev, busy: false,
+            error: status === 403
+              ? 'You do not have permission to delete a held bill (supervisor required).'
+              : (err?.response?.data?.message || 'Failed to delete held bill.'),
+          }));
+        }
+      },
+    });
+  };
+
   // ── Layaways ────────────────────────────────────────────────────────────────
   const loadLayaways = useCallback(async () => {
     setLayawaysLoading(true);
@@ -2495,22 +2524,33 @@ export default function POSSales() {
     }
   };
 
-  const handleCancelLayaway = async (layawayId) => {
-    if (!window.confirm('Cancel this layaway? Reserved stock will be released.')) return;
-    setLayawayBusyId(layawayId);
-    try {
-      await cancelLayaway(layawayId);
-      if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
-      await loadLayaways();
-      syncPosData();
-    } catch (err) {
-      const status = err?.response?.status;
-      alert(status === 403
-        ? 'You do not have permission to cancel a layaway (supervisor required).'
-        : (err?.response?.data?.message || 'Failed to cancel layaway.'));
-    } finally {
-      setLayawayBusyId(null);
-    }
+  const handleCancelLayaway = (layawayId) => {
+    const lay = (layawaysList || []).find(l => l.id === layawayId);
+    setConfirmAction({
+      title: 'Cancel Layaway',
+      message: `Cancel ${lay?.layawayNumber || 'this layaway'}? Reserved stock will be released.`,
+      onConfirm: async () => {
+        setConfirmAction(prev => ({ ...prev, busy: true }));
+        setLayawayBusyId(layawayId);
+        try {
+          await cancelLayaway(layawayId);
+          if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
+          await loadLayaways();
+          syncPosData();
+          setConfirmAction(null);
+        } catch (err) {
+          const status = err?.response?.status;
+          setConfirmAction(prev => ({
+            ...prev, busy: false,
+            error: status === 403
+              ? 'You do not have permission to cancel a layaway (supervisor required).'
+              : (err?.response?.data?.message || 'Failed to cancel layaway.'),
+          }));
+        } finally {
+          setLayawayBusyId(null);
+        }
+      },
+    });
   };
 
   // ── Cash drawer control ────────────────────────────────────────────────────
@@ -6400,7 +6440,7 @@ export default function POSSales() {
     filteredCustomerOptions, customerHistory, customerHistoryLoading,
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
-    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
+    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
@@ -9253,6 +9293,7 @@ export default function POSSales() {
                                 <div className="flex items-center justify-center gap-1">
                                   <button onClick={e=>{e.stopPropagation();setSelectedLayawayId(l.entityId);}} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
                                   {l.isOpen && <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded" onClick={e=>{e.stopPropagation();startLayawayConversion(l.entityId);}}>Convert</button>}
+                                  {l.isOpen && <button disabled={layawayBusyId===l.entityId} className="border border-red-300 text-red-600 text-[10px] px-1.5 py-0.5 rounded hover:bg-red-50 disabled:opacity-40" onClick={e=>{e.stopPropagation();handleCancelLayaway(l.entityId);}}>{layawayBusyId===l.entityId?'…':'Delete'}</button>}
                                 </div>
                               </td>
                             </tr>
@@ -9313,6 +9354,48 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* ─── CONFIRM ACTION MODAL ─── */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-[700] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !confirmAction.busy && setConfirmAction(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="h-7 w-7 text-red-500" />
+              </div>
+              <h3 className="text-lg font-bold text-[#1E293B] mb-1">{confirmAction.title}</h3>
+              <p className="text-sm text-gray-500">{confirmAction.message}</p>
+              {confirmAction.error && (
+                <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600 font-medium">
+                  {confirmAction.error}
+                </div>
+              )}
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button
+                onClick={() => setConfirmAction(null)}
+                disabled={confirmAction.busy}
+                className="flex-1 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <div className="w-px bg-gray-100" />
+              <button
+                onClick={confirmAction.onConfirm}
+                disabled={confirmAction.busy}
+                className="flex-1 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {confirmAction.busy ? (
+                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" />Deleting…</>
+                ) : (
+                  <><Trash2 className="h-3.5 w-3.5" />Delete</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── SAVE LAYAWAY MODAL ─── */}
       {showSaveLayaway && (() => {
@@ -11082,6 +11165,7 @@ export default function POSSales() {
                   <p className="text-[10px] text-gray-400 mb-3">Toggle which action buttons appear in the Cart Focus right panel.</p>
                   <div className="space-y-1.5">
                     {[
+                      { id: 'hold', label: 'Hold Bill' },
                       { id: 'add-qty', label: 'Add Qty' },
                       { id: 'remove', label: 'Remove Item' },
                       { id: 'discount', label: 'Discount' },

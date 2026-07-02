@@ -32,7 +32,7 @@ const POSTouchScreen = React.memo((props) => {
     posCustomersLoading, posCustomersError,
     // cart actions
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
-    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
+    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     // layaway
     activeLayawayId, activeLayawayDeposit,
     // shipping (order-level flat charge, not a cart line)
@@ -374,10 +374,18 @@ const POSTouchScreen = React.memo((props) => {
                     <p className="text-xl font-black text-white">{invoiceCounter + 1}</p>
                   </div>
                 </div>
-                <button type="button" onClick={guardedClearInvoice} disabled={currentInvoice.items.length === 0}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-white/80 hover:text-white disabled:opacity-30 transition-colors">
-                  <X className="h-3.5 w-3.5" />Clear
-                </button>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={holdInvoice} disabled={currentInvoice.items.length === 0 || holdBusy || !sessionId}
+                    title={!sessionId ? 'Open a POS session to hold a bill' : ''}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-white/80 hover:text-white disabled:opacity-30 transition-colors">
+                    <Pause className="h-3.5 w-3.5" />Hold
+                  </button>
+                  <div className="w-px h-4 bg-white/30"></div>
+                  <button type="button" onClick={guardedClearInvoice} disabled={currentInvoice.items.length === 0}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-white/80 hover:text-white disabled:opacity-30 transition-colors">
+                    <X className="h-3.5 w-3.5" />Clear
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -676,10 +684,17 @@ const POSTouchScreen = React.memo((props) => {
                           <p className="text-[10px] font-bold uppercase tracking-widest text-[#F5C742] mb-2">Held Bills</p>
                           <div className="flex flex-wrap gap-1.5">
                             {heldSales.map((h) => (
-                              <button key={h.id} type="button" onClick={() => recallInvoice(h.id)}
-                                className="px-3 py-1.5 text-xs font-bold text-amber-800 bg-[#F5C742]/10 hover:bg-amber-100 rounded-lg border border-[#327F74]/30 transition-colors">
-                                {h.label} · {formatCurrency(h.total)}
-                              </button>
+                              <div key={h.id} className="flex items-center gap-0.5">
+                                <button type="button" onClick={() => recallInvoice(h.id)}
+                                  className="px-3 py-1.5 text-xs font-bold text-amber-800 bg-[#F5C742]/10 hover:bg-amber-100 rounded-l-lg border border-r-0 border-[#327F74]/30 transition-colors">
+                                  {h.label} · {formatCurrency(h.total)}
+                                </button>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
+                                  title="Delete held bill"
+                                  className="px-1.5 py-1.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-lg transition-colors">
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             ))}
                           </div>
                         </div>
@@ -1003,10 +1018,17 @@ const POSTouchScreen = React.memo((props) => {
               {heldSales.length > 0 && (
                 <div className="px-3 py-1.5 bg-amber-50 border-t border-[#F5C742]/20 flex flex-wrap gap-1">
                   {heldSales.map((h) => (
-                    <button key={h.id} type="button" onClick={() => recallInvoice(h.id)}
-                      className="px-2 py-0.5 text-[10px] font-bold text-amber-800 bg-[#F5C742]/20 hover:bg-amber-200 rounded-full border border-[#F5C742]/30 transition-colors">
-                      {h.label} · {formatCurrency(h.total)}
-                    </button>
+                    <div key={h.id} className="flex items-center">
+                      <button type="button" onClick={() => recallInvoice(h.id)}
+                        className="px-2 py-0.5 text-[10px] font-bold text-amber-800 bg-[#F5C742]/20 hover:bg-amber-200 rounded-l-full border border-r-0 border-[#F5C742]/30 transition-colors">
+                        {h.label} · {formatCurrency(h.total)}
+                      </button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
+                        title="Delete held bill"
+                        className="px-1 py-0.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-full transition-colors">
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
