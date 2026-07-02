@@ -1029,11 +1029,28 @@ public class PosSessionService {
     private static final class TenderTotals {
         final Map<String, BigDecimal> byBucket = new java.util.LinkedHashMap<>();
         final Map<String, Long> countByBucket = new java.util.LinkedHashMap<>();
+        // Card-only breakdown by network/brand (raw paymentMode label, e.g. "Visa", "Mastercard", "Card").
+        final Map<String, BigDecimal> cardByType = new java.util.LinkedHashMap<>();
+        final Map<String, Long> cardCountByType = new java.util.LinkedHashMap<>();
         final List<Map<String, Object>> lines = new java.util.ArrayList<>();
         BigDecimal cash = BigDecimal.ZERO;
         BigDecimal card = BigDecimal.ZERO;
         BigDecimal credit = BigDecimal.ZERO;
         BigDecimal total = BigDecimal.ZERO;
+    }
+
+    /** Normalizes a raw card paymentMode label into a display card-type name
+     *  (e.g. "VISA DEBIT" -&gt; "Visa"). Falls back to the trimmed raw label,
+     *  or "Card" if blank, so unrecognized brands still get their own row. */
+    private static String cardTypeLabel(String rawMode) {
+        String m = rawMode == null ? "" : rawMode.trim();
+        String lower = m.toLowerCase();
+        if (lower.contains("visa")) return "Visa";
+        if (lower.contains("master")) return "Mastercard";
+        if (lower.contains("amex")) return "Amex";
+        if (lower.contains("mada")) return "Mada";
+        if (m.isEmpty() || lower.equals("card")) return "Card";
+        return m;
     }
 
     /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.
@@ -1055,7 +1072,12 @@ public class PosSessionService {
             t.countByBucket.merge(bucket, count, Long::sum);
             t.total = t.total.add(amount);
             if ("cash".equals(bucket)) t.cash = t.cash.add(amount);
-            else if ("card".equals(bucket)) t.card = t.card.add(amount);
+            else if ("card".equals(bucket)) {
+                t.card = t.card.add(amount);
+                String cardType = cardTypeLabel(rawMode);
+                t.cardByType.merge(cardType, amount, BigDecimal::add);
+                t.cardCountByType.merge(cardType, count, Long::sum);
+            }
             else if ("credit".equals(bucket)) t.credit = t.credit.add(amount);
         }
         for (Payment p : paymentRepository.findTenderForInvoices(numbers)) {
@@ -1092,6 +1114,11 @@ public class PosSessionService {
             t.byBucket.merge(bucket, amount, BigDecimal::add);
             t.countByBucket.merge(bucket, count, Long::sum);
             t.total = t.total.add(amount);
+            if ("card".equals(bucket)) {
+                String cardType = cardTypeLabel(rawMode);
+                t.cardByType.merge(cardType, amount, BigDecimal::add);
+                t.cardCountByType.merge(cardType, count, Long::sum);
+            }
         }
         return t;
     }
@@ -1185,6 +1212,7 @@ public class PosSessionService {
         s.put("creditSales", tender.byBucket.getOrDefault("credit", BigDecimal.ZERO));
         s.put("bankTransferSales", tender.byBucket.getOrDefault("bankTransfer", BigDecimal.ZERO));
         s.put("walletSales", tender.byBucket.getOrDefault("wallet", BigDecimal.ZERO));
+        s.put("walletInvoiceCount", tender.countByBucket.getOrDefault("wallet", 0L));
         s.put("voucherSales", tender.byBucket.getOrDefault("voucher", BigDecimal.ZERO));
         // "Other" combines every bucket besides cash/card/credit (bank transfer, wallet,
         // voucher, cheque, loyalty, store credit, other) so cash+card+credit+other sums to
@@ -1205,6 +1233,18 @@ public class PosSessionService {
         s.put("cardInvoiceCount", tender.countByBucket.getOrDefault("card", 0L));
         s.put("creditInvoiceCount", tender.countByBucket.getOrDefault("credit", 0L));
         s.put("totalTenderCount", tender.countByBucket.values().stream().mapToLong(Long::longValue).sum());
+
+        // Card settlement split by network/brand (Visa/Mastercard/Amex/…), plus the
+        // existing single "cardSales" total above so both views stay available.
+        List<Map<String, Object>> cardTypeBreakdown = new java.util.ArrayList<>();
+        for (Map.Entry<String, BigDecimal> e : tender.cardByType.entrySet()) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("cardType", e.getKey());
+            row.put("count", tender.cardCountByType.getOrDefault(e.getKey(), 0L));
+            row.put("amount", e.getValue());
+            cardTypeBreakdown.add(row);
+        }
+        s.put("cardTypeBreakdown", cardTypeBreakdown);
         return s;
     }
 
