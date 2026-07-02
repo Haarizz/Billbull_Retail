@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull Retail ERP - VPS Infrastructure Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+
+    :root {
+        --bg-body: #f1f5f9;
+        --bg-card: #ffffff;
+        --text-main: #334155;
+        --text-muted: #64748b;
+        --heading: #0f172a;
+        --primary: #3b82f6;
+        --primary-hover: #2563eb;
+        --border-color: #e2e8f0;
+        --code-bg: #0f172a;
+        --code-text: #e2e8f0;
+        --inline-code-bg: #f1f5f9;
+        --inline-code-text: #ec4899;
+        --accent: #3b82f6;
+        --danger: #dc2626;
+        --danger-bg: #fef2f2;
+        --danger-border: #fecaca;
+        --warning: #d97706;
+        --warning-bg: #fffbeb;
+        --warning-border: #fde68a;
+        --ok: #16a34a;
+        --ok-bg: #f0fdf4;
+        --ok-border: #bbf7d0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        line-height: 1.7;
+        color: var(--text-main);
+        background-color: var(--bg-body);
+        background-image: radial-gradient(#cbd5e1 1px, transparent 0);
+        background-size: 24px 24px;
+        margin: 0;
+        padding: 60px 20px;
+    }
+
+    .container {
+        max-width: 1040px;
+        margin: 0 auto;
+        background-color: var(--bg-card);
+        padding: 60px 80px;
+        border-radius: 24px;
+        box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.02);
+    }
+
+    h1, h2, h3, h4 {
+        color: var(--heading);
+        margin-top: 2em;
+        margin-bottom: 0.75em;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    h1 {
+        font-size: 2.6em;
+        font-weight: 800;
+        line-height: 1.2;
+        margin-top: 0;
+        text-align: center;
+        background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.4em;
+    }
+
+    .meta-info {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.95em;
+        margin-bottom: 3em;
+        padding-bottom: 2.5em;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 15px 30px;
+    }
+    .meta-item { display: flex; align-items: center; gap: 8px; }
+    .meta-item strong { color: var(--heading); font-weight: 600; }
+
+    h2 {
+        font-size: 1.7em;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        margin-top: 2.5em;
+    }
+    h2::after {
+        content: '';
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        width: 80px;
+        height: 3px;
+        background-color: var(--primary);
+        border-radius: 3px;
+    }
+
+    h3 { font-size: 1.25em; color: #1e293b; margin-top: 1.8em; }
+
+    p, ul, ol { margin-bottom: 1.5em; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin-bottom: 0.5em; }
+
+    code {
+        font-family: 'Fira Code', monospace;
+        background-color: var(--inline-code-bg);
+        color: var(--inline-code-text);
+        padding: 0.2em 0.5em;
+        border-radius: 6px;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+
+    /* Tables */
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1.5em 0;
+        font-size: 0.92em;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    thead { background-color: #0f172a; }
+    th {
+        color: #f1f5f9;
+        text-align: left;
+        padding: 12px 16px;
+        font-weight: 600;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    td {
+        padding: 11px 16px;
+        border-bottom: 1px solid var(--border-color);
+        background: #fff;
+    }
+    tbody tr:nth-child(even) td { background: #f8fafc; }
+    tbody tr:hover td { background: #f1f5f9; }
+    td.num, th.num { text-align: right; font-family: 'Fira Code', monospace; }
+
+    /* Callout boxes */
+    .callout {
+        border-radius: 14px;
+        padding: 20px 24px;
+        margin: 1.8em 0;
+        border: 1px solid;
+    }
+    .callout-title {
+        font-weight: 700;
+        font-size: 1.05em;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .callout.danger { background: var(--danger-bg); border-color: var(--danger-border); }
+    .callout.danger .callout-title { color: var(--danger); }
+    .callout.warning { background: var(--warning-bg); border-color: var(--warning-border); }
+    .callout.warning .callout-title { color: var(--warning); }
+    .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+    .callout.ok .callout-title { color: var(--ok); }
+
+    /* Risk badge */
+    .badge {
+        display: inline-block;
+        padding: 4px 14px;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 0.85em;
+        letter-spacing: 0.02em;
+    }
+    .badge.critical { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+    .badge.moderate { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+
+    /* Metric cards */
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 14px;
+        margin: 1.8em 0;
+    }
+    .metric-card {
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 16px 18px;
+        text-align: center;
+    }
+    .metric-card .value {
+        font-size: 1.6em;
+        font-weight: 800;
+        color: var(--heading);
+        font-family: 'Fira Code', monospace;
+    }
+    .metric-card .value.danger { color: var(--danger); }
+    .metric-card .value.ok { color: var(--ok); }
+    .metric-card .label {
+        font-size: 0.78em;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 4px;
+    }
+
+    /* Progress bar for memory usage */
+    .meter {
+        width: 100%;
+        height: 22px;
+        background: #e2e8f0;
+        border-radius: 999px;
+        overflow: hidden;
+        margin: 10px 0 4px;
+        position: relative;
+    }
+    .meter-fill {
+        height: 100%;
+        border-radius: 999px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding-right: 10px;
+        color: white;
+        font-size: 0.75em;
+        font-weight: 700;
+        font-family: 'Fira Code', monospace;
+    }
+    .meter-fill.danger { background: linear-gradient(90deg, #f87171, #dc2626); }
+    .meter-fill.warning { background: linear-gradient(90deg, #fbbf24, #d97706); }
+
+    .server-card {
+        border: 1px solid var(--border-color);
+        border-radius: 18px;
+        padding: 30px 32px;
+        margin: 2em 0;
+        background: linear-gradient(180deg, #fff 0%, #fbfcfe 100%);
+    }
+    .server-card h3 { margin-top: 0; font-size: 1.4em; display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+    .server-ip { font-family: 'Fira Code', monospace; color: var(--text-muted); font-size: 0.6em; font-weight: 500; }
+
+    .comparison-note {
+        font-size: 0.95em;
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    ol.recommendations > li {
+        margin-bottom: 1.1em;
+        padding-left: 4px;
+    }
+    ol.recommendations > li strong { color: var(--heading); }
+
+    @media (max-width: 768px) {
+        body { padding: 20px 10px; }
+        .container { padding: 32px 20px; border-radius: 16px; }
+        h1 { font-size: 2em; }
+        .meta-info { flex-direction: column; gap: 10px; align-items: center; }
+        table { font-size: 0.8em; }
+        th, td { padding: 8px 10px; }
+    }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>BillBull Retail ERP<br>VPS Infrastructure Report</h1>
+<div class="meta-info">
+    <div class="meta-item"><strong>Date:</strong> July 2, 2026</div>
+    <div class="meta-item"><strong>Scope:</strong> 2 production VPS boxes</div>
+    <div class="meta-item"><strong>Tenants covered:</strong> 12</div>
+</div>
+
+<h2 id="overview">Overview</h2>
+<p>BillBull is deployed across two VPS boxes, each running one Spring Boot JVM per client tenant (isolated by Spring profile and a dedicated PostgreSQL database), fronted by a shared Nginx reverse proxy per box with per-subdomain Let's Encrypt SSL.</p>
+
+<div class="metric-grid">
+    <div class="metric-card">
+        <div class="value">2</div>
+        <div class="label">VPS boxes</div>
+    </div>
+    <div class="metric-card">
+        <div class="value">12</div>
+        <div class="label">Total tenants</div>
+    </div>
+    <div class="metric-card">
+        <div class="value danger">0</div>
+        <div class="label">Boxes with swap</div>
+    </div>
+    <div class="metric-card">
+        <div class="value danger">0</div>
+        <div class="label">JVMs with heap caps</div>
+    </div>
+</div>
+
+<h2 id="vps1">VPS 1 &mdash; 62.72.59.119 <span class="comparison-note">(srv1783343)</span></h2>
+
+<span class="badge critical">RISK: CRITICAL</span>
+
+<h3>Hardware</h3>
+<table>
+<thead><tr><th>Spec</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>OS</td><td>Ubuntu 24.04.4 LTS</td></tr>
+<tr><td>CPU</td><td>2 cores</td></tr>
+<tr><td>RAM</td><td>7.8 GB</td></tr>
+<tr><td>Disk</td><td>96 GB (11 GB used, 11%)</td></tr>
+<tr><td>Swap</td><td><strong>0 B &mdash; none configured</strong></td></tr>
+<tr><td>Uptime</td><td>6 days</td></tr>
+</tbody>
+</table>
+
+<h3>Memory status</h3>
+<div class="meter">
+    <div class="meter-fill danger" style="width: 98%;">98% USED</div>
+</div>
+<p class="comparison-note">Total 7.8 GB &middot; Used 7.6 GB &middot; Free 142 MB &middot; Available 121 MB &middot; Swap 0 B</p>
+
+<h3>Tenants (8 running)</h3>
+<table>
+<thead>
+<tr><th>Client</th><th>Profile</th><th>Port</th><th>Domain</th><th class="num">Uptime</th><th class="num">RSS</th></tr>
+</thead>
+<tbody>
+<tr><td>demo</td><td><code>demo</code></td><td>8083</td><td>demo.billbull.app</td><td class="num">1d 11h</td><td class="num">974 MB</td></tr>
+<tr><td>leroyalgifts</td><td><code>leroyalgifts</code></td><td>8082</td><td>leroyalgifts.billbull.app</td><td class="num">23h 51m</td><td class="num">881 MB</td></tr>
+<tr><td>royaltools</td><td><code>royaltools</code></td><td>8080</td><td>royaltools.billbull.app</td><td class="num">12h 10m</td><td class="num">896 MB</td></tr>
+<tr><td>leroyalflowers</td><td><code>leroyalflowers</code></td><td>8081</td><td>leroyalflowers.billbull.app</td><td class="num">11h 38m</td><td class="num">874 MB</td></tr>
+<tr><td>helenz</td><td><code>client6</code></td><td>8086</td><td>helenz.billbull.app</td><td class="num">47m</td><td class="num">849 MB</td></tr>
+<tr><td>geebu</td><td><code>geebu</code></td><td>8088</td><td>geebu.billbull.app</td><td class="num">37m</td><td class="num">1042 MB</td></tr>
+<tr><td>qa</td><td><code>qa</code></td><td>8087</td><td>qa.billbull.app</td><td class="num">32m</td><td class="num">787 MB</td></tr>
+<tr><td>agi</td><td><code>client5</code></td><td>8085</td><td>agi.billbull.app</td><td class="num">31m</td><td class="num">935 MB</td></tr>
+<tr style="font-weight:700;"><td colspan="5">Total JVM RSS</td><td class="num">7,238 MB</td></tr>
+<tr style="font-weight:700;"><td colspan="5">PostgreSQL (all DBs)</td><td class="num">981 MB</td></tr>
+<tr style="font-weight:800; background:#fef2f2 !important;"><td colspan="5" style="color:#dc2626;">Combined footprint (exceeds 7.8 GB physical RAM)</td><td class="num" style="color:#dc2626;">8,219 MB</td></tr>
+</tbody>
+</table>
+
+<div class="callout danger">
+<div class="callout-title">&#9888; Critical risk</div>
+<ul style="margin-bottom:0;">
+<li>The system runs with essentially <strong>no memory headroom</strong> &mdash; under 150&nbsp;MB free/available at all times.</li>
+<li><strong>No <code>-Xmx</code> heap cap is set on any of the 8 JVMs.</strong> Each service's heap can still grow further under real request load; today's RSS figures are near-idle baseline, not peak.</li>
+<li><strong>No swap exists.</strong> Swap is normally the buffer that turns a memory spike into slow-but-survivable degradation. Without it, any spike goes straight to the kernel's OOM killer.</li>
+<li>The OOM killer does <strong>not</strong> necessarily kill the process causing the spike &mdash; it scores all processes and kills whichever looks most "killable." In practice, <strong>one tenant's traffic surge can silently take down an unrelated tenant's backend</strong>, producing a <code>502 Bad Gateway</code> with no direct log correlation to the real cause.</li>
+<li>Only 2 CPU cores are shared across 8 JVMs, Nginx, and Postgres &mdash; a secondary contention risk under concurrent multi-tenant load.</li>
+<li><strong>This already happened today</strong> &mdash; this box produced multiple 502 errors purely from services being memory/CPU-starved during startup, before any real user traffic was involved.</li>
+</ul>
+</div>
+
+<h2 id="vps2">VPS 2 &mdash; 77.37.49.42 <span class="comparison-note">(srv1185005)</span></h2>
+
+<span class="badge moderate">RISK: MODERATE</span>
+
+<h3>Hardware</h3>
+<table>
+<thead><tr><th>Spec</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>OS</td><td>Ubuntu 24.04.3 LTS</td></tr>
+<tr><td>CPU</td><td><strong>1 core</strong></td></tr>
+<tr><td>RAM</td><td>3.8 GB</td></tr>
+<tr><td>Disk</td><td>48 GB (12 GB used, 25%)</td></tr>
+<tr><td>Swap</td><td><strong>0 B &mdash; none configured</strong></td></tr>
+<tr><td>Uptime</td><td><strong>199 days</strong> (no reboot in ~6.5 months)</td></tr>
+</tbody>
+</table>
+
+<h3>Memory status</h3>
+<div class="meter">
+    <div class="meter-fill warning" style="width: 61%;">61% USED</div>
+</div>
+<p class="comparison-note">Total 3.8 GB &middot; Used 2.6 GB &middot; Free 205 MB &middot; Buff/cache 1.3 GB &middot; Available 1.2 GB &middot; Swap 0 B</p>
+
+<h3>Tenants (4 running)</h3>
+<table>
+<thead>
+<tr><th>Client</th><th>Profile</th><th>Port</th><th class="num">Uptime</th><th class="num">RSS</th></tr>
+</thead>
+<tbody>
+<tr><td>client1 (nest)</td><td><code>client1</code></td><td>8081</td><td class="num">20d 18h</td><td class="num">520 MB</td></tr>
+<tr><td>hilite</td><td><code>hilite</code></td><td>8083</td><td class="num">20d 16h</td><td class="num">511 MB</td></tr>
+<tr><td>client4 (albadar)</td><td><code>client4</code></td><td>8084</td><td class="num">20d 15h</td><td class="num">506 MB</td></tr>
+<tr><td>client2 (max)</td><td><code>client2</code></td><td>8082</td><td class="num">11h 3m</td><td class="num">545 MB</td></tr>
+<tr style="font-weight:700;"><td colspan="4">Total JVM RSS</td><td class="num">2,082 MB</td></tr>
+</tbody>
+</table>
+
+<div class="callout warning">
+<div class="callout-title">&#9888; Moderate risk &mdash; tighter than the headline % suggests</div>
+<ul style="margin-bottom:0;">
+<li>61% used looks comfortable, but this is <strong>only 4 lightweight tenants on a single CPU core</strong>. Each JVM here is smaller (~510&ndash;545&nbsp;MB) than on VPS&nbsp;1 (~850&ndash;1050&nbsp;MB), likely reflecting less data/usage per tenant rather than more efficient configuration &mdash; footprint will grow as these tenants' data grows.</li>
+<li><strong>Single CPU core</strong> is a meaningful constraint: 4 JVMs + Postgres + Nginx are all competing for one core. Under concurrent multi-tenant traffic this is likely to bottleneck on CPU before memory.</li>
+<li>No <code>-Xmx</code> caps here either &mdash; same unbounded-growth exposure as VPS&nbsp;1, just with more current slack.</li>
+<li>No swap configured.</li>
+<li><strong>199-day uptime</strong> with a pending "system restart required" flag and <strong>72 pending updates (16 security)</strong> &mdash; this box hasn't been patched or rebooted in over 6 months.</li>
+<li>Available memory (1.2&nbsp;GB) is healthier than VPS&nbsp;1's today, but adding a 5th tenant here without capacity planning would erode that quickly given the ~500&nbsp;MB+ per-tenant pattern.</li>
+</ul>
+</div>
+
+<h2 id="comparison">Cross-box comparison</h2>
+<table>
+<thead>
+<tr><th></th><th>VPS 1 &mdash; 62.72.59.119</th><th>VPS 2 &mdash; 77.37.49.42</th></tr>
+</thead>
+<tbody>
+<tr><td>RAM</td><td>7.8 GB</td><td>3.8 GB</td></tr>
+<tr><td>CPU</td><td>2 cores</td><td>1 core</td></tr>
+<tr><td>Tenants</td><td>8</td><td>4</td></tr>
+<tr><td>RAM per tenant (avg)</td><td>~975 MB</td><td>~950 MB (RAM/tenant is actually similar despite lower RSS &mdash; VPS 2 just has fewer tenants)</td></tr>
+<tr><td>Memory used</td><td>~98%</td><td>~61%</td></tr>
+<tr><td>Swap</td><td>None</td><td>None</td></tr>
+<tr><td>Heap caps (<code>-Xmx</code>)</td><td>None on any service</td><td>None on any service</td></tr>
+<tr><td>Immediate risk</td><td><strong>High &mdash; actively over capacity</strong></td><td>Medium &mdash; tight for its size, single core is the sharper constraint</td></tr>
+</tbody>
+</table>
+
+<div class="callout warning">
+<div class="callout-title">Key finding</div>
+<p style="margin-bottom:0;"><strong>Rebalancing tenants between boxes is not a viable fix.</strong> Moving a tenant from VPS&nbsp;1 to VPS&nbsp;2 doesn't solve anything &mdash; VPS&nbsp;2 has proportionally similar RAM-per-tenant economics (3.8&nbsp;GB / 4 &asymp; 950&nbsp;MB vs. 7.8&nbsp;GB / 8 &asymp; 975&nbsp;MB) and only one CPU core, so it would just relocate the same risk, not eliminate it.</p>
+</div>
+
+<h2 id="recommendations">Recommendations, in priority order</h2>
+<ol class="recommendations">
+<li><strong>Add swap on both boxes immediately.</strong> Cheapest, zero-risk, no app changes required. Even 2&ndash;4&nbsp;GB of swap converts an instant hard-crash into slower-but-survivable behavior, buying time for the real fix. Both boxes have ample free disk (86&nbsp;GB and 36&nbsp;GB available respectively) to spare for this.</li>
+<li><strong>Cap <code>-Xmx</code> per JVM on both boxes.</strong> Prevents any single tenant's heap from growing unbounded and starving its neighbors. Based on current usage, a starting cap of ~1.2&ndash;1.5&nbsp;GB on VPS&nbsp;1's tenants and ~800&nbsp;MB&ndash;1&nbsp;GB on VPS&nbsp;2's tenants gives headroom for real traffic without allowing runaway growth. This constrains blast radius but does not add capacity.</li>
+<li><strong>RAM upgrade is the real long-term fix</strong>, especially for VPS&nbsp;1. At 8 tenants already exceeding 7.8&nbsp;GB at idle, this box needs meaningfully more RAM (16&nbsp;GB would give ~2&nbsp;GB/tenant with real headroom) before adding further clients or expecting stable concurrent multi-user traffic.</li>
+<li><strong>VPS&nbsp;2 needs a CPU upgrade more than RAM</strong> given it's down to a single core across 4 JVMs + Postgres + Nginx &mdash; 2 cores minimum if more tenants are planned there.</li>
+<li><strong>Patch and reboot VPS&nbsp;2.</strong> 199 days uptime, 72 pending updates (16 security), and a flagged "system restart required" &mdash; schedule a maintenance window. A clean reboot after patching is also a good moment to add swap and heap caps in the same pass.</li>
+<li><strong>Treat tenant onboarding as a capacity-planning decision going forward.</strong> The current pattern (~900&nbsp;MB&ndash;1&nbsp;GB RAM per tenant, unbounded) means each new client added to an existing box directly reduces headroom for every other tenant on it.</li>
+</ol>
+
+<div style="text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px dashed var(--border-color); color: var(--text-muted);">
+    <strong>End of Report</strong>
+</div>
+
+</div>
+</body>
+</html>

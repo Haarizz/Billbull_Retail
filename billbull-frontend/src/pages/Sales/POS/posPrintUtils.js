@@ -164,7 +164,7 @@ export const buildZatcaTlvBase64 = (sellerName, trn, isoTimestamp, totalWithVat,
 
 export const buildThermalReceiptHtml = (paperSize, invoice, {
   companyName, trn, header, footer,
-  showTrn = true, isReprint = false, documentTitle = null,
+  showTrn = true, isReprint = false, isReturn = false, documentTitle = null,
   zatcaQrDataUrl = null, logoDataUrl = null, footerLogoDataUrl = null,
   stampDataUrl = null,
   showLogo = true, showCompanyDetails = true, showCompanyAddress = true,
@@ -196,6 +196,7 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
     const v = parseFloat(n) || 0;
     return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
+  const fmtAmt = fmt; // Removed negative override at user request
   // Collapse a multi-line / comma address into one continuous line (§1).
   const oneLineAddress = (addr) => String(addr || '')
     .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
@@ -234,7 +235,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (showLogo && logoDataUrl) {
     html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
   }
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle || 'TAX INVOICE')}</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle || (isReturn ? 'CREDIT NOTE' : 'TAX INVOICE'))}</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
   html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
   if (showCompanyDetails && showCompanyAddress) {
@@ -271,7 +272,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     // Row 1: quantity × product name (name wraps if long).
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
     // Row 2: unit price → line total, right-aligned and aligned with the total column.
-    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
     if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
     if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
     if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
@@ -280,16 +281,16 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += D;
 
   // ── Totals (§3): Subtotal, Discount (if any), VAT (no hardcoded %), TOTAL ──
-  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
-  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmt(discountTotal)}</span></div>`;
-  if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
+  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
+  if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
   // as their own lines so the total always ties out on the printed invoice.
-  if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmt(invoice.deliveryCharge)}</span></div>`;
-  if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmt(shippingCharge)}</span></div>`;
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmtAmt(invoice.deliveryCharge)}</span></div>`;
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmtAmt(shippingCharge)}</span></div>`;
   html += D;
-  html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
+  html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmtAmt(grandTotal)}</span></div>`;
   // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
     const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(grandTotal) - parseFloat(depositApplied));
@@ -300,7 +301,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
   if (showPaymentDetails) {
-    if (payMode) html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="val">${esc(payMode)}</span></div>`;
+    if (payMode) html += `<div class="row"><span class="lbl">${isReturn ? 'Refund Method:' : 'Payment Mode:'}</span><span class="val">${esc(payMode)}</span></div>`;
     if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
     if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
     if (payMode || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
@@ -365,6 +366,138 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
   // 'after': QR/stamp renders below the footer text.
   if (qrPlacement === 'after') { html += D; html += qrStampHtml; }
+
+  html += '</body></html>';
+  return html;
+};
+
+// Thermal (58mm/80mm) credit-note receipt for Sales Return. Independent of
+// buildThermalReceiptHtml (POS tax-invoice shape) since a return doc carries
+// different fields (returnNumber, linkedInvoice, per-line discount/tax already
+// resolved by SalesReturn.jsx) rather than a POS invoice/session object.
+export const buildSalesReturnThermalHtml = (paperSize, ret, {
+  companyName, trn, header, footer,
+  showTrn = true, showLogo = true, showCompanyDetails = true,
+  showCompanyAddress = true, showCustomerDetails = true, showFooterText = true,
+  logoDataUrl = null, stampDataUrl = null,
+  outletAddress = '', outletPhone = '',
+  currency = 'AED',
+  // Extended toggles (parity with buildThermalReceiptHtml / POSConsole settings)
+  showServiceCharge = true, showVatSummary = true, showPaymentDetails = true,
+  showQRCode = false, zatcaQrDataUrl = null, qrPlacement = 'before',
+  showStamp = true, showSignature = false,
+}) => {
+  const cur = currency || 'AED';
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = n => {
+    const v = parseFloat(n) || 0;
+    return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const oneLineAddress = (addr) => String(addr || '')
+    .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+  const items = ret.items || [];
+  const subTotal = items.reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
+  const discountTotal = items.reduce((s, i) => s + (Number(i.discountAmount) || 0), 0);
+  const taxTotal = Number(ret.taxAmount) || items.reduce((s, i) => s + (Number(i.taxAmount) || 0), 0);
+  const grandTotal = Number(ret.totalAmount) || (subTotal - discountTotal + taxTotal);
+  const retDate = ret.returnDate ? new Date(ret.returnDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+  const customerName = ret.customerName || '';
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+.s{font-size:9px;text-transform:uppercase;color:#555;margin:3px 0 1px;letter-spacing:.08em}
+</style></head><body>`;
+
+  if (showLogo && logoDataUrl) {
+    html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  }
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">CREDIT NOTE</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  if (showCompanyDetails && showCompanyAddress) {
+    const addrLine = oneLineAddress(outletAddress);
+    if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+    if (outletPhone) html += `<div class="c" style="font-size:9px">Tel: ${esc(outletPhone)}</div>`;
+  }
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+
+  html += D;
+  html += `<div class="row"><span class="lbl">Credit Note No:</span><span class="num">${esc(ret.returnNumber || '')}</span></div>`;
+  html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(retDate)}</span></div>`;
+  if (ret.linkedInvoice) html += `<div class="row"><span class="lbl">Original Invoice:</span><span class="num">${esc(ret.linkedInvoice)}</span></div>`;
+  if (ret.reason) html += `<div class="row"><span class="lbl">Reason:</span><span class="val">${esc(ret.reason)}</span></div>`;
+  html += D;
+
+  items.forEach(it => {
+    const qty = Number(it.returnQty) || 0;
+    const unit = Number(it.price) || 0;
+    const lineDiscount = Number(it.discountAmount) || 0;
+    const lineTax = Number(it.taxAmount) || 0;
+    const total = Number(it.total) || (qty * unit - lineDiscount + lineTax);
+    const nameDisplay = `${qty}x ${esc(it.itemName || it.itemCode || '')}`;
+
+    html += `<div class="row"><span class="val b" style="text-align:left;">${nameDisplay}</span></div>`;
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    if (it.itemCode) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(it.itemCode)}</div>`;
+    if (lineDiscount > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(lineDiscount)}</span></div>`;
+    if (lineTax > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">VAT${it.taxRate ? ` (${it.taxRate}%)` : ''}:</span><span class="num">${cur} ${fmt(lineTax)}</span></div>`;
+  });
+  html += D;
+
+  html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmt(subTotal)}</span></div>`;
+  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(discountTotal)}</span></div>`;
+  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT:</span><span class="num">${cur} ${fmt(taxTotal)}</span></div>`;
+  html += D;
+  if (showServiceCharge) {
+    html += `<div class="row b" style="font-size:13px"><span>CREDIT TOTAL:</span><span class="num">${cur} ${fmt(grandTotal)}</span></div>`;
+    html += D;
+  }
+
+  // Refund method
+  if (showPaymentDetails && ret.refundMethod) {
+    html += `<div class="row"><span class="lbl">Refund Method:</span><span class="val">${esc(ret.refundMethod)}</span></div>`;
+    html += D;
+  }
+
+  // QR code — before footer
+  if (showQRCode && zatcaQrDataUrl && qrPlacement === 'before') {
+    html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="height:100px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    html += D;
+  }
+
+  if (showStamp && stampDataUrl) {
+    html += `<div class="c" style="margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain;display:block;margin:0 auto" alt="Stamp" /></div>`;
+    html += D;
+  }
+
+  if (showCustomerDetails && customerName) {
+    html += `<div class="s">CUSTOMER</div>`;
+    html += `<div class="row"><span class="lbl">Name:</span><span class="val">${esc(customerName)}</span></div>`;
+    html += D;
+  }
+
+  if (showSignature) {
+    html += `<div style="margin:12px 0 4px"><div class="s">Authorized Signature</div><div style="border-bottom:1px solid #000;width:60%;margin:18px auto 2px"></div></div>`;
+    html += D;
+  }
+
+  if (showFooterText && footer) {
+    html += `<div class="c" style="font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
+  }
+
+  // QR code — after footer
+  if (showQRCode && zatcaQrDataUrl && qrPlacement === 'after') {
+    html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="height:100px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  }
 
   html += '</body></html>';
   return html;
