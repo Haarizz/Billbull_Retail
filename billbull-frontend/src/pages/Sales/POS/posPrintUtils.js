@@ -280,17 +280,17 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
     if (!isVoid && lineDiscountAmount > 0) {
       // Discounted line: base price, discount detail, and net (discounted) total each on their own row.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#444">${cur} ${fmtAmt(grossAmount)}</span></div>`;
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#555;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#555">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#000">${cur} ${fmtAmt(grossAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#000">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
       html += `<div class="row"><span class="lbl" style="padding-left:8px">Net @ ${cur} ${fmt(netUnit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
     } else {
       // Row 2: unit price → line total, right-aligned and aligned with the total column.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
     }
-    if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
-    if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
-    if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
-    else if (batch) html += `<div style="font-size:9px;color:#555;padding-left:8px">Batch: ${esc(batch)}</div>`;
+    if (sku) html += `<div style="font-size:10px;color:#000;padding-left:8px">SKU: ${esc(sku)}</div>`;
+    if (desc) html += `<div style="font-size:10px;color:#000;padding-left:8px">${esc(desc)}</div>`;
+    if (serial) html += `<div style="font-size:10px;color:#000;padding-left:8px">S/N: ${esc(serial)}</div>`;
+    else if (batch) html += `<div style="font-size:10px;color:#000;padding-left:8px">Batch: ${esc(batch)}</div>`;
   });
   html += D;
 
@@ -460,10 +460,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     const nameDisplay = `${qty}x ${esc(it.itemName || it.itemCode || '')}`;
 
     html += `<div class="row"><span class="val b" style="text-align:left;">${nameDisplay}</span></div>`;
-    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
-    if (it.itemCode) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(it.itemCode)}</div>`;
-    if (lineDiscount > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(lineDiscount)}</span></div>`;
-    if (lineTax > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">VAT${it.taxRate ? ` (${it.taxRate}%)` : ''}:</span><span class="num">${cur} ${fmt(lineTax)}</span></div>`;
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    if (it.itemCode) html += `<div style="font-size:10px;color:#000;padding-left:8px">SKU: ${esc(it.itemCode)}</div>`;
+    if (lineDiscount > 0) html += `<div class="row" style="font-size:10px;color:#000;padding-left:8px"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(lineDiscount)}</span></div>`;
+    if (lineTax > 0) html += `<div class="row" style="font-size:10px;color:#000;padding-left:8px"><span class="lbl">VAT${it.taxRate ? ` (${it.taxRate}%)` : ''}:</span><span class="num">${cur} ${fmt(lineTax)}</span></div>`;
   });
   html += D;
 
@@ -1032,8 +1032,8 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   // Item rows mirror the live receipt (§5): "Qty x Name" then "@ unit  =  total".
   const itemRow = (qty, name, unit, total, note) => {
     let h = `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(name)}</span></div>`;
-    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
-    if (note) h += `<div style="font-size:9px;padding-left:8px;color:#555">${esc(note)}</div>`;
+    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
+    if (note) h += `<div style="font-size:10px;padding-left:8px;color:#000">${esc(note)}</div>`;
     return h;
   };
   if (isReturn) {
