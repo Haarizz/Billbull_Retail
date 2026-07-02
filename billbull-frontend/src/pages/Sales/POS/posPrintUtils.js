@@ -755,6 +755,137 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
   return lines.join('\n');
 };
 
+// Customer payment receipt (Customer Management → Customer Receipt tab).
+// Deliberately simpler than buildThermalReceiptHtml — no line items, just the
+// amount received against a customer's outstanding balance.
+export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  logoDataUrl = null, currency = 'AED', customer = null,
+}) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = n => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+  const receiptNo = payment?.paymentNumber || payment?.receiptNumber || payment?.id || '';
+  const dateStr = payment?.paymentDate
+    ? new Date(payment.paymentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const custName = payment?.customerName || customer?.name || 'Walk-in Customer';
+  const custCode = payment?.customerCode || customer?.code || '';
+  const mode = payment?.paymentMode || '';
+  const bankName = payment?.bankName || '';
+  const ref = payment?.referenceNumber || '';
+  const amount = payment?.amount || 0;
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+</style></head><body>`;
+
+  if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">PAYMENT RECEIPT</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  const addrLine = oneLineAddress(address);
+  if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+  if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Receipt No:</span><span class="num">${esc(receiptNo)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(dateStr)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="num">${esc(custCode)}</span></div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="num">${esc(mode)}</span></div>`;
+  if (bankName) html += `<div class="row"><span class="lbl">Bank Account:</span><span class="val">${esc(bankName)}</span></div>`;
+  if (ref) html += `<div class="row"><span class="lbl">Reference:</span><span class="val">${esc(ref)}</span></div>`;
+  html += D;
+  html += `<div class="row b" style="font-size:14px"><span class="lbl">AMOUNT RECEIVED</span><span class="num">${esc(currency)} ${fmt(amount)}</span></div>`;
+  html += D;
+  html += `<div class="c" style="font-size:9px">Received with thanks.</div>`;
+  if (footer) html += `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>`;
+  html += `</body></html>`;
+  return html;
+};
+
+// Customer statement of account (Customer Management → Customer Statement tab).
+// Prints the running transaction history as a continuous thermal roll — no page
+// breaks needed since @page height is "auto".
+export const buildStatementThermalHtml = (paperSize, statement, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  logoDataUrl = null, currency = 'AED', customer = null,
+  startDate = '', endDate = '',
+}) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = n => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+  const typeLabel = (type) => !type ? '' : String(type).toLowerCase().split('_').filter(Boolean)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  const custName = customer?.name || statement?.accountName || 'Customer';
+  const custCode = customer?.code || statement?.accountCode || '';
+  const entries = (Array.isArray(statement?.entries) ? statement.entries : [])
+    .filter(e => e?.type !== 'OPENING_BALANCE'); // opening balance is already shown separately below
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+.desc{font-size:9px;color:#333;margin:1px 0;word-break:break-word}
+</style></head><body>`;
+
+  if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">CUSTOMER STATEMENT</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  const addrLine = oneLineAddress(address);
+  if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+  if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="num">${esc(custCode)}</span></div>`;
+  if (startDate || endDate) html += `<div class="row"><span class="lbl">Period:</span><span class="num">${esc(startDate)} to ${esc(endDate)}</span></div>`;
+  html += D;
+  html += `<div class="row b"><span class="lbl">Opening Balance</span><span class="num">${fmt(statement?.openingBalance)}</span></div>`;
+  html += D;
+
+  if (entries.length === 0) {
+    html += `<div class="c" style="font-size:9px;margin:6px 0">No transactions in this period.</div>${D}`;
+  }
+  entries.forEach(e => {
+    const debit = parseFloat(e.debit || 0);
+    const credit = parseFloat(e.credit || 0);
+    const balance = parseFloat(e.runningBalance || 0);
+    html += `<div class="row"><span class="lbl">${esc(e.transactionDate || '')}</span><span class="num">${esc(typeLabel(e.type))}</span></div>`;
+    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    if (descLine) html += `<div class="desc">${esc(descLine)}</div>`;
+    html += `<div class="row"><span class="lbl">${debit > 0 ? 'Dr ' + fmt(debit) : credit > 0 ? 'Cr ' + fmt(credit) : '—'}</span><span class="num">Bal ${fmt(balance)}</span></div>`;
+    html += D;
+  });
+
+  html += `<div class="row b" style="font-size:13px"><span class="lbl">CLOSING BAL.</span><span class="num">${esc(currency)} ${fmt(statement?.closingBalance)}</span></div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Total Invoiced</span><span class="num">${fmt(statement?.totalDebit)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Total Paid</span><span class="num">${fmt(statement?.totalCredit)}</span></div>`;
+  if (footer) { html += D; html += `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>`; }
+  html += `</body></html>`;
+  return html;
+};
+
 export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
