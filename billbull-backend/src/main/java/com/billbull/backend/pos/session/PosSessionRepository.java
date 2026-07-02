@@ -56,6 +56,7 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
               total_card_sales  = COALESCE(total_card_sales, 0)  + :cardDelta,
               total_credit_sales= COALESCE(total_credit_sales,0) + :creditDelta,
               total_mixed_sales = COALESCE(total_mixed_sales, 0) + :mixedDelta,
+              total_online_sales= COALESCE(total_online_sales,0) + :onlineDelta,
               total_voids       = COALESCE(total_voids, 0)       + :voidDelta,
               invoice_count     = COALESCE(invoice_count, 0)     + 1
             WHERE id = :sessionId AND status = 'OPEN'
@@ -67,5 +68,6 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
             @Param("cardDelta")   BigDecimal cardDelta,
             @Param("creditDelta") BigDecimal creditDelta,
             @Param("mixedDelta")  BigDecimal mixedDelta,
+            @Param("onlineDelta") BigDecimal onlineDelta,
             @Param("voidDelta")   int voidDelta);
 }

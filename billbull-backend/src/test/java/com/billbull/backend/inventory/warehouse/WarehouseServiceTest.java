@@ -63,7 +63,7 @@ class WarehouseServiceTest {
         Branch branch = branch(11L, "North Branch");
         WarehouseRequestDto request = warehouseRequest();
 
-        when(branchAccessService.currentUserHasRole("ADMIN")).thenReturn(false);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(false);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch);
         when(repository.save(any(Warehouse.class))).thenAnswer(invocation -> {
             Warehouse warehouse = invocation.getArgument(0);
@@ -87,7 +87,7 @@ class WarehouseServiceTest {
         WarehouseRequestDto request = warehouseRequest();
         request.setBranchId(22L);
 
-        when(branchAccessService.currentUserHasRole("ADMIN")).thenReturn(false);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(false);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(currentBranch);
 
         ResponseStatusException ex = assertThrows(
@@ -104,7 +104,7 @@ class WarehouseServiceTest {
         Branch defaultBranch = branch(3L, "Default Branch");
         WarehouseRequestDto request = warehouseRequest();
 
-        when(branchAccessService.currentUserHasRole("ADMIN")).thenReturn(true);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(true);
         when(branchAccessService.getCurrentUserBranchOrNull()).thenReturn(null);
         when(branchRepository.findByIsDefaultTrue()).thenReturn(Optional.of(defaultBranch));
         when(repository.save(any(Warehouse.class))).thenAnswer(invocation -> {
@@ -133,7 +133,7 @@ class WarehouseServiceTest {
         warehouse.setStatus("Active");
 
         when(repository.findById(7L)).thenReturn(Optional.of(warehouse));
-        when(branchAccessService.currentUserHasRole("ADMIN")).thenReturn(false);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(false);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(currentBranch);
 
         ResponseStatusException ex = assertThrows(

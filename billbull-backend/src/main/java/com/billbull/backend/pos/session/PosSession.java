@@ -100,6 +100,9 @@ public class PosSession extends BaseEntity {
     @Column(name = "total_mixed_sales", precision = 15, scale = 2)
     private BigDecimal totalMixedSales = BigDecimal.ZERO;
 
+    @Column(name = "total_online_sales", precision = 15, scale = 2)
+    private BigDecimal totalOnlineSales = BigDecimal.ZERO;
+
     @Column(name = "total_refunds", precision = 15, scale = 2)
     private BigDecimal totalRefunds = BigDecimal.ZERO;
 
@@ -228,6 +231,9 @@ public class PosSession extends BaseEntity {
 
     public BigDecimal getTotalMixedSales() { return totalMixedSales; }
     public void setTotalMixedSales(BigDecimal totalMixedSales) { this.totalMixedSales = totalMixedSales; }
+
+    public BigDecimal getTotalOnlineSales() { return totalOnlineSales; }
+    public void setTotalOnlineSales(BigDecimal totalOnlineSales) { this.totalOnlineSales = totalOnlineSales; }
 
     public BigDecimal getTotalRefunds() { return totalRefunds; }
     public void setTotalRefunds(BigDecimal totalRefunds) { this.totalRefunds = totalRefunds; }

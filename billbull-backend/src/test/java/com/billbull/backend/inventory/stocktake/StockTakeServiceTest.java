@@ -224,7 +224,7 @@ class StockTakeServiceTest {
     void addBatchPicksNextLotIndexWhenItemAlreadyHasLots() {
         StockTakeSession session = session();
         session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
-        StockTakeItem item = stockTakeItem(21L, session, 10L, null, 0, 0);
+        StockTakeItem item = stockTakeItem(21L, session, 10L, 7L, 0, 0);
         item.setBatchEnabled(true);
         item.setExpiryEnabled(false);
         // Pretend a prior addBatch already produced two unit rows under L01 today.
@@ -249,7 +249,7 @@ class StockTakeServiceTest {
         StockTakeSession session = session();
         session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
         session.setType(StockTakeSession.StockTakeType.OPENING_INVENTORY);
-        StockTakeItem item = stockTakeItem(22L, session, 10L, null, 0, 0);
+        StockTakeItem item = stockTakeItem(22L, session, 10L, 7L, 0, 0);
         item.setBatchEnabled(true);
         item.setExpiryEnabled(false);
 

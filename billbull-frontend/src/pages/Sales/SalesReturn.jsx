@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { buildSalesReturnThermalHtml } from './POS/posPrintUtils';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import billBullLogo from '../../assets/billBullLogo.png';
@@ -251,6 +252,8 @@ const SalesReturn = () => {
             soldQty: i.quantity,
             returnQty: 0,
             price: i.price,
+            discountPercent: i.discount || 0,
+            discountAmount: 0,
             taxRate: i.taxRate,
             taxAmount: 0,
             total: 0,
@@ -261,13 +264,51 @@ const SalesReturn = () => {
       }
 
       try {
-         const list = await getReturnableBatches(inv.invoiceNumber);
-         const grouped = (list || []).reduce((acc, r) => {
+         const batches = await getReturnableBatches(inv.invoiceNumber);
+         const pastReturnsPage = await getSalesReturnsPage({ search: inv.invoiceNumber, size: 100 });
+         const pastReturns = pastReturnsPage?.content || [];
+         
+         const alreadyReturnedMap = {};
+         pastReturns.forEach(ret => {
+            if (ret.status === 'DRAFT' || ret.status === 'REJECTED') return;
+            (ret.items || []).forEach(ri => {
+               if (ri.itemCode) {
+                  alreadyReturnedMap[ri.itemCode] = (alreadyReturnedMap[ri.itemCode] || 0) + (Number(ri.returnQty) || 0);
+               }
+            });
+         });
+
+         const grouped = (batches || []).reduce((acc, r) => {
             const code = r.itemCode || '';
             if (!acc[code]) acc[code] = [];
             acc[code].push(r);
             return acc;
          }, {});
+         
+         // Add non-batch items to grouped if they don't exist
+         (inv.items || []).forEach(invItem => {
+            if (!grouped[invItem.itemCode] && !invItem.voided) {
+               grouped[invItem.itemCode] = [{
+                  itemCode: invItem.itemCode,
+                  itemName: invItem.itemName,
+                  unit: invItem.unit || 'Each',
+                  originalQty: parseFloat(invItem.quantity || 0)
+               }];
+            }
+         });
+
+         // Calculate returnable qty for each group
+         Object.keys(grouped).forEach(code => {
+            const totalSold = grouped[code].reduce((sum, b) => sum + (Number(b.originalQty) || 0), 0);
+            const alreadyRet = alreadyReturnedMap[code] || 0;
+            const returnable = Math.max(0, totalSold - alreadyRet);
+            
+            // Assign returnable to the first batch element for UI caps
+            if (grouped[code].length > 0) {
+               grouped[code][0].returnableQty = returnable;
+            }
+         });
+
          setReturnableByItem(grouped);
       } catch (err) {
          console.warn('Could not load returnable batches:', err);
@@ -280,9 +321,14 @@ const SalesReturn = () => {
       const item = { ...updatedItems[index], [field]: value };
 
       if (field === 'returnQty') {
-         if (Number(value) > item.soldQty) {
-            alert(`Cannot return more than sold quantity (${item.soldQty})`);
-            item.returnQty = item.soldQty;
+         const batchesForCode = returnableByItem[item.itemCode] || [];
+         const maxReturnable = batchesForCode.reduce((sum, b) => sum + (Number(b.returnableQty) || 0), 0);
+         const requested = Number(value) || 0;
+         if (requested > maxReturnable) {
+            alert(`Cannot return more than available quantity (${maxReturnable})`);
+            item.returnQty = maxReturnable;
+         } else {
+            item.returnQty = requested;
          }
       }
 
@@ -290,10 +336,14 @@ const SalesReturn = () => {
       const qty = Number(item.returnQty) || 0;
       const price = Number(item.price) || 0;
       const taxR = Number(item.taxRate) || 0;
+      const discP = Number(item.discountPercent) || 0;
 
-      const base = qty * price;
+      const gross = qty * price;
+      const discA = gross * (discP / 100);
+      const base = gross - discA;
       const taxA = base * (taxR / 100);
 
+      item.discountAmount = discA;
       item.total = base + taxA;
       item.taxAmount = taxA;
 
@@ -303,8 +353,9 @@ const SalesReturn = () => {
 
    const calculateTotals = () => {
       const sub = items.reduce((acc, i) => acc + (Number(i.returnQty) * Number(i.price) || 0), 0);
+      const discount = items.reduce((acc, i) => acc + (Number(i.discountAmount) || 0), 0);
       const tax = items.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0);
-      return { sub, tax, total: sub + tax };
+      return { sub, discount, tax, total: sub - discount + tax };
    };
 
    const { sub: subTotal, tax: taxAmtTotal, total: grandTotal } = calculateTotals();
@@ -505,75 +556,116 @@ const SalesReturn = () => {
       }
    };
 
-   const handlePrint = async (ret) => {
-      if (!ret) return;
-      try {
-         const templates = await getTemplatesByCategory('Sales Return');
-         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
-            category: 'Sales Return',
-            paperSize: 'A4',
-            orientation: 'Portrait',
-            headerContent: '',
-            footerContent: '',
-            termsContent: '',
-            displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
-            columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: false, total: true },
-         };
+   const DEFAULT_RETURN_TEMPLATE = {
+      category: 'Sales Return',
+      paperSize: 'A4',
+      orientation: 'Portrait',
+      headerContent: '',
+      footerContent: '',
+      termsContent: '',
+      displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+      columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: true, total: true },
+   };
 
-         const subTotal = Number(ret.subTotal) || (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
-         const taxAmt = Number(ret.taxAmount) || 0;
-         const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
+   const buildReturnPrintData = (ret) => {
+      const grossSubTotal = (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
+      const itemDiscountAmount = (ret.items || []).reduce((s, i) => s + (Number(i.discountAmount) || 0), 0);
+      const subTotal = Number(ret.subTotal) || grossSubTotal;
+      const taxAmt = Number(ret.taxAmount) || (ret.items || []).reduce((s, i) => s + (Number(i.taxAmount) || 0), 0);
+      const grandTotal = Number(ret.totalAmount) || (subTotal - itemDiscountAmount + taxAmt);
 
-         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
-         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
-         const printData = {
-            title: 'CREDIT NOTE',
-            docNo: ret.returnNumber,
-            date: ret.returnDate,
-            customer: {
-               name: ret.customerName || '',
-               address: '',
-               shippingAddress: '',
-               phone: '',
-               email: '',
-               trn: '',
-            },
-            items: (ret.items || []).map(item => ({
+      const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+      const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
+
+      return {
+         title: 'CREDIT NOTE',
+         docNo: ret.returnNumber,
+         date: ret.returnDate,
+         customer: {
+            name: ret.customerName || '',
+            address: '',
+            shippingAddress: '',
+            phone: '',
+            email: '',
+            trn: '',
+         },
+         items: (ret.items || []).map(item => {
+            const qty = Number(item.returnQty);
+            const price = Number(item.price);
+            const gross = qty * price;
+            const discountAmount = Number(item.discountAmount) || 0;
+            return {
                name: item.itemName || item.itemCode || '',
                description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] },
                code: item.itemCode || '',
                unit: item.unit || 'PCS',
-               qty: Number(item.returnQty),
-               price: Number(item.price),
-               taxableAmount: Number(item.price) * Number(item.returnQty),
-               taxAmt: 0,
-               taxPercent: 0,
+               qty,
+               price,
+               discountPercent: Number(item.discountPercent) || 0,
+               discountAmount,
+               taxableAmount: gross - discountAmount,
+               taxAmt: Number(item.taxAmount) || 0,
+               taxPercent: Number(item.taxRate) || 0,
                total: Number(item.total),
-            })),
-            totals: {
-               subTotal,
-               tax: taxAmt,
-               grandTotal,
-               currency: company?.currencySymbol || company?.currency || 'AED',
-               billDiscount: 0,
-               billDiscountAmount: 0,
-               itemDiscountAmount: 0,
-               footerDiscountAmount: 0,
-            },
-            meta: {
-               status: ret.status || '',
-               paymentTerm: '',
-               validTill: '',
-               validTillLabel: 'Original Invoice',
-               notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`,
-               location: printBranch.name || '',
-               locationStore: printBranch.name || printBranch.code || '',
-               warehouse: printBranch.defaultWarehouseName || '',
-               deliveryTerms: '',
-               salesPerson: '',
-            },
-         };
+            };
+         }),
+         totals: {
+            subTotal,
+            tax: taxAmt,
+            grandTotal,
+            currency: company?.currencySymbol || company?.currency || 'AED',
+            billDiscount: 0,
+            billDiscountAmount: 0,
+            itemDiscountAmount,
+            footerDiscountAmount: 0,
+         },
+         meta: {
+            status: ret.status || '',
+            paymentTerm: '',
+            validTill: '',
+            validTillLabel: 'Original Invoice',
+            notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`,
+            location: printBranch.name || '',
+            locationStore: printBranch.name || printBranch.code || '',
+            warehouse: printBranch.defaultWarehouseName || '',
+            deliveryTerms: '',
+            salesPerson: '',
+         },
+      };
+   };
 
+   const isThermalPaperSize = (paperSize) => paperSize === '80mm' || paperSize === '58mm';
+
+   const buildReturnThermalHtml = (ret, paperSize) => {
+      const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+      const headerProfile = buildDocumentHeaderProfile({
+         company,
+         branches: availableBranches || [],
+         branchId: returnBranchId,
+      });
+      return buildSalesReturnThermalHtml(paperSize, ret, {
+         companyName: headerProfile.companyName || headerProfile.name || '',
+         trn: headerProfile.trn || '',
+         outletAddress: headerProfile.address || '',
+         outletPhone: headerProfile.phone || '',
+         logoDataUrl: headerProfile.logoUrl || billBullLogo,
+         stampDataUrl: headerProfile.stampUrl || null,
+         currency: company?.currencySymbol || company?.currency || 'AED',
+      });
+   };
+
+   const handlePrint = async (ret) => {
+      if (!ret) return;
+      try {
+         const templates = await getTemplatesByCategory('Sales Return');
+         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || DEFAULT_RETURN_TEMPLATE;
+
+         if (isThermalPaperSize(defaultTemplate.paperSize)) {
+            printHtml(buildReturnThermalHtml(ret, defaultTemplate.paperSize));
+            return;
+         }
+
+         const printData = buildReturnPrintData(ret);
          const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
             companyProfile: buildDocumentHeaderProfile({
                company,
@@ -592,13 +684,14 @@ const SalesReturn = () => {
       if (!ret) return;
       try {
          const templates = await getTemplatesByCategory('Sales Return');
-         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || { category: 'Sales Return', paperSize: 'A4', orientation: 'Portrait', headerContent: '', footerContent: '', termsContent: '', displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false }, columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: false, total: true } };
-         const subTotal = Number(ret.subTotal) || (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
-         const taxAmt = Number(ret.taxAmount) || 0;
-         const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
-         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
-         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
-         const printData = { title: 'CREDIT NOTE', docNo: ret.returnNumber, date: ret.returnDate, customer: { name: ret.customerName || '', address: '', shippingAddress: '', phone: '', email: '', trn: '' }, items: (ret.items || []).map(item => ({ name: item.itemName || item.itemCode || '', description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] }, code: item.itemCode || '', unit: item.unit || 'PCS', qty: Number(item.returnQty), price: Number(item.price), taxableAmount: Number(item.price) * Number(item.returnQty), taxAmt: 0, taxPercent: 0, total: Number(item.total) })), totals: { subTotal, tax: taxAmt, grandTotal, currency: company?.currencySymbol || company?.currency || 'AED', billDiscount: 0, billDiscountAmount: 0 }, meta: { status: ret.status || '', paymentTerm: '', validTill: '', validTillLabel: 'Original Invoice', notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`, location: printBranch.name || '', locationStore: printBranch.name || printBranch.code || '', warehouse: printBranch.defaultWarehouseName || '', deliveryTerms: '', salesPerson: '' } };
+         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || DEFAULT_RETURN_TEMPLATE;
+
+         if (isThermalPaperSize(defaultTemplate.paperSize)) {
+            await downloadPdfViaServer(buildReturnThermalHtml(ret, defaultTemplate.paperSize), ret.returnNumber || 'Credit-Note');
+            return;
+         }
+
+         const printData = buildReturnPrintData(ret);
          const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id }), billBullLogo });
          await downloadPdfViaServer(html, ret.returnNumber || 'Credit-Note');
       } catch (err) { console.error('Download error', err); }
