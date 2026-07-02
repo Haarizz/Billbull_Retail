@@ -19,6 +19,10 @@ public class StatementEntryDTO {
     private String reference;
     // Display-order priority (0 = first, 99 = last). Set during enrichment before sorting.
     private int sortPriority = 4;
+    // True for receipts that are still an unapplied customer-advance liability
+    // (not yet linked to a specific invoice/opening bill) — shown in the SoA
+    // as a line item but excluded from the running AR balance calculation.
+    private boolean excludeFromBalance = false;
 
     public StatementEntryDTO() {
     }
@@ -144,5 +148,13 @@ public class StatementEntryDTO {
 
     public void setSortPriority(int sortPriority) {
         this.sortPriority = sortPriority;
+    }
+
+    public boolean isExcludeFromBalance() {
+        return excludeFromBalance;
+    }
+
+    public void setExcludeFromBalance(boolean excludeFromBalance) {
+        this.excludeFromBalance = excludeFromBalance;
     }
 }

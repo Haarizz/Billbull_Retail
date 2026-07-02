@@ -123,6 +123,18 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
         }
 
+        // 0b. Guard against silently rolling into a new day while a prior day's session is
+        // still open/suspended (BBQA-5.3-013): surface it as a distinct, machine-readable
+        // status so the frontend can prompt the user to close it instead of just failing.
+        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, LocalDate.now());
+        if (!stale.isEmpty()) {
+            PosSession oldest = stale.get(0);
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "PREVIOUS_DAY_SESSION_OPEN: Session #" + oldest.getId() + " on " + oldest.getSessionDate()
+                            + " (terminal " + oldest.getTerminalId() + ") is still " + oldest.getStatus()
+                            + ". Close the previous day's session before starting a new one.");
+        }
+
         // Resolve terminal entity for the DB-level lock
         PosTerminal terminal = terminalRepository.findByTerminalId(terminalId).orElse(null);
 
@@ -551,6 +563,19 @@ public class PosSessionService {
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
+        // Sales Return module figures for this session's branch+date — same source and
+        // shape as the Z-Report's Returns/Refund Summary, so the two reports agree.
+        ReturnsSummary returns = buildReturnsSummary(session.getBranchId(), session.getSessionDate());
+        summary.put("salesReturnCount", returns.totalCount);
+        summary.put("salesReturnTotal", returns.totalAmount);
+        summary.put("creditNoteCount", returns.creditNoteCount);
+        summary.put("creditNoteTotal", returns.creditNoteTotal);
+        summary.put("refundCount", returns.refundCount);
+        summary.put("refundTotal", returns.refundTotal);
+        summary.put("exchangeCount", returns.exchangeCount);
+        summary.put("exchangeTotal", returns.exchangeTotal);
+        summary.put("totalItemsReturned", returns.totalQtyReturned);
+
         // Reopen tracking: more than one SESSION_OPENED audit entry for this session id
         // means the terminal was reopened after an earlier open (first open isn't a "reopen").
         long sessionOpenedCount = auditLogRepository.countBySessionIdAndAction(sessionId, PosAuditAction.SESSION_OPENED);
@@ -622,6 +647,9 @@ public class PosSessionService {
                     .toList();
 
         TenderTotals tender = aggregateTender(invoices);
+        // Actual tender refunded (paymentType = MADE) across the day's invoices — same
+        // source and shape as the X-Report's "Returns" KPI, so the two reports agree.
+        TenderTotals refunds = aggregateRefunds(invoices);
 
         int invoiceCount = sessions.stream()
                 .mapToInt(s -> s.getInvoiceCount() != null ? s.getInvoiceCount() : 0).sum();
@@ -639,12 +667,15 @@ public class PosSessionService {
         summary.put("postedVoidCount", voids.postedVoids.size());
         summary.put("cartRemovalCount", voids.cartRemovals.size());
         summary.put("voidAmount", voids.voidAmount);
+        summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO));
+        summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L));
+        summary.put("totalRefunds", refunds.total);
+        summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
         // Returns / Refund Summary — sourced from the Sales Return module for this branch+date
         // (a Sales Return is a separate post-sale transaction, not a session-scoped concept,
         // so it's queried by branch/date like the rest of the Z-Report rather than by session).
         ReturnsSummary returns = buildReturnsSummary(branchId, date);
-        summary.put("totalRefunds", returns.refundTotal);
         summary.put("salesReturnCount", returns.totalCount);
         summary.put("salesReturnTotal", returns.totalAmount);
         summary.put("creditNoteCount", returns.creditNoteCount);
@@ -729,23 +760,57 @@ public class PosSessionService {
         BigDecimal creditSales = (BigDecimal) summary.getOrDefault("creditSales", BigDecimal.ZERO);
         BigDecimal otherSales = (BigDecimal) summary.getOrDefault("otherSales", BigDecimal.ZERO);
         
+        BigDecimal bankTransferSales = (BigDecimal) summary.getOrDefault("bankTransferSales", BigDecimal.ZERO);
+        BigDecimal walletSales = (BigDecimal) summary.getOrDefault("walletSales", BigDecimal.ZERO);
+        BigDecimal voucherSales = (BigDecimal) summary.getOrDefault("voucherSales", BigDecimal.ZERO);
+        BigDecimal onlineSales = bankTransferSales.add(walletSales).add(voucherSales);
+        BigDecimal roundOff = (BigDecimal) summary.getOrDefault("roundOff", BigDecimal.ZERO);
+        BigDecimal totalRefunds = (BigDecimal) summary.getOrDefault("totalRefunds", BigDecimal.ZERO);
+        BigDecimal salesReturnTotal = (BigDecimal) summary.getOrDefault("salesReturnTotal", BigDecimal.ZERO);
+
         BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales);
-        if (totalSales.subtract(computedTotalSales).abs().compareTo(new BigDecimal("0.05")) > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
-                "Cannot close day: Sales reconciliation failed. Variance: " + totalSales.subtract(computedTotalSales));
+        BigDecimal salesVariance = totalSales.subtract(computedTotalSales);
+        if (salesVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
+            breakdown.put("expectedTotalSales", totalSales);
+            breakdown.put("computedTotalSales", computedTotalSales);
+            breakdown.put("variance", salesVariance);
+            breakdown.put("cash", cashSales);
+            breakdown.put("card", cardSales);
+            breakdown.put("credit", creditSales);
+            breakdown.put("online", onlineSales);
+            breakdown.put("other", otherSales.subtract(onlineSales));
+            breakdown.put("returns", salesReturnTotal);
+            breakdown.put("refunds", totalRefunds);
+            breakdown.put("rounding", roundOff);
+            throw new com.billbull.backend.exception.ReconciliationException(
+                "SALES",
+                "Cannot close day: Sales reconciliation failed. Variance: " + salesVariance,
+                breakdown);
         }
-        
+
         BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
         // Cash paid in/out is recorded in sessions.
         BigDecimal cashPaidIn = allSessions.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashPaidOut = allSessions.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
-        
+
         // Let's compute actual expected cash from sessions directly
         BigDecimal expectedCashSessions = allSessions.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (expectedCashComputed.subtract(expectedCashSessions).abs().compareTo(new BigDecimal("0.05")) > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
-                "Cannot close day: Cash reconciliation failed. Variance: " + expectedCashComputed.subtract(expectedCashSessions));
+        BigDecimal cashVariance = expectedCashComputed.subtract(expectedCashSessions);
+        if (cashVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
+            breakdown.put("openingCash", openingCash);
+            breakdown.put("cashSales", cashSales);
+            breakdown.put("cashPaidIn", cashPaidIn);
+            breakdown.put("cashPaidOut", cashPaidOut);
+            breakdown.put("expectedCashComputed", expectedCashComputed);
+            breakdown.put("expectedCashSessions", expectedCashSessions);
+            breakdown.put("variance", cashVariance);
+            throw new com.billbull.backend.exception.ReconciliationException(
+                "CASH",
+                "Cannot close day: Cash reconciliation failed. Variance: " + cashVariance,
+                breakdown);
         }
 
         report.put("isDayClosed", true);

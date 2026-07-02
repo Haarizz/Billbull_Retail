@@ -256,12 +256,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += D;
 
   // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
-  // row 2 so unit price is always visible (was: qty×name + total only). ──
+  // row 2 so unit price is always visible (was: qty×name + total only). When a
+  // line discount applies (BBQA-5.3-015), show the actual/base unit price, the
+  // discount %/amount, and the net (discounted) unit price as separate rows so
+  // the discounted price never gets reprinted as if it were the base price. ──
   items.forEach(it => {
     const isVoid = !!it.voided || !!it.isVoided;
     const qty = it.quantity || 0;
     const unit = parseFloat(it.unitPrice || it.price || 0);
     const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
+    const discountPercent = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
+    const grossAmount = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
+    const lineDiscountAmount = parseFloat(it.discountAmount ?? Math.max(0, grossAmount - total)) || 0;
+    const netUnit = qty > 0 ? total / qty : unit;
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
     const desc = it.description || '';
@@ -271,8 +278,15 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
     // Row 1: quantity × product name (name wraps if long).
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
-    // Row 2: unit price → line total, right-aligned and aligned with the total column.
-    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    if (!isVoid && lineDiscountAmount > 0) {
+      // Discounted line: base price, discount detail, and net (discounted) total each on their own row.
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#444">${cur} ${fmtAmt(grossAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#555;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#555">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="padding-left:8px">Net @ ${cur} ${fmt(netUnit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    } else {
+      // Row 2: unit price → line total, right-aligned and aligned with the total column.
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    }
     if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
     if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
     if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
@@ -801,7 +815,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += `<div class="row"><span class="lbl">Receipt No:</span><span class="num">${esc(receiptNo)}</span></div>`;
   html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(dateStr)}</span></div>`;
   html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
-  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="num">${esc(custCode)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="val">${esc(custCode)}</span></div>`;
   html += D;
   html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="num">${esc(mode)}</span></div>`;
   if (bankName) html += `<div class="row"><span class="lbl">Bank Account:</span><span class="val">${esc(bankName)}</span></div>`;
@@ -857,8 +871,8 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
   html += D;
   html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
-  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="num">${esc(custCode)}</span></div>`;
-  if (startDate || endDate) html += `<div class="row"><span class="lbl">Period:</span><span class="num">${esc(startDate)} to ${esc(endDate)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="val">${esc(custCode)}</span></div>`;
+  if (startDate || endDate) html += `<div class="row"><span class="lbl">Period:</span><span class="val">${esc(startDate)} to ${esc(endDate)}</span></div>`;
   html += D;
   html += `<div class="row b"><span class="lbl">Opening Balance</span><span class="num">${fmt(statement?.openingBalance)}</span></div>`;
   html += D;

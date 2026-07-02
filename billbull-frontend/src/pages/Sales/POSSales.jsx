@@ -377,9 +377,11 @@ export default function POSSales() {
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
+  const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
+  const [closeDayVariance, setCloseDayVariance] = useState(null);
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
@@ -933,6 +935,8 @@ export default function POSSales() {
           quantity: it.quantity || 0,
           unitPrice: it.price || 0,
           netAmount: it.total || 0,
+          discountPercent: it.discount || 0,
+          grossAmount: (it.quantity || 0) * (it.price || 0),
           batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
           serialNumber: it.serialNumber || '',
           voided: !!it.isVoided,
@@ -1007,6 +1011,22 @@ export default function POSSales() {
       .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
     return () => { cancelled = true; };
   }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
+
+  // Credit Balance function-button modal: auto-load the currently selected POS
+  // customer's due/credit balance on open, and refresh if the selection changes
+  // while the modal stays open (e.g. after a transaction updates their balance).
+  useEffect(() => {
+    if (!showCreditBalance || !selectedCustomerData || selectedCustomerData.id === 'walk-in') return;
+    const code = selectedCustomerData.code || selectedCustomerData.id;
+    if (!code) return;
+    setCreditBalanceQuery(selectedCustomerData.id);
+    let cancelled = false;
+    setCreditBalanceResult('searching');
+    posCreditBalance(code)
+      .then(res => { if (!cancelled) setCreditBalanceResult(res.found ? res : 'notfound'); })
+      .catch(() => { if (!cancelled) setCreditBalanceResult('notfound'); });
+    return () => { cancelled = true; };
+  }, [showCreditBalance, selectedCustomerData]);
 
   // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
@@ -1545,6 +1565,13 @@ export default function POSSales() {
       setZReportData(null);
       setSessionNowMs(Date.now());
     } catch (err) {
+      // Previous day's session was left open/suspended — block silent continuation and
+      // guide the user to close it instead of starting a new day on top of it (BBQA-5.3-013).
+      const serverMsg = err?.response?.data?.message || err?.response?.data;
+      if (err?.response?.status === 409 && typeof serverMsg === 'string' && serverMsg.includes('PREVIOUS_DAY_SESSION_OPEN')) {
+        setPrevDaySessionOpenMsg(serverMsg.replace('PREVIOUS_DAY_SESSION_OPEN: ', ''));
+        return;
+      }
       // Fallback to in-memory session if backend unavailable
       console.warn('Session API unavailable, falling back to local session', err);
       setCurrentSession({
@@ -2011,7 +2038,12 @@ export default function POSSales() {
       setZReportData(data);
       alert('Business day has been officially closed.');
     } catch (err) {
-      alert(err?.response?.data?.message || 'Failed to close business day.');
+      const body = err?.response?.data;
+      if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
+        setCloseDayVariance({ stage: body.stage, message: body.message, breakdown: body.breakdown });
+      } else {
+        alert(body?.message || 'Failed to close business day.');
+      }
     } finally {
       setZReportLoading(false);
     }
@@ -4486,6 +4518,7 @@ export default function POSSales() {
             ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
             ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
             ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
+            ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), fmt(zSummary.totalRefunds ?? 0)],
           ],
         },
         {
@@ -4619,6 +4652,7 @@ export default function POSSales() {
       { Section: '',                        Description: 'Refunds Processed',        Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
       { Section: '',                        Description: 'Credit Notes Issued',      Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
       { Section: '',                        Description: 'Exchange Transactions',    Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
+      { Section: '',                        Description: 'Total Refunds (Tender)',   Count: zSummary.totalRefundCount ?? 0, Amount: fmt(zSummary.totalRefunds ?? 0) },
       { Section: 'Item Movement',           Description: 'Total Items Sold',         Count: String(itemsSold), Amount: totalSalesV },
       { Section: '',                        Description: 'Total Items Returned',     Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
       { Section: '',                        Description: 'Net Quantity Sold',        Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
@@ -4930,7 +4964,11 @@ export default function POSSales() {
       { Section: 'Discount',        Description: 'Bill Level Discount',         Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
       { Section: '',                Description: 'Line Item Discount',          Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
       { Section: '',                Description: 'Total Discount',              Count: '',  Amount: discountV },
-      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalRefundCount, Amount: refundTotal },
+      { Section: 'Return / Refund', Description: 'Sales Returns',               Count: xSummary.salesReturnCount ?? 0, Amount: fmt(xSummary.salesReturnTotal ?? 0) },
+      { Section: '',                Description: 'Refunds Processed',           Count: xSummary.refundCount ?? 0, Amount: fmt(xSummary.refundTotal ?? 0) },
+      { Section: '',                Description: 'Credit Notes Issued',         Count: xSummary.creditNoteCount ?? 0, Amount: fmt(xSummary.creditNoteTotal ?? 0) },
+      { Section: '',                Description: 'Exchange Transactions',       Count: xSummary.exchangeCount ?? 0, Amount: fmt(xSummary.exchangeTotal ?? 0) },
+      { Section: '',                Description: 'Total Refunds (In-session)',  Count: totalRefundCount, Amount: refundTotal },
       { Section: 'Card Settlement', Description: 'Card Refunds',                Count: cardRefundCount, Amount: cardRefundTotal },
       { Section: '',                Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
       { Section: '',                Description: 'Card Machine Batch No.',      Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
@@ -5398,6 +5436,7 @@ export default function POSSales() {
           ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
           ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
           ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
+          ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), <CurrencyAmount key="z8tr" amount={zSummary.totalRefunds ?? 0} />],
         ]}
       />
 
@@ -5777,12 +5816,13 @@ export default function POSSales() {
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
           {[
             {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCashVal} />,icon:<Wallet className="h-4 w-4" />},
             {label:'Total Sales',value:<CurrencyAmount amount={totalSales} />,icon:<TrendingUp className="h-4 w-4" />},
             {label:'Cash Sales',value:<CurrencyAmount amount={cashSales} />,icon:<Banknote className="h-4 w-4" />},
             {label:'Card Sales',value:<CurrencyAmount amount={cardSales} />,icon:<CreditCard className="h-4 w-4" />},
+            {label:'Credit Sales',value:<CurrencyAmount amount={creditSales} />,icon:<FileText className="h-4 w-4" />},
             {label:'Expected Cash',value:<CurrencyAmount amount={expectedCashVal} />,icon:<Calculator className="h-4 w-4" />},
             {label:'Actual Cash Counted',value:<CurrencyAmount amount={actualCash} />,icon:<CheckCircle className="h-4 w-4" />},
             {label:'Cash Variance',value:<CurrencyAmount amount={Math.abs(cashVariance)} />,icon:<AlertCircle className="h-4 w-4" />,badge:actualCash===0?'Pending':varStatus,badgeColor:isBalanced?'bg-green-100 text-green-700':cashVariance<0?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'},
@@ -5909,7 +5949,7 @@ export default function POSSales() {
               const reopenedCount = xSummary.sessionReopenedCount ?? 0;
               return (
                 <XRTable
-                  title="13. Manual Actions / Exception Summary"
+                  title="14. Manual Actions / Exception Summary"
                   icon={<AlertTriangle className="h-4 w-4" />}
                   cols={['Action Type','Count','Remarks']}
                   rows={[
@@ -5927,7 +5967,7 @@ export default function POSSales() {
             <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
                 <span className="text-[#327F74]"><CheckCircle className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">14. Close Session Confirmation</span>
+                <span className="text-sm text-[#1E293B]">15. Close Session Confirmation</span>
               </div>
               <div className="p-4 space-y-2">
                 {(() => {
@@ -6069,7 +6109,33 @@ export default function POSSales() {
               ]}
             />
 
-            {/* Section 8: Discount & Promotion Summary */}
+            {/* Section 8: Credit Sales Summary */}
+            {(() => {
+              // Per-invoice credit breakdown, filtered the same way as the Z-Report's
+              // credit invoice list (paymentMode contains "credit", excludes "credit card")
+              // so this section's invoice rows agree with the creditSales KPI/Section 4 total.
+              const xInvoices = xReportData?.invoices || [];
+              const creditInvoicesList = xInvoices.filter(inv =>
+                inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
+              const creditRows = creditInvoicesList.length > 0
+                ? creditInvoicesList.map((inv, i) => [
+                    inv.invoiceNumber || '—',
+                    inv.customerName || inv.customer?.name || '—',
+                    <CurrencyAmount key={`cs8-${i}`} amount={inv.invoiceTotal ?? 0} />,
+                  ])
+                : [['—', 'No credit sales this session', <CurrencyAmount key="cs8-0" amount={0} />]];
+              return (
+                <XRTable
+                  title="8. Credit Sales Summary"
+                  icon={<FileText className="h-4 w-4" />}
+                  cols={['Invoice No.','Customer','Amount']}
+                  rows={creditRows}
+                  footerRow={['Total Credit Sales', String(xSummary.creditInvoiceCount ?? creditInvoicesList.length), <CurrencyAmount key="cs8t" amount={creditSales} />]}
+                />
+              );
+            })()}
+
+            {/* Section 9: Discount & Promotion Summary */}
             {(() => {
               // Sourced entirely from the backend's authoritative discount aggregation
               // (xSummary.billDiscount/lineDiscount + counts) instead of recomputing only
@@ -6084,7 +6150,7 @@ export default function POSSales() {
               const totalDiscountCount = billDiscountCount + lineDiscountCount;
               return (
                 <XRTable
-                  title="8. Discount Summary"
+                  title="9. Discount Summary"
                   icon={<Tag className="h-4 w-4" />}
                   cols={['Discount Type','Count','Amount']}
                   rows={[
@@ -6096,19 +6162,23 @@ export default function POSSales() {
               );
             })()}
 
-            {/* Section 9: Returns / Refund Summary */}
+            {/* Section 10: Returns / Refund Summary */}
             <XRTable
-              title="9. Returns / Refund Summary"
+              title="10. Returns / Refund Summary"
               icon={<RotateCcw className="h-4 w-4" />}
               cols={['Description','Count','Amount']}
               rows={[
-                ['Total Refunds', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
+                ['Sales Returns', String(xSummary.salesReturnCount ?? 0), xSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(xSummary.salesReturnTotal)})` : <CurrencyAmount key="r9sr" amount={0} />],
+                ['Refunds Processed', String(xSummary.refundCount ?? 0), xSummary.refundTotal > 0 ? `(${formatCurrencyStr(xSummary.refundTotal)})` : <CurrencyAmount key="r9rf" amount={0} />],
+                ['Credit Notes Issued', String(xSummary.creditNoteCount ?? 0), xSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(xSummary.creditNoteTotal)})` : <CurrencyAmount key="r9cn" amount={0} />],
+                ['Exchange Transactions', String(xSummary.exchangeCount ?? 0), <CurrencyAmount key="r9ex" amount={xSummary.exchangeTotal ?? 0} />],
+                ['Total Refunds (In-session)', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
               ]}
             />
 
-            {/* Section 10: VAT / Tax Summary */}
+            {/* Section 11: VAT / Tax Summary */}
             <XRTable
-              title="10. VAT / Tax Summary"
+              title="11. VAT / Tax Summary"
               icon={<FileBarChart className="h-4 w-4" />}
               cols={['Tax Type','Taxable Amount','Tax Amount','Total Amount']}
               rows={[
@@ -6125,9 +6195,9 @@ export default function POSSales() {
               ]}
             />
 
-            {/* Section 11: Item Movement */}
+            {/* Section 12: Item Movement */}
             <XRTable
-              title="11. Item Movement Summary"
+              title="12. Item Movement Summary"
               icon={<Package className="h-4 w-4" />}
               cols={['Description','Quantity','Amount']}
               rows={[
@@ -6136,7 +6206,7 @@ export default function POSSales() {
               ]}
             />
 
-            {/* Section 12: Document Numbers */}
+            {/* Section 13: Document Numbers */}
             {(() => {
               const xInvoices = xReportData?.invoices || [];
               const invNums = xInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
@@ -6144,7 +6214,7 @@ export default function POSSales() {
               const lastInv = invNums[invNums.length - 1] || '—';
               return (
                 <XRTable
-                  title="12. Opening & Closing Document Numbers"
+                  title="13. Opening & Closing Document Numbers"
                   icon={<Hash className="h-4 w-4" />}
                   cols={['Document Type','Starting No.','Ending No.']}
                   rows={[
@@ -6158,7 +6228,7 @@ export default function POSSales() {
             <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
                 <span className="text-[#327F74]"><Shield className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">15. Declaration &amp; Approval</span>
+                <span className="text-sm text-[#1E293B]">16. Declaration &amp; Approval</span>
               </div>
               <div className="p-4">
                 <p className="text-xs text-gray-600 mb-3 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
@@ -6649,6 +6719,32 @@ export default function POSSales() {
       {currentView === 'x-report' && renderXReport()}
       {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
+
+      {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}
+      <Dialog open={!!prevDaySessionOpenMsg} onOpenChange={(o) => { if (!o) setPrevDaySessionOpenMsg(null); }}>
+        <DialogContent className="sm:max-w-md border-0 shadow-xl bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-[#1E293B] flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Previous Day Not Closed
+            </DialogTitle>
+            <DialogDescription>{prevDaySessionOpenMsg}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setPrevDaySessionOpenMsg(null)}>Cancel</Button>
+            <Button
+              className="bg-[#327F74] hover:bg-[#286660] text-white"
+              onClick={() => {
+                setPrevDaySessionOpenMsg(null);
+                setShowStartSessionDialog(false);
+                setCurrentView('x-report');
+              }}
+            >
+              Go to Close Session
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Start Session Dialog */}
       <Dialog open={showStartSessionDialog} onOpenChange={setShowStartSessionDialog}>
@@ -8073,6 +8169,58 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Close Day Reconciliation Variance Dialog */}
+      <Dialog open={!!closeDayVariance} onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-red-50">
+                  <AlertTriangle className="h-5 w-5 text-red-500" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#1E293B]">
+                    {closeDayVariance?.stage === 'CASH' ? 'Cash Reconciliation Failed' : 'Sales Reconciliation Failed'}
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">Close day was blocked — review the variance breakdown below</p>
+                </div>
+              </div>
+              <button onClick={() => setCloseDayVariance(null)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="px-6 py-5 space-y-3 max-h-[60vh] overflow-y-auto">
+            {closeDayVariance?.breakdown && Object.entries(closeDayVariance.breakdown).map(([key, value]) => {
+              const isVariance = key === 'variance';
+              const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase());
+              const num = Number(value);
+              return (
+                <div
+                  key={key}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg ${isVariance ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}
+                >
+                  <span className={`text-sm ${isVariance ? 'font-semibold text-red-600' : 'text-gray-600'}`}>{label}</span>
+                  <span className={`text-sm font-mono ${isVariance ? 'font-bold text-red-600' : 'text-[#1E293B]'}`}>
+                    {Number.isFinite(num) ? num.toFixed(2) : String(value)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="px-6 pb-6 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setCloseDayVariance(null)}
+              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Lock POS Dialog */}
       <Dialog open={showLockPOS} onOpenChange={v => { if (!v) { setShowLockPOS(false); setLockPOSPin(''); } }}>
         <DialogContent className="max-w-sm border-0 shadow-2xl bg-white">
@@ -9154,14 +9302,32 @@ export default function POSSales() {
                 </div>
                 <button onClick={() => setShowCreditBalance(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0">
-                <input value={creditBalanceQuery} onChange={e=>setCreditBalanceQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doCreditSearch()}
-                  placeholder="Scan loyalty card / enter mobile / customer code..." className="flex-1 border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                <button onClick={doCreditSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
+              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0 overflow-visible">
+                <div className="flex-1">
+                  <CustomerPicker 
+                    customers={posCustomers} 
+                    value={creditBalanceQuery} 
+                    onChange={async (customerId) => {
+                      setCreditBalanceQuery(customerId || '');
+                      if (!customerId) {
+                        setCreditBalanceResult(null);
+                        return;
+                      }
+                      const c = posCustomers.find(x => x.id === customerId);
+                      if (!c) return;
+                      setCreditBalanceResult('searching');
+                      try {
+                        const res = await posCreditBalance(c.code || c.mobile || String(customerId));
+                        setCreditBalanceResult(res.found ? res : 'notfound');
+                      } catch { setCreditBalanceResult('notfound'); }
+                    }} 
+                    placeholder="Search or select customer..." 
+                  />
+                </div>
                 <button onClick={()=>{setCreditBalanceQuery('');setCreditBalanceResult(null);}} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
               </div>
               <div className="overflow-auto flex-1 p-5">
-                {creditBalanceResult === null && <div className="flex flex-col items-center justify-center h-40 text-center"><Star className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan loyalty card or enter mobile number to check balance.</p></div>}
+                {creditBalanceResult === null && <div className="flex flex-col items-center justify-center h-40 text-center"><Star className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Search customer to check balance.</p></div>}
                 {creditBalanceResult === 'searching' && <div className="flex flex-col items-center justify-center h-40 text-center"><div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" /><p className="text-sm text-gray-400">Searching...</p></div>}
                 {creditBalanceResult === 'notfound' && <div className="flex flex-col items-center justify-center h-40 text-center"><AlertCircle className="h-10 w-10 text-gray-300 mb-3" /><p className="text-sm text-gray-500">No customer found for the scanned card.</p></div>}
                 {data && (
