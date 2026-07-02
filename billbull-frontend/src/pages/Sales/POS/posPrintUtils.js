@@ -201,19 +201,34 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const oneLineAddress = (addr) => String(addr || '')
     .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
   const items = invoice.items || [];
-  const subTotal = invoice.subTotal || 0;
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
-  // Total discount = sum of line discounts + bill-level discount (§3A). Note:
-  // on a persisted invoice, subTotal is already net of per-item discounts (only
-  // the bill/footer-level discount is added back into it) — so this is NOT an
-  // "item + bill" total in that case, just whatever remains between subTotal
-  // and the taxable base. Deriving it from gross-vs-net item prices here would
-  // double-subtract the per-item discount and break Taxable+Tax=Total.
-  const discountTotal = parseFloat(
-    invoice.discountTotal != null ? invoice.discountTotal
-      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
-  ) || 0;
+  let subTotal, discountTotal, taxableAmount;
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total (checkout preview's mock
+    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
+    // pre-discount amount, so derive the taxable base the old way.
+    subTotal = invoice.subTotal || 0;
+    discountTotal = parseFloat(invoice.discountTotal) || 0;
+    taxableAmount = subTotal - discountTotal;
+  } else {
+    // Persisted invoice from the backend: SalesInvoiceService#finalizeInvoiceTotals sums
+    // (netAmount − taxAmount) per line into subTotal, i.e. it's already the TAXABLE base,
+    // net of per-item discounts — and the entity stores no top-level discount aggregate at
+    // all. Reconstruct Subtotal/Discount from each line's own grossAmount instead.
+    taxableAmount = invoice.subTotal || 0;
+    const grossSubtotal = items.reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const qty = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (qty * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const lineDiscountTotal = Math.max(0, grossSubtotal - taxableAmount);
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    discountTotal = lineDiscountTotal + billDiscountTotal;
+    subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
+  }
   const payMode = invoice.paymentMode || '';
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -303,7 +318,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
   if (discountTotal > 0) {
     html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(subTotal - discountTotal)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
   }
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
   if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
@@ -598,17 +613,34 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   });
 
   lines.push(hr);
-  // Note: on a persisted invoice, subTotal is already net of per-item discounts
-  // (only the bill/footer-level discount is added back into it), so this only
-  // resolves to the bill-level discount there — see buildThermalReceiptHtml.
-  const resolvedDiscountTotal = parseFloat(
-    invoice.discountTotal != null ? invoice.discountTotal
-      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
-  ) || 0;
-  lines.push(buildFixedWidthLine('Subtotal', fmt(invoice.subTotal), width));
+  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total — invoice.subTotal IS
+    // the gross pre-discount amount in that shape (see buildThermalReceiptHtml).
+    resolvedSubTotal = invoice.subTotal || 0;
+    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
+    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
+  } else {
+    // Persisted invoice from the backend: subTotal is already the TAXABLE base
+    // (net of per-item discounts) and there's no top-level discount aggregate at
+    // all. Reconstruct Subtotal/Discount from each line's own grossAmount.
+    resolvedTaxableAmount = invoice.subTotal || 0;
+    const resolvedGrossSubtotal = (invoice.items || []).reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const qty = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (qty * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const resolvedLineDiscountTotal = Math.max(0, resolvedGrossSubtotal - resolvedTaxableAmount);
+    const resolvedBillDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    resolvedDiscountTotal = resolvedLineDiscountTotal + resolvedBillDiscountTotal;
+    resolvedSubTotal = resolvedGrossSubtotal > 0 ? resolvedGrossSubtotal : resolvedTaxableAmount;
+  }
+  lines.push(buildFixedWidthLine('Subtotal', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
-    lines.push(buildFixedWidthLine('Taxable Amount', fmt(parseFloat(invoice.subTotal || 0) - resolvedDiscountTotal), width));
+    lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
   }
   lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
