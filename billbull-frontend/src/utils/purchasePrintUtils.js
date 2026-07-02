@@ -1862,6 +1862,104 @@ export const buildReceiptVoucherPrintData = (payment, customer, companyProfile) 
     };
 };
 
+export const createDefaultReceiptVoucherTemplate = () => normalizePurchaseTemplate({
+    category: 'Receipt Voucher',
+    name: 'Default Receipt Voucher',
+    isDefault: true,
+    paperSize: 'A4',
+    orientation: 'Portrait',
+    headerContent: '',
+    footerContent: '',
+    termsContent: 'Received with thanks the amount stated above. This receipt is valid after cheque or bank-transfer clearance.',
+    displayOptions: {
+        showLogo: true,
+        showCompanyDetails: true,
+        showCustomerDetails: true,
+        showTerms: false,
+        showItemImage: false,
+        salesDesigner: 'payment',
+        salesDesignerSettings: {
+            templateName: 'Default Receipt Voucher',
+            salesDesigner: 'payment',
+            docType: 'receipt',
+            accentColor: '#F5C742',
+            primaryColor: '#F5C742',
+            headerBg: '#1e293b',
+            borderColor: '#dbe2ea',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 9,
+            paperSize: 'A4',
+            orientation: 'portrait',
+            showLogo: true,
+            showCompanyLogo: true,
+            showCompanyName: true,
+            showCompanyAddress: true,
+            showCompanyPhone: true,
+            showCompanyEmail: true,
+            showTRN: true,
+            showBillTo: true,
+            showCustomerName: true,
+            showCustomerCode: true,
+            showCustomerPhone: true,
+            showCustomerEmail: true,
+            showCustomerTRN: true,
+            showReceiptNumber: true,
+            showReceiptDate: true,
+            showDocNumber: true,
+            showDocDate: true,
+            showStatusBadge: true,
+            showItemsTable: false,
+            showGrandTotalBanner: true,
+            showTotalReceivedBold: true,
+            showAmountPaid: true,
+            showBalanceDue: false,
+            showTerms: false,
+            showTermsConditions: false,
+            showNote: true,
+            showNotes: true,
+            showCompanyStamp: true,
+            showGeneratedBy: true,
+            showReceivedByLine: true,
+        }
+    },
+    columns: {
+        qty: false,
+        unitPrice: false,
+        taxableAmount: false,
+        tax: false,
+        discount: false,
+        total: false,
+    }
+}, 'Receipt Voucher');
+
+export const resolveReceiptVoucherPrintTemplate = (templates = []) => {
+    const selectedTemplate = Array.isArray(templates)
+        ? (templates.find((template) => template?.isDefault) || templates[0])
+        : null;
+    const normalizedTemplate = selectedTemplate
+        ? normalizePurchaseTemplate({ ...selectedTemplate, category: 'Receipt Voucher' }, 'Receipt Voucher')
+        : createDefaultReceiptVoucherTemplate();
+    const displayOptions = { ...(normalizedTemplate.displayOptions || {}) };
+    const designerSettings = {
+        ...(displayOptions.salesDesignerSettings || displayOptions.designerSettings || {}),
+    };
+
+    if (designerSettings.showCustomerName !== false) {
+        designerSettings.showBillTo = true;
+        displayOptions.showCustomerDetails = true;
+    }
+
+    return {
+        ...normalizedTemplate,
+        displayOptions: {
+            ...displayOptions,
+            salesDesigner: displayOptions.salesDesigner || 'payment',
+            salesDesignerSettings: designerSettings,
+            designerSettings,
+        },
+    };
+};
+
 export const getPurchasePreviewCompany = (companyProfile = {}) => ({
     ...PREVIEW_COMPANY,
     ...companyProfile,
