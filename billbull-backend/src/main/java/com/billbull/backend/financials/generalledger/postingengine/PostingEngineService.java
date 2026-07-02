@@ -880,7 +880,7 @@ public class PostingEngineService {
                 String ref = receipt.getVoucherId();
                 { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
-                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt);
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
                                 "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER,
                                 receipt.getBranchEntity());
@@ -960,7 +960,7 @@ public class PostingEngineService {
 
                 // Compute the net cash/bank debit already posted for this RV across
                 // the original entry + all prior ADJ entries.
-                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt);
                 boolean isAdvance = receipt.getPurpose() ==
                                 com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED;
                 String creditAccount = isAdvance ? ACC_CUSTOMER_ADVANCE : ACC_ACCOUNTS_RECEIVABLE;
@@ -2103,6 +2103,17 @@ public class PostingEngineService {
                                 + resolveWarehouseCostCenter(transfer.getFromWarehouse())
                                 + " -> "
                                 + resolveWarehouseCostCenter(transfer.getToWarehouse());
+        }
+
+        /** Prefers the specific bank account selected on the receipt (e.g. POS Online
+         *  payments) over generic mode-based routing, mirroring resolveOutgoingPaymentAccount(PaymentVoucher). */
+        private AccountSelection resolveIncomingPaymentAccount(ReceiptVoucher receipt) {
+                AccountSelection selectedAccount = resolveSelectedPaymentAccount(
+                                receipt != null ? receipt.getBankAccount() : null);
+                if (selectedAccount != null) {
+                        return selectedAccount;
+                }
+                return resolveIncomingPaymentAccount(receipt != null ? receipt.getPaymentMode() : null);
         }
 
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {

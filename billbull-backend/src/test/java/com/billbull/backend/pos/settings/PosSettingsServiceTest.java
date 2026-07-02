@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.user.UserRepository;
@@ -35,13 +36,14 @@ class PosSettingsServiceTest {
     @Mock private BranchAccessService branchAccessService;
     @Mock private UserRepository userRepository;
     @Mock private AuditLogService auditLogService;
+    @Mock private PosSessionService posSessionService;
 
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private PosSettingsService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService);
+        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService, posSessionService);
     }
 
     @Test

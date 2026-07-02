@@ -412,6 +412,7 @@ public class PosSessionService {
                 + ",\"totalCashSales\":" + nz(s.getTotalCashSales())
                 + ",\"totalCardSales\":" + nz(s.getTotalCardSales())
                 + ",\"totalCreditSales\":" + nz(s.getTotalCreditSales())
+                + ",\"totalOnlineSales\":" + nz(s.getTotalOnlineSales())
                 + ",\"invoiceCount\":" + (s.getInvoiceCount() != null ? s.getInvoiceCount() : 0)
                 + ",\"expectedCash\":" + expectedCash
                 + ",\"closingCash\":" + closingCash
@@ -465,6 +466,7 @@ public class PosSessionService {
         BigDecimal cardDelta   = BigDecimal.ZERO;
         BigDecimal creditDelta = BigDecimal.ZERO;
         BigDecimal mixedDelta  = BigDecimal.ZERO;
+        BigDecimal onlineDelta = BigDecimal.ZERO;
 
         if (mode.contains("cash") && mode.contains("card")) {
             mixedDelta = total;
@@ -474,6 +476,8 @@ public class PosSessionService {
             cardDelta = total;
         } else if (mode.contains("credit")) {
             creditDelta = total;
+        } else if (mode.contains("online") || mode.contains("bank") || mode.contains("transfer")) {
+            onlineDelta = total;
         } else {
             cashDelta = total; // default fallback (Voucher, etc.) treated as cash
         }
@@ -487,7 +491,7 @@ public class PosSessionService {
         }
 
         // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
-        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, voidDelta);
+        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, onlineDelta, voidDelta);
         // Reset the idle clock so a cashier actively ringing sales is never auto-suspended.
         repo.touchLastActivity(sessionId, LocalDateTime.now());
     }
@@ -947,7 +951,7 @@ public class PosSessionService {
                 || m.contains("amex") || m.contains("mada")) return "card";
         if (m.contains("cash")) return "cash";
         if (m.contains("credit")) return "credit";
-        if (m.contains("bank") || m.contains("transfer")) return "bankTransfer";
+        if (m.contains("bank") || m.contains("transfer") || m.contains("online")) return "bankTransfer";
         if (m.contains("wallet") || m.contains("apple") || m.contains("google")) return "wallet";
         if (m.contains("voucher") || m.contains("gift")) return "voucher";
         if (m.contains("cheque") || m.contains("check")) return "cheque";
