@@ -593,7 +593,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         {/* Statement — lazy mount */}
         <div style={{ display: custTab === 'statement' ? 'block' : 'none' }}>
           {visited.statement && (
-            <div className="py-5 max-w-3xl space-y-4">
+            <div className="py-5 w-full space-y-4">
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-transparent">
                   <div className="p-2 bg-indigo-100 rounded-lg"><FileText className="h-5 w-5 text-indigo-600" /></div>

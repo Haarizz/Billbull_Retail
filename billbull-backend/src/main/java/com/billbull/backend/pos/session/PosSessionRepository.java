@@ -25,6 +25,12 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate = :date AND s.status = 'OPEN'")
     List<PosSession> findOpenSessionsByBranchAndDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
 
+    // Unclosed sessions (OPEN or SUSPENDED) from a prior business day — used to block
+    // opening a new day/session until the stale one is explicitly closed.
+    @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate < :date " +
+           "AND s.status IN ('OPEN', 'SUSPENDED') ORDER BY s.sessionDate ASC")
+    List<PosSession> findUnclosedSessionsBeforeDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
+
     boolean existsByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
 
     // Sessions idle past the threshold — used by PosSessionScheduler to auto-suspend
