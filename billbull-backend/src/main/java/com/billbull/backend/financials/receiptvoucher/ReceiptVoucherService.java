@@ -179,6 +179,7 @@ public class ReceiptVoucherService {
         receipt.setCategory(receiptDetails.getCategory());
         receipt.setAmount(receiptDetails.getAmount());
         receipt.setPaymentMode(receiptDetails.getPaymentMode());
+        receipt.setBankAccount(receiptDetails.getBankAccount());
         receipt.setReference(receiptDetails.getReference());
         receipt.setNotes(receiptDetails.getNotes());
         receipt.setPreparedBy(receiptDetails.getPreparedBy());

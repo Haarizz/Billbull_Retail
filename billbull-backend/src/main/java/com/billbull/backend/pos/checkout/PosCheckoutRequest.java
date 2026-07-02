@@ -12,8 +12,14 @@ public class PosCheckoutRequest {
     private Double amountTendered;
     private Double cashAmount;
     private Double cardAmount;
+    /** Third settlement leg — Online/Bank Transfer amount (e.g. partial receipt against a Credit sale). */
+    private Double onlineAmount;
     private String cardReference;
     private String cardType;
+    /** Selected bank account for Online-mode payments, formatted "{code} - {name}"
+     *  so PostingEngineService.resolveSelectedPaymentAccount() can resolve it back
+     *  to the exact Chart-of-Accounts row for GL posting + reconciliation. */
+    private String bankAccountName;
     private Long branchId;
     private String branchName;
     private String branchCode;
@@ -93,10 +99,14 @@ public class PosCheckoutRequest {
     public void setCashAmount(Double cashAmount) { this.cashAmount = cashAmount; }
     public Double getCardAmount() { return cardAmount; }
     public void setCardAmount(Double cardAmount) { this.cardAmount = cardAmount; }
+    public Double getOnlineAmount() { return onlineAmount; }
+    public void setOnlineAmount(Double onlineAmount) { this.onlineAmount = onlineAmount; }
     public String getCardReference() { return cardReference; }
     public void setCardReference(String cardReference) { this.cardReference = cardReference; }
     public String getCardType() { return cardType; }
     public void setCardType(String cardType) { this.cardType = cardType; }
+    public String getBankAccountName() { return bankAccountName; }
+    public void setBankAccountName(String bankAccountName) { this.bankAccountName = bankAccountName; }
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }
     public String getBranchName() { return branchName; }
