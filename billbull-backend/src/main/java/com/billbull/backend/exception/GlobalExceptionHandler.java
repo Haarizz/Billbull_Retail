@@ -36,6 +36,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * POS close-day reconciliation failures → 422 with the per-bucket breakdown
+     * (cash/card/credit/online/returns/rounding) so the frontend can show the exact
+     * cause instead of a bare variance number.
+     */
+    @ExceptionHandler(ReconciliationException.class)
+    public ResponseEntity<Map<String, Object>> handleReconciliation(ReconciliationException ex) {
+        log.warn("ReconciliationException [{}] requestId={}: {}", ex.getStage(), requestId(), ex.getMessage());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "RECONCILIATION_FAILED");
+        body.put("stage", ex.getStage());
+        body.put("message", ex.getMessage());
+        body.put("breakdown", ex.getBreakdown());
+        body.put("requestId", requestId());
+        return ResponseEntity.unprocessableEntity().body(body);
+    }
+
+    /**
      * Explicit HTTP status rejections (e.g. 401 from AuthController) — return the
      * declared status and log at WARN without a stack trace.
      */

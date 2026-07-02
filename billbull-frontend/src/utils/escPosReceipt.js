@@ -297,8 +297,19 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   });
   w.line(hr);
 
+  // Note: on a persisted invoice, subTotal is already net of per-item discounts
+  // (only the bill/footer-level discount is added back into it), so this only
+  // resolves to the bill-level discount there — see buildThermalReceiptHtml.
+  const resolvedDiscountTotal = parseFloat(
+    invoice.discountTotal != null ? invoice.discountTotal
+      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
+  ) || 0;
+
   w.line(buildFixedWidthLine('Subtotal:', fmt(invoice.subTotal), width));
-  if (parseFloat(invoice.discountTotal || 0) > 0) w.line(buildFixedWidthLine('Discount:', fmt(invoice.discountTotal), width));
+  if (resolvedDiscountTotal > 0) {
+    w.line(buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
+    w.line(buildFixedWidthLine('Taxable Amount:', fmt(parseFloat(invoice.subTotal || 0) - resolvedDiscountTotal), width));
+  }
   if (showServiceCharge && invoice.serviceChargeAmount) w.line(buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
   if (showVatSummary) w.line(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) w.line(buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));

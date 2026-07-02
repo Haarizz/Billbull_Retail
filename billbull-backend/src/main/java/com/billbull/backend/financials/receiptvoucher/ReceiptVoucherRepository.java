@@ -17,12 +17,16 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     List<ReceiptVoucher> findBySalesOrderIdOrderByDateDesc(Long salesOrderId);
 
     /**
-     * Sum of completed receipts for a customer before a given date.
+     * Sum of completed receipts for a customer before a given date, excluding
+     * unapplied customer advances (ADVANCE_RECEIVED with no salesInvoiceId link)
+     * which are a separate liability until applied and must not reduce AR here.
      * Used by StatementService to compute the opening-balance credit offset.
      */
     @Query("SELECT COALESCE(SUM(rv.amount), 0) FROM ReceiptVoucher rv " +
            "WHERE rv.customerCode = :customerCode AND rv.date < :startDate " +
-           "AND LOWER(rv.status) = 'completed'")
+           "AND LOWER(rv.status) = 'completed' " +
+           "AND (rv.purpose <> com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED " +
+           "     OR rv.salesInvoiceId IS NOT NULL)")
     BigDecimal sumCompletedAmountBeforeDate(
             @Param("customerCode") String customerCode,
             @Param("startDate") LocalDate startDate);

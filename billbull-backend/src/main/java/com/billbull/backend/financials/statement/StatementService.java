@@ -142,8 +142,13 @@ public class StatementService {
             totalDebit = totalDebit.add(debit);
             totalCredit = totalCredit.add(credit);
 
-            // AR formula: Balance = Previous + Debit - Credit
-            runningBalance = runningBalance.add(debit).subtract(credit);
+            // AR formula: Balance = Previous + Debit - Credit.
+            // Unapplied customer advances are shown as a line item but held as a
+            // separate liability (Customer Advance 2104) until applied to an
+            // invoice, so they must not net against the AR running balance yet.
+            if (!entry.isExcludeFromBalance()) {
+                runningBalance = runningBalance.add(debit).subtract(credit);
+            }
             entry.setRunningBalance(runningBalance);
         }
 
@@ -243,6 +248,11 @@ public class StatementService {
                             entry.setDescription("Advance Received"
                                     + (rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
                         }
+                        // An advance only reduces AR once it's applied to an invoice
+                        // (AdvanceApplicationService.apply → Dr Customer Advance / Cr AR).
+                        // Until then it's a separate customer-advance liability and must
+                        // not net against the invoiced balance shown here.
+                        entry.setExcludeFromBalance(!hasInvoice);
                     } else {
                         // AGAINST_INVOICE or any other purpose → payment receipt
                         entry.setSortPriority(PRI_PAYMENT_RECEIPT);

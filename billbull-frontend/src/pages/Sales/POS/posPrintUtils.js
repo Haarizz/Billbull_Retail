@@ -201,14 +201,34 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const oneLineAddress = (addr) => String(addr || '')
     .split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
   const items = invoice.items || [];
-  const subTotal = invoice.subTotal || 0;
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
-  // Total discount = sum of line discounts + bill-level discount (§3A).
-  const discountTotal = parseFloat(
-    invoice.discountTotal != null ? invoice.discountTotal
-      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
-  ) || 0;
+  let subTotal, discountTotal, taxableAmount;
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total (checkout preview's mock
+    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
+    // pre-discount amount, so derive the taxable base the old way.
+    subTotal = invoice.subTotal || 0;
+    discountTotal = parseFloat(invoice.discountTotal) || 0;
+    taxableAmount = subTotal - discountTotal;
+  } else {
+    // Persisted invoice from the backend: SalesInvoiceService#finalizeInvoiceTotals sums
+    // (netAmount − taxAmount) per line into subTotal, i.e. it's already the TAXABLE base,
+    // net of per-item discounts — and the entity stores no top-level discount aggregate at
+    // all. Reconstruct Subtotal/Discount from each line's own grossAmount instead.
+    taxableAmount = invoice.subTotal || 0;
+    const grossSubtotal = items.reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const qty = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (qty * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const lineDiscountTotal = Math.max(0, grossSubtotal - taxableAmount);
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    discountTotal = lineDiscountTotal + billDiscountTotal;
+    subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
+  }
   const payMode = invoice.paymentMode || '';
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -256,12 +276,19 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += D;
 
   // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
-  // row 2 so unit price is always visible (was: qty×name + total only). ──
+  // row 2 so unit price is always visible (was: qty×name + total only). When a
+  // line discount applies (BBQA-5.3-015), show the actual/base unit price, the
+  // discount %/amount, and the net (discounted) unit price as separate rows so
+  // the discounted price never gets reprinted as if it were the base price. ──
   items.forEach(it => {
     const isVoid = !!it.voided || !!it.isVoided;
     const qty = it.quantity || 0;
     const unit = parseFloat(it.unitPrice || it.price || 0);
     const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
+    const discountPercent = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
+    const grossAmount = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
+    const lineDiscountAmount = parseFloat(it.discountAmount ?? Math.max(0, grossAmount - total)) || 0;
+    const netUnit = qty > 0 ? total / qty : unit;
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
     const desc = it.description || '';
@@ -271,8 +298,15 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
     // Row 1: quantity × product name (name wraps if long).
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
-    // Row 2: unit price → line total, right-aligned and aligned with the total column.
-    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    if (!isVoid && lineDiscountAmount > 0) {
+      // Discounted line: base price, discount detail, and net (discounted) total each on their own row.
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#444">${cur} ${fmtAmt(grossAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#555;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#555">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="padding-left:8px">Net @ ${cur} ${fmt(netUnit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    } else {
+      // Row 2: unit price → line total, right-aligned and aligned with the total column.
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+    }
     if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
     if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
     if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
@@ -282,7 +316,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
 
   // ── Totals (§3): Subtotal, Discount (if any), VAT (no hardcoded %), TOTAL ──
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
-  if (discountTotal > 0) html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
+  if (discountTotal > 0) {
+    html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
+    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
+  }
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
   if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
@@ -576,9 +613,34 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   });
 
   lines.push(hr);
-  lines.push(buildFixedWidthLine('Subtotal', fmt(invoice.subTotal), width));
-  if (parseFloat(invoice.discountTotal || 0) > 0) {
-    lines.push(buildFixedWidthLine('Discount', fmt(invoice.discountTotal), width));
+  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total — invoice.subTotal IS
+    // the gross pre-discount amount in that shape (see buildThermalReceiptHtml).
+    resolvedSubTotal = invoice.subTotal || 0;
+    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
+    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
+  } else {
+    // Persisted invoice from the backend: subTotal is already the TAXABLE base
+    // (net of per-item discounts) and there's no top-level discount aggregate at
+    // all. Reconstruct Subtotal/Discount from each line's own grossAmount.
+    resolvedTaxableAmount = invoice.subTotal || 0;
+    const resolvedGrossSubtotal = (invoice.items || []).reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const qty = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (qty * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const resolvedLineDiscountTotal = Math.max(0, resolvedGrossSubtotal - resolvedTaxableAmount);
+    const resolvedBillDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    resolvedDiscountTotal = resolvedLineDiscountTotal + resolvedBillDiscountTotal;
+    resolvedSubTotal = resolvedGrossSubtotal > 0 ? resolvedGrossSubtotal : resolvedTaxableAmount;
+  }
+  lines.push(buildFixedWidthLine('Subtotal', fmt(resolvedSubTotal), width));
+  if (resolvedDiscountTotal > 0) {
+    lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
+    lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
   }
   lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
@@ -755,6 +817,137 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
   return lines.join('\n');
 };
 
+// Customer payment receipt (Customer Management → Customer Receipt tab).
+// Deliberately simpler than buildThermalReceiptHtml — no line items, just the
+// amount received against a customer's outstanding balance.
+export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  logoDataUrl = null, currency = 'AED', customer = null,
+}) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = n => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+  const receiptNo = payment?.paymentNumber || payment?.receiptNumber || payment?.id || '';
+  const dateStr = payment?.paymentDate
+    ? new Date(payment.paymentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const custName = payment?.customerName || customer?.name || 'Walk-in Customer';
+  const custCode = payment?.customerCode || customer?.code || '';
+  const mode = payment?.paymentMode || '';
+  const bankName = payment?.bankName || '';
+  const ref = payment?.referenceNumber || '';
+  const amount = payment?.amount || 0;
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+</style></head><body>`;
+
+  if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">PAYMENT RECEIPT</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  const addrLine = oneLineAddress(address);
+  if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+  if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Receipt No:</span><span class="num">${esc(receiptNo)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(dateStr)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="val">${esc(custCode)}</span></div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="num">${esc(mode)}</span></div>`;
+  if (bankName) html += `<div class="row"><span class="lbl">Bank Account:</span><span class="val">${esc(bankName)}</span></div>`;
+  if (ref) html += `<div class="row"><span class="lbl">Reference:</span><span class="val">${esc(ref)}</span></div>`;
+  html += D;
+  html += `<div class="row b" style="font-size:14px"><span class="lbl">AMOUNT RECEIVED</span><span class="num">${esc(currency)} ${fmt(amount)}</span></div>`;
+  html += D;
+  html += `<div class="c" style="font-size:9px">Received with thanks.</div>`;
+  if (footer) html += `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>`;
+  html += `</body></html>`;
+  return html;
+};
+
+// Customer statement of account (Customer Management → Customer Statement tab).
+// Prints the running transaction history as a continuous thermal roll — no page
+// breaks needed since @page height is "auto".
+export const buildStatementThermalHtml = (paperSize, statement, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  logoDataUrl = null, currency = 'AED', customer = null,
+  startDate = '', endDate = '',
+}) => {
+  const w = paperSize === '58mm' ? '58mm' : '80mm';
+  const pw = paperSize === '58mm' ? '50mm' : '72mm';
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmt = n => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
+  const typeLabel = (type) => !type ? '' : String(type).toLowerCase().split('_').filter(Boolean)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  const custName = customer?.name || statement?.accountName || 'Customer';
+  const custCode = customer?.code || statement?.accountCode || '';
+  const entries = (Array.isArray(statement?.entries) ? statement.entries : [])
+    .filter(e => e?.type !== 'OPENING_BALANCE'); // opening balance is already shown separately below
+  const D = `<div class="d"></div>`;
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
+body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.row .lbl{flex:0 0 auto;white-space:nowrap}
+.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;text-align:right;white-space:nowrap}
+.desc{font-size:9px;color:#333;margin:1px 0;word-break:break-word}
+</style></head><body>`;
+
+  if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">CUSTOMER STATEMENT</div>`;
+  if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  const addrLine = oneLineAddress(address);
+  if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
+  if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
+  if (showTrn && trn) html += `<div class="c" style="font-size:9px">TRN: ${esc(trn)}</div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Customer:</span><span class="val">${esc(custName)}</span></div>`;
+  if (custCode) html += `<div class="row"><span class="lbl">Code:</span><span class="val">${esc(custCode)}</span></div>`;
+  if (startDate || endDate) html += `<div class="row"><span class="lbl">Period:</span><span class="val">${esc(startDate)} to ${esc(endDate)}</span></div>`;
+  html += D;
+  html += `<div class="row b"><span class="lbl">Opening Balance</span><span class="num">${fmt(statement?.openingBalance)}</span></div>`;
+  html += D;
+
+  if (entries.length === 0) {
+    html += `<div class="c" style="font-size:9px;margin:6px 0">No transactions in this period.</div>${D}`;
+  }
+  entries.forEach(e => {
+    const debit = parseFloat(e.debit || 0);
+    const credit = parseFloat(e.credit || 0);
+    const balance = parseFloat(e.runningBalance || 0);
+    html += `<div class="row"><span class="lbl">${esc(e.transactionDate || '')}</span><span class="num">${esc(typeLabel(e.type))}</span></div>`;
+    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    if (descLine) html += `<div class="desc">${esc(descLine)}</div>`;
+    html += `<div class="row"><span class="lbl">${debit > 0 ? 'Dr ' + fmt(debit) : credit > 0 ? 'Cr ' + fmt(credit) : '—'}</span><span class="num">Bal ${fmt(balance)}</span></div>`;
+    html += D;
+  });
+
+  html += `<div class="row b" style="font-size:13px"><span class="lbl">CLOSING BAL.</span><span class="num">${esc(currency)} ${fmt(statement?.closingBalance)}</span></div>`;
+  html += D;
+  html += `<div class="row"><span class="lbl">Total Invoiced</span><span class="num">${fmt(statement?.totalDebit)}</span></div>`;
+  html += `<div class="row"><span class="lbl">Total Paid</span><span class="num">${fmt(statement?.totalCredit)}</span></div>`;
+  if (footer) { html += D; html += `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</div>`; }
+  html += `</body></html>`;
+  return html;
+};
+
 export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
@@ -901,6 +1094,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   html += D;
   html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');
   if (!isReturn)         html += srow('Discount:', 'AED 0.00');
+  if (!isReturn)         html += srow('Taxable Amount:', 'AED 89.00');
   if (showServiceCharge) html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
   if (showVatSummary)    html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
   html += D;
