@@ -1,14 +1,25 @@
-import { connectQz, disconnectQz, listQzPrinters } from "../utils/qzTray";
+import qz from "qz-tray";
 
 export async function testConnection() {
   try {
-    await connectQz();
-    console.log("Connected");
+    await qz.websocket.connect();
 
-    const printers = await listQzPrinters();
-    console.log(printers);
+    const printer = await qz.printers.find("POS-80C");
 
-    await disconnectQz();
+    const config = qz.configs.create(printer);
+
+    const data = [
+      '\x1B\x40',
+      'BILLBULL\n',
+      '-----------------------\n',
+      'HELLO WORLD\n',
+      '\n\n\n',
+      '\x1D\x56\x00'
+    ];
+
+    await qz.print(config, data);
+
+    await qz.websocket.disconnect();
   } catch (e) {
     console.error(e);
   }
