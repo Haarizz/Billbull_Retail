@@ -20,4 +20,12 @@ public interface OpeningInvoiceRepository extends JpaRepository<OpeningInvoice, 
            "FROM OpeningInvoice oi WHERE oi.customer.code IS NOT NULL " +
            "GROUP BY oi.customer.code")
     List<Object[]> sumOutstandingByCustomerCode();
+
+    /**
+     * Sum of outstanding opening balances for a single customer.
+     * Uses COALESCE(outstanding, amount) to handle rows where outstanding was not explicitly set.
+     */
+    @Query("SELECT COALESCE(SUM(COALESCE(oi.outstanding, oi.amount)), 0) " +
+           "FROM OpeningInvoice oi WHERE oi.customer.code = :customerCode")
+    java.math.BigDecimal sumOutstandingForCustomer(@org.springframework.data.repository.query.Param("customerCode") String customerCode);
 }

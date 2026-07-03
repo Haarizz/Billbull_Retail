@@ -1481,7 +1481,11 @@ export const downloadPdf = async (htmlContent, filename = 'document') => {
     }
 };
 
-export const printHtml = (htmlContent) => {
+// opts.fast: for lightweight documents (POS thermal receipts — plain text plus at
+// most a small logo/QR image) where we don't need the full worst-case safety
+// margin that image-heavy A4 documents (invoices with logos/stamps) still get
+// by default.
+export const printHtml = (htmlContent, { fast = false } = {}) => {
     // Remove any previous print frame
     const existing = document.getElementById('__bb_print_frame__');
     if (existing) existing.remove();
@@ -1508,9 +1512,27 @@ export const printHtml = (htmlContent) => {
         } catch {
             // Fallback: open new window if iframe print is blocked
             const win = window.open('', '_blank');
-            if (win) { win.document.write(htmlContent); win.document.close(); setTimeout(() => win.print(), 500); }
+            if (win) { win.document.write(htmlContent); win.document.close(); setTimeout(() => win.print(), fast ? 150 : 500); }
         }
         cleanup();
+    };
+
+    // Fire the moment every <img> in the frame has actually finished loading (or
+    // errored) instead of blindly waiting out a fixed delay — a receipt with no
+    // logo/QR resolves in ~0ms this way rather than paying the full worst-case
+    // padding every single print, while an image-heavy document still waits for
+    // its images for correctness.
+    const waitForImagesThenPrint = () => {
+        const frameDoc = iframe.contentWindow?.document;
+        const imgs = frameDoc ? Array.from(frameDoc.images || []) : [];
+        const pending = imgs.filter((img) => !img.complete);
+        if (pending.length === 0) { runPrint(); return; }
+        let remaining = pending.length;
+        const settle = () => { if (--remaining <= 0) runPrint(); };
+        pending.forEach((img) => {
+            img.addEventListener('load', settle, { once: true });
+            img.addEventListener('error', settle, { once: true });
+        });
     };
 
     const doc = iframe.contentWindow.document;
@@ -1518,6 +1540,6 @@ export const printHtml = (htmlContent) => {
     doc.write(htmlContent);
     doc.close();
 
-    iframe.onload = () => setTimeout(runPrint, 350);
-    setTimeout(runPrint, 900);
+    iframe.onload = () => setTimeout(waitForImagesThenPrint, fast ? 20 : 350);
+    setTimeout(runPrint, fast ? 350 : 900);
 };

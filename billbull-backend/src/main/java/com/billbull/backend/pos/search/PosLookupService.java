@@ -7,6 +7,7 @@ import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.sales.advance.AdvanceApplicationService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
@@ -29,17 +30,20 @@ public class PosLookupService {
     private final AdvanceApplicationService advanceApplicationService;
     private final BatchMasterRepository batchMasterRepository;
     private final StockMovementRepository stockMovementRepository;
+    private final OpeningInvoiceRepository openingInvoiceRepository;
 
     public PosLookupService(CustomerRepository customerRepository,
                             SalesInvoiceRepository invoiceRepository,
                             AdvanceApplicationService advanceApplicationService,
                             BatchMasterRepository batchMasterRepository,
-                            StockMovementRepository stockMovementRepository) {
+                            StockMovementRepository stockMovementRepository,
+                            OpeningInvoiceRepository openingInvoiceRepository) {
         this.customerRepository = customerRepository;
         this.invoiceRepository = invoiceRepository;
         this.advanceApplicationService = advanceApplicationService;
         this.batchMasterRepository = batchMasterRepository;
         this.stockMovementRepository = stockMovementRepository;
+        this.openingInvoiceRepository = openingInvoiceRepository;
     }
 
     @Transactional(readOnly = true)
@@ -68,7 +72,15 @@ public class PosLookupService {
         }
 
         Customer c = opt.get();
-        Double outstanding = invoiceRepository.findOutstandingBalanceByCustomerCode(c.getCode());
+        // Invoice outstanding (from sales invoices with unpaid balance)
+        Double invoiceOutstanding = invoiceRepository.findOutstandingBalanceByCustomerCode(c.getCode());
+        BigDecimal invOutstanding = invoiceOutstanding != null ? BigDecimal.valueOf(invoiceOutstanding) : BigDecimal.ZERO;
+        // Opening invoice outstanding (imported/migrated opening balances)
+        BigDecimal opnOutstanding = openingInvoiceRepository.sumOutstandingForCustomer(c.getCode());
+        if (opnOutstanding == null) opnOutstanding = BigDecimal.ZERO;
+        // Total outstanding = invoice outstanding + opening invoice outstanding
+        BigDecimal totalOutstanding = invOutstanding.add(opnOutstanding);
+
         BigDecimal advanceBalance = advanceApplicationService.findOpenAdvances(c.getCode())
                 .stream()
                 .map(AdvanceApplicationService.AdvanceBalance::openBalance)
@@ -87,7 +99,7 @@ public class PosLookupService {
         PosCreditBalanceResponse res = new PosCreditBalanceResponse();
         res.setFound(true);
         res.setCustomer(info);
-        res.setOutstanding(outstanding != null ? BigDecimal.valueOf(outstanding) : BigDecimal.ZERO);
+        res.setOutstanding(totalOutstanding);
         res.setCreditLimit(c.getCreditLimitAmount() != null ? c.getCreditLimitAmount() : BigDecimal.ZERO);
         res.setAdvanceBalance(advanceBalance);
         return res;
