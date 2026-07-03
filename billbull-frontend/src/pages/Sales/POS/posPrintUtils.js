@@ -126,8 +126,8 @@ export const buildThermalPrintHtml = (paperSize, { companyName, trn, header, foo
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -246,8 +246,8 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
@@ -741,8 +741,8 @@ export const buildLayawayReceiptHtml = (paperSize, layaway, { companyName, trn, 
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -1102,8 +1102,8 @@ export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, foot
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -1196,7 +1196,7 @@ export const buildThermalSampleHtml = (paperSize, {
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 2px;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 2px;color:#000}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
