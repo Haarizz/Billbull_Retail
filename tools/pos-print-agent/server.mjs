@@ -71,30 +71,46 @@ const listPrinters = async () => {
   return Array.isArray(parsed) ? parsed : [parsed];
 };
 
-const printTextToPrinter = async ({ printerName, text, title = "BillBull Print Job" }) => {
+// mm -> hundredths-of-an-inch, the unit System.Drawing.Printing.PaperSize expects.
+const mmToHundredthsInch = (mm) => Math.round(((Number(mm) || 80) / 25.4) * 100);
+
+const printTextToPrinter = async ({ printerName, text, title = "BillBull Print Job", paperWidthMm = 80 }) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "billbull-print-"));
   const textFile = path.join(tempDir, "job.txt");
   await fs.writeFile(textFile, text, "utf8");
+  const paperWidthHundredths = mmToHundredthsInch(paperWidthMm);
   const script = `
     Add-Type -AssemblyName System.Drawing
     $printerName = '${escapeSingleQuotes(printerName)}'
     $filePath = '${escapeSingleQuotes(textFile)}'
     $title = '${escapeSingleQuotes(title)}'
     $content = Get-Content -LiteralPath $filePath -Raw
-    $font = New-Object System.Drawing.Font('Consolas', 9)
+    $font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
     $brush = [System.Drawing.Brushes]::Black
     $doc = New-Object System.Drawing.Printing.PrintDocument
     $doc.PrinterSettings.PrinterName = $printerName
     if (-not $doc.PrinterSettings.IsValid) { throw "Printer not found: $printerName" }
     $doc.DocumentName = $title
+    # Explicitly size the page to the configured roll width. Without this the
+    # driver's own default page size is used instead (often narrower than the
+    # physical roll), and GDI silently clips any DrawString content that falls
+    # past that page's right edge rather than wrapping it — that's what was
+    # cropping the right side of receipts.
+    $doc.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize('BillBullReceipt', ${paperWidthHundredths}, 3000)
+    # Zero soft margins so the full roll width is usable — matches the zero-margin
+    # @page CSS on the HTML print path and the full-dot-width ESC/POS path. The
+    # driver still clamps to its own unprintable hard margin, so this can't push
+    # ink past the physical print head; it just stops GDI reserving extra room the
+    # 42/32-column line width (calibrated for the full physical width) doesn't expect.
+    $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
     $lines = $content -split "\\r?\\n"
     $index = 0
     $doc.add_PrintPage({
       param($sender, $e)
-      $y = 10
+      $y = $e.MarginBounds.Top
       $lineHeight = $font.GetHeight($e.Graphics) + 2
       while ($index -lt $lines.Length) {
-        $e.Graphics.DrawString($lines[$index], $font, $brush, 10, $y)
+        $e.Graphics.DrawString($lines[$index], $font, $brush, $e.MarginBounds.Left, $y)
         $y += $lineHeight
         $index++
         if ($y + $lineHeight -gt $e.MarginBounds.Bottom) {
@@ -293,6 +309,7 @@ const server = http.createServer(async (req, res) => {
           printerName: body.printerName,
           text: body.text,
           title: body.title || "BillBull POS Receipt",
+          paperWidthMm: body.paperWidthMm,
         });
       }
       sendJson(res, 200, result);
