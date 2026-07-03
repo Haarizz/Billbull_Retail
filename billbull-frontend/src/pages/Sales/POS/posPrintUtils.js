@@ -122,9 +122,11 @@ export const buildThermalPrintHtml = (paperSize, { companyName, trn, header, foo
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -233,7 +235,6 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
   const customerName = invoice.customerName || 'Walk-in Customer';
-  const isWalkIn = !invoice.customerName || invoice.customerName === 'Walk-in Customer';
   // Cashier = logged-in user (§2A); falls back to audit createdBy. NOT the counter name.
   const cashier = cashierName || invoice.createdBy || '';
   const terminal = terminalId || invoice.posTerminalId || '';
@@ -241,14 +242,16 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
-.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
-.row .num{flex:1;text-align:right;white-space:nowrap}
-.s{font-size:9px;text-transform:uppercase;color:#555;margin:3px 0 1px;letter-spacing:.08em}
+.row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
+.s{font-size:9px;text-transform:uppercase;color:#000;margin:3px 0 1px;letter-spacing:.08em}
 </style></head><body>`;
 
   // ── Header (§1): logo, title, company name, single-line address, phone, TRN ──
@@ -300,17 +303,17 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
     if (!isVoid && lineDiscountAmount > 0) {
       // Discounted line: base price, discount detail, and net (discounted) total each on their own row.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#444">${cur} ${fmtAmt(grossAmount)}</span></div>`;
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#555;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#555">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#000">${cur} ${fmtAmt(grossAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#000">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
       html += `<div class="row"><span class="lbl" style="padding-left:8px">Net @ ${cur} ${fmt(netUnit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
     } else {
       // Row 2: unit price → line total, right-aligned and aligned with the total column.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
     }
-    if (sku) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(sku)}</div>`;
-    if (desc) html += `<div style="font-size:9px;color:#555;padding-left:8px">${esc(desc)}</div>`;
-    if (serial) html += `<div style="font-size:9px;color:#555;padding-left:8px">S/N: ${esc(serial)}</div>`;
-    else if (batch) html += `<div style="font-size:9px;color:#555;padding-left:8px">Batch: ${esc(batch)}</div>`;
+    if (sku) html += `<div style="font-size:10px;color:#000;padding-left:8px">SKU: ${esc(sku)}</div>`;
+    if (desc) html += `<div style="font-size:10px;color:#000;padding-left:8px">${esc(desc)}</div>`;
+    if (serial) html += `<div style="font-size:10px;color:#000;padding-left:8px">S/N: ${esc(serial)}</div>`;
+    else if (batch) html += `<div style="font-size:10px;color:#000;padding-left:8px">Batch: ${esc(batch)}</div>`;
   });
   html += D;
 
@@ -353,7 +356,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
     qrStampHtml += D;
   } else if (showQRCode && zatcaQrDataUrl) {
-    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
+    qrStampHtml += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="width:80px;height:80px" alt="ZATCA QR" /><div style="font-size:8px;color:#000;margin-top:2px">Scan to verify</div></div>`;
     if (footerLogoDataUrl) qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
     qrStampHtml += D;
   } else if (footerLogoDataUrl) {
@@ -364,7 +367,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (qrPlacement !== 'after') html += qrStampHtml;
 
   // ── Customer (§6): label fixed-width, name/email wrap gracefully within width ──
-  if (showCustomerDetails && !isWalkIn) {
+  // Gated on the toggle alone (matches the settings preview) — a walk-in sale still
+  // prints "Walk-in Customer" as the name when the merchant has this section enabled,
+  // rather than silently dropping the whole block regardless of the toggle state.
+  if (showCustomerDetails) {
     const custPhone = customerPhone || invoice.customerPhone || '';
     const custEmail = customerEmail || invoice.customerEmail || '';
     html += `<div class="s">CUSTOMER</div>`;
@@ -383,12 +389,17 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   }
 
   // ── Credit account (§7): mandatory 4-field structure when a credit account exists ──
+  // Invoice Credit = this invoice's amount (the receivable it adds to the account);
+  // Amount Paid = what was actually collected against it right now. The same formula
+  // holds for every payment mode: a fully-settled cash/card/online sale nets Invoice
+  // Credit − Amount Paid to 0 (balance unchanged), while an unpaid/partially-paid
+  // Credit sale carries the remainder forward — see POSSales.jsx checkout.
   if (showCreditBalance && creditPreviousBalance != null) {
-    const invCredit  = creditInvoiceCredit != null ? creditInvoiceCredit : 0;
-    const amtPaid    = creditAmountPaid    != null ? creditAmountPaid    : grandTotal;
+    const invCredit  = creditInvoiceCredit != null ? creditInvoiceCredit : grandTotal;
+    const amtPaid    = creditAmountPaid    != null ? creditAmountPaid    : 0;
     const updatedBal = creditUpdatedBalance != null
       ? creditUpdatedBalance
-      : (parseFloat(creditPreviousBalance) + parseFloat(invCredit));
+      : (parseFloat(creditPreviousBalance) + parseFloat(invCredit) - parseFloat(amtPaid));
     html += `<div class="s">CREDIT ACCOUNT</div>`;
     html += `<div class="row"><span class="lbl">Previous Balance:</span><span class="num">${cur} ${fmt(creditPreviousBalance)}</span></div>`;
     html += `<div class="row"><span class="lbl">Invoice Credit:</span><span class="num">${cur} ${fmt(invCredit)}</span></div>`;
@@ -444,14 +455,16 @@ export const buildSalesReturnThermalHtml = (paperSize, ret, {
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
-.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
-.row .num{flex:1;text-align:right;white-space:nowrap}
-.s{font-size:9px;text-transform:uppercase;color:#555;margin:3px 0 1px;letter-spacing:.08em}
+.row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
+.s{font-size:9px;text-transform:uppercase;color:#000;margin:3px 0 1px;letter-spacing:.08em}
 </style></head><body>`;
 
   if (showLogo && logoDataUrl) {
@@ -483,10 +496,10 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     const nameDisplay = `${qty}x ${esc(it.itemName || it.itemCode || '')}`;
 
     html += `<div class="row"><span class="val b" style="text-align:left;">${nameDisplay}</span></div>`;
-    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
-    if (it.itemCode) html += `<div style="font-size:9px;color:#555;padding-left:8px">SKU: ${esc(it.itemCode)}</div>`;
-    if (lineDiscount > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(lineDiscount)}</span></div>`;
-    if (lineTax > 0) html += `<div class="row" style="font-size:9px;color:#555;padding-left:8px"><span class="lbl">VAT${it.taxRate ? ` (${it.taxRate}%)` : ''}:</span><span class="num">${cur} ${fmt(lineTax)}</span></div>`;
+    html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmt(total)}</span></div>`;
+    if (it.itemCode) html += `<div style="font-size:10px;color:#000;padding-left:8px">SKU: ${esc(it.itemCode)}</div>`;
+    if (lineDiscount > 0) html += `<div class="row" style="font-size:10px;color:#000;padding-left:8px"><span class="lbl">Discount:</span><span class="num">- ${cur} ${fmt(lineDiscount)}</span></div>`;
+    if (lineTax > 0) html += `<div class="row" style="font-size:10px;color:#000;padding-left:8px"><span class="lbl">VAT${it.taxRate ? ` (${it.taxRate}%)` : ''}:</span><span class="num">${cur} ${fmt(lineTax)}</span></div>`;
   });
   html += D;
 
@@ -564,6 +577,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   currency = 'AED',
   customerPhone = null,
   customerEmail = null,
+  showCustomerDetails = true,
 } = {}) => {
   const width = String(paperSize || '').includes('58') ? 32 : 42;
   const hr = '-'.repeat(width);
@@ -593,10 +607,12 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   if (terminalId) lines.push(buildFixedWidthLine('Terminal', terminalId, width));
   if (counterName) lines.push(buildFixedWidthLine('Counter', counterName, width));
   lines.push(hr);
-  lines.push(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
-  if (customerPhone) lines.push(`Mobile: ${customerPhone}`);
-  if (customerEmail) lines.push(`Email: ${customerEmail}`);
-  lines.push(hr);
+  if (showCustomerDetails) {
+    lines.push(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
+    if (customerPhone) lines.push(`Mobile: ${customerPhone}`);
+    if (customerEmail) lines.push(`Email: ${customerEmail}`);
+    lines.push(hr);
+  }
 
   (invoice.items || []).forEach((item) => {
     if (item.voided || item.isVoided) return;
@@ -721,9 +737,11 @@ export const buildLayawayReceiptHtml = (paperSize, layaway, { companyName, trn, 
     : '';
   const items = layaway.items || [];
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -842,13 +860,15 @@ export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
-.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
-.row .num{flex:1;text-align:right;white-space:nowrap}
+.row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
@@ -899,14 +919,16 @@ export const buildStatementThermalHtml = (paperSize, statement, {
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
-.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
-.row .num{flex:1;text-align:right;white-space:nowrap}
-.desc{font-size:9px;color:#333;margin:1px 0;word-break:break-word}
+.row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
+.desc{font-size:9px;color:#000;margin:1px 0;word-break:break-word}
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
@@ -948,6 +970,126 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   return html;
 };
 
+// Plain-text companion to buildReceiptVoucherThermalHtml, for the print-agent path
+// (which sends raw text to the configured printer — no browser print dialog).
+export const buildReceiptVoucherThermalText = (paperSize, payment, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  currency = 'AED', customer = null,
+} = {}) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const fmt = (n) => `${currency} ${(parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
+  const receiptNo = payment?.paymentNumber || payment?.receiptNumber || payment?.id || '';
+  const dateStr = payment?.paymentDate
+    ? new Date(payment.paymentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const custName = payment?.customerName || customer?.name || 'Walk-in Customer';
+  const custCode = payment?.customerCode || customer?.code || '';
+  const mode = payment?.paymentMode || '';
+  const bankName = payment?.bankName || '';
+  const ref = payment?.referenceNumber || '';
+  const amount = payment?.amount || 0;
+
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+
+  pushCentered('PAYMENT RECEIPT');
+  if (header) pushCentered(header);
+  pushCentered(companyName || '');
+  const addrLine = oneLineAddress(address);
+  if (addrLine) pushCentered(addrLine);
+  if (phone) pushCentered(`Tel: ${phone}`);
+  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Receipt No:', receiptNo, width));
+  lines.push(buildFixedWidthLine('Date:', dateStr, width));
+  lines.push(buildFixedWidthLine('Customer:', custName, width));
+  if (custCode) lines.push(buildFixedWidthLine('Code:', custCode, width));
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Payment Mode:', mode, width));
+  if (bankName) lines.push(buildFixedWidthLine('Bank Account:', bankName, width));
+  if (ref) lines.push(buildFixedWidthLine('Reference:', ref, width));
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('AMOUNT RECEIVED', fmt(amount), width));
+  lines.push(hr);
+  pushCentered('Received with thanks.');
+  if (footer) pushCentered(footer);
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
+};
+
+// Plain-text companion to buildStatementThermalHtml, for the print-agent path.
+export const buildStatementThermalText = (paperSize, statement, {
+  companyName, trn, address, phone, header, footer, showTrn = true,
+  currency = 'AED', customer = null,
+  startDate = '', endDate = '',
+} = {}) => {
+  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  const hr = '-'.repeat(width);
+  const fmt = (n) => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
+  const typeLabel = (type) => !type ? '' : String(type).toLowerCase().split('_').filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  const custName = customer?.name || statement?.accountName || 'Customer';
+  const custCode = customer?.code || statement?.accountCode || '';
+  const entries = (Array.isArray(statement?.entries) ? statement.entries : [])
+    .filter((e) => e?.type !== 'OPENING_BALANCE');
+
+  const lines = [];
+  const pushCentered = (value = '') => {
+    const text = String(value);
+    if (!text) return;
+    const pad = Math.max(0, Math.floor((width - text.length) / 2));
+    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+  };
+
+  pushCentered('CUSTOMER STATEMENT');
+  if (header) pushCentered(header);
+  pushCentered(companyName || '');
+  const addrLine = oneLineAddress(address);
+  if (addrLine) pushCentered(addrLine);
+  if (phone) pushCentered(`Tel: ${phone}`);
+  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Customer:', custName, width));
+  if (custCode) lines.push(buildFixedWidthLine('Code:', custCode, width));
+  if (startDate || endDate) lines.push(buildFixedWidthLine('Period:', `${startDate} to ${endDate}`, width));
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Opening Balance', fmt(statement?.openingBalance), width));
+  lines.push(hr);
+
+  if (entries.length === 0) {
+    pushCentered('No transactions in this period.');
+    lines.push(hr);
+  }
+  entries.forEach((e) => {
+    const debit = parseFloat(e.debit || 0);
+    const credit = parseFloat(e.credit || 0);
+    const balance = parseFloat(e.runningBalance || 0);
+    lines.push(buildFixedWidthLine(e.transactionDate || '', typeLabel(e.type), width));
+    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    if (descLine) lines.push(descLine.slice(0, width));
+    lines.push(buildFixedWidthLine(debit > 0 ? `Dr ${fmt(debit)}` : credit > 0 ? `Cr ${fmt(credit)}` : '—', `Bal ${fmt(balance)}`, width));
+    lines.push(hr);
+  });
+
+  lines.push(buildFixedWidthLine('CLOSING BAL.', `${currency} ${fmt(statement?.closingBalance)}`, width));
+  lines.push(hr);
+  lines.push(buildFixedWidthLine('Total Invoiced', fmt(statement?.totalDebit), width));
+  lines.push(buildFixedWidthLine('Total Paid', fmt(statement?.totalCredit), width));
+  if (footer) { lines.push(hr); pushCentered(footer); }
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
+};
+
 export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, footer, showTrn }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
@@ -956,9 +1098,11 @@ export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, foot
     ? new Date(job.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:4px 0}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
 <div class="c b" style="font-size:13px">${esc(companyName)}</div>
@@ -1042,17 +1186,19 @@ export const buildThermalSampleHtml = (paperSize, {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const D = `<div style="border-top:1px dashed #000;margin:4px 0"></div>`;
-  const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#555;margin:4px 0 2px">${t}</div>`;
+  const D = `<div style="border-top:2px dashed #000;margin:4px 0"></div>`;
+  const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#000;margin:4px 0 2px">${t}</div>`;
   const invNo = isReturn ? 'SR-28-042' : 'DI-28-042';
   const total = isReturn ? 'AED -1,449.00' : 'AED 102.80';
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{margin:0;size:${w} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 2px}
+@page{margin:0;size:${w} auto}
+*{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 2px;color:#000;filter:contrast(1.35)}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
-.row .val{flex:1;text-align:right;word-break:break-word;overflow-wrap:anywhere}
+.row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
 </style></head><body>`;
 
   const srow = (l, r, bold) => `<div class="row"${bold?' style="font-weight:bold"':''}><span class="lbl">${esc(l)}</span><span class="val">${esc(r)}</span></div>`;
@@ -1080,8 +1226,8 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   // Item rows mirror the live receipt (§5): "Qty x Name" then "@ unit  =  total".
   const itemRow = (qty, name, unit, total, note) => {
     let h = `<div class="row"><span class="val b" style="text-align:left">${qty}x ${esc(name)}</span></div>`;
-    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#444;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
-    if (note) h += `<div style="font-size:9px;padding-left:8px;color:#555">${esc(note)}</div>`;
+    h += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${unit}</span><span class="val">${total}</span></div>`;
+    if (note) h += `<div style="font-size:10px;padding-left:8px;color:#000">${esc(note)}</div>`;
     return h;
   };
   if (isReturn) {
@@ -1115,7 +1261,7 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
     html += `<div style="text-align:center;margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain" alt="Stamp" /></div>`;
     html += D;
   } else if (showQRCode) {
-    html += `<div style="text-align:center;margin:6px 0"><div style="width:80px;height:80px;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">QR Code</div><div style="font-size:8px;color:#555;margin-top:2px">Scan to verify</div></div>`;
+    html += `<div style="text-align:center;margin:6px 0"><div style="width:80px;height:80px;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">QR Code</div><div style="font-size:8px;color:#000;margin-top:2px">Scan to verify</div></div>`;
     html += D;
   }
   if (showCustomerDetails) {
@@ -1135,9 +1281,9 @@ body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11p
   if (showCreditBalance) {
     html += sec('CREDIT ACCOUNT');
     html += srow('Previous Balance:', 'AED 245.50');
-    html += srow('Invoice Credit:', 'AED 0.00');
-    html += srow('Amount Paid:', 'AED 102.80');
-    html += srow('Updated Balance:', 'AED 245.50');
+    html += srow('Invoice Credit:', 'AED 102.80');
+    html += srow('Amount Paid:', 'AED 0.00');
+    html += srow('Updated Balance:', 'AED 348.30');
     html += D;
   }
   if (showFooterText && footer) {

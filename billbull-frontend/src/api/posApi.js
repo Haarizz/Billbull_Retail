@@ -88,6 +88,11 @@ export const getActivePosSession = async (terminalId = "") => {
   return res.data; // null / undefined if 204
 };
 
+export const getPosSessionById = async (sessionId) => {
+  const res = await api.get(`${BASE}/sessions/${sessionId}`);
+  return res.data;
+};
+
 export const suspendPosSession = async (sessionId) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/suspend`);
   return res.data;

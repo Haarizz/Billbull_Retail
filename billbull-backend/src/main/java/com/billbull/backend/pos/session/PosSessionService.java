@@ -1138,11 +1138,25 @@ public class PosSessionService {
         int billDiscountCount = 0;
         int lineDiscountCount = 0;
         BigDecimal highest = null, lowest = null;
+        // Sales attributed to Credit = each invoice's own outstanding balance (invoiceTotal
+        // minus whatever was actually collected/synced via recordPayment+ReceiptVoucher).
+        // A fully-settled cash/card/online sale has balance=0 here; an unpaid or
+        // partially-paid Credit sale has a positive balance. Sourced from the invoice
+        // itself rather than the Payment/tender ledger, because a $0-collected Credit
+        // sale never creates a Payment row at all (see aggregateTender/tenderBucket,
+        // which only ever see ACTUAL collected tender and can't represent "sold on credit").
+        BigDecimal creditSales = BigDecimal.ZERO;
+        long creditInvoiceCount = 0;
 
         for (SalesInvoice inv : invoices) {
             totalSales = totalSales.add(nz(inv.getInvoiceTotal()));
             totalTax = totalTax.add(nz(inv.getTaxTotal()));
             billDiscount = billDiscount.add(nz(inv.getBillDiscountAmount()));
+            BigDecimal outstandingBalance = nz(inv.getBalance());
+            if (outstandingBalance.signum() > 0) {
+                creditSales = creditSales.add(outstandingBalance);
+                creditInvoiceCount++;
+            }
             if (nz(inv.getBillDiscountAmount()).signum() > 0) billDiscountCount++;
             deliveryCharge = deliveryCharge.add(nz(inv.getDeliveryCharge()));
             roundOff = roundOff.add(nz(inv.getRoundOff()));
@@ -1206,10 +1220,11 @@ public class PosSessionService {
         s.put("highestInvoice", highest != null ? highest : BigDecimal.ZERO);
         s.put("lowestInvoice", lowest != null ? lowest : BigDecimal.ZERO);
 
-        // Payment summary = ACTUAL tender collected, bucketed.
+        // Payment summary = ACTUAL tender collected, bucketed — except Credit, which is
+        // sourced from invoice.balance above (a Credit sale may have collected nothing).
         s.put("cashSales", tender.byBucket.getOrDefault("cash", BigDecimal.ZERO));
         s.put("cardSales", tender.byBucket.getOrDefault("card", BigDecimal.ZERO));
-        s.put("creditSales", tender.byBucket.getOrDefault("credit", BigDecimal.ZERO));
+        s.put("creditSales", creditSales);
         s.put("bankTransferSales", tender.byBucket.getOrDefault("bankTransfer", BigDecimal.ZERO));
         s.put("walletSales", tender.byBucket.getOrDefault("wallet", BigDecimal.ZERO));
         s.put("walletInvoiceCount", tender.countByBucket.getOrDefault("wallet", 0L));
@@ -1231,7 +1246,7 @@ public class PosSessionService {
         s.put("totalPaid", tender.total);
         s.put("cashInvoiceCount", tender.countByBucket.getOrDefault("cash", 0L));
         s.put("cardInvoiceCount", tender.countByBucket.getOrDefault("card", 0L));
-        s.put("creditInvoiceCount", tender.countByBucket.getOrDefault("credit", 0L));
+        s.put("creditInvoiceCount", creditInvoiceCount);
         s.put("totalTenderCount", tender.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
         // Card settlement split by network/brand (Visa/Mastercard/Amex/…), plus the
