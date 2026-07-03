@@ -40,6 +40,13 @@ billbull-frontend/.env.*.local
 billbull-frontend/.vite/
 
 # ===========================
+# POS Print Agent (tools/pos-print-agent)
+# ===========================
+tools/pos-print-agent/node_modules/
+tools/pos-print-agent/dist/
+tools/pos-print-agent/installer/output/
+
+# ===========================
 # OS / Editor
 # ===========================
 .DS_Store
