@@ -24,6 +24,7 @@ import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
+  getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -378,6 +379,7 @@ export default function POSSales() {
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
+  const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
@@ -1568,21 +1570,26 @@ export default function POSSales() {
       // guide the user to close it instead of starting a new day on top of it (BBQA-5.3-013).
       const serverMsg = err?.response?.data?.message || err?.response?.data;
       if (err?.response?.status === 409 && typeof serverMsg === 'string' && serverMsg.includes('PREVIOUS_DAY_SESSION_OPEN')) {
-        setPrevDaySessionOpenMsg(serverMsg.replace('PREVIOUS_DAY_SESSION_OPEN: ', ''));
+        const cleanMsg = serverMsg.replace('PREVIOUS_DAY_SESSION_OPEN: ', '');
+        // Message is built server-side as "Session #<id> on <date> (terminal <t>) is
+        // still <status>..." (PosSessionService.openSession) — pull the id out so
+        // "Go to Close Session" can load that exact stale session instead of landing
+        // on whatever report happens to be cached (BBQA follow-up: previously this
+        // button just switched views with no session loaded, so it silently showed
+        // a stale/unrelated X-Report instead of the blocking session).
+        const idMatch = cleanMsg.match(/Session #(\d+)/);
+        setPrevDaySessionOpenId(idMatch ? Number(idMatch[1]) : null);
+        setPrevDaySessionOpenMsg(cleanMsg);
         return;
       }
-      // Fallback to in-memory session if backend unavailable
-      console.warn('Session API unavailable, falling back to local session', err);
-      setCurrentSession({
-        id: `SES-${Date.now()}`,
-        openingCash: total,
-        openingDenominations: { ...denominations },
-        openedAt: new Date().toISOString(),
-        status: 'OPEN'
-      });
-      setXReportData(null);
-      setZReportData(null);
-      setSessionNowMs(Date.now());
+      // Do NOT fabricate a local session here — a fake `SES-<timestamp>` id is never
+      // persisted server-side, so every downstream action (settle payment, session
+      // totals, X/Z reports) later fails with "not a valid Long value" once it's sent
+      // to an endpoint expecting the real numeric session id. Surface the real error
+      // and let the cashier retry instead.
+      console.error('Failed to open POS session', err);
+      alert(err?.response?.data?.message || 'Failed to open POS session. Please try again.');
+      return;
     }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
@@ -6755,10 +6762,27 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setPrevDaySessionOpenMsg(null)}>Cancel</Button>
             <Button
               className="bg-[#327F74] hover:bg-[#286660] text-white"
-              onClick={() => {
+              onClick={async () => {
+                const sessionId = prevDaySessionOpenId;
                 setPrevDaySessionOpenMsg(null);
+                setPrevDaySessionOpenId(null);
                 setShowStartSessionDialog(false);
-                setCurrentView('x-report');
+                if (!sessionId) {
+                  // Couldn't parse the session id out of the server message — fall
+                  // back to the old (best-effort) behavior rather than dead-ending.
+                  setCurrentView('x-report');
+                  return;
+                }
+                try {
+                  const session = await getPosSessionById(sessionId);
+                  setCurrentSession(session);
+                  setXReportData(null);
+                  setZReportData(null);
+                  setSessionNowMs(Date.now());
+                  setCurrentView('x-report');
+                } catch (err) {
+                  alert(err?.response?.data?.message || 'Failed to load the stale session. Please close it manually.');
+                }
               }}
             >
               Go to Close Session
