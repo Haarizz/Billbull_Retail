@@ -10,6 +10,7 @@
 import React, { useMemo } from 'react';
 import { Upload } from 'lucide-react';
 import { buildDocumentPreviewHtml, buildServiceJobA4Html, stripForPreview } from './posPrintUtils';
+import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 
 // Rich thermal receipt preview that mirrors the actual print output exactly
 export const ThermalMock = ({
@@ -48,7 +49,7 @@ export const ThermalMock = ({
   const isReturn = templateType === 'return';
   const isJobCard = templateType === 'jobcard';
 
-  const mono = { fontFamily: "'Courier New', Courier, monospace" };
+  const mono = { fontFamily: "'Roboto Mono', 'Courier New', Courier, monospace" };
 
   // §1: collapse the multi-line / comma address into one continuous line.
   const addrLine = (outletAddress || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean).join(', ');
@@ -102,6 +103,7 @@ export const ThermalMock = ({
       boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       ...mono,
     }}>
+      <style>{ROBOTO_MONO_FONT_FACE}</style>
 
       {/* ── Logo ── */}
       {showLogo && (
