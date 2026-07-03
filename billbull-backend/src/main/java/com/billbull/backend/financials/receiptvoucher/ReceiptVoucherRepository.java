@@ -1,6 +1,8 @@
 package com.billbull.backend.financials.receiptvoucher;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -8,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, Long> {
@@ -68,10 +71,38 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     List<ReceiptVoucher> findByCustomerCodeAndPurpose(String customerCode, ReceiptPurpose purpose);
 
     /**
+     * Same as above, ordered oldest-first at the DB layer for FIFO advance
+     * application (AdvanceApplicationService.findOpenAdvances /
+     * SalesInvoiceService auto-apply).
+     */
+    List<ReceiptVoucher> findByCustomerCodeAndPurposeOrderByDateAsc(String customerCode, ReceiptPurpose purpose);
+
+    /**
      * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive
      * the next sequence safely — counting all rows can collide with existing keys
      * if records span multiple years or any rows have been deleted.
      */
     @Query("SELECT MAX(rv.voucherId) FROM ReceiptVoucher rv WHERE rv.voucherId LIKE CONCAT(:prefix, '%')")
     String findMaxVoucherIdByPrefix(@Param("prefix") String prefix);
+
+    /**
+     * Row-locked lookup for advance application. Held for the duration of the
+     * enclosing transaction so two concurrent apply() calls against the same
+     * advance receipt can't both read a stale open balance and over-apply it.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT rv FROM ReceiptVoucher rv WHERE rv.id = :id")
+    Optional<ReceiptVoucher> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * Distinct customer codes that have ever recorded a completed general
+     * advance (purpose = ADVANCE_RECEIVED). Used by the one-off historical
+     * backfill to find candidates worth checking for an open balance — the
+     * actual open-balance filtering happens per-customer via
+     * AdvanceApplicationService.findOpenAdvances.
+     */
+    @Query("SELECT DISTINCT rv.customerCode FROM ReceiptVoucher rv " +
+           "WHERE rv.purpose = com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED " +
+           "AND LOWER(rv.status) = 'completed' AND rv.customerCode IS NOT NULL")
+    List<String> findDistinctCustomerCodesWithAdvances();
 }

@@ -15,4 +15,13 @@ public interface AdvanceApplicationRepository extends JpaRepository<AdvanceAppli
 
     @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.advanceReceiptId = :receiptId AND a.status = 'APPLIED'")
     BigDecimal sumAppliedByReceiptId(@Param("receiptId") Long receiptId);
+
+    /**
+     * Sum of advance applications settled against a given invoice — folded into
+     * SalesInvoice.amountPaid/balance by ReceiptVoucherService.syncLinkedInvoice,
+     * since applying an advance posts a GL journal but (unlike a ReceiptVoucher
+     * linked via salesInvoiceId) never touches the invoice row directly.
+     */
+    @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.invoiceNumber = :invoiceNumber AND a.status = 'APPLIED'")
+    BigDecimal sumAppliedByInvoiceNumber(@Param("invoiceNumber") String invoiceNumber);
 }

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { saveSalesPayment } from '../../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
+import { getOpenAdvances, applyAdvance } from '../../../api/advanceApplicationApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
@@ -71,6 +72,17 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [advNotes, setAdvNotes]     = React.useState('');
   const [advBusy, setAdvBusy]       = React.useState(false);
   const [advSuccess, setAdvSuccess] = React.useState(null);
+
+  // Apply Existing Advance — open-advances list + apply modal state
+  const [applyAdvCust, setApplyAdvCust]     = React.useState(null);
+  const [openAdvances, setOpenAdvances]     = React.useState([]);
+  const [openAdvBusy, setOpenAdvBusy]       = React.useState(false);
+  const [openAdvError, setOpenAdvError]     = React.useState(null);
+  const [applyModalAdv, setApplyModalAdv]   = React.useState(null); // the AdvanceBalance row being applied
+  const [applyInvoiceNo, setApplyInvoiceNo] = React.useState('');
+  const [applyAmount, setApplyAmount]       = React.useState('');
+  const [applyDate, setApplyDate]           = React.useState(new Date().toISOString().slice(0, 10));
+  const [applyBusy, setApplyBusy]           = React.useState(false);
 
   // Statement form state
   const [stmtFromDate, setStmtFromDate] = React.useState('');
@@ -203,6 +215,59 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setAdvBusy(false);
     }
   }, [advanceCust, advAmount, advMethod, advNotes, customerOptions, syncPosData]);
+
+  const refreshOpenAdvances = React.useCallback(async (custId) => {
+    const selected = customerOptions.find(c => c.id === custId);
+    if (!selected) { setOpenAdvances([]); return; }
+    setOpenAdvBusy(true);
+    setOpenAdvError(null);
+    try {
+      const data = await getOpenAdvances(selected.code);
+      setOpenAdvances(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setOpenAdvError(e?.response?.data?.message || e?.response?.data || 'Failed to load open advances.');
+      setOpenAdvances([]);
+    } finally {
+      setOpenAdvBusy(false);
+    }
+  }, [customerOptions]);
+
+  React.useEffect(() => {
+    if (applyAdvCust) refreshOpenAdvances(applyAdvCust);
+    else setOpenAdvances([]);
+  }, [applyAdvCust, refreshOpenAdvances]);
+
+  const openApplyModal = React.useCallback((adv) => {
+    setApplyModalAdv(adv);
+    setApplyInvoiceNo('');
+    setApplyAmount(Number(adv.openBalance ?? 0).toFixed(2));
+    setApplyDate(new Date().toISOString().slice(0, 10));
+  }, []);
+
+  const closeApplyModal = React.useCallback(() => setApplyModalAdv(null), []);
+
+  const handleApplyAdvance = React.useCallback(async () => {
+    if (!applyModalAdv) return;
+    if (!applyInvoiceNo.trim()) return alert('Enter an invoice number.');
+    const amt = Number(applyAmount);
+    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    setApplyBusy(true);
+    try {
+      await applyAdvance({
+        advanceReceiptId: applyModalAdv.receiptId,
+        invoiceNumber: applyInvoiceNo.trim(),
+        amount: amt,
+        appliedDate: applyDate,
+      });
+      toast.success(`Applied ${amt.toFixed(2)} to invoice ${applyInvoiceNo.trim()}.`);
+      setApplyModalAdv(null);
+      refreshOpenAdvances(applyAdvCust);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e?.response?.data || 'Failed to apply advance.');
+    } finally {
+      setApplyBusy(false);
+    }
+  }, [applyModalAdv, applyInvoiceNo, applyAmount, applyDate, applyAdvCust, refreshOpenAdvances]);
 
   const handleViewStatement = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === statementCust);
@@ -625,6 +690,56 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   <Button className="w-full bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold h-10" disabled={advBusy} onClick={handleReceiveAdvance}><Wallet className="h-4 w-4 mr-2" /> {advBusy ? 'Saving…' : 'Receive Advance'}</Button>
                 </div>
               </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-5">
+                <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-[#327F74]/10 to-transparent">
+                  <div className="p-2 bg-[#327F74]/15 rounded-lg"><Wallet className="h-5 w-5 text-[#327F74]" /></div>
+                  <div><h2 className="text-base font-semibold text-[#1E293B]">Apply Existing Advance to Invoice</h2><p className="text-xs text-gray-500">Settle an open advance balance against a specific invoice</p></div>
+                </div>
+                <div className="p-6 space-y-5">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-gray-700">Select Customer <span className="text-red-500">*</span></label>
+                    <CustomerPicker customers={realCustomers} value={applyAdvCust} onChange={setApplyAdvCust} />
+                  </div>
+                  {openAdvError && <div className="rounded-lg px-4 py-3 bg-red-50 border border-red-100 text-sm text-red-600">{openAdvError}</div>}
+                  {applyAdvCust && (
+                    openAdvBusy ? (
+                      <div className="text-center text-sm text-gray-400 py-6">Loading open advances…</div>
+                    ) : openAdvances.length === 0 ? (
+                      <div className="text-center text-sm text-gray-400 py-6">No open advance balance for this customer.</div>
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 overflow-hidden">
+                        <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-[#F7F7FA] border-b border-gray-100">
+                              <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Voucher No.</th>
+                              <th className="px-4 py-2.5 text-right font-semibold text-gray-500">Total</th>
+                              <th className="px-4 py-2.5 text-right font-semibold text-gray-500">Applied</th>
+                              <th className="px-4 py-2.5 text-right font-semibold text-gray-500">Open Balance</th>
+                              <th className="px-4 py-2.5 text-right font-semibold text-gray-500">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {openAdvances.map((adv) => (
+                              <tr key={adv.receiptId} className="hover:bg-[#F7F7FA]/50">
+                                <td className="px-4 py-2 text-[#1E293B]">{adv.voucherId}</td>
+                                <td className="px-4 py-2 text-right"><span className="inline-flex items-center gap-0.5"><DirhamSymbol />{Number(adv.totalAmount ?? 0).toFixed(2)}</span></td>
+                                <td className="px-4 py-2 text-right text-gray-500"><span className="inline-flex items-center gap-0.5"><DirhamSymbol />{Number(adv.appliedAmount ?? 0).toFixed(2)}</span></td>
+                                <td className="px-4 py-2 text-right font-semibold text-emerald-600"><span className="inline-flex items-center gap-0.5"><DirhamSymbol />{Number(adv.openBalance ?? 0).toFixed(2)}</span></td>
+                                <td className="px-4 py-2 text-right">
+                                  <Button size="sm" variant="outline" className="h-7 text-xs border-gray-200" onClick={() => openApplyModal(adv)}>Apply</Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -699,6 +814,46 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
           )}
         </div>
       </div>
+
+      {applyModalAdv && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[480px] max-w-[96vw] rounded-xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#327F74]/15 rounded-lg"><Wallet className="h-5 w-5 text-[#327F74]" /></div>
+                <div><h3 className="text-sm font-semibold text-[#1E293B]">Apply Advance</h3><p className="text-xs text-gray-500">Voucher {applyModalAdv.voucherId}</p></div>
+              </div>
+              <button className="text-gray-400 hover:text-gray-600" onClick={closeApplyModal} aria-label="Close">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 gap-3 bg-[#F7F7FA] rounded-lg p-4 text-center">
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Open Advance Balance</p>
+                  <p className="text-sm font-bold text-[#1E293B] inline-flex items-center gap-0.5"><DirhamSymbol />{Number(applyModalAdv.openBalance ?? 0).toFixed(2)}</p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Invoice Number <span className="text-red-500">*</span></label>
+                <Input placeholder="e.g. INV-2026-0052" className="h-10 border-gray-200" value={applyInvoiceNo} onChange={e => setApplyInvoiceNo(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-gray-700">Amount to Apply</label>
+                  <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span><Input type="number" className="pl-8 h-10 border-gray-200" value={applyAmount} onChange={e => setApplyAmount(e.target.value)} /></div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-gray-700">Applied Date</label>
+                  <Input type="date" className="h-10 border-gray-200" value={applyDate} onChange={e => setApplyDate(e.target.value)} />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-100">
+              <Button variant="outline" className="flex-1 border-gray-200 text-gray-600 h-10" onClick={closeApplyModal}>Cancel</Button>
+              <Button className="flex-1 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold h-10" disabled={applyBusy} onClick={handleApplyAdvance}>{applyBusy ? 'Applying…' : 'Confirm'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
