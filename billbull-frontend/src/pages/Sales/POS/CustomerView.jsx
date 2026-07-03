@@ -12,6 +12,7 @@ import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
+import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { exportToPDF } from '../../../utils/exportUtils';
 import { mapStatementEntriesForExport, STATEMENT_EXPORT_COLUMNS } from '../../../utils/statementUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
@@ -20,7 +21,7 @@ import { useBranch } from '../../../context/BranchContext';
 import { DirhamSymbol } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import CustomerPicker from './CustomerPicker';
-import { buildReceiptVoucherThermalHtml, buildStatementThermalHtml } from './posPrintUtils';
+import { buildReceiptVoucherThermalHtml, buildReceiptVoucherThermalText, buildStatementThermalHtml, buildStatementThermalText } from './posPrintUtils';
 
 const CUST_PAGE_SIZE = 30;
 const CUST_AVATAR_COLORS = [
@@ -32,7 +33,7 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal }) => {
   const { company } = useCompany();
   const { activeBranch } = useBranch();
   const [custTab, setCustTab]             = React.useState('list');
@@ -127,12 +128,12 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     }
   }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, customerOptions, syncPosData]);
 
-  const handlePrintReceipt = React.useCallback(() => {
+  const handlePrintReceipt = React.useCallback(async () => {
     if (!lastPayment) return;
     setReceiptPrintBusy(true);
     try {
       const customer = customerOptions.find(c => c.code === lastPayment.customerCode) || null;
-      const html = buildReceiptVoucherThermalHtml('80mm', lastPayment, {
+      const opts = {
         companyName: company?.companyName,
         trn: company?.trn,
         address: company?.address,
@@ -141,14 +142,33 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         logoDataUrl: company?.logoUrl,
         currency: company?.currency || 'AED',
         customer,
+      };
+      // Print straight to the configured printer when one's reachable — only fall
+      // back to the browser print-preview dialog when there's genuinely no device.
+      const printer = resolvePrinterForContext(printerConfigs, {
+        deviceType: 'RECEIPT_PRINTER',
+        branchId: currentTerminal?.branchId || null,
+        terminalId: currentTerminal?.terminalId || null,
       });
-      printHtml(html);
+      if (!printer) {
+        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
+        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
+        return;
+      }
+      const text = buildReceiptVoucherThermalText('80mm', lastPayment, opts);
+      try {
+        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim() });
+      } catch (err) {
+        console.warn('Configured printer failed for receipt voucher, falling back to browser print preview', err);
+        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
+      }
     } catch (e) {
       toast.error(e?.message || 'Failed to generate receipt print layout.');
     } finally {
       setReceiptPrintBusy(false);
     }
-  }, [lastPayment, customerOptions, company, activeBranch]);
+  }, [lastPayment, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
 
   const handleReceiveAdvance = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === advanceCust);
@@ -214,7 +234,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       const freshStatement = await fetchStatementOfAccount('CUSTOMER', selected.code, from, to);
       setStmtData(freshStatement);
       setStmtEntries(freshStatement?.entries || freshStatement?.lines || []);
-      const html = buildStatementThermalHtml('80mm', freshStatement, {
+      const opts = {
         companyName: company?.companyName,
         trn: company?.trn,
         address: company?.address,
@@ -225,14 +245,33 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         customer: selected,
         startDate: from,
         endDate: to,
+      };
+      // Print straight to the configured printer when one's reachable — only fall
+      // back to the browser print-preview dialog when there's genuinely no device.
+      const printer = resolvePrinterForContext(printerConfigs, {
+        deviceType: 'RECEIPT_PRINTER',
+        branchId: currentTerminal?.branchId || null,
+        terminalId: currentTerminal?.terminalId || null,
       });
-      printHtml(html);
+      if (!printer) {
+        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
+        printHtml(buildStatementThermalHtml('80mm', freshStatement, opts), { fast: true });
+        return;
+      }
+      const text = buildStatementThermalText('80mm', freshStatement, opts);
+      try {
+        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Statement ${selected.code || selected.name || ''}`.trim() });
+      } catch (err) {
+        console.warn('Configured printer failed for statement, falling back to browser print preview', err);
+        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+        printHtml(buildStatementThermalHtml('80mm', freshStatement, opts), { fast: true });
+      }
     } catch (e) {
       toast.error(e?.response?.data?.message || e?.message || 'Failed to generate statement print layout.');
     } finally {
       setStmtPrintBusy(false);
     }
-  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch]);
+  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
 
   const handleExportStatementPdf = React.useCallback(() => {
     const selected = customerOptions.find(c => c.id === statementCust);

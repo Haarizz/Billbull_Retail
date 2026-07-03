@@ -216,6 +216,9 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
+  showCreditBalance = false,
+  creditPreviousBalance = null, creditInvoiceCredit = null,
+  creditAmountPaid = null, creditUpdatedBalance = null,
   currency = 'AED',
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
@@ -274,9 +277,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (counterName) w.line(buildFixedWidthLine('Counter:', counterName, width));
   w.line(hr);
 
-  const isWalkIn = !invoice.customerName || invoice.customerName === 'Walk-in Customer';
-  if (showCustomerDetails && !isWalkIn) {
-    w.line(`Customer: ${invoice.customerName}`);
+  // Gated on the toggle alone (matches the settings preview and the HTML/browser
+  // print path) — a walk-in sale still prints "Walk-in Customer" as the name when
+  // this section is enabled, rather than silently dropping it regardless of the toggle.
+  if (showCustomerDetails) {
+    w.line(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
     if (customerPhone) w.line(`Mobile: ${customerPhone}`);
     if (customerEmail) w.line(`Email: ${customerEmail}`);
     w.line(hr);
@@ -339,6 +344,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M' }));
     w.line('Scan to verify');
     w.push(CMD.ALIGN_LEFT);
+    w.line(hr);
+  }
+
+  // ── Credit account (§7): same 4-field formula as the HTML/browser path —
+  // Invoice Credit is this invoice's amount, Amount Paid is what was actually
+  // collected against it now, so a fully-settled cash/card sale nets to zero
+  // balance change while a Credit sale carries the unpaid remainder forward.
+  if (showCreditBalance && creditPreviousBalance != null) {
+    const invCredit = creditInvoiceCredit != null ? creditInvoiceCredit : parseFloat(invoice.invoiceTotal || 0);
+    const amtPaid = creditAmountPaid != null ? creditAmountPaid : 0;
+    const updatedBal = creditUpdatedBalance != null
+      ? creditUpdatedBalance
+      : (parseFloat(creditPreviousBalance) + parseFloat(invCredit) - parseFloat(amtPaid));
+    w.line('CREDIT ACCOUNT');
+    w.line(buildFixedWidthLine('Previous Balance:', fmt(creditPreviousBalance), width));
+    w.line(buildFixedWidthLine('Invoice Credit:', fmt(invCredit), width));
+    w.line(buildFixedWidthLine('Amount Paid:', fmt(amtPaid), width));
+    w.line(buildFixedWidthLine('Updated Balance:', fmt(updatedBal), width));
     w.line(hr);
   }
 

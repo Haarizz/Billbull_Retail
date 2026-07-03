@@ -391,10 +391,10 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
-          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
+          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white overflow-hidden">
 
             {/* Last scanned item panel */}
-            <div className="border-b border-[#327F74]/20 flex-shrink-0 min-h-[140px] lg:min-h-[220px] flex flex-col justify-center bg-white">
+            <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[30vh] flex flex-col justify-center bg-white overflow-y-auto">
               {lastScannedItem ? (
                 (() => {
                   const cartItem = currentInvoice.items.find(i => i.barcode === lastScannedItem.barcode || i.code === lastScannedItem.barcode || i.id === lastScannedItem.barcode || i.name === lastScannedItem.name) || currentInvoice.items[0];
@@ -475,7 +475,7 @@ const POSTouchScreen = React.memo((props) => {
             </div>
 
             {/* Numpad + Barcode Input */}
-            <div className="flex-1 flex flex-col justify-between p-4 bg-white">
+            <div className="flex-1 flex flex-col justify-between p-4 bg-white min-h-0 overflow-y-auto">
               {posActionMode !== 'none' && (
                 <div className="mb-3 rounded-xl bg-[#F5C742]/10 border border-[#327F74]/30 px-3 py-2">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-[#F5C742] mb-1">
@@ -564,23 +564,23 @@ const POSTouchScreen = React.memo((props) => {
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-2 flex-1">
+              <div className="grid grid-cols-3 gap-2">
                 {['7', '8', '9', '4', '5', '6', '1', '2', '3'].map(k => (
                   <button key={k} type="button" onClick={() => setBarcodeInput(prev => prev + k)}
-                    className="text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                    className="h-12 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                     {k}
                   </button>
                 ))}
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '*')}
-                  className="text-xl font-bold text-[#F5C742] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                  className="h-12 text-xl font-bold text-[#F5C742] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                   ×
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev + '0')}
-                  className="text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
+                  className="h-12 text-xl font-bold text-[#1E293B] bg-gray-50 hover:bg-[#F5C742] hover:text-white active:scale-95 rounded-xl border border-[#327F74]/20 hover:border-[#F5C742] transition-all shadow-sm">
                   0
                 </button>
                 <button type="button" onClick={() => setBarcodeInput(prev => prev.slice(0, -1))}
-                  className="text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm flex items-center justify-center">
+                  className="h-12 text-xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-xl border border-[#327F74]/20 transition-all shadow-sm flex items-center justify-center">
                   ⌫
                 </button>
               </div>

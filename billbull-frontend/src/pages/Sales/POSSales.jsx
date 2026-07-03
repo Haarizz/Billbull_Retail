@@ -605,6 +605,7 @@ export default function POSSales() {
   // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
   const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
+  const [printFeedback, setPrintFeedback] = useState(null);
   const [showCouponsDialog, setShowCouponsDialog] = useState(false);
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState(null);
@@ -2214,6 +2215,22 @@ export default function POSSales() {
         ? customerOptions.find(c => String(c.id) === String(deliveryCustomerId)) || { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' }
         : { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' };
 
+      // Previous balance must be read BEFORE posCheckout posts this invoice below —
+      // same reasoning as the main checkout flow. Nothing is collected at dispatch
+      // time, so the full invoice (incl. delivery charge) becomes outstanding until
+      // settled at delivery — the same accounting as a Credit sale.
+      let creditPrevBalAuto = null;
+      if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in') {
+        creditPrevBalAuto = 0;
+        const custCodeForBalance = customer?.code || customer?.id;
+        if (custCodeForBalance) {
+          try {
+            const cr = await posCreditBalance(custCodeForBalance);
+            if (cr?.found && cr.outstanding != null) creditPrevBalAuto = parseFloat(cr.outstanding) || 0;
+          } catch (_) { /* keep the 0 fallback so the section still renders */ }
+        }
+      }
+
       const payload = {
         customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
         customerName: customer.name,
@@ -2243,7 +2260,37 @@ export default function POSSales() {
         items: cartItemsToPayload(currentInvoice.items),
       };
 
-      await posCheckout(payload);
+      const savedInvoice = await posCheckout(payload);
+
+      if (tplInvoicePaper !== 'A4') {
+        try {
+          const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
+          const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
+          const creditAmountPaidAuto = creditPrevBalAuto != null ? 0 : null;
+          const creditUpdatedBalanceAuto = creditPrevBalAuto != null
+            ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
+            : null;
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+            full: savedInvoice,
+            customerPhone: customer?.phone,
+            customerEmail: customer?.email,
+            creditPreviousBalance: creditPrevBalAuto,
+            creditInvoiceCredit: creditInvoiceCreditAuto,
+            creditAmountPaid: creditAmountPaidAuto,
+            creditUpdatedBalance: creditUpdatedBalanceAuto,
+          });
+          await printThermalReceiptWithConfiguredPrinter({
+            full: savedInvoice,
+            html,
+            text,
+            escPosBase64,
+            title: `Delivery ${savedInvoice.invoiceNumber || ''}`.trim(),
+          });
+        } catch (printErr) {
+          console.warn('Out-for-delivery receipt print failed', printErr);
+        }
+      }
+
       setShowDeliveryModal(false);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
@@ -2266,9 +2313,16 @@ export default function POSSales() {
     } finally {
       setDeliveryOutLoading(false);
     }
+    // buildThermalReceiptArtifacts/printThermalReceiptWithConfiguredPrinter are
+    // intentionally omitted here — they're declared further down in this component,
+    // so referencing them in this array (evaluated immediately, before those consts
+    // exist yet on this render pass) throws "Cannot access before initialization".
+    // currentInvoice already forces this callback to be recreated on every cart
+    // change, so it picks up their current values in practice regardless.
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
     deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
-    currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder]);
+    currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
+    tplInvoiceShowBankDetails, tplInvoicePaper]);
 
   // Open the New Delivery Order dialog, pre-seeding the customer + default
   // address from whoever is already selected on the POS bill (a walk-in seeds
@@ -2505,7 +2559,7 @@ export default function POSSales() {
           };
           const layawayHtml = buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts);
           if (tplReceiptPaper === 'A4') {
-            printHtml(layawayHtml);
+            printHtml(layawayHtml, { fast: true });
           } else {
             const printer = resolvePrinterForContext(printerConfigs, {
               deviceType: 'RECEIPT_PRINTER',
@@ -2513,14 +2567,16 @@ export default function POSSales() {
               terminalId: currentTerminal?.terminalId || null,
             });
             if (!printer) {
-              printHtml(layawayHtml);
+              notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
+              printHtml(layawayHtml, { fast: true });
             } else {
               try {
                 const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
                 await sendReceiptToConfiguredPrinter(printer, { receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
-                console.warn('Configured printer failed for layaway receipt, falling back to browser print', err);
-                printHtml(layawayHtml);
+                console.warn('Configured printer failed for layaway receipt, falling back to browser print preview', err);
+                notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+                printHtml(layawayHtml, { fast: true });
               }
             }
           }
@@ -2748,15 +2804,66 @@ export default function POSSales() {
     customerPhone = null,
     customerEmail = null,
     creditPreviousBalance = null,
+    creditInvoiceCredit = null,
+    creditAmountPaid = null,
+    creditUpdatedBalance = null,
     cashierNameOverride = null,
     depositApplied = null,
     balanceDue = null,
     shippingCharge = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
-    const qrDataUrl = tplInvoiceShowQRCode
-      ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
-      : null;
+
+    // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
+    // needs the raw qrContent *string* — the printer renders its own QR natively, and
+    // dithers the logo raster if any) are independent of each other. Running them
+    // concurrently instead of one-after-the-other roughly halves the wait before the
+    // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
+    const qrDataUrlPromise = tplInvoiceShowQRCode
+      ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
+      : Promise.resolve(null);
+    const escPosPromise = buildEscPosReceiptBase64(tplInvoicePaper, full, {
+      companyName: tplOutletName,
+      trn: tplOutletTrn,
+      header: tplInvoiceHeader,
+      footer: tplInvoiceFooter,
+      showTrn: tplInvoiceShowTrn,
+      isReprint,
+      logoDataUrl: tplLogoDataUrl,
+      showLogo: tplInvoiceShowLogo,
+      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      outletAddress: tplOutletAddress,
+      outletPhone: tplOutletPhone,
+      showServiceCharge: tplInvoiceShowGrandTotalBanner,
+      showVatSummary: tplInvoiceColVatAmt,
+      showPaymentDetails: tplInvoiceColDiscount,
+      showQRCode: tplInvoiceShowQRCode,
+      qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      showCustomerDetails: tplInvoiceShowCustomerDetails,
+      showFooterText: tplInvoiceShowTerms,
+      cashierName: cashierNameOverride || cashierDisplayName,
+      terminalId: full.posTerminalId || currentTerminal?.terminalId,
+      counterName: full.posCounterName || currentTerminal?.counterName,
+      cashGiven,
+      changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
+      customerPhone,
+      customerEmail,
+      showCreditBalance: tplInvoiceShowBankDetails,
+      creditPreviousBalance,
+      creditInvoiceCredit,
+      creditAmountPaid,
+      creditUpdatedBalance,
+      currency: activeCurrency,
+    }).catch((err) => {
+      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
+      return null;
+    });
+
+    const [qrDataUrl, escPosBase64] = await Promise.all([qrDataUrlPromise, escPosPromise]);
+
     const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
@@ -2790,6 +2897,9 @@ export default function POSSales() {
       customerPhone,
       customerEmail,
       creditPreviousBalance,
+      creditInvoiceCredit,
+      creditAmountPaid,
+      creditUpdatedBalance,
       currency: activeCurrency,
       qrPlacement: tplInvoiceQrPlacement,
     });
@@ -2809,48 +2919,9 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
+      showCustomerDetails: tplInvoiceShowCustomerDetails,
       currency: activeCurrency,
     });
-    // Raw ESC/POS binary payload — the only path that actually carries
-    // density/heat/font/raster-image commands to the printer hardware
-    // (the HTML and plain-text paths above go through the Windows driver
-    // or a bare socket write with no print-quality control at all).
-    let escPosBase64 = null;
-    try {
-      escPosBase64 = await buildEscPosReceiptBase64(tplInvoicePaper, full, {
-        companyName: tplOutletName,
-        trn: tplOutletTrn,
-        header: tplInvoiceHeader,
-        footer: tplInvoiceFooter,
-        showTrn: tplInvoiceShowTrn,
-        isReprint,
-        logoDataUrl: tplLogoDataUrl,
-        showLogo: tplInvoiceShowLogo,
-        showCompanyDetails: tplInvoiceShowCompanyDetails,
-        outletAddress: tplOutletAddress,
-        outletPhone: tplOutletPhone,
-        showServiceCharge: tplInvoiceShowGrandTotalBanner,
-        showVatSummary: tplInvoiceColVatAmt,
-        showPaymentDetails: tplInvoiceColDiscount,
-        showQRCode: tplInvoiceShowQRCode,
-        qrContent: tplInvoiceShowQRCode ? qrContent : null,
-        showCustomerDetails: tplInvoiceShowCustomerDetails,
-        showFooterText: tplInvoiceShowTerms,
-        cashierName: cashierNameOverride || cashierDisplayName,
-        terminalId: full.posTerminalId || currentTerminal?.terminalId,
-        counterName: full.posCounterName || currentTerminal?.counterName,
-        cashGiven,
-        changeAmount,
-        depositApplied,
-        balanceDue,
-        shippingCharge,
-        customerPhone,
-        customerEmail,
-        currency: activeCurrency,
-      });
-    } catch (err) {
-      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
-    }
     return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
@@ -2860,6 +2931,16 @@ export default function POSSales() {
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
   ]);
+
+  // When a thermal printer is configured and reachable, print straight to it — no
+  // browser print-preview dialog. Only fall back to the print-preview dialog when
+  // there's genuinely no device to print to (nothing configured, or the configured
+  // one/agent isn't responding) so the cashier still gets a receipt out one way or
+  // another instead of nothing.
+  const notifyPrintFallback = useCallback((message) => {
+    setPrintFeedback({ type: 'error', message });
+    setTimeout(() => setPrintFeedback(null), 6000);
+  }, []);
 
   const printThermalReceiptWithConfiguredPrinter = useCallback(async ({
     full,
@@ -2874,12 +2955,13 @@ export default function POSSales() {
       terminalId: full.posTerminalId || currentTerminal?.terminalId || null,
     });
     if (!printer) {
-      printHtml(html);
+      notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead. Set one up in Settings → Printer Configuration to print silently.');
+      printHtml(html, { fast: true });
       return { mode: 'browser-fallback', printer: null };
     }
     // Prefer raw ESC/POS — it's the only path with real density/heat/font/logo
-    // control. Fall back to the plain-text agent path, then to browser/driver
-    // printing, so a malformed payload or an unreachable agent never blocks checkout.
+    // control. Fall back to the plain-text agent path — both go straight to the
+    // configured printer with no OS/browser print dialog.
     if (escPosBase64) {
       try {
         await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
@@ -2892,11 +2974,12 @@ export default function POSSales() {
       await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title });
       return { mode: 'agent', printer };
     } catch (err) {
-      console.warn('Configured printer failed, falling back to browser print', err);
-      printHtml(html);
+      console.warn('Configured printer failed, falling back to browser print preview', err);
+      notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead. Check the print agent is running.`);
+      printHtml(html, { fast: true });
       return { mode: 'browser-fallback', printer, error: err };
     }
-  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
+  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs, notifyPrintFallback]);
 
   const processPayment = async () => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
@@ -2957,6 +3040,22 @@ export default function POSSales() {
       }
 
       const customer = selectedCustomerData;
+
+      // Credit account "Previous Balance" must be read BEFORE posCheckout() posts
+      // this invoice below — otherwise the lookup returns the balance AFTER this
+      // sale was added to the ledger, which is the Updated Balance, not Previous.
+      let creditPrevBalAuto = null;
+      if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in') {
+        creditPrevBalAuto = 0;
+        const custCodeForBalance = customer?.code || customer?.id;
+        if (custCodeForBalance) {
+          try {
+            const cr = await posCreditBalance(custCodeForBalance);
+            if (cr?.found && cr.outstanding != null) creditPrevBalAuto = parseFloat(cr.outstanding) || 0;
+          } catch (_) { /* keep the 0 fallback so the section still renders */ }
+        }
+      }
+
       // Voided lines are still sent (flagged) so they remain on the receipt,
       // audit log and reports. The backend excludes them from totals & stock.
       const items = currentInvoice.items
@@ -3022,6 +3121,18 @@ export default function POSSales() {
       }
       if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
 
+      // Credit account posting for THIS invoice — same formula for every payment
+      // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
+      // already collected), Amount Paid is what was actually received against it now.
+      // A fully-settled cash/card/online/mixed sale nets to 0 (balance unchanged);
+      // an unpaid or partially-paid Credit sale carries the remainder forward.
+      const creditAppliedAmount = checkoutPayMode === 'credit' ? creditReceivedNum : effectiveDueAmt;
+      const creditInvoiceCreditAuto = creditPrevBalAuto != null ? effectiveDueAmt : null;
+      const creditAmountPaidAuto = creditPrevBalAuto != null ? creditAppliedAmount : null;
+      const creditUpdatedBalanceAuto = creditPrevBalAuto != null
+        ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
+        : null;
+
       const paid = {
         id: savedInvoice.invoiceNumber,
         total: savedInvoice.invoiceTotal,
@@ -3036,14 +3147,18 @@ export default function POSSales() {
             : checkoutPayMode === 'credit' ? creditReceivedNum
               : effectiveDueAmt,
         creditBalance: checkoutPayMode === 'credit' ? Math.max(0, effectiveDueAmt - creditReceivedNum) : 0,
+        // Snapshotted here so the "Print Receipt" / "Last Receipt" reprint actions
+        // (which reuse lastPaidInvoice) show the same correct figures instead of
+        // re-querying the customer's balance, which by then already reflects this
+        // invoice and would be mislabeled as "previous".
+        creditPreviousBalance: creditPrevBalAuto,
+        creditInvoiceCredit: creditInvoiceCreditAuto,
+        creditAmountPaid: creditAmountPaidAuto,
+        creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
       if (tplInvoicePaper !== 'A4') {
         try {
-          let creditPrevBalAuto = null;
-          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
-            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) { }
-          }
           const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             cashGiven: paid.paidAmount,
@@ -3051,6 +3166,9 @@ export default function POSSales() {
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
             creditPreviousBalance: creditPrevBalAuto,
+            creditInvoiceCredit: creditInvoiceCreditAuto,
+            creditAmountPaid: creditAmountPaidAuto,
+            creditUpdatedBalance: creditUpdatedBalanceAuto,
             depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
             balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
             shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
@@ -5032,15 +5150,17 @@ export default function POSSales() {
       terminalId: currentTerminal?.terminalId || null,
     });
     if (!printer) {
-      printHtml(html);
+      notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
+      printHtml(html, { fast: true });
       return;
     }
     try {
       const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
       await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
     } catch (err) {
-      console.warn('Configured printer failed for report print, falling back to browser print', err);
-      printHtml(html);
+      console.warn('Configured printer failed for report print, falling back to browser print preview', err);
+      notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+      printHtml(html, { fast: true });
     }
   };
 
@@ -6745,7 +6865,7 @@ export default function POSSales() {
       {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} />}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
 
       {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}
@@ -7267,18 +7387,19 @@ export default function POSSales() {
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
-                          const isWalkInPrint = !full.customerName || full.customerName === 'Walk-in Customer';
-                          let creditPrevBalPrint = null;
-                          if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
-                            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) { }
-                          }
+                          // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
+                          // rather than re-querying posCreditBalance — by now it already reflects
+                          // this invoice and would be mislabeled as "previous balance".
                           const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
                             customerPhone: lastPaidInvoice?.customer?.phone,
                             customerEmail: lastPaidInvoice?.customer?.email,
-                            creditPreviousBalance: creditPrevBalPrint,
+                            creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
+                            creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
+                            creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
+                            creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                           });
                           await printThermalReceiptWithConfiguredPrinter({
                             full,
@@ -8391,11 +8512,9 @@ export default function POSSales() {
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
-                  const isWalkInLR = !full.customerName || full.customerName === 'Walk-in Customer';
-                  let creditPrevBalLR = null;
-                  if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
-                    try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) { }
-                  }
+                  // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
+                  // rather than re-querying posCreditBalance — by now it already reflects
+                  // this invoice and would be mislabeled as "previous balance".
                   const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
@@ -8403,7 +8522,10 @@ export default function POSSales() {
                     changeAmount: lastPaidInvoice?.changeAmount,
                     customerPhone: lastPaidInvoice?.customer?.phone,
                     customerEmail: lastPaidInvoice?.customer?.email,
-                    creditPreviousBalance: creditPrevBalLR,
+                    creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
+                    creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
+                    creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
+                    creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                     cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
                   });
                   await printThermalReceiptWithConfiguredPrinter({
@@ -8685,6 +8807,18 @@ export default function POSSales() {
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${cashDropFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}>
           {cashDropFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
           {cashDropFeedback.message}
+        </div>
+      )}
+
+      {/* Print fallback toast — explains why a browser print-preview just opened
+          (no printer configured, or the configured one/agent didn't respond). */}
+      {printFeedback && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium bg-red-500 text-white max-w-md">
+          <Printer className="h-4 w-4 shrink-0" />
+          <span>{printFeedback.message}</span>
+          <button type="button" onClick={() => setPrintFeedback(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -10008,44 +10142,50 @@ export default function POSSales() {
                 const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
                 printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
               } else {
-                const qrContent = buildQrContent(returnA4Data, tplOutletName);
-                const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
-                const returnHtml = buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, {
-                  companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
-                  showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
-                  logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl,
-                  stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
-                  showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
-                  outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
-                  showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt,
-                  showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode,
-                  showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
-                  showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms,
-                  currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
-                  cashierName: cashierDisplayName,
-                  terminalId: currentTerminal?.terminalId,
-                  counterName: currentTerminal?.counterName,
-                  customerPhone: returnInvoiceFound?.customerPhone,
-                  customerEmail: returnInvoiceFound?.customerEmail,
-                  creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
-                  creditInvoiceCredit: returnNet,
-                  creditAmountPaid: 0,
-                  creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null)
-                });
                 const returnPrinter = resolvePrinterForContext(printerConfigs, {
                   deviceType: 'RECEIPT_PRINTER',
                   branchId: inv.branchId || currentTerminal?.branchId || null,
                   terminalId: currentTerminal?.terminalId || null,
                 });
+                // Only build the HTML (incl. QR image) when it's actually needed for the
+                // print-preview fallback — the agent path below only needs plain text.
+                const buildReturnFallbackHtml = async () => {
+                  const qrContent = buildQrContent(returnA4Data, tplOutletName);
+                  const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
+                  return buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, {
+                    companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
+                    showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
+                    logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl,
+                    stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                    showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
+                    outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
+                    showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt,
+                    showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode,
+                    showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
+                    showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms,
+                    currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                    cashierName: cashierDisplayName,
+                    terminalId: currentTerminal?.terminalId,
+                    counterName: currentTerminal?.counterName,
+                    customerPhone: returnInvoiceFound?.customerPhone,
+                    customerEmail: returnInvoiceFound?.customerEmail,
+                    creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
+                    creditInvoiceCredit: returnNet,
+                    creditAmountPaid: 0,
+                    creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null)
+                  });
+                };
                 if (!returnPrinter) {
-                  printHtml(returnHtml);
+                  notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
+                  printHtml(await buildReturnFallbackHtml(), { fast: true });
                 } else {
                   try {
-                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone });
+                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
                     await sendReceiptToConfiguredPrinter(returnPrinter, { receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
                   } catch (err) {
-                    console.warn('Configured printer failed for return receipt, falling back to browser print', err);
-                    printHtml(returnHtml);
+                    console.warn('Configured printer failed for return receipt, falling back to browser print preview', err);
+                    notifyPrintFallback(`Couldn't reach "${returnPrinter.deviceName || returnPrinter.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+                    printHtml(await buildReturnFallbackHtml(), { fast: true });
                   }
                 }
               }
@@ -11757,8 +11897,9 @@ export default function POSSales() {
           try {
             const cashAmt = deliverySettlePayMode === 'Cash' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCash : 0;
             const cardAmt = deliverySettlePayMode === 'Card' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCard : 0;
-            await settleDeliveryOrder(sel.id, {
-              paymentMode: deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode,
+            const displayPaymentMode = deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode;
+            const settledInvoice = await settleDeliveryOrder(sel.id, {
+              paymentMode: displayPaymentMode,
               amountTendered: selBalance,
               cashAmount: cashAmt,
               cardAmount: cardAmt,
@@ -11766,6 +11907,32 @@ export default function POSSales() {
               terminalId: currentTerminal?.terminalId || null,
               branchId: currentTerminal?.branchId || null,
             });
+
+            if (tplInvoicePaper !== 'A4') {
+              try {
+                // recordPayment() stamps the invoice's own paymentMode per settlement leg
+                // (last write wins for a split Cash+Card settle), so the receipt shows the
+                // mode actually selected here rather than trusting that stamp.
+                const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
+                const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
+                const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                  full: receiptInvoice,
+                  cashGiven: selBalance,
+                  customerPhone: custRec?.phone,
+                  customerEmail: custRec?.email,
+                });
+                await printThermalReceiptWithConfiguredPrinter({
+                  full: receiptInvoice,
+                  html,
+                  text,
+                  escPosBase64,
+                  title: `Delivery Settled ${settledInvoice?.invoiceNumber || sel.invoice || ''}`.trim(),
+                });
+              } catch (printErr) {
+                console.warn('Delivery settlement receipt print failed', printErr);
+              }
+            }
+
             setDeliverySettleSelected(null);
             setDeliverySettleMixCash('');
             setDeliverySettleMixCard('');
