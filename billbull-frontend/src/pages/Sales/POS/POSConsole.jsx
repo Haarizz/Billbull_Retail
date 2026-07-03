@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, LayoutDashboard } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, LayoutDashboard, Layers } from 'lucide-react';
+import POSCounters from '../POSCounters';
 import DeviceDashboardPanel from './DeviceDashboardPanel';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
@@ -9,6 +10,8 @@ import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
 import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
+import { assignTerminalCounter } from '../../../api/posApi';
+import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 
@@ -30,7 +33,7 @@ const POSConsole = React.memo((props) => {
     tplReturnHeader, tplReturnFooter, tplReturnPaper, 
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails, 
     tplReturnColItemCode, tplReturnColBatchNo, tplReturnColDiscount, tplReturnColVatPct, tplReturnColVatAmt, 
-    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, 
+    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, tplReturnShowCreditBalance, 
     tplJobCardFooter, tplJobCardPaper, 
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails, 
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms, 
@@ -41,7 +44,7 @@ const POSConsole = React.memo((props) => {
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
-    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, 
+    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
     editingTerminalId, terminalsLoading, terminalSaving,
     setTplInvoiceHeader, setTplInvoiceFooter, setTplInvoicePaper, setTplInvoiceColBarcode,
@@ -92,6 +95,7 @@ const POSConsole = React.memo((props) => {
       notes: '',
     });
 
+    const [counterList, setCounterList] = useState([]);
     const [printerDialogOpen, setPrinterDialogOpen] = useState(false);
     const [editingPrinter, setEditingPrinter] = useState(null);
     const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
@@ -115,6 +119,13 @@ const POSConsole = React.memo((props) => {
       if (consoleTab !== 'devices') return;
       loadPrinterConfigs?.();
     }, [consoleTab, loadPrinterConfigs, currentTerminal?.branchId]);
+
+    useEffect(() => {
+      if (consoleTab !== 'terminals') return;
+      const branchId = currentTerminal?.branchId;
+      if (!branchId) return;
+      getActiveCounters(branchId).then(data => setCounterList(Array.isArray(data) ? data : [])).catch(() => {});
+    }, [consoleTab, currentTerminal?.branchId]);
 
     const refreshAgentPrinters = async () => {
       setAgentLoading(true);
@@ -253,7 +264,7 @@ const POSConsole = React.memo((props) => {
       { id:'devices',   label:'Devices',        icon:<Printer className="h-4 w-4" /> },
       { id:'dashboard', label:'Dashboard',      icon:<LayoutDashboard className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
-      { id:'terminals', label:'Terminals',      icon:<Hash className="h-4 w-4" /> },
+      { id:'terminals', label:'Terminals & Counters', icon:<Hash className="h-4 w-4" /> },
     ];
 
     const loadTerminals = async () => {
@@ -369,7 +380,7 @@ const POSConsole = React.memo((props) => {
                       returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
                       returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
                       returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
-                      returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,
+                      returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,returnShowCreditBalance:tplReturnShowCreditBalance,
                       jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
                       jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
                       jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
@@ -616,37 +627,6 @@ const POSConsole = React.memo((props) => {
                       {d.voidMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* Tax mode */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><FileText className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  VAT / Tax Mode
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Decide whether product prices already include VAT or VAT is added at checkout.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  {[
-                    [false,'Exclusive','Prices are net of VAT. VAT is added on top at checkout.'],
-                    [true,'Inclusive','Prices already include VAT. VAT is extracted from the price.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={String(val)} type="button" onClick={()=>patch({ taxInclusive: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.taxInclusive===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.taxInclusive===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.taxInclusive===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Default VAT Rate (%) — used when a product has no rate of its own</label>
-                  <input
-                    type="number" min="0" max="100" step="0.01"
-                    value={d.defaultTaxRate}
-                    onChange={e=>patch({ defaultTaxRate: e.target.value === '' ? '' : Number(e.target.value) })}
-                    className="w-32 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
-                  />
                 </div>
               </div>
 
@@ -1173,7 +1153,7 @@ const POSConsole = React.memo((props) => {
                 showQRCode: tplReturnShowQRCode, setShowQRCode: setTplReturnShowQRCode,
                 qrPlacement: tplInvoiceQrPlacement, setQrPlacement: setTplInvoiceQrPlacement,
                 showLoyaltyPoints: tplReturnShowNotes, setShowLoyaltyPoints: setTplReturnShowNotes,
-                showCreditBalance: false, setShowCreditBalance: ()=>{},
+                showCreditBalance: tplReturnShowCreditBalance, setShowCreditBalance: setTplReturnShowCreditBalance,
                 showFooterText: tplReturnShowTerms, setShowFooterText: setTplReturnShowTerms,
                 colItemCode: tplReturnColItemCode, setColItemCode: setTplReturnColItemCode,
                 colItemImage: false, setColItemImage: ()=>{},
@@ -1634,6 +1614,7 @@ const POSConsole = React.memo((props) => {
           {/* ══ TERMINALS ══ */}
           {consoleTab === 'terminals' && (() => {
             const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
+
             const activeCount = terminalList.filter(t => t.status === 'ACTIVE').length;
             const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
             const inactiveCount = terminalList.filter(t => t.status === 'INACTIVE').length;
@@ -1866,7 +1847,29 @@ const POSConsole = React.memo((props) => {
                                 <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                                   <span className="flex items-center gap-1 text-xs text-gray-500">
                                     <Hash className="h-3 w-3 text-gray-300" />
-                                    <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                    {counterList.length > 0 ? (
+                                      <select
+                                        value={t.counterId ?? ''}
+                                        onChange={async (e) => {
+                                          const counterId = e.target.value ? Number(e.target.value) : null;
+                                          try {
+                                            const updated = await assignTerminalCounter(t.id, counterId);
+                                            setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? { ...x, counterId: updated.counterId, counterName: updated.counterName } : x));
+                                            if (currentTerminal?.terminalId === t.terminalId) {
+                                              setCurrentTerminal(prev => ({ ...prev, counterId: updated.counterId, counterName: updated.counterName }));
+                                            }
+                                          } catch (e) { console.warn('Counter assign failed', e); }
+                                        }}
+                                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 bg-white focus:outline-none focus:border-[#F5C742]"
+                                      >
+                                        <option value="">— No Counter —</option>
+                                        {counterList.map(c => (
+                                          <option key={c.id} value={c.id}>{c.counterName} ({c.counterCode})</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <strong className="text-gray-700">{t.counterName || 'No counter'}</strong>
+                                    )}
                                   </span>
                                   {t.registeredBy && (
                                     <span className="flex items-center gap-1 text-xs text-gray-400">
@@ -2022,6 +2025,24 @@ const POSConsole = React.memo((props) => {
                   <span className="text-[#b8920e] font-semibold flex items-center gap-1"><Star className="h-3 w-3 fill-current" />{terminalList.filter(t => t.isMainPos).length} main POS</span>
                 </div>
               )}
+
+              {/* ── Counter Management (embedded) ── */}
+              <div className="border-t border-gray-200 pt-6 mt-2">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-7 h-7 rounded-lg bg-[#F5C742]/20 flex items-center justify-center">
+                    <Layers className="h-4 w-4 text-[#b8920e]" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-[#1E293B] leading-none">Counter Management</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">Create and manage POS counters for this branch</p>
+                  </div>
+                </div>
+                <POSCounters onCounterChange={() => {
+                  const branchId = currentTerminal?.branchId;
+                  if (branchId) getActiveCounters(branchId).then(data => setCounterList(Array.isArray(data) ? data : [])).catch(() => {});
+                }} />
+              </div>
+
             </div>
             );
           })()}

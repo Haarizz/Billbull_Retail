@@ -49,6 +49,26 @@ public class PosSession extends BaseEntity {
     @Column(name = "duration_seconds")
     private Long durationSeconds;
 
+    // FK to pos_terminals.id — nullable for sessions created before the counter entity existed.
+    @Column(name = "terminal_pk")
+    private Long terminalPk;
+
+    // FK to pos_counters.id — nullable for sessions created before counter entity existed.
+    @Column(name = "counter_id")
+    private Long counterId;
+
+    // Updated on every sale/movement to drive idle-timeout detection.
+    @Column(name = "last_activity_at")
+    private LocalDateTime lastActivityAt;
+
+    // Snapshot of PosSettings.sessionIdleTimeoutMinutes at session open time.
+    @Column(name = "idle_timeout_minutes")
+    private Integer idleTimeoutMinutes;
+
+    // Absolute session expiry (now + max_session_duration_hours). Null = no hard limit.
+    @Column(name = "session_timeout_at")
+    private LocalDateTime sessionTimeoutAt;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PosSessionStatus status = PosSessionStatus.OPEN;
@@ -79,6 +99,9 @@ public class PosSession extends BaseEntity {
 
     @Column(name = "total_mixed_sales", precision = 15, scale = 2)
     private BigDecimal totalMixedSales = BigDecimal.ZERO;
+
+    @Column(name = "total_online_sales", precision = 15, scale = 2)
+    private BigDecimal totalOnlineSales = BigDecimal.ZERO;
 
     @Column(name = "total_refunds", precision = 15, scale = 2)
     private BigDecimal totalRefunds = BigDecimal.ZERO;
@@ -209,6 +232,9 @@ public class PosSession extends BaseEntity {
     public BigDecimal getTotalMixedSales() { return totalMixedSales; }
     public void setTotalMixedSales(BigDecimal totalMixedSales) { this.totalMixedSales = totalMixedSales; }
 
+    public BigDecimal getTotalOnlineSales() { return totalOnlineSales; }
+    public void setTotalOnlineSales(BigDecimal totalOnlineSales) { this.totalOnlineSales = totalOnlineSales; }
+
     public BigDecimal getTotalRefunds() { return totalRefunds; }
     public void setTotalRefunds(BigDecimal totalRefunds) { this.totalRefunds = totalRefunds; }
 
@@ -256,4 +282,19 @@ public class PosSession extends BaseEntity {
 
     public List<PosCashMovement> getCashMovements() { return cashMovements; }
     public void setCashMovements(List<PosCashMovement> cashMovements) { this.cashMovements = cashMovements; }
+
+    public Long getTerminalPk() { return terminalPk; }
+    public void setTerminalPk(Long terminalPk) { this.terminalPk = terminalPk; }
+
+    public Long getCounterId() { return counterId; }
+    public void setCounterId(Long counterId) { this.counterId = counterId; }
+
+    public LocalDateTime getLastActivityAt() { return lastActivityAt; }
+    public void setLastActivityAt(LocalDateTime lastActivityAt) { this.lastActivityAt = lastActivityAt; }
+
+    public Integer getIdleTimeoutMinutes() { return idleTimeoutMinutes; }
+    public void setIdleTimeoutMinutes(Integer idleTimeoutMinutes) { this.idleTimeoutMinutes = idleTimeoutMinutes; }
+
+    public LocalDateTime getSessionTimeoutAt() { return sessionTimeoutAt; }
+    public void setSessionTimeoutAt(LocalDateTime sessionTimeoutAt) { this.sessionTimeoutAt = sessionTimeoutAt; }
 }

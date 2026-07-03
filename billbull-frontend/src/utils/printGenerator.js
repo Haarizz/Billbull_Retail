@@ -8,6 +8,7 @@ import {
     resolveCurrencyDisplayConfig,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from './countryCurrencyOptions';
+import { ROBOTO_MONO_FONT_FACE } from './receiptFont';
 import toast from 'react-hot-toast';
 
 const escapeHtml = (value) =>
@@ -941,14 +942,14 @@ export const generateReportThermalHtml = (viewModel = {}, companyProfile = {}, m
     const D = `<div class="d"></div>`;
     const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportTitle)}</title><style>
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportTitle)}</title><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${paper} auto}*{margin:0;padding:0;box-sizing:border-box}
-body{width:${pw};margin:0 auto;font-family:'Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0;color:#000;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #000;margin:6px 0}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;line-height:1.5;padding:4px 0;color:#000;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:1px dashed #444;margin:6px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin:2px 0}
 .row .lbl{flex:1;text-align:left;word-break:break-word;overflow-wrap:anywhere}
 .row .val{flex:0 0 auto;text-align:right;white-space:nowrap}
-.info-row{display:flex;justify-content:flex-start;align-items:flex-start;margin:2px 0;font-family:'Courier New',monospace;font-size:11px;line-height:1.4}
+.info-row{display:flex;justify-content:flex-start;align-items:flex-start;margin:2px 0;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;line-height:1.4}
 .info-row .info-lbl{flex:0 0 auto;width:${paper === '58mm' ? '78px' : '92px'};text-align:left;white-space:nowrap;overflow:hidden;font-weight:normal}
 .info-row .info-col{flex:0 0 auto;width:12px;text-align:center;white-space:nowrap;font-weight:normal}
 .info-row .info-val{flex:1 1 auto;text-align:left;white-space:normal;word-break:normal;overflow-wrap:break-word;min-width:0;padding-left:2px}
@@ -1481,7 +1482,11 @@ export const downloadPdf = async (htmlContent, filename = 'document') => {
     }
 };
 
-export const printHtml = (htmlContent) => {
+// opts.fast: for lightweight documents (POS thermal receipts — plain text plus at
+// most a small logo/QR image) where we don't need the full worst-case safety
+// margin that image-heavy A4 documents (invoices with logos/stamps) still get
+// by default.
+export const printHtml = (htmlContent, { fast = false } = {}) => {
     // Remove any previous print frame
     const existing = document.getElementById('__bb_print_frame__');
     if (existing) existing.remove();
@@ -1508,9 +1513,27 @@ export const printHtml = (htmlContent) => {
         } catch {
             // Fallback: open new window if iframe print is blocked
             const win = window.open('', '_blank');
-            if (win) { win.document.write(htmlContent); win.document.close(); setTimeout(() => win.print(), 500); }
+            if (win) { win.document.write(htmlContent); win.document.close(); setTimeout(() => win.print(), fast ? 150 : 500); }
         }
         cleanup();
+    };
+
+    // Fire the moment every <img> in the frame has actually finished loading (or
+    // errored) instead of blindly waiting out a fixed delay — a receipt with no
+    // logo/QR resolves in ~0ms this way rather than paying the full worst-case
+    // padding every single print, while an image-heavy document still waits for
+    // its images for correctness.
+    const waitForImagesThenPrint = () => {
+        const frameDoc = iframe.contentWindow?.document;
+        const imgs = frameDoc ? Array.from(frameDoc.images || []) : [];
+        const pending = imgs.filter((img) => !img.complete);
+        if (pending.length === 0) { runPrint(); return; }
+        let remaining = pending.length;
+        const settle = () => { if (--remaining <= 0) runPrint(); };
+        pending.forEach((img) => {
+            img.addEventListener('load', settle, { once: true });
+            img.addEventListener('error', settle, { once: true });
+        });
     };
 
     const doc = iframe.contentWindow.document;
@@ -1518,6 +1541,6 @@ export const printHtml = (htmlContent) => {
     doc.write(htmlContent);
     doc.close();
 
-    iframe.onload = () => setTimeout(runPrint, 350);
-    setTimeout(runPrint, 900);
+    iframe.onload = () => setTimeout(waitForImagesThenPrint, fast ? 20 : 350);
+    setTimeout(runPrint, fast ? 350 : 900);
 };

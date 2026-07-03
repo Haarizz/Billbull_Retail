@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,6 +16,8 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     Optional<PosSession> findByTerminalIdAndStatus(String terminalId, PosSessionStatus status);
 
+    Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
+
     List<PosSession> findByBranchIdAndStatusOrderByOpenedAtDesc(Long branchId, PosSessionStatus status);
 
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);
@@ -22,7 +25,29 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate = :date AND s.status = 'OPEN'")
     List<PosSession> findOpenSessionsByBranchAndDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
 
+    // Unclosed sessions (OPEN or SUSPENDED) from a prior business day — used to block
+    // opening a new day/session until the stale one is explicitly closed.
+    @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate < :date " +
+           "AND s.status IN ('OPEN', 'SUSPENDED') ORDER BY s.sessionDate ASC")
+    List<PosSession> findUnclosedSessionsBeforeDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
+
     boolean existsByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
+
+    // Sessions idle past the threshold — used by PosSessionScheduler to auto-suspend
+    @Query("SELECT s FROM PosSession s WHERE s.status = 'OPEN' " +
+           "AND s.idleTimeoutMinutes IS NOT NULL AND s.idleTimeoutMinutes > 0 " +
+           "AND (s.lastActivityAt IS NULL OR s.lastActivityAt < :threshold)")
+    List<PosSession> findIdleSessionsBefore(@Param("threshold") LocalDateTime threshold);
+
+    // Sessions that hit their hard wall-clock limit — used by PosSessionScheduler
+    @Query("SELECT s FROM PosSession s WHERE s.status = 'OPEN' " +
+           "AND s.sessionTimeoutAt IS NOT NULL AND s.sessionTimeoutAt < :now")
+    List<PosSession> findTimedOutSessions(@Param("now") LocalDateTime now);
+
+    // Update last activity timestamp without a full entity round-trip
+    @Modifying
+    @Query("UPDATE PosSession s SET s.lastActivityAt = :now WHERE s.id = :sessionId AND s.status = 'OPEN'")
+    int touchLastActivity(@Param("sessionId") Long sessionId, @Param("now") LocalDateTime now);
 
     /**
      * Atomic session-total increment: avoids a SELECT then UPDATE hot-row pattern
@@ -37,6 +62,7 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
               total_card_sales  = COALESCE(total_card_sales, 0)  + :cardDelta,
               total_credit_sales= COALESCE(total_credit_sales,0) + :creditDelta,
               total_mixed_sales = COALESCE(total_mixed_sales, 0) + :mixedDelta,
+              total_online_sales= COALESCE(total_online_sales,0) + :onlineDelta,
               total_voids       = COALESCE(total_voids, 0)       + :voidDelta,
               invoice_count     = COALESCE(invoice_count, 0)     + 1
             WHERE id = :sessionId AND status = 'OPEN'
@@ -48,5 +74,6 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
             @Param("cardDelta")   BigDecimal cardDelta,
             @Param("creditDelta") BigDecimal creditDelta,
             @Param("mixedDelta")  BigDecimal mixedDelta,
+            @Param("onlineDelta") BigDecimal onlineDelta,
             @Param("voidDelta")   int voidDelta);
 }

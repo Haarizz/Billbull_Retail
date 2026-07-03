@@ -8,6 +8,14 @@ const PRINT_AGENT_BASES = [
 ];
 
 let resolvedAgentBase = null;
+// Once the agent is found missing, skip re-probing for this long — otherwise every
+// single POS sale re-runs the full "not found" probe against both hosts before
+// falling back to browser print, which is the opposite of fast for back-to-back sales.
+let lastProbeFailedAt = 0;
+const PROBE_RETRY_COOLDOWN_MS = 15000;
+// Bounds each health-check so a filtered/dropped port (vs. an actively refused one)
+// can't turn into a multi-second stall before falling back — fetch() has no default timeout.
+const HEALTH_PROBE_TIMEOUT_MS = 400;
 
 const isBlank = (value) => value == null || String(value).trim() === "";
 
@@ -41,9 +49,13 @@ const agentFetch = async (path, init = {}) => {
 
 export const resolvePrintAgentBase = async () => {
   if (resolvedAgentBase) return resolvedAgentBase;
+  if (lastProbeFailedAt && Date.now() - lastProbeFailedAt < PROBE_RETRY_COOLDOWN_MS) return null;
   for (const base of PRINT_AGENT_BASES) {
     try {
-      const resp = await fetch(`${base}/health`);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
+      const resp = await fetch(`${base}/health`, { signal: controller.signal });
+      clearTimeout(timer);
       if (resp.ok) {
         resolvedAgentBase = base;
         return base;
@@ -52,6 +64,7 @@ export const resolvePrintAgentBase = async () => {
       // Keep probing candidates.
     }
   }
+  lastProbeFailedAt = Date.now();
   return null;
 };
 

@@ -8,6 +8,7 @@ import com.billbull.backend.common.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -28,13 +29,28 @@ public class StockTakeItem extends BaseEntity {
     private StockTakeSession session;
 
     private Long productId;
+
+    @Column(length = 1000)
     private String productName;
+
+    @Column(length = 500)
     private String sku;
+
+    @Column(length = 500)
     private String barcode;
+
+    @Column(length = 500)
     private String brand;
+
+    @Column(length = 500)
     private String category;
+
+    @Column(columnDefinition = "TEXT")
     private String image;
+
     private BigDecimal price;
+
+    @Column(columnDefinition = "TEXT")
     private String description;
 
     private Integer systemQty;

@@ -1100,6 +1100,7 @@ const SessionView = ({
     countMode, setCountMode,
     ChevronRight, Undo2, Save, ClipboardList, Barcode, Keyboard, Search, Filter, FileDown,
     ImageIcon, Trash2, PackageSearch, Package, RefreshCw, CheckSquare, MousePointer2,
+    setIsBulkBinModalOpen,
     binCapacityViolations = [],
     isItemDeleting = false,
 }) => {
@@ -1241,15 +1242,15 @@ const SessionView = ({
     return (
         <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500">
             {/* Navbar / Breadcrumbs */}
-            <div className="flex items-center justify-between pt-2">
-                <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-                    <span>Inventory & Registries</span>
-                    <ChevronRight className="h-3 w-3" />
-                    <span>Stock Taking</span>
-                    <ChevronRight className="h-3 w-3" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 font-medium">
+                    <span className="hidden sm:inline">Inventory & Registries</span>
+                    <ChevronRight className="h-3 w-3 hidden sm:inline" />
+                    <span className="hidden sm:inline">Stock Taking</span>
+                    <ChevronRight className="h-3 w-3 hidden sm:inline" />
                     <span className="text-slate-900 font-semibold">{selectedSession?.id}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                     {selectedSession?.status === 'In Progress' && (
                         <>
                             <button
@@ -1287,13 +1288,13 @@ const SessionView = ({
             </div>
 
             {/* Session Header Info */}
-            <div className="flex items-center gap-2.5 px-1">
-                <div className="bg-amber-100 p-1.5 rounded-lg border border-amber-200">
+            <div className="flex items-start gap-2.5 px-1 min-w-0">
+                <div className="bg-amber-100 p-1.5 rounded-lg border border-amber-200 shrink-0">
                     <ClipboardList className="h-5 w-5 text-amber-600" />
                 </div>
-                <div>
-                    <div className="flex items-center gap-2">
-                        <h1 className="text-lg font-bold text-slate-800 tracking-tight">{selectedSession?.id} - {selectedSession?.warehouse}</h1>
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <h1 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">{selectedSession?.id} - {selectedSession?.warehouse}</h1>
                         <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700 border border-blue-200 uppercase tracking-widest">
                             {selectedSession?.status}
                         </span>
@@ -1305,10 +1306,10 @@ const SessionView = ({
             </div>
 
             {/* Main Content Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
 
                 {/* Left Column - Table and Controls */}
-                <div className="xl:col-span-3 space-y-4">
+                <div className="lg:col-span-3 space-y-4">
 
                     {/* Control Bar */}
                     <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-2">
@@ -1343,7 +1344,7 @@ const SessionView = ({
                                         ))}
                                     </select>
                                 )}
-                                <div className="relative flex-grow min-w-[200px]">
+                                <div className="relative flex-grow min-w-[120px]">
                                     <input
                                         ref={barcodeInputRef}
                                         type="text"
@@ -1368,7 +1369,7 @@ const SessionView = ({
                             </>
                         )}
 
-                        <div className="flex items-center gap-1.5 ml-auto">
+                        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
                             {/* BB-016: Item search within session */}
                             <div className="relative">
                                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
@@ -1400,7 +1401,7 @@ const SessionView = ({
                     </div>
 
                     {/* Product Table */}
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px] flex flex-col">
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px] flex flex-col overflow-x-auto">
                         <table className="bb-nowrap-table w-full text-sm">
                             <thead className="bg-[#F8FAFC] border-b border-slate-200 text-[9px] uppercase tracking-wider text-slate-400 font-bold">
                                 <tr>
@@ -2005,6 +2006,7 @@ const StockTaking = () => {
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
     const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
     const [isBulkBinModalOpen, setIsBulkBinModalOpen] = useState(false);
+    const [pendingBulkBinId, setPendingBulkBinId] = useState('');
     const [barcodeInput, setBarcodeInput] = useState('');
     const [lastScannedItem, setLastScannedItem] = useState(null);
     const [lastScannedAt, setLastScannedAt] = useState(null);
@@ -2508,18 +2510,20 @@ const StockTaking = () => {
     const handleBulkAssignBin = async (binId) => {
         const binIdNum = binId ? Number(binId) : null;
         if (!binIdNum || !selectedSession) return;
-        
+
         const bin = warehouseBins.find(b => String(b.id) === String(binIdNum));
         const itemsToUpdate = (selectedSession.items || []).filter(item => !item.binId);
-        
+
         if (itemsToUpdate.length === 0) {
             showNotif('info', 'No Items', 'No items require bin assignment.');
             setIsBulkBinModalOpen(false);
+            setPendingBulkBinId('');
             return;
         }
 
         setIsLoading(true);
         setIsBulkBinModalOpen(false);
+        setPendingBulkBinId('');
 
         setSelectedSession(prev => ({
             ...prev,
@@ -3142,6 +3146,7 @@ const StockTaking = () => {
                     RefreshCw={RefreshCw}
                     CheckSquare={CheckSquare}
                     MousePointer2={MousePointer2}
+                    setIsBulkBinModalOpen={setIsBulkBinModalOpen}
                     getStatusStyle={getStatusStyle}
                     binCapacityViolations={binCapacityViolations}
                     isItemDeleting={isItemDeleting}
@@ -3764,30 +3769,61 @@ const StockTaking = () => {
 
             {/* Bulk Assign Bin Modal */}
             {isBulkBinModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-0">
-                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]" onClick={() => setIsBulkBinModalOpen(false)}></div>
-                    <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ overflow: 'visible' }}>
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]" onClick={() => { setIsBulkBinModalOpen(false); setPendingBulkBinId(''); }}></div>
+                    <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="flex items-center justify-between p-4 border-b border-slate-100">
                             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                 <PackageSearch className="h-4 w-4 text-slate-400" />
                                 Bulk Assign Bin
                             </h3>
-                            <button onClick={() => setIsBulkBinModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+                            <button onClick={() => { setIsBulkBinModalOpen(false); setPendingBulkBinId(''); }} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
                         </div>
-                        <div className="p-4 space-y-4 text-center">
-                            <p className="text-[11px] text-slate-500 text-left">Assign a single bin to all {selectedSession?.items?.filter(item => !item.binId).length || 0} unassigned items.</p>
-                            <div className="inline-block relative">
-                                <BinSelector
-                                    itemId="bulk"
-                                    binId={null}
-                                    bins={warehouseBins}
-                                    onBinChange={(_, binId) => handleBulkAssignBin(binId)}
-                                    disabled={false}
-                                />
+                        <div className="p-4 space-y-4">
+                            <p className="text-[11px] text-slate-500">
+                                Assign a single bin to all{' '}
+                                <span className="font-bold text-slate-700">
+                                    {selectedSession?.items?.filter(item => !item.binId).length || 0}
+                                </span>{' '}
+                                unassigned items in this session.
+                            </p>
+                            <div className="space-y-1.5">
+                                <label className="block text-[11px] font-bold text-slate-600">Select Bin <span className="text-red-500">*</span></label>
+                                <div className="relative">
+                                    <select
+                                        value={pendingBulkBinId}
+                                        onChange={e => setPendingBulkBinId(e.target.value)}
+                                        className="w-full h-10 px-3 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all font-medium appearance-none"
+                                    >
+                                        <option value="">-- Choose a bin --</option>
+                                        {warehouseBins.map(bin => (
+                                            <option key={bin.id} value={bin.id}>
+                                                {bin.code}{bin.name ? ` — ${bin.name}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                                </div>
+                                {warehouseBins.length === 0 && (
+                                    <p className="text-[10px] text-amber-600 font-medium">No bins found for this warehouse.</p>
+                                )}
                             </div>
                         </div>
-                        <div className="p-3 bg-slate-50 border-t border-slate-100 flex justify-end">
-                            <button onClick={() => setIsBulkBinModalOpen(false)} className="px-4 py-2 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+                        <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={() => { setIsBulkBinModalOpen(false); setPendingBulkBinId(''); }}
+                                className="px-4 py-2 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => { if (pendingBulkBinId) handleBulkAssignBin(pendingBulkBinId); }}
+                                disabled={!pendingBulkBinId || isLoading}
+                                className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
+                            >
+                                {isLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <PackageSearch className="h-3.5 w-3.5" />}
+                                Assign to All
+                            </button>
                         </div>
                     </div>
                 </div>

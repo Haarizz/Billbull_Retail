@@ -327,6 +327,7 @@ public class PaymentService {
         receiptVoucher.setDate(payment.getPaymentDate() != null ? payment.getPaymentDate() : LocalDate.now());
         receiptVoucher.setAmount(payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO);
         receiptVoucher.setPaymentMode(payment.getPaymentMode());
+        receiptVoucher.setBankAccount(payment.getBankName());
         receiptVoucher.setReference(payment.getReferenceNumber());
         receiptVoucher.setNotes(payment.getNotes());
         receiptVoucher.setMemberName(

@@ -880,7 +880,7 @@ public class PostingEngineService {
                 String ref = receipt.getVoucherId();
                 { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
 
-                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt);
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
                                 "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER,
                                 receipt.getBranchEntity());
@@ -960,7 +960,7 @@ public class PostingEngineService {
 
                 // Compute the net cash/bank debit already posted for this RV across
                 // the original entry + all prior ADJ entries.
-                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
+                AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt);
                 boolean isAdvance = receipt.getPurpose() ==
                                 com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED;
                 String creditAccount = isAdvance ? ACC_CUSTOMER_ADVANCE : ACC_ACCOUNTS_RECEIVABLE;
@@ -1042,14 +1042,17 @@ public class PostingEngineService {
          * already recognized (DN was delivered) or is still deferred:
          *
          *   revenueWasRecognized = true  (DN already delivered):
-         *     Dr Sales Revenue (4101) [subTotal]
+         *     Dr Sales Revenue (4101) [subTotal - discount]
          *     Dr VAT Output (2102)    [taxAmount]  (if > 0)
          *     Cr Accounts Receivable (1110) [totalAmount]
          *
          *   revenueWasRecognized = false (DN not yet delivered / revenue deferred):
-         *     Dr Deferred Revenue (2107) [subTotal]
+         *     Dr Deferred Revenue (2107) [subTotal - discount]
          *     Dr VAT Output (2102)       [taxAmount]  (if > 0)
          *     Cr Accounts Receivable (1110) [totalAmount]
+         *
+         * discount is derived as subTotal + taxAmount - totalAmount so the entry always
+         * balances regardless of any item-level discount breakdown.
          *
          * COGS reversal (only if costOfGoodsReturned > 0):
          *   Dr Inventory (1120) / Cr COGS (5101)
@@ -1073,11 +1076,16 @@ public class PostingEngineService {
                 BigDecimal subTotal   = nz(salesReturn.getSubTotal());
                 BigDecimal taxAmount  = nz(salesReturn.getTaxAmount());
                 BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
+                // subTotal is gross (pre-discount); totalAmount = subTotal - discount + tax.
+                // Derive the discount as the residual so the entry balances however the
+                // caller computed totalAmount, without needing a header-level discount field.
+                BigDecimal discountAmount = subTotal.add(taxAmount).subtract(totalAmount).max(BigDecimal.ZERO);
+                BigDecimal netRevenue = subTotal.subtract(discountAmount);
 
-                // Debit the correct revenue account
+                // Debit the correct revenue account (net of discount)
                 String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE     : ACC_DEFERRED_REVENUE;
                 String revenueAccountName = revenueWasRecognized ? "Sales Revenue"        : "Deferred Revenue";
-                addLine(entry, revenueAccountName, revenueAccount, "Return Revenue Reversal", subTotal, BigDecimal.ZERO);
+                addLine(entry, revenueAccountName, revenueAccount, "Return Revenue Reversal", netRevenue, BigDecimal.ZERO);
 
                 if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT Refund", taxAmount, BigDecimal.ZERO);
@@ -2103,6 +2111,17 @@ public class PostingEngineService {
                                 + resolveWarehouseCostCenter(transfer.getFromWarehouse())
                                 + " -> "
                                 + resolveWarehouseCostCenter(transfer.getToWarehouse());
+        }
+
+        /** Prefers the specific bank account selected on the receipt (e.g. POS Online
+         *  payments) over generic mode-based routing, mirroring resolveOutgoingPaymentAccount(PaymentVoucher). */
+        private AccountSelection resolveIncomingPaymentAccount(ReceiptVoucher receipt) {
+                AccountSelection selectedAccount = resolveSelectedPaymentAccount(
+                                receipt != null ? receipt.getBankAccount() : null);
+                if (selectedAccount != null) {
+                        return selectedAccount;
+                }
+                return resolveIncomingPaymentAccount(receipt != null ? receipt.getPaymentMode() : null);
         }
 
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {

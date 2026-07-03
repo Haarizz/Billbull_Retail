@@ -21,8 +21,10 @@ import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOr
 import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
+import { getBankAccounts } from '../../api/ledgerApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
+  getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -30,7 +32,7 @@ import {
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
 } from '../../api/posApi';
-import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches } from '../../api/salesReturnApi';
+import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
@@ -42,6 +44,7 @@ import {
   Receipt,
   CreditCard,
   Banknote,
+  Landmark,
   Smartphone,
   Package,
   Plus,
@@ -150,6 +153,10 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
+import { useHeartbeat } from '../../hooks/useHeartbeat';
+import { useIdleTimeout } from '../../hooks/useIdleTimeout';
+import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
+import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64 } from '../../utils/escPosReceipt';
 
@@ -336,6 +343,8 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  const [isIdleLocked, setIsIdleLocked] = useState(false);
+  const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
   // Sidebar's display-name derivation: strip the @domain then title-case.
   const cashierDisplayName = useMemo(() => {
@@ -369,9 +378,12 @@ export default function POSSales() {
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
+  const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
+  const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
+  const [closeDayVariance, setCloseDayVariance] = useState(null);
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
@@ -383,7 +395,6 @@ export default function POSSales() {
   });
   const [closeSessionTab, setCloseSessionTab] = useState('cash');
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
-  const [cardSettlementRef, setCardSettlementRef] = useState('');
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
@@ -412,7 +423,7 @@ export default function POSSales() {
   const [deliveryPersons, setDeliveryPersons] = useState([]);
   const [deliveryPersonsLoading, setDeliveryPersonsLoading] = useState(false);
   const [deliveryValidationErrors, setDeliveryValidationErrors] = useState({});
-  
+
   // Quick Customer Creation Modal State
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
   const [quickCustomerForm, setQuickCustomerForm] = useState({
@@ -462,11 +473,23 @@ export default function POSSales() {
   const [checkoutKeypadVisible, setCheckoutKeypadVisible] = useState(false);
   const [checkoutCardType, setCheckoutCardType] = useState('');
   const [checkoutCardRef, setCheckoutCardRef] = useState('');
+  // Online payment mode — bank account linking for reconciliation/reporting
+  const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);
+  const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
+  const [checkoutOnlineBankAccountId, setCheckoutOnlineBankAccountId] = useState('');
+  const [checkoutOnlineReference, setCheckoutOnlineReference] = useState('');
   const [checkoutRemarks, setCheckoutRemarks] = useState('');
   const [checkoutCreditCustomerSearch, setCheckoutCreditCustomerSearch] = useState('');
   const [checkoutCreditCustomer, setCheckoutCreditCustomer] = useState(null);
   const [checkoutCreditDueDate, setCheckoutCreditDueDate] = useState('2026-06-28');
   const [checkoutCreditTerms, setCheckoutCreditTerms] = useState('30');
+  // Partial receipt against a Credit sale — cashier can collect part of the bill now
+  // (Cash/Card/Online/Bank) while the remainder posts to the customer's receivable.
+  const [checkoutCreditReceivedMode, setCheckoutCreditReceivedMode] = useState('');
+  const [checkoutCreditReceivedAmount, setCheckoutCreditReceivedAmount] = useState('');
+  const [checkoutCreditReceivedCardType, setCheckoutCreditReceivedCardType] = useState('');
+  const [checkoutCreditReceivedRef, setCheckoutCreditReceivedRef] = useState('');
+  const [checkoutCreditReceivedBankAccountId, setCheckoutCreditReceivedBankAccountId] = useState('');
   // E-bill options (embedded in checkout)
   const [checkoutEbillPrint, setCheckoutEbillPrint] = useState(true);
   const [checkoutEbillSms, setCheckoutEbillSms] = useState(false);
@@ -582,6 +605,7 @@ export default function POSSales() {
   // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
   const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
+  const [printFeedback, setPrintFeedback] = useState(null);
   const [showCouponsDialog, setShowCouponsDialog] = useState(false);
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState(null);
@@ -635,6 +659,8 @@ export default function POSSales() {
   // Hold (persisted, session-scoped)
   const [heldSales, setHeldSales] = useState([]);
   const [holdBusy, setHoldBusy] = useState(false);
+  // Confirmation modal (replaces window.confirm for delete/cancel actions)
+  const [confirmAction, setConfirmAction] = useState(null); // { title, message, onConfirm, busy }
   // Save Layaway modal
   const [showSaveLayaway, setShowSaveLayaway] = useState(false);
   const [saveLayawayDepositReq, setSaveLayawayDepositReq] = useState(true);
@@ -701,6 +727,7 @@ export default function POSSales() {
   // Configure: which right-panel buttons are visible
   // BillBull Console
   const [consoleTab, setConsoleTab] = useState('layout');
+
   const [templateSubTab, setTemplateSubTab] = useState('receipt');
   const [terminalList, setTerminalList] = useState([]);
   const [terminalsLoading, setTerminalsLoading] = useState(false);
@@ -722,10 +749,10 @@ export default function POSSales() {
   });
   const [scannerConfigSavedFlash, setScannerConfigSavedFlash] = useState(false);
   const [consoleDevices, setConsoleDevices] = useState([
-    { id: 'd1', type: 'Receipt Printer', name: 'Epson TM-T82III',        port: 'USB',          status: 'Online' },
-    { id: 'd2', type: 'Barcode Scanner', name: 'Honeywell Voyager 1202g', port: 'USB',          status: 'Online' },
-    { id: 'd3', type: 'Cash Drawer',     name: 'APG Vasario 1616',        port: 'Kick-out',     status: 'Online' },
-    { id: 'd4', type: 'Card Terminal',   name: 'Ingenico Move 5000',      port: 'Bluetooth',    status: 'Offline' },
+    { id: 'd1', type: 'Receipt Printer', name: 'Epson TM-T82III', port: 'USB', status: 'Online' },
+    { id: 'd2', type: 'Barcode Scanner', name: 'Honeywell Voyager 1202g', port: 'USB', status: 'Online' },
+    { id: 'd3', type: 'Cash Drawer', name: 'APG Vasario 1616', port: 'Kick-out', status: 'Online' },
+    { id: 'd4', type: 'Card Terminal', name: 'Ingenico Move 5000', port: 'Bluetooth', status: 'Offline' },
   ]);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [newDevType, setNewDevType] = useState('Receipt Printer');
@@ -814,6 +841,7 @@ export default function POSSales() {
   const [tplReturnShowNotes, setTplReturnShowNotes] = useState(false);
   const [tplReturnShowQRCode, setTplReturnShowQRCode] = useState(false);
   const [tplReturnShowSignature, setTplReturnShowSignature] = useState(false);
+  const [tplReturnShowCreditBalance, setTplReturnShowCreditBalance] = useState(false);
   // Job Card A4 extras
   const [tplJobCardShowLogo, setTplJobCardShowLogo] = useState(true);
   const [tplJobCardShowTrn, setTplJobCardShowTrn] = useState(true);
@@ -863,10 +891,10 @@ export default function POSSales() {
   ]), [posDepartments, posProductTotalElements, selectedCategory]);
 
   const horizontalCategories = useMemo(() => ([
-    { id: 'all',           name: 'All Items',     icon: Package },
-    { id: 'favourites',    name: 'Favourites ❤️',  icon: Heart },
-    { id: 'recently-sold', name: 'Recently Sold',  icon: Clock },
-    { id: 'top-sold',      name: 'Top Sold',       icon: TrendingUp },
+    { id: 'all', name: 'All Items', icon: Package },
+    { id: 'favourites', name: 'Favourites ❤️', icon: Heart },
+    { id: 'recently-sold', name: 'Recently Sold', icon: Clock },
+    { id: 'top-sold', name: 'Top Sold', icon: TrendingUp },
   ]), []);
 
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
@@ -896,7 +924,7 @@ export default function POSSales() {
         customerEmail: customer?.email || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : 'Cash + Card',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -909,6 +937,8 @@ export default function POSSales() {
           quantity: it.quantity || 0,
           unitPrice: it.price || 0,
           netAmount: it.total || 0,
+          discountPercent: it.discount || 0,
+          grossAmount: (it.quantity || 0) * (it.price || 0),
           batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
           serialNumber: it.serialNumber || '',
           voided: !!it.isVoided,
@@ -941,14 +971,29 @@ export default function POSSales() {
       return '';
     }
   }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
-      checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
-      tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
-      tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
-      tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
-      tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-      tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
+    checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
+    tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
+    tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
+    tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
+    tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
+    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Heartbeat — keeps the terminal ACTIVE on the server
+  useHeartbeat(
+    currentTerminal?.terminalId,
+    (posSettings?.heartbeatIntervalSeconds ?? 60) * 1000,
+  );
+
+  // Idle timeout — auto-lock the screen when no activity
+  useIdleTimeout({
+    timeoutMs: isSessionActive && posSettings?.sessionIdleTimeoutMinutes > 0
+      ? posSettings.sessionIdleTimeoutMinutes * 60_000 : 0,
+    touchIntervalMs: 30_000,
+    sessionId: currentSession?.id,
+    onIdle: () => { if (isSessionActive) setIsIdleLocked(true); },
+  });
 
   // Fetch the selected customer's outstanding balance for the checkout preview's
   // Credit Account section — same lookup used at actual print time.
@@ -968,6 +1013,22 @@ export default function POSSales() {
       .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
     return () => { cancelled = true; };
   }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
+
+  // Credit Balance function-button modal: auto-load the currently selected POS
+  // customer's due/credit balance on open, and refresh if the selection changes
+  // while the modal stays open (e.g. after a transaction updates their balance).
+  useEffect(() => {
+    if (!showCreditBalance || !selectedCustomerData || selectedCustomerData.id === 'walk-in') return;
+    const code = selectedCustomerData.code || selectedCustomerData.id;
+    if (!code) return;
+    setCreditBalanceQuery(selectedCustomerData.id);
+    let cancelled = false;
+    setCreditBalanceResult('searching');
+    posCreditBalance(code)
+      .then(res => { if (!cancelled) setCreditBalanceResult(res.found ? res : 'notfound'); })
+      .catch(() => { if (!cancelled) setCreditBalanceResult('notfound'); });
+    return () => { cancelled = true; };
+  }, [showCreditBalance, selectedCustomerData]);
 
   // Generate the preview ZATCA QR only when the QR is enabled and no stamp is
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
@@ -1003,7 +1064,7 @@ export default function POSSales() {
     } catch { setCheckoutPreviewQrDataUrl(null); }
     return () => { cancelled = true; };
   }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
-      currentInvoice, invoiceCounter, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
+    currentInvoice, invoiceCounter, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
 
   // Safety net: whenever the checkout overlay is fully dismissed, drop the
   // settle-freeze so the next sale's preview tracks the live cart again. Covers
@@ -1032,10 +1093,10 @@ export default function POSSales() {
     const query = customerSearchQuery.trim().toLowerCase();
     const list = query
       ? customerOptions.filter(c =>
-          [c.name, c.code, c.membershipId, c.phone, c.mobile, c.email, c.trn]
-            .filter(Boolean)
-            .some(value => String(value).toLowerCase().includes(query))
-        )
+        [c.name, c.code, c.membershipId, c.phone, c.mobile, c.email, c.trn]
+          .filter(Boolean)
+          .some(value => String(value).toLowerCase().includes(query))
+      )
       : customerOptions;
     return list.slice(0, 30);
   }, [customerOptions, customerSearchQuery]);
@@ -1069,6 +1130,22 @@ export default function POSSales() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPaymentDialog]);
+
+  // Lazily load configured bank accounts the first time the cashier opens checkout
+  // and switches to Online mode (or Credit mode, whose partial-receipt leg can also
+  // be received Online/Bank) — same list/endpoint Bank Reconciliation already uses.
+  useEffect(() => {
+    if (checkoutPayMode !== 'online' && checkoutPayMode !== 'credit') return;
+    if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
+    let cancelled = false;
+    setCheckoutOnlineBankAccountsLoading(true);
+    getBankAccounts()
+      .then(data => { if (!cancelled) setCheckoutOnlineBankAccounts(Array.isArray(data) ? data : []); })
+      .catch(err => { console.warn('Failed to load bank accounts', err); if (!cancelled) setCheckoutOnlineBankAccounts([]); })
+      .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutPayMode]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
@@ -1175,6 +1252,19 @@ export default function POSSales() {
               if (tpl.returnShowLogo != null) setTplReturnShowLogo(tpl.returnShowLogo);
               if (tpl.returnShowTrn != null) setTplReturnShowTrn(tpl.returnShowTrn);
               if (tpl.returnShowStamp != null) setTplReturnShowStamp(tpl.returnShowStamp);
+              if (tpl.returnShowCompanyDetails != null) setTplReturnShowCompanyDetails(tpl.returnShowCompanyDetails);
+              if (tpl.returnShowCustomerDetails != null) setTplReturnShowCustomerDetails(tpl.returnShowCustomerDetails);
+              if (tpl.returnColItemCode != null) setTplReturnColItemCode(tpl.returnColItemCode);
+              if (tpl.returnColBatchNo != null) setTplReturnColBatchNo(tpl.returnColBatchNo);
+              if (tpl.returnColDiscount != null) setTplReturnColDiscount(tpl.returnColDiscount);
+              if (tpl.returnColVatPct != null) setTplReturnColVatPct(tpl.returnColVatPct);
+              if (tpl.returnColVatAmt != null) setTplReturnColVatAmt(tpl.returnColVatAmt);
+              if (tpl.returnShowGrandTotalBanner != null) setTplReturnShowGrandTotalBanner(tpl.returnShowGrandTotalBanner);
+              if (tpl.returnShowTerms != null) setTplReturnShowTerms(tpl.returnShowTerms);
+              if (tpl.returnShowNotes != null) setTplReturnShowNotes(tpl.returnShowNotes);
+              if (tpl.returnShowQRCode != null) setTplReturnShowQRCode(tpl.returnShowQRCode);
+              if (tpl.returnShowSignature != null) setTplReturnShowSignature(tpl.returnShowSignature);
+              if (tpl.returnShowCreditBalance != null) setTplReturnShowCreditBalance(tpl.returnShowCreditBalance);
               if (tpl.jobCardFooter != null) setTplJobCardFooter(tpl.jobCardFooter);
               if (tpl.jobCardPaper != null) setTplJobCardPaper(tpl.jobCardPaper);
               if (tpl.jobCardShowLogo != null) setTplJobCardShowLogo(tpl.jobCardShowLogo);
@@ -1362,7 +1452,7 @@ export default function POSSales() {
         setPosProductsLoading(false);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearchQuery, selectedCategory]);
 
   useEffect(() => {
@@ -1477,18 +1567,30 @@ export default function POSSales() {
       setZReportData(null);
       setSessionNowMs(Date.now());
     } catch (err) {
-      // Fallback to in-memory session if backend unavailable
-      console.warn('Session API unavailable, falling back to local session', err);
-      setCurrentSession({
-        id: `SES-${Date.now()}`,
-        openingCash: total,
-        openingDenominations: { ...denominations },
-        openedAt: new Date().toISOString(),
-        status: 'OPEN'
-      });
-      setXReportData(null);
-      setZReportData(null);
-      setSessionNowMs(Date.now());
+      // Previous day's session was left open/suspended — block silent continuation and
+      // guide the user to close it instead of starting a new day on top of it (BBQA-5.3-013).
+      const serverMsg = err?.response?.data?.message || err?.response?.data;
+      if (err?.response?.status === 409 && typeof serverMsg === 'string' && serverMsg.includes('PREVIOUS_DAY_SESSION_OPEN')) {
+        const cleanMsg = serverMsg.replace('PREVIOUS_DAY_SESSION_OPEN: ', '');
+        // Message is built server-side as "Session #<id> on <date> (terminal <t>) is
+        // still <status>..." (PosSessionService.openSession) — pull the id out so
+        // "Go to Close Session" can load that exact stale session instead of landing
+        // on whatever report happens to be cached (BBQA follow-up: previously this
+        // button just switched views with no session loaded, so it silently showed
+        // a stale/unrelated X-Report instead of the blocking session).
+        const idMatch = cleanMsg.match(/Session #(\d+)/);
+        setPrevDaySessionOpenId(idMatch ? Number(idMatch[1]) : null);
+        setPrevDaySessionOpenMsg(cleanMsg);
+        return;
+      }
+      // Do NOT fabricate a local session here — a fake `SES-<timestamp>` id is never
+      // persisted server-side, so every downstream action (settle payment, session
+      // totals, X/Z reports) later fails with "not a valid Long value" once it's sent
+      // to an endpoint expecting the real numeric session id. Surface the real error
+      // and let the cashier retry instead.
+      console.error('Failed to open POS session', err);
+      alert(err?.response?.data?.message || 'Failed to open POS session. Please try again.');
+      return;
     }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
@@ -1529,11 +1631,24 @@ export default function POSSales() {
     }
   };
 
+  // Keeps cardSettlementVerified (the flag actually persisted by handleCloseSession)
+  // in sync with the terminal settlement amount typed into the Close Session modal's
+  // Card Settlement tab, so a cashier who enters a matching settlement doesn't also
+  // have to flip the legacy toggle on the X-Report page separately.
+  useEffect(() => {
+    if (!showCloseSessionDialog) return;
+    const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
+    const settled = parseFloat(cardSettlementAmount) || 0;
+    const isSettled = cardSettlementAmount !== '' && Math.abs(settled - sessionCardTotal) < 0.01;
+    setXReportCardVerified(isSettled);
+  }, [cardSettlementAmount, showCloseSessionDialog, xReportData]);
+
   // Single entry point for opening the Close Session modal: always refreshes
   // xReportData first so the modal's Expected/Actual/Variance match the X-Report
   // page exactly, instead of relying on a possibly-stale cached xReportData.
   const openCloseSessionDialog = () => {
     if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
+      setCardSettlementAmount('');
       setShowCloseSessionDialog(true);
       loadXReport();
     }
@@ -1577,10 +1692,10 @@ export default function POSSales() {
         newItems = prev.items.map(item =>
           item.id === product.id
             ? {
-                ...item,
-                quantity: item.quantity + qtyToAdd,
-                total: (item.quantity + qtyToAdd) * item.price * (1 - item.discount / 100)
-              }
+              ...item,
+              quantity: item.quantity + qtyToAdd,
+              total: (item.quantity + qtyToAdd) * item.price * (1 - item.discount / 100)
+            }
             : item
         );
       } else {
@@ -1600,7 +1715,7 @@ export default function POSSales() {
           price: unitPrice,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
-          taxRate: toNumber(product.salesTax, 5),
+          taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
@@ -1634,10 +1749,10 @@ export default function POSSales() {
       const newItems = prev.items.map(item =>
         item.id === itemId
           ? {
-              ...item,
-              quantity: newQuantity,
-              total: newQuantity * item.price * (1 - item.discount / 100)
-            }
+            ...item,
+            quantity: newQuantity,
+            total: newQuantity * item.price * (1 - item.discount / 100)
+          }
           : item
       );
       return recalculateInvoice(newItems);
@@ -1647,12 +1762,12 @@ export default function POSSales() {
   const updateDiscount = (itemId, discount) => {
     setCurrentInvoice(prev => {
       const newItems = prev.items.map(item =>
-        item.id === itemId 
-          ? { 
-              ...item, 
-              discount,
-              total: item.quantity * item.price * (1 - discount / 100)
-            }
+        item.id === itemId
+          ? {
+            ...item,
+            discount,
+            total: item.quantity * item.price * (1 - discount / 100)
+          }
           : item
       );
       return recalculateInvoice(newItems);
@@ -1741,6 +1856,17 @@ export default function POSSales() {
       setHandoverEmail('');
       setHandoverPassword('');
       setTerminalLockedBy(null);
+
+      // Handover unlocks the terminal but the ongoing session (owned by the
+      // previous cashier) still exists — resume it rather than falling through
+      // to "Start Session".
+      if (currentTerminal?.terminalId) {
+        try {
+          const active = await getActivePosSession(currentTerminal.terminalId);
+          if (active?.id) setCurrentSession(active);
+        } catch { /* no active session to resume */ }
+      }
+
       showFeedback(
         `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
         'success'
@@ -1843,6 +1969,8 @@ export default function POSSales() {
       cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
       cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
       cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
+      taxInclusive: !!posSettings?.taxInclusive,
+      defaultTaxRate: posSettings?.defaultTaxRate ?? 5,
     });
   };
 
@@ -1864,6 +1992,20 @@ export default function POSSales() {
       setSettingsDraft(null);
     } finally {
       setSettingsSaving(false);
+    }
+  };
+
+  // Tax mode (Exclusive/Inclusive + default VAT rate) is edited directly from the
+  // POS Configure quick sidebar, independent of the Behavior tab's settingsDraft,
+  // so it applies immediately without requiring a trip to Configure & customize.
+  const patchTaxSettings = async (changes) => {
+    const payload = { ...(posSettings || {}), ...changes };
+    setPosSettings(payload);
+    try {
+      const saved = await savePosSettings(payload);
+      setPosSettings(saved || payload);
+    } catch (err) {
+      console.warn('Failed to save POS tax settings', err);
     }
   };
 
@@ -1916,7 +2058,12 @@ export default function POSSales() {
       setZReportData(data);
       alert('Business day has been officially closed.');
     } catch (err) {
-      alert(err?.response?.data?.message || 'Failed to close business day.');
+      const body = err?.response?.data;
+      if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
+        setCloseDayVariance({ stage: body.stage, message: body.message, breakdown: body.breakdown });
+      } else {
+        alert(body?.message || 'Failed to close business day.');
+      }
     } finally {
       setZReportLoading(false);
     }
@@ -1975,12 +2122,12 @@ export default function POSSales() {
         unit: 'Each',
         price: item.price,
         discount: item.discount || 0,
-        taxRate: toNumber(item.taxRate, 5),
+        taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
         serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
       }));
-  }, [posSettings?.voidMode]);
+  }, [posSettings?.voidMode, posSettings?.defaultTaxRate]);
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
@@ -2068,6 +2215,22 @@ export default function POSSales() {
         ? customerOptions.find(c => String(c.id) === String(deliveryCustomerId)) || { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' }
         : { id: 'walk-in', name: deliveryNewName || 'Walk-in Customer', code: 'WALK-IN' };
 
+      // Previous balance must be read BEFORE posCheckout posts this invoice below —
+      // same reasoning as the main checkout flow. Nothing is collected at dispatch
+      // time, so the full invoice (incl. delivery charge) becomes outstanding until
+      // settled at delivery — the same accounting as a Credit sale.
+      let creditPrevBalAuto = null;
+      if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in') {
+        creditPrevBalAuto = 0;
+        const custCodeForBalance = customer?.code || customer?.id;
+        if (custCodeForBalance) {
+          try {
+            const cr = await posCreditBalance(custCodeForBalance);
+            if (cr?.found && cr.outstanding != null) creditPrevBalAuto = parseFloat(cr.outstanding) || 0;
+          } catch (_) { /* keep the 0 fallback so the section still renders */ }
+        }
+      }
+
       const payload = {
         customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
         customerName: customer.name,
@@ -2097,7 +2260,37 @@ export default function POSSales() {
         items: cartItemsToPayload(currentInvoice.items),
       };
 
-      await posCheckout(payload);
+      const savedInvoice = await posCheckout(payload);
+
+      if (tplInvoicePaper !== 'A4') {
+        try {
+          const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
+          const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
+          const creditAmountPaidAuto = creditPrevBalAuto != null ? 0 : null;
+          const creditUpdatedBalanceAuto = creditPrevBalAuto != null
+            ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
+            : null;
+          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+            full: savedInvoice,
+            customerPhone: customer?.phone,
+            customerEmail: customer?.email,
+            creditPreviousBalance: creditPrevBalAuto,
+            creditInvoiceCredit: creditInvoiceCreditAuto,
+            creditAmountPaid: creditAmountPaidAuto,
+            creditUpdatedBalance: creditUpdatedBalanceAuto,
+          });
+          await printThermalReceiptWithConfiguredPrinter({
+            full: savedInvoice,
+            html,
+            text,
+            escPosBase64,
+            title: `Delivery ${savedInvoice.invoiceNumber || ''}`.trim(),
+          });
+        } catch (printErr) {
+          console.warn('Out-for-delivery receipt print failed', printErr);
+        }
+      }
+
       setShowDeliveryModal(false);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
@@ -2120,9 +2313,16 @@ export default function POSSales() {
     } finally {
       setDeliveryOutLoading(false);
     }
+    // buildThermalReceiptArtifacts/printThermalReceiptWithConfiguredPrinter are
+    // intentionally omitted here — they're declared further down in this component,
+    // so referencing them in this array (evaluated immediately, before those consts
+    // exist yet on this render pass) throws "Cannot access before initialization".
+    // currentInvoice already forces this callback to be recreated on every cart
+    // change, so it picks up their current values in practice regardless.
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
-      deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
-      currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder]);
+    deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
+    currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
+    tplInvoiceShowBankDetails, tplInvoicePaper]);
 
   // Open the New Delivery Order dialog, pre-seeding the customer + default
   // address from whoever is already selected on the POS bill (a walk-in seeds
@@ -2230,6 +2430,33 @@ export default function POSSales() {
     }
   };
 
+  // Delete a held bill: cancel the underlying layaway (releases reserved stock)
+  // and refresh the held-sales list so the pill disappears.
+  const deleteHeldBill = (id) => {
+    const heldBill = heldSales.find(h => h.id === id);
+    setConfirmAction({
+      title: 'Delete Held Bill',
+      message: `Delete ${heldBill?.label || 'this held bill'}? Reserved stock will be released.`,
+      onConfirm: async () => {
+        setConfirmAction(prev => ({ ...prev, busy: true }));
+        try {
+          await cancelLayaway(id);
+          await loadHeldSales();
+          syncPosData();
+          setConfirmAction(null);
+        } catch (err) {
+          const status = err?.response?.status;
+          setConfirmAction(prev => ({
+            ...prev, busy: false,
+            error: status === 403
+              ? 'You do not have permission to delete a held bill (supervisor required).'
+              : (err?.response?.data?.message || 'Failed to delete held bill.'),
+          }));
+        }
+      },
+    });
+  };
+
   // ── Layaways ────────────────────────────────────────────────────────────────
   const loadLayaways = useCallback(async () => {
     setLayawaysLoading(true);
@@ -2331,7 +2558,7 @@ export default function POSSales() {
             showTrn: tplReceiptShowTrn,
           };
           if (tplReceiptPaper === 'A4') {
-            printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts));
+            printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts), { fast: true });
           } else {
             const printer = resolvePrinterForContext(printerConfigs, {
               deviceType: 'RECEIPT_PRINTER',
@@ -2339,7 +2566,7 @@ export default function POSSales() {
               terminalId: currentTerminal?.terminalId || null,
             });
             if (!printer) {
-              alert('No receipt printer is configured for this terminal — the layaway was saved, but the slip did not print. Set one up in Settings → Devices.');
+              notifyPrintFallback('No receipt printer is configured for this terminal — the layaway was saved, but the slip did not print. Set one up in Settings → Devices.');
             } else {
               try {
                 const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
@@ -2347,7 +2574,7 @@ export default function POSSales() {
                 await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
                 console.warn('ESC/POS print failed for layaway receipt', err);
-                alert(`The layaway was saved, but the slip didn't print: ${err?.message || 'printer error'}.`);
+                notifyPrintFallback(`The layaway was saved, but the slip didn't print: ${err?.message || 'printer error'}.`);
               }
             }
           }
@@ -2416,22 +2643,33 @@ export default function POSSales() {
     }
   };
 
-  const handleCancelLayaway = async (layawayId) => {
-    if (!window.confirm('Cancel this layaway? Reserved stock will be released.')) return;
-    setLayawayBusyId(layawayId);
-    try {
-      await cancelLayaway(layawayId);
-      if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
-      await loadLayaways();
-      syncPosData();
-    } catch (err) {
-      const status = err?.response?.status;
-      alert(status === 403
-        ? 'You do not have permission to cancel a layaway (supervisor required).'
-        : (err?.response?.data?.message || 'Failed to cancel layaway.'));
-    } finally {
-      setLayawayBusyId(null);
-    }
+  const handleCancelLayaway = (layawayId) => {
+    const lay = (layawaysList || []).find(l => l.id === layawayId);
+    setConfirmAction({
+      title: 'Cancel Layaway',
+      message: `Cancel ${lay?.layawayNumber || 'this layaway'}? Reserved stock will be released.`,
+      onConfirm: async () => {
+        setConfirmAction(prev => ({ ...prev, busy: true }));
+        setLayawayBusyId(layawayId);
+        try {
+          await cancelLayaway(layawayId);
+          if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
+          await loadLayaways();
+          syncPosData();
+          setConfirmAction(null);
+        } catch (err) {
+          const status = err?.response?.status;
+          setConfirmAction(prev => ({
+            ...prev, busy: false,
+            error: status === 403
+              ? 'You do not have permission to cancel a layaway (supervisor required).'
+              : (err?.response?.data?.message || 'Failed to cancel layaway.'),
+          }));
+        } finally {
+          setLayawayBusyId(null);
+        }
+      },
+    });
   };
 
   // ── Cash drawer control ────────────────────────────────────────────────────
@@ -2564,15 +2802,66 @@ export default function POSSales() {
     customerPhone = null,
     customerEmail = null,
     creditPreviousBalance = null,
+    creditInvoiceCredit = null,
+    creditAmountPaid = null,
+    creditUpdatedBalance = null,
     cashierNameOverride = null,
     depositApplied = null,
     balanceDue = null,
     shippingCharge = null,
   }) => {
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
-    const qrDataUrl = tplInvoiceShowQRCode
-      ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
-      : null;
+
+    // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
+    // needs the raw qrContent *string* — the printer renders its own QR natively, and
+    // dithers the logo raster if any) are independent of each other. Running them
+    // concurrently instead of one-after-the-other roughly halves the wait before the
+    // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
+    const qrDataUrlPromise = tplInvoiceShowQRCode
+      ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
+      : Promise.resolve(null);
+    const escPosPromise = buildEscPosReceiptBase64(tplInvoicePaper, full, {
+      companyName: tplOutletName,
+      trn: tplOutletTrn,
+      header: tplInvoiceHeader,
+      footer: tplInvoiceFooter,
+      showTrn: tplInvoiceShowTrn,
+      isReprint,
+      logoDataUrl: tplLogoDataUrl,
+      showLogo: tplInvoiceShowLogo,
+      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      outletAddress: tplOutletAddress,
+      outletPhone: tplOutletPhone,
+      showServiceCharge: tplInvoiceShowGrandTotalBanner,
+      showVatSummary: tplInvoiceColVatAmt,
+      showPaymentDetails: tplInvoiceColDiscount,
+      showQRCode: tplInvoiceShowQRCode,
+      qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      showCustomerDetails: tplInvoiceShowCustomerDetails,
+      showFooterText: tplInvoiceShowTerms,
+      cashierName: cashierNameOverride || cashierDisplayName,
+      terminalId: full.posTerminalId || currentTerminal?.terminalId,
+      counterName: full.posCounterName || currentTerminal?.counterName,
+      cashGiven,
+      changeAmount,
+      depositApplied,
+      balanceDue,
+      shippingCharge,
+      customerPhone,
+      customerEmail,
+      showCreditBalance: tplInvoiceShowBankDetails,
+      creditPreviousBalance,
+      creditInvoiceCredit,
+      creditAmountPaid,
+      creditUpdatedBalance,
+      currency: activeCurrency,
+    }).catch((err) => {
+      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
+      return null;
+    });
+
+    const [qrDataUrl, escPosBase64] = await Promise.all([qrDataUrlPromise, escPosPromise]);
+
     const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
@@ -2606,6 +2895,9 @@ export default function POSSales() {
       customerPhone,
       customerEmail,
       creditPreviousBalance,
+      creditInvoiceCredit,
+      creditAmountPaid,
+      creditUpdatedBalance,
       currency: activeCurrency,
       qrPlacement: tplInvoiceQrPlacement,
     });
@@ -2625,48 +2917,9 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
+      showCustomerDetails: tplInvoiceShowCustomerDetails,
       currency: activeCurrency,
     });
-    // Raw ESC/POS binary payload — the only path that actually carries
-    // density/heat/font/raster-image commands to the printer hardware
-    // (the HTML and plain-text paths above go through the Windows driver
-    // or a bare socket write with no print-quality control at all).
-    let escPosBase64 = null;
-    try {
-      escPosBase64 = await buildEscPosReceiptBase64(tplInvoicePaper, full, {
-        companyName: tplOutletName,
-        trn: tplOutletTrn,
-        header: tplInvoiceHeader,
-        footer: tplInvoiceFooter,
-        showTrn: tplInvoiceShowTrn,
-        isReprint,
-        logoDataUrl: tplLogoDataUrl,
-        showLogo: tplInvoiceShowLogo,
-        showCompanyDetails: tplInvoiceShowCompanyDetails,
-        outletAddress: tplOutletAddress,
-        outletPhone: tplOutletPhone,
-        showServiceCharge: tplInvoiceShowGrandTotalBanner,
-        showVatSummary: tplInvoiceColVatAmt,
-        showPaymentDetails: tplInvoiceColDiscount,
-        showQRCode: tplInvoiceShowQRCode,
-        qrContent: tplInvoiceShowQRCode ? qrContent : null,
-        showCustomerDetails: tplInvoiceShowCustomerDetails,
-        showFooterText: tplInvoiceShowTerms,
-        cashierName: cashierNameOverride || cashierDisplayName,
-        terminalId: full.posTerminalId || currentTerminal?.terminalId,
-        counterName: full.posCounterName || currentTerminal?.counterName,
-        cashGiven,
-        changeAmount,
-        depositApplied,
-        balanceDue,
-        shippingCharge,
-        customerPhone,
-        customerEmail,
-        currency: activeCurrency,
-      });
-    } catch (err) {
-      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
-    }
     return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
@@ -2681,6 +2934,14 @@ export default function POSSales() {
   // control, so thermal receipts no longer fall back to the plain-text agent
   // path or a browser/driver print dialog — a missing printer or a failed
   // ESC/POS send throws instead of silently degrading to a worse printout.
+  // notifyPrintFallback now reports that failure via the dismissible toast
+  // (bottom-of-screen) instead of a blocking alert() — same UI as before, just
+  // no longer paired with an actual browser-print fallback.
+  const notifyPrintFallback = useCallback((message) => {
+    setPrintFeedback({ type: 'error', message });
+    setTimeout(() => setPrintFeedback(null), 6000);
+  }, []);
+
   const printThermalReceiptWithConfiguredPrinter = useCallback(async ({
     full,
     text,
@@ -2721,17 +2982,37 @@ export default function POSSales() {
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
       const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
+      // Partial receipt against a Credit sale — the amount collected now (if any);
+      // the remainder posts to the customer's receivable balance.
+      const creditReceivedNum = checkoutPayMode === 'credit'
+        ? Math.min(parseFloat(checkoutCreditReceivedAmount) || 0, effectiveDueAmt)
+        : 0;
 
       // Build payment mode string
       let paymentMode = checkoutPayMode === 'cash' ? 'Cash'
         : checkoutPayMode === 'card' ? (checkoutCardType || 'Card')
-        : checkoutPayMode === 'credit' ? 'Credit'
-        : 'Cash + Card';
+          : checkoutPayMode === 'credit' ? 'Credit'
+            : checkoutPayMode === 'online' ? 'Online'
+              : 'Cash + Card';
       let combinedPaymentMode = checkoutPayMode === 'mixed' ? `Cash + ${mixedCardType || 'Card'}` : null;
       let amountTendered = checkoutPayMode === 'cash' ? tenderedNum
         : checkoutPayMode === 'card' ? grandTotal
-        : checkoutPayMode === 'credit' ? 0
-        : mixedCashNum + mixedCardNum;
+          : checkoutPayMode === 'credit' ? creditReceivedNum
+            : checkoutPayMode === 'online' ? grandTotal
+              : mixedCashNum + mixedCardNum;
+
+      // Selected bank account — for Online mode, or a Credit sale's partial receipt
+      // when it was collected Online/Bank — formatted "{code} - {name}" so the
+      // backend's resolveSelectedPaymentAccount() can resolve it to the exact
+      // Chart-of-Accounts row for GL posting + reconciliation.
+      const selectedOnlineAccount = checkoutPayMode === 'online'
+        ? checkoutOnlineBankAccounts.find(a => String(a.id) === String(checkoutOnlineBankAccountId))
+        : (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
+          ? checkoutOnlineBankAccounts.find(a => String(a.id) === String(checkoutCreditReceivedBankAccountId))
+          : null;
+      const bankAccountName = selectedOnlineAccount
+        ? `${selectedOnlineAccount.code || selectedOnlineAccount.accountCode || ''} - ${selectedOnlineAccount.name}`.trim()
+        : null;
 
       // Layaway conversion: the deposit was collected at layaway creation (not yet
       // posted), so it's pre-credited here as already-paid tender. The cashier only
@@ -2741,6 +3022,22 @@ export default function POSSales() {
       }
 
       const customer = selectedCustomerData;
+
+      // Credit account "Previous Balance" must be read BEFORE posCheckout() posts
+      // this invoice below — otherwise the lookup returns the balance AFTER this
+      // sale was added to the ledger, which is the Updated Balance, not Previous.
+      let creditPrevBalAuto = null;
+      if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in') {
+        creditPrevBalAuto = 0;
+        const custCodeForBalance = customer?.code || customer?.id;
+        if (custCodeForBalance) {
+          try {
+            const cr = await posCreditBalance(custCodeForBalance);
+            if (cr?.found && cr.outstanding != null) creditPrevBalAuto = parseFloat(cr.outstanding) || 0;
+          } catch (_) { /* keep the 0 fallback so the section still renders */ }
+        }
+      }
+
       // Voided lines are still sent (flagged) so they remain on the receipt,
       // audit log and reports. The backend excludes them from totals & stock.
       const items = currentInvoice.items
@@ -2751,7 +3048,7 @@ export default function POSSales() {
           unit: 'Each',
           price: item.price,
           discount: item.discount || 0,
-          taxRate: toNumber(item.taxRate, 5),
+          taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
           batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
           serialNumber: item.isVoided ? null : (item.serialNumber || null),
           voided: !!item.isVoided,
@@ -2763,10 +3060,21 @@ export default function POSSales() {
         paymentMode,
         combinedPaymentMode,
         amountTendered,
-        cashAmount: checkoutPayMode === 'mixed' ? mixedCashNum : (checkoutPayMode === 'cash' ? amountTendered : 0),
-        cardAmount: checkoutPayMode === 'mixed' ? mixedCardNum : (checkoutPayMode === 'card' ? grandTotal : 0),
-        cardReference: checkoutCardRef || null,
-        cardType: checkoutCardType || mixedCardType || null,
+        cashAmount: checkoutPayMode === 'mixed' ? mixedCashNum
+          : checkoutPayMode === 'cash' ? amountTendered
+            : (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash') ? creditReceivedNum
+              : 0,
+        cardAmount: checkoutPayMode === 'mixed' ? mixedCardNum
+          : checkoutPayMode === 'card' ? grandTotal
+            : (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Card') ? creditReceivedNum
+              : 0,
+        onlineAmount: (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
+          ? creditReceivedNum : 0,
+        cardReference: checkoutPayMode === 'credit' ? (checkoutCreditReceivedRef || null)
+          : checkoutPayMode === 'online' ? (checkoutOnlineReference || null)
+            : (checkoutCardRef || null),
+        cardType: checkoutPayMode === 'credit' ? (checkoutCreditReceivedCardType || null) : (checkoutCardType || mixedCardType || null),
+        bankAccountName,
         sessionId: currentSession?.id || null,
         terminalId: currentTerminal?.terminalId || null,
         counterName: currentTerminal?.counterName || null,
@@ -2787,12 +3095,25 @@ export default function POSSales() {
       const changeDue = checkoutPayMode === 'cash' ? Math.max(0, tenderedNum - effectiveDueAmt) : 0;
 
       // Cash drawer — open on cash settlement / completion, and again if change is due.
-      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0);
+      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
+        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
       if (cashTaken) {
         openCashDrawer('CASH_SETTLEMENT');
         openCashDrawer('CASH_PAYMENT');
       }
       if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
+
+      // Credit account posting for THIS invoice — same formula for every payment
+      // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
+      // already collected), Amount Paid is what was actually received against it now.
+      // A fully-settled cash/card/online/mixed sale nets to 0 (balance unchanged);
+      // an unpaid or partially-paid Credit sale carries the remainder forward.
+      const creditAppliedAmount = checkoutPayMode === 'credit' ? creditReceivedNum : effectiveDueAmt;
+      const creditInvoiceCreditAuto = creditPrevBalAuto != null ? effectiveDueAmt : null;
+      const creditAmountPaidAuto = creditPrevBalAuto != null ? creditAppliedAmount : null;
+      const creditUpdatedBalanceAuto = creditPrevBalAuto != null
+        ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
+        : null;
 
       const paid = {
         id: savedInvoice.invoiceNumber,
@@ -2805,7 +3126,17 @@ export default function POSSales() {
         depositAmount: depositSnapshot,
         paidAmount: checkoutPayMode === 'cash' ? tenderedNum
           : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum
-          : effectiveDueAmt,
+            : checkoutPayMode === 'credit' ? creditReceivedNum
+              : effectiveDueAmt,
+        creditBalance: checkoutPayMode === 'credit' ? Math.max(0, effectiveDueAmt - creditReceivedNum) : 0,
+        // Snapshotted here so the "Print Receipt" / "Last Receipt" reprint actions
+        // (which reuse lastPaidInvoice) show the same correct figures instead of
+        // re-querying the customer's balance, which by then already reflects this
+        // invoice and would be mislabeled as "previous".
+        creditPreviousBalance: creditPrevBalAuto,
+        creditInvoiceCredit: creditInvoiceCreditAuto,
+        creditAmountPaid: creditAmountPaidAuto,
+        creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
       if (tplInvoicePaper !== 'A4') {
@@ -2821,6 +3152,9 @@ export default function POSSales() {
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
             creditPreviousBalance: creditPrevBalAuto,
+            creditInvoiceCredit: creditInvoiceCreditAuto,
+            creditAmountPaid: creditAmountPaidAuto,
+            creditUpdatedBalance: creditUpdatedBalanceAuto,
             depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
             balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
             shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
@@ -2870,9 +3204,16 @@ export default function POSSales() {
       setCheckoutKeypadValue('');
       setCheckoutCardType('');
       setCheckoutCardRef('');
+      setCheckoutOnlineBankAccountId('');
+      setCheckoutOnlineReference('');
       setCheckoutRemarks('');
       setCheckoutCreditCustomer(null);
       setCheckoutCreditCustomerSearch('');
+      setCheckoutCreditReceivedMode('');
+      setCheckoutCreditReceivedAmount('');
+      setCheckoutCreditReceivedCardType('');
+      setCheckoutCreditReceivedRef('');
+      setCheckoutCreditReceivedBankAccountId('');
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
       // resets above (clearInvoice, setCheckoutPayMode, etc.) are committed
@@ -2896,7 +3237,7 @@ export default function POSSales() {
       setCheckoutLoading(false);
     }
   };
-  
+
   const handleKeypadInput = (value) => {
     if (value === 'C') {
       setTenderedAmount('');
@@ -2969,7 +3310,7 @@ export default function POSSales() {
         const full = await getSalesInvoiceById(inv.id);
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = buildPosA4Template(tplInvoiceFooter, { showLogo:tplInvoiceShowLogo, showCompanyDetails:tplInvoiceShowCompanyDetails, showTrn:tplInvoiceShowTrn, showCustomerDetails:tplInvoiceShowCustomerDetails, showTerms:tplInvoiceShowTerms, showNotes:tplInvoiceShowNotes, showBankDetails:tplInvoiceShowBankDetails, showQRCode:tplInvoiceShowQRCode, showStamp:tplInvoiceShowStamp, showSignature:tplInvoiceShowSignature, showGrandTotalBanner:tplInvoiceShowGrandTotalBanner, colItemCode:tplInvoiceColItemCode, colItemImage:tplInvoiceColItemImage, colBarcode:tplInvoiceColBarcode, colBatchNo:tplInvoiceColBatchNo, colDiscount:tplInvoiceColDiscount, colVatPct:tplInvoiceColVatPct, colVatAmt:tplInvoiceColVatAmt });
+          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
           const data = buildPosPrintData(full, tplInvoiceFooter);
           const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
@@ -2987,7 +3328,7 @@ export default function POSSales() {
           const isWalkIn = !full.customerName || full.customerName === 'Walk-in Customer';
           let creditPrevBal = null;
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
-            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) {}
+            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) { }
           }
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
@@ -3162,7 +3503,7 @@ export default function POSSales() {
       showFeedback('error', `No product found: ${value}`);
       setBarcodeInput('');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Back-compat alias: existing scan/keypad call sites add-to-cart.
@@ -3195,29 +3536,29 @@ export default function POSSales() {
 
   const renderSalesAnalytics = () => {
     const kpi = analyticsData?.kpi;
-    const pl  = analyticsData?.pipeline;
+    const pl = analyticsData?.pipeline;
     const fmt = (v) => v == null ? '—' : `AED ${Number(v).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const fmtN = (v) => v == null ? '—' : String(v);
 
     const kpis = [
-      { label: 'Total Sales',            value: kpi ? fmt(kpi.totalSales)        : '—', sub: kpi ? `${kpi.invoiceCount} invoices` : '—', trend: 'up',  icon: <TrendingUp className="h-5 w-5" />,    color: '#327F74' },
-      { label: 'Total Receivables',      value: kpi ? fmt(kpi.totalReceivables)  : '—', sub: 'Outstanding balance',                       trend: 'neu', icon: <Wallet className="h-5 w-5" />,        color: '#F59E0B' },
-      { label: 'Pending Quotations',     value: fmtN(kpi?.pendingQuotations),             sub: 'Pending approval / active',                trend: 'neu', icon: <FileText className="h-5 w-5" />,      color: '#6366F1' },
-      { label: 'Open Sales Orders',      value: fmtN(kpi?.openSalesOrders),               sub: 'Confirmed & in progress',                  trend: 'neu', icon: <ShoppingCart className="h-5 w-5" />,  color: '#8B5CF6' },
-      { label: 'Pending Proforma',       value: fmtN(kpi?.pendingProforma),               sub: 'Draft proforma invoices',                  trend: 'neu', icon: <FileBarChart className="h-5 w-5" />,  color: '#0EA5E9' },
-      { label: 'Pending Delivery Notes', value: fmtN(kpi?.pendingDeliveryNotes),          sub: 'Draft / dispatched',                       trend: 'neu', icon: <Truck className="h-5 w-5" />,         color: '#F97316' },
-      { label: 'Overdue Invoices',       value: fmtN(kpi?.overdueInvoices),               sub: 'Unpaid >30 days',                          trend: kpi?.overdueInvoices > 0 ? 'warn' : 'neu', icon: <AlertTriangle className="h-5 w-5" />, color: '#EF4444' },
-      { label: 'Sales Returns Value',    value: kpi ? fmt(kpi.salesReturnsValue) : '—', sub: 'Period total',                              trend: 'neu', icon: <RotateCcw className="h-5 w-5" />,     color: '#EC4899' },
-      { label: 'Credit Notes Value',     value: kpi ? fmt(kpi.creditNotesValue)  : '—', sub: 'Period total',                              trend: 'neu', icon: <CreditCard className="h-5 w-5" />,    color: '#14B8A6' },
+      { label: 'Total Sales', value: kpi ? fmt(kpi.totalSales) : '—', sub: kpi ? `${kpi.invoiceCount} invoices` : '—', trend: 'up', icon: <TrendingUp className="h-5 w-5" />, color: '#327F74' },
+      { label: 'Total Receivables', value: kpi ? fmt(kpi.totalReceivables) : '—', sub: 'Outstanding balance', trend: 'neu', icon: <Wallet className="h-5 w-5" />, color: '#F59E0B' },
+      { label: 'Pending Quotations', value: fmtN(kpi?.pendingQuotations), sub: 'Pending approval / active', trend: 'neu', icon: <FileText className="h-5 w-5" />, color: '#6366F1' },
+      { label: 'Open Sales Orders', value: fmtN(kpi?.openSalesOrders), sub: 'Confirmed & in progress', trend: 'neu', icon: <ShoppingCart className="h-5 w-5" />, color: '#8B5CF6' },
+      { label: 'Pending Proforma', value: fmtN(kpi?.pendingProforma), sub: 'Draft proforma invoices', trend: 'neu', icon: <FileBarChart className="h-5 w-5" />, color: '#0EA5E9' },
+      { label: 'Pending Delivery Notes', value: fmtN(kpi?.pendingDeliveryNotes), sub: 'Draft / dispatched', trend: 'neu', icon: <Truck className="h-5 w-5" />, color: '#F97316' },
+      { label: 'Overdue Invoices', value: fmtN(kpi?.overdueInvoices), sub: 'Unpaid >30 days', trend: kpi?.overdueInvoices > 0 ? 'warn' : 'neu', icon: <AlertTriangle className="h-5 w-5" />, color: '#EF4444' },
+      { label: 'Sales Returns Value', value: kpi ? fmt(kpi.salesReturnsValue) : '—', sub: 'Period total', trend: 'neu', icon: <RotateCcw className="h-5 w-5" />, color: '#EC4899' },
+      { label: 'Credit Notes Value', value: kpi ? fmt(kpi.creditNotesValue) : '—', sub: 'Period total', trend: 'neu', icon: <CreditCard className="h-5 w-5" />, color: '#14B8A6' },
     ];
 
     const pipelineStages = [
-      { stage: 'Quotation',     count: pl?.quotations       ?? 0, value: pl?.quotationsValue    ?? 0, icon: <FileText className="h-4 w-4" />,     color: '#6366F1' },
-      { stage: 'Sales Order',   count: pl?.salesOrders      ?? 0, value: pl?.salesOrdersValue   ?? 0, icon: <ShoppingCart className="h-4 w-4" />, color: '#8B5CF6' },
-      { stage: 'Proforma Inv.', count: pl?.proformaInvoices ?? 0, value: pl?.proformaValue      ?? 0, icon: <FileBarChart className="h-4 w-4" />, color: '#0EA5E9' },
-      { stage: 'Delivery Note', count: pl?.deliveryNotes    ?? 0, value: pl?.deliveryNotesValue ?? 0, icon: <Truck className="h-4 w-4" />,        color: '#F97316' },
-      { stage: 'Sales Invoice', count: pl?.invoices         ?? 0, value: pl?.invoicesValue      ?? 0, icon: <Receipt className="h-4 w-4" />,      color: '#327F74' },
-      { stage: 'Receipt',       count: pl?.receipts         ?? 0, value: pl?.receiptsValue      ?? 0, icon: <CheckCircle className="h-4 w-4" />,  color: '#22C55E' },
+      { stage: 'Quotation', count: pl?.quotations ?? 0, value: pl?.quotationsValue ?? 0, icon: <FileText className="h-4 w-4" />, color: '#6366F1' },
+      { stage: 'Sales Order', count: pl?.salesOrders ?? 0, value: pl?.salesOrdersValue ?? 0, icon: <ShoppingCart className="h-4 w-4" />, color: '#8B5CF6' },
+      { stage: 'Proforma Inv.', count: pl?.proformaInvoices ?? 0, value: pl?.proformaValue ?? 0, icon: <FileBarChart className="h-4 w-4" />, color: '#0EA5E9' },
+      { stage: 'Delivery Note', count: pl?.deliveryNotes ?? 0, value: pl?.deliveryNotesValue ?? 0, icon: <Truck className="h-4 w-4" />, color: '#F97316' },
+      { stage: 'Sales Invoice', count: pl?.invoices ?? 0, value: pl?.invoicesValue ?? 0, icon: <Receipt className="h-4 w-4" />, color: '#327F74' },
+      { stage: 'Receipt', count: pl?.receipts ?? 0, value: pl?.receiptsValue ?? 0, icon: <CheckCircle className="h-4 w-4" />, color: '#22C55E' },
     ];
 
     const agingData = (analyticsData?.agingBuckets ?? []);
@@ -3226,17 +3567,17 @@ export default function POSSales() {
     const salesTrendData = (analyticsData?.salesTrend ?? []);
     const paymentSplitData = (analyticsData?.paymentBreakdown ?? []).map((p, i) => ({
       name: p.name, value: p.value,
-      fill: ['#F5C742','#327F74','#6366F1','#EC4899','#0EA5E9'][i % 5],
+      fill: ['#F5C742', '#327F74', '#6366F1', '#EC4899', '#0EA5E9'][i % 5],
     }));
     const branchSalesData = (analyticsData?.branchSales ?? []).map(b => ({ branch: b.name, sales: b.value, returns: 0 }));
     const returnReasonData = [];
 
     const tabs = [
-      { id: 'pipeline',    label: 'Sales Pipeline'        },
-      { id: 'receivables', label: 'Receivables'           },
-      { id: 'customers',   label: 'Customer Analytics'    },
-      { id: 'invoices',    label: 'Invoice & POS'         },
-      { id: 'returns',     label: 'Returns & Credit Notes' },
+      { id: 'pipeline', label: 'Sales Pipeline' },
+      { id: 'receivables', label: 'Receivables' },
+      { id: 'customers', label: 'Customer Analytics' },
+      { id: 'invoices', label: 'Invoice & POS' },
+      { id: 'returns', label: 'Returns & Credit Notes' },
     ];
 
     const GOLD = '#F5C742';
@@ -3300,14 +3641,14 @@ export default function POSSales() {
                 <label className="text-xs text-gray-400">Branch</label>
                 <select value={analyticsBranch} onChange={e => setAnalyticsBranch(e.target.value)}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-[#1E293B] bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40">
-                  {['All','Dubai Mall','Deira City','Ibn Battuta','Mirdif City','Online'].map(b => <option key={b}>{b}</option>)}
+                  {['All', 'Dubai Mall', 'Deira City', 'Ibn Battuta', 'Mirdif City', 'Online'].map(b => <option key={b}>{b}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-400">Payment Mode</label>
                 <select value={analyticsPayMode} onChange={e => setAnalyticsPayMode(e.target.value)}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-[#1E293B] bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40">
-                  {['All','Cash','Card','Credit','Mixed'].map(m => <option key={m}>{m}</option>)}
+                  {['All', 'Cash', 'Card', 'Credit', 'Mixed'].map(m => <option key={m}>{m}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
@@ -3354,8 +3695,8 @@ export default function POSSales() {
                   <div className="p-2 rounded-lg" style={{ background: k.color + '18', color: k.color }}>
                     {k.icon}
                   </div>
-                  {k.trend === 'up'   && <TrendingUp   className="h-4 w-4 text-green-500" />}
-                  {k.trend === 'down' && <TrendingDown  className="h-4 w-4 text-red-500"   />}
+                  {k.trend === 'up' && <TrendingUp className="h-4 w-4 text-green-500" />}
+                  {k.trend === 'down' && <TrendingDown className="h-4 w-4 text-red-500" />}
                   {k.trend === 'warn' && <AlertTriangle className="h-4 w-4 text-amber-400" />}
                 </div>
                 <p className="text-xs text-gray-400 leading-tight">{k.label}</p>
@@ -3423,21 +3764,21 @@ export default function POSSales() {
                   <AreaChart data={salesTrendData} margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
                     <defs>
                       <linearGradient id="gradSales" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor={GOLD} stopOpacity={0.25} />
-                        <stop offset="95%" stopColor={GOLD} stopOpacity={0}    />
+                        <stop offset="5%" stopColor={GOLD} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={GOLD} stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="gradPOS" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#327F74" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#327F74" stopOpacity={0}   />
+                        <stop offset="5%" stopColor="#327F74" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#327F74" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" />
                     <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                     <ReTooltip formatter={(v, name) => [`AED ${v.toLocaleString()}`, name]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Area type="monotone" dataKey="sales" name="Total Sales" stroke={GOLD} strokeWidth={2} fill="url(#gradSales)" />
-                    <Area type="monotone" dataKey="pos"   name="POS Sales"   stroke="#327F74" strokeWidth={2} fill="url(#gradPOS)" />
+                    <Area type="monotone" dataKey="pos" name="POS Sales" stroke="#327F74" strokeWidth={2} fill="url(#gradPOS)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -3452,10 +3793,10 @@ export default function POSSales() {
                   <BarChart data={branchSalesData} margin={{ top: 0, right: 20, left: 10, bottom: 0 }} barCategoryGap="35%">
                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" vertical={false} />
                     <XAxis dataKey="branch" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                     <ReTooltip formatter={(v, name) => [`AED ${v.toLocaleString()}`, name]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
-                    <Bar dataKey="sales"   name="Sales"   fill={GOLD}     radius={[4,4,0,0]} />
-                    <Bar dataKey="returns" name="Returns" fill="#F87171"   radius={[4,4,0,0]} />
+                    <Bar dataKey="sales" name="Sales" fill={GOLD} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="returns" name="Returns" fill="#F87171" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -3468,7 +3809,7 @@ export default function POSSales() {
               {/* Aging summary */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {agingData.map((a, i) => {
-                  const colors = ['#22C55E','#F59E0B','#F97316','#EF4444'];
+                  const colors = ['#22C55E', '#F59E0B', '#F97316', '#EF4444'];
                   return (
                     <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                       <div className="flex items-center justify-between mb-2">
@@ -3492,24 +3833,24 @@ export default function POSSales() {
                   Outstanding vs Overdue Receivables Trend
                 </h2>
                 <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={salesTrendData.map((d,i) => ({ ...d, outstanding: [48320,44200,51800,39400,46600,48320][i], overdue: [22130,18400,26100,17200,20400,22130][i] }))} margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
+                  <AreaChart data={salesTrendData.map((d, i) => ({ ...d, outstanding: [48320, 44200, 51800, 39400, 46600, 48320][i], overdue: [22130, 18400, 26100, 17200, 20400, 22130][i] }))} margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
                     <defs>
                       <linearGradient id="gradOut" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#0EA5E9" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#0EA5E9" stopOpacity={0}   />
+                        <stop offset="5%" stopColor="#0EA5E9" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#0EA5E9" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="gradOver" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#EF4444" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#EF4444" stopOpacity={0}   />
+                        <stop offset="5%" stopColor="#EF4444" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" />
                     <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                     <ReTooltip formatter={(v, name) => [`AED ${v.toLocaleString()}`, name]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Area type="monotone" dataKey="outstanding" name="Outstanding" stroke="#0EA5E9" strokeWidth={2} fill="url(#gradOut)"  />
-                    <Area type="monotone" dataKey="overdue"     name="Overdue"     stroke="#EF4444" strokeWidth={2} fill="url(#gradOver)" />
+                    <Area type="monotone" dataKey="outstanding" name="Outstanding" stroke="#0EA5E9" strokeWidth={2} fill="url(#gradOut)" />
+                    <Area type="monotone" dataKey="overdue" name="Overdue" stroke="#EF4444" strokeWidth={2} fill="url(#gradOver)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -3521,32 +3862,32 @@ export default function POSSales() {
                   Top Overdue Customers
                 </h2>
                 <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      {['Customer','Mobile','Overdue Amount','Days Overdue','Action'].map(h => (
-                        <th key={h} className="text-left py-2 px-3 text-xs text-gray-400">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topOverdue.map((c, i) => (
-                      <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-3 text-[#1E293B]">{c.name}</td>
-                        <td className="py-3 px-3 text-gray-500">{c.mobile}</td>
-                        <td className="py-3 px-3 text-red-600"><DirhamSymbol /> {c.amount.toLocaleString()}</td>
-                        <td className="py-3 px-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs ${c.days > 90 ? 'bg-red-100 text-red-700' : c.days > 60 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {c.days} days
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <button className="text-xs text-[#327F74] hover:underline">Send Reminder</button>
-                        </td>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        {['Customer', 'Mobile', 'Overdue Amount', 'Days Overdue', 'Action'].map(h => (
+                          <th key={h} className="text-left py-2 px-3 text-xs text-gray-400">{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {topOverdue.map((c, i) => (
+                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                          <td className="py-3 px-3 text-[#1E293B]">{c.name}</td>
+                          <td className="py-3 px-3 text-gray-500">{c.mobile}</td>
+                          <td className="py-3 px-3 text-red-600"><DirhamSymbol /> {c.amount.toLocaleString()}</td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${c.days > 90 ? 'bg-red-100 text-red-700' : c.days > 60 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {c.days} days
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <button className="text-xs text-[#327F74] hover:underline">Send Reminder</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -3558,10 +3899,10 @@ export default function POSSales() {
               {/* Customer summary stats */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
-                  { label: 'Total Customers',    value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.totalCustomers) : '—', icon: <Users className="h-4 w-4" />,     color: '#327F74' },
-                  { label: 'New This Period',     value: '—', icon: <UserPlus className="h-4 w-4" />,  color: '#22C55E' },
-                  { label: 'Active Customers',    value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.activeCustomers) : '—', icon: <UserCheck className="h-4 w-4" />, color: '#6366F1' },
-                  { label: 'Inactive (90+ days)', value: '—', icon: <User className="h-4 w-4" />,      color: '#94A3B8' },
+                  { label: 'Total Customers', value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.totalCustomers) : '—', icon: <Users className="h-4 w-4" />, color: '#327F74' },
+                  { label: 'New This Period', value: '—', icon: <UserPlus className="h-4 w-4" />, color: '#22C55E' },
+                  { label: 'Active Customers', value: analyticsData?.customerMetrics ? String(analyticsData.customerMetrics.activeCustomers) : '—', icon: <UserCheck className="h-4 w-4" />, color: '#6366F1' },
+                  { label: 'Inactive (90+ days)', value: '—', icon: <User className="h-4 w-4" />, color: '#94A3B8' },
                 ].map((s, i) => (
                   <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
                     <div className="p-3 rounded-xl" style={{ background: s.color + '15', color: s.color }}>
@@ -3585,42 +3926,42 @@ export default function POSSales() {
                   <button className="text-xs text-[#327F74] hover:underline">View All</button>
                 </div>
                 <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      {['#','Customer','Invoices','Total Sales','Outstanding','Purchase Trend'].map(h => (
-                        <th key={h} className="text-left py-2 px-3 text-xs text-gray-400">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topCustomers.map((c, i) => (
-                      <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                        <td className="py-3 px-3">
-                          <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs" style={{ background: i < 3 ? GOLD + '30' : '#F1F5F9', color: i < 3 ? '#B8860B' : '#94A3B8' }}>
-                            {i + 1}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-[#1E293B]">{c.name}</td>
-                        <td className="py-3 px-3 text-gray-500">{c.invoices}</td>
-                        <td className="py-3 px-3 text-[#1E293B]"><DirhamSymbol /> {c.sales.toLocaleString()}</td>
-                        <td className="py-3 px-3">
-                          {c.outstanding > 0
-                            ? <span className="text-amber-600"><DirhamSymbol /> {c.outstanding.toLocaleString()}</span>
-                            : <span className="text-green-500">Cleared</span>}
-                        </td>
-                        <td className="py-3 px-3">
-                          {/* Tiny sparkline bars */}
-                          <div className="flex items-end gap-0.5 h-6">
-                            {[0.5,0.7,0.4,0.9,0.8,1.0].map((v, j) => (
-                              <div key={j} className="w-2 rounded-sm" style={{ height: `${v*100}%`, background: '#327F74', opacity: 0.4 + v * 0.6 }} />
-                            ))}
-                          </div>
-                        </td>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        {['#', 'Customer', 'Invoices', 'Total Sales', 'Outstanding', 'Purchase Trend'].map(h => (
+                          <th key={h} className="text-left py-2 px-3 text-xs text-gray-400">{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {topCustomers.map((c, i) => (
+                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                          <td className="py-3 px-3">
+                            <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs" style={{ background: i < 3 ? GOLD + '30' : '#F1F5F9', color: i < 3 ? '#B8860B' : '#94A3B8' }}>
+                              {i + 1}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-[#1E293B]">{c.name}</td>
+                          <td className="py-3 px-3 text-gray-500">{c.invoices}</td>
+                          <td className="py-3 px-3 text-[#1E293B]"><DirhamSymbol /> {c.sales.toLocaleString()}</td>
+                          <td className="py-3 px-3">
+                            {c.outstanding > 0
+                              ? <span className="text-amber-600"><DirhamSymbol /> {c.outstanding.toLocaleString()}</span>
+                              : <span className="text-green-500">Cleared</span>}
+                          </td>
+                          <td className="py-3 px-3">
+                            {/* Tiny sparkline bars */}
+                            <div className="flex items-end gap-0.5 h-6">
+                              {[0.5, 0.7, 0.4, 0.9, 0.8, 1.0].map((v, j) => (
+                                <div key={j} className="w-2 rounded-sm" style={{ height: `${v * 100}%`, background: '#327F74', opacity: 0.4 + v * 0.6 }} />
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
@@ -3637,8 +3978,8 @@ export default function POSSales() {
                     <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
                     <ReTooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="new"       name="New Customers"       fill="#22C55E" radius={[4,4,0,0]} />
-                    <Bar dataKey="returning" name="Returning Customers" fill={GOLD}    radius={[4,4,0,0]} />
+                    <Bar dataKey="new" name="New Customers" fill="#22C55E" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="returning" name="Returning Customers" fill={GOLD} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -3659,13 +4000,13 @@ export default function POSSales() {
                     <AreaChart data={salesTrendData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                       <defs>
                         <linearGradient id="gradInv" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={GOLD}    stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={GOLD}    stopOpacity={0}   />
+                          <stop offset="5%" stopColor={GOLD} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={GOLD} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" />
                       <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                      <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                       <ReTooltip formatter={(v) => [`AED ${v.toLocaleString()}`]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
                       <Area type="monotone" dataKey="sales" name="Invoiced" stroke={GOLD} strokeWidth={2} fill="url(#gradInv)" />
                     </AreaChart>
@@ -3703,9 +4044,9 @@ export default function POSSales() {
               {/* POS trend + avg invoice */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
-                  { label: 'Average Invoice Value', value: kpi ? fmt(kpi.avgInvoiceValue)  : '—', sub: 'Per invoice', icon: <DollarSign className="h-4 w-4" />, color: '#327F74' },
-                  { label: 'Total Invoices Issued',  value: kpi ? fmtN(kpi.invoiceCount)   : '—', sub: 'In period',   icon: <FileText className="h-4 w-4" />,   color: '#6366F1' },
-                  { label: 'POS Transactions',       value: '—', sub: '—', icon: <ShoppingCart className="h-4 w-4" />, color: GOLD },
+                  { label: 'Average Invoice Value', value: kpi ? fmt(kpi.avgInvoiceValue) : '—', sub: 'Per invoice', icon: <DollarSign className="h-4 w-4" />, color: '#327F74' },
+                  { label: 'Total Invoices Issued', value: kpi ? fmtN(kpi.invoiceCount) : '—', sub: 'In period', icon: <FileText className="h-4 w-4" />, color: '#6366F1' },
+                  { label: 'POS Transactions', value: '—', sub: '—', icon: <ShoppingCart className="h-4 w-4" />, color: GOLD },
                 ].map((s, i) => (
                   <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-4">
                     <div className="p-3 rounded-xl" style={{ background: s.color + '15', color: s.color }}>
@@ -3730,9 +4071,9 @@ export default function POSSales() {
                   <BarChart data={salesTrendData} barCategoryGap="30%">
                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" vertical={false} />
                     <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                     <ReTooltip formatter={(v) => [`AED ${v.toLocaleString()}`]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
-                    <Bar dataKey="pos" name="POS Sales" fill="#327F74" radius={[4,4,0,0]} />
+                    <Bar dataKey="pos" name="POS Sales" fill="#327F74" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -3745,10 +4086,10 @@ export default function POSSales() {
               {/* Returns KPI row */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {[
-                  { label: 'Sales Return Value',   value: analyticsData?.returnMetrics ? fmt(analyticsData.returnMetrics.salesReturnsValue) : '—', sub: '—', icon: <RotateCcw className="h-4 w-4" />,  color: '#EC4899' },
-                  { label: 'Credit Notes Value',   value: '—', sub: '—', icon: <CreditCard className="h-4 w-4" />, color: '#14B8A6' },
-                  { label: 'Total Return Txns',    value: analyticsData?.returnMetrics ? fmtN(analyticsData.returnMetrics.returnCount) : '—', sub: '—', icon: <Package className="h-4 w-4" />,    color: '#F97316' },
-                  { label: 'Return %',             value: analyticsData?.returnMetrics ? `${analyticsData.returnMetrics.returnPct.toFixed(1)}%` : '—', sub: 'of sales', icon: <Percent className="h-4 w-4" />,    color: '#6366F1' },
+                  { label: 'Sales Return Value', value: analyticsData?.returnMetrics ? fmt(analyticsData.returnMetrics.salesReturnsValue) : '—', sub: '—', icon: <RotateCcw className="h-4 w-4" />, color: '#EC4899' },
+                  { label: 'Credit Notes Value', value: '—', sub: '—', icon: <CreditCard className="h-4 w-4" />, color: '#14B8A6' },
+                  { label: 'Total Return Txns', value: analyticsData?.returnMetrics ? fmtN(analyticsData.returnMetrics.returnCount) : '—', sub: '—', icon: <Package className="h-4 w-4" />, color: '#F97316' },
+                  { label: 'Return %', value: analyticsData?.returnMetrics ? `${analyticsData.returnMetrics.returnPct.toFixed(1)}%` : '—', sub: 'of sales', icon: <Percent className="h-4 w-4" />, color: '#6366F1' },
                 ].map((s, i) => (
                   <div key={i} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
                     <div className="p-3 rounded-xl" style={{ background: s.color + '15', color: s.color }}>
@@ -3773,20 +4114,20 @@ export default function POSSales() {
                   <AreaChart data={salesTrendData} margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
                     <defs>
                       <linearGradient id="gS2" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor={GOLD}    stopOpacity={0.2} />
-                        <stop offset="95%" stopColor={GOLD}    stopOpacity={0}   />
+                        <stop offset="5%" stopColor={GOLD} stopOpacity={0.2} />
+                        <stop offset="95%" stopColor={GOLD} stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="gR2" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#EC4899" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#EC4899" stopOpacity={0}   />
+                        <stop offset="5%" stopColor="#EC4899" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#EC4899" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F4" />
                     <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
                     <ReTooltip formatter={(v, name) => [`AED ${v.toLocaleString()}`, name]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Area type="monotone" dataKey="sales"   name="Sales"   stroke={GOLD}    strokeWidth={2} fill="url(#gS2)" />
+                    <Area type="monotone" dataKey="sales" name="Sales" stroke={GOLD} strokeWidth={2} fill="url(#gS2)" />
                     <Area type="monotone" dataKey="returns" name="Returns" stroke="#EC4899" strokeWidth={2} fill="url(#gR2)" />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -3809,7 +4150,7 @@ export default function POSSales() {
                             <span className="text-sm text-[#1E293B]">{r.count} ({Math.round(r.count / returnReasonData.reduce((s, x) => s + x.count, 0) * 100)}%)</span>
                           </div>
                           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${r.count / maxCount * 100}%`, background: ['#EC4899','#F97316','#F59E0B','#6366F1','#14B8A6'][i] }} />
+                            <div className="h-full rounded-full" style={{ width: `${r.count / maxCount * 100}%`, background: ['#EC4899', '#F97316', '#F59E0B', '#6366F1', '#14B8A6'][i] }} />
                           </div>
                         </div>
                       );
@@ -3823,20 +4164,20 @@ export default function POSSales() {
                     Credit Notes Detail
                   </h2>
                   <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100">
-                        {['Credit Note #','Customer','Amount','Status'].map(h => (
-                          <th key={h} className="text-left py-2 px-2 text-xs text-gray-400">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td colSpan={4} className="py-6 text-center text-xs text-gray-400">No credit notes to display</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100">
+                          {['Credit Note #', 'Customer', 'Amount', 'Status'].map(h => (
+                            <th key={h} className="text-left py-2 px-2 text-xs text-gray-400">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td colSpan={4} className="py-6 text-center text-xs text-gray-400">No credit notes to display</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -4132,35 +4473,39 @@ export default function POSSales() {
     const zSummary = zReportData?.summary || {};
     const zSessions = zReportData?.sessions || [];
     const zInvoices = zReportData?.invoices || [];
-    const totalSalesV  = Number(zSummary.totalSales  ?? 0);
-    const cashSalesV   = Number(zSummary.cashSales   ?? 0);
-    const cardSalesV   = Number(zSummary.cardSales   ?? 0);
+    const totalSalesV = Number(zSummary.totalSales ?? 0);
+    const cashSalesV = Number(zSummary.cashSales ?? 0);
+    const cardSalesV = Number(zSummary.cardSales ?? 0);
     const creditSalesV = Number(zSummary.creditSales ?? 0);
-    const totalTaxV    = Number(zSummary.totalTax    ?? 0);
-    const salesExTaxV  = Number(zSummary.salesAmountExTax ?? 0);
-    const discountV    = Number(zSummary.totalDiscount    ?? 0);
-    const itemsSoldV   = zSummary.totalItemsSold ?? 0;
-    const invoiceCount = zSummary.invoiceCount   ?? 0;
-    const sessionCount = zSummary.sessionCount   ?? zSessions.length;
-    const openingCash  = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
+    // Online payments are tendered against a bank account, so they land in the
+    // same reconciliation bucket as generic bank transfers (see POS backend
+    // tenderBucket()).
+    const bankTransferSalesV = Number(zSummary.bankTransferSales ?? 0);
+    const totalTaxV = Number(zSummary.totalTax ?? 0);
+    const salesExTaxV = Number(zSummary.salesAmountExTax ?? 0);
+    const discountV = Number(zSummary.totalDiscount ?? 0);
+    const itemsSoldV = zSummary.totalItemsSold ?? 0;
+    const invoiceCount = zSummary.invoiceCount ?? 0;
+    const sessionCount = zSummary.sessionCount ?? zSessions.length;
+    const openingCash = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
     const expectedCash = openingCash + cashSalesV;
     const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
     const zId = zSessions[0]?.id;
-    const reportNo = zId ? `ZR-${String(zId).padStart(9,'0')}` : `ZR-${zReportDate?.replace(/-/g,'')}-001`;
+    const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
 
     const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-    const creditTotal    = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
-    const invNums        = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
+    const creditTotal = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
+    const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
     // Detailed void/removal + per-cashier collection from the backend.
-    const postedVoids    = Array.isArray(zReportData?.voids) ? zReportData.voids : [];
-    const cartRemovals   = Array.isArray(zReportData?.cartRemovals) ? zReportData.cartRemovals : [];
-    const cashierRows    = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
-    const totalPaidV     = Number(zSummary.totalPaid ?? totalSalesV);
-    const voidAmountV    = Number(zSummary.voidAmount ?? 0);
-    const refundTotal    = Number(zSummary.totalRefunds ?? 0);
-    const actualCash     = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
-    const cashVariance   = actualCash - expectedCash;
-    const zCashierLabel  = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
+    const postedVoids = Array.isArray(zReportData?.voids) ? zReportData.voids : [];
+    const cartRemovals = Array.isArray(zReportData?.cartRemovals) ? zReportData.cartRemovals : [];
+    const cashierRows = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
+    const totalPaidV = Number(zSummary.totalPaid ?? totalSalesV);
+    const voidAmountV = Number(zSummary.voidAmount ?? 0);
+    const refundTotal = Number(zSummary.totalRefunds ?? 0);
+    const actualCash = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
+    const cashVariance = actualCash - expectedCash;
+    const zCashierLabel = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
     const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
     const fmtTs = (t) => {
       const d = parseUTCDate(t);
@@ -4168,8 +4513,9 @@ export default function POSSales() {
       const pad = (n) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
-    const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
-    const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
+    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
+    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    const cardTypeBreakdown = Array.isArray(zSummary.cardTypeBreakdown) ? zSummary.cardTypeBreakdown : [];
     const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
     zSessionInfoRows.forEach((row) => {
       const raw = row?.closingDenominationsJson;
@@ -4184,13 +4530,13 @@ export default function POSSales() {
 
     return {
       reportTitle: 'Z-Report / End-of-Day Closing Report',
-      note: `Report No: ${reportNo}  |  Business Date: ${zReportDate || new Date().toISOString().slice(0,10)}  |  Sessions: ${sessionCount}`,
+      note: `Report No: ${reportNo}  |  Business Date: ${zReportDate || new Date().toISOString().slice(0, 10)}  |  Sessions: ${sessionCount}`,
       reportMeta: [
         { label: 'Report No', value: reportNo },
         { label: 'Session No', value: `${sessionCount} session${sessionCount === 1 ? '' : 's'}` },
         { label: 'Cashier', value: zCashierLabel },
         { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: zReportDate || new Date().toISOString().slice(0,10) },
+        { label: 'Business Date', value: zReportDate || new Date().toISOString().slice(0, 10) },
         { label: 'Terminal', value: currentTerminal?.terminalId || 'All Terminals' },
       ],
       kpis: [
@@ -4199,6 +4545,7 @@ export default function POSSales() {
         { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
         { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
         { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
+        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
         { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
         { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
         { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + cash sales', icon: 'EC' },
@@ -4211,21 +4558,21 @@ export default function POSSales() {
           cols: ['Session', 'Cashier', 'Opened At', 'Closed At', 'Expected Cash', 'Actual Cash'],
           rows: zSessionInfoRows.length
             ? zSessionInfoRows.map((row) => [
-                row.sessionNo || 'â€”',
-                row.cashier || 'â€”',
-                fmtTs(row.openedAt),
-                fmtTs(row.closedAt),
-                fmt(Number(row.expectedCash ?? 0)),
-                fmt(Number(row.closingCash ?? 0)),
-              ])
+              row.sessionNo || 'â€”',
+              row.cashier || 'â€”',
+              fmtTs(row.openedAt),
+              fmtTs(row.closedAt),
+              fmt(Number(row.expectedCash ?? 0)),
+              fmt(Number(row.closingCash ?? 0)),
+            ])
             : zSessions.map((row) => [
-                row.id ? `SESS-${String(row.id).padStart(6,'0')}` : 'â€”',
-                row.openedBy || 'â€”',
-                fmtTs(row.openedAt),
-                fmtTs(row.closedAt),
-                fmt(Number(row.expectedCash ?? 0)),
-                fmt(Number(row.closingCash ?? 0)),
-              ]),
+              row.id ? `SESS-${String(row.id).padStart(6, '0')}` : 'â€”',
+              row.openedBy || 'â€”',
+              fmtTs(row.openedAt),
+              fmtTs(row.closedAt),
+              fmt(Number(row.expectedCash ?? 0)),
+              fmt(Number(row.closingCash ?? 0)),
+            ]),
         },
         {
           title: '1. Denomination Count', type: 'table',
@@ -4237,11 +4584,11 @@ export default function POSSales() {
           title: '2. Sales Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
-            ['Gross Sales',              fmt(totalSalesV)],
-            ['Total Discount',           discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-            ['Net Sales Before VAT',     fmt(salesExTaxV)],
-            ['VAT Amount (5%)',          fmt(totalTaxV)],
-            ['Net Sales Including VAT',  fmt(totalSalesV)],
+            ['Gross Sales', fmt(totalSalesV)],
+            ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
+            ['Net Sales Before VAT', fmt(salesExTaxV)],
+            ['VAT Amount (5%)', fmt(totalTaxV)],
+            ['Net Sales Including VAT', fmt(totalSalesV)],
           ],
         },
         {
@@ -4253,8 +4600,8 @@ export default function POSSales() {
           title: '3. Payment / Tender Summary', type: 'table',
           cols: ['Payment Mode', 'Count', 'Amount'],
           rows: [
-            ['Cash',   String(zSummary.cashInvoiceCount   ?? '—'), fmt(cashSalesV)],
-            ['Card',   String(zSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
+            ['Cash', String(zSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
+            ['Card', String(zSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
             ['Credit', String(zSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
           ],
           footer: ['Total Collected', String(invoiceCount), fmt(totalSalesV)],
@@ -4263,17 +4610,18 @@ export default function POSSales() {
           title: '4. Cash Drawer Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
-            ['Opening Cash / Float',       fmt(openingCash)],
-            ['Cash Sales',                  fmt(cashSalesV)],
-            ['Expected Cash in Drawer',     fmt(expectedCash)],
+            ['Opening Cash / Float', fmt(openingCash)],
+            ['Cash Sales', fmt(cashSalesV)],
+            ['Expected Cash in Drawer', fmt(expectedCash)],
           ],
         },
         {
           title: '5. Card / Bank Settlement Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
-            ['Total Card Sales',               fmt(cardSalesV)],
-            ['Net Card Settlement Expected',    fmt(cardSalesV)],
+            ...cardTypeBreakdown.map(row => [row.cardType, fmt(row.amount ?? 0)]),
+            ['Total Card Sales', fmt(cardSalesV)],
+            ['Net Card Settlement Expected', fmt(cardSalesV)],
           ],
         },
         {
@@ -4295,6 +4643,7 @@ export default function POSSales() {
             ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
             ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
             ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
+            ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), fmt(zSummary.totalRefunds ?? 0)],
           ],
         },
         {
@@ -4331,15 +4680,15 @@ export default function POSSales() {
           cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
           rows: postedVoids.length
             ? postedVoids.map(v => [
-                v.invoiceNumber || '—',
-                `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-                String(v.quantity ?? 0),
-                fmt(Number(v.unitPrice ?? 0)),
-                fmt(Number(v.lineTotal ?? 0)),
-                v.voidReason || '—',
-                v.voidedBy || '—',
-                v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-              ])
+              v.invoiceNumber || '—',
+              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
+              String(v.quantity ?? 0),
+              fmt(Number(v.unitPrice ?? 0)),
+              fmt(Number(v.lineTotal ?? 0)),
+              v.voidReason || '—',
+              v.voidedBy || '—',
+              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+            ])
             : [['—', 'No voided items', '', '', '', '', '', '']],
           footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
         },
@@ -4348,20 +4697,20 @@ export default function POSSales() {
           cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
           rows: cartRemovals.length
             ? cartRemovals.map(r => [
-                r.itemCode || '—',
-                r.description || '—',
-                r.voidedBy || '—',
-                r.terminalId || '—',
-                r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-              ])
+              r.itemCode || '—',
+              r.description || '—',
+              r.voidedBy || '—',
+              r.terminalId || '—',
+              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+            ])
             : [['—', 'No cart removals', '', '', '']],
         },
         {
           title: '11. Customer Credit Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Credit Sales',                   String(creditInvoices.length), fmt(creditTotal)],
-            ['Outstanding Created Today',       String(creditInvoices.length), fmt(creditTotal)],
+            ['Credit Sales', String(creditInvoices.length), fmt(creditTotal)],
+            ['Outstanding Created Today', String(creditInvoices.length), fmt(creditTotal)],
           ],
         },
         {
@@ -4373,12 +4722,12 @@ export default function POSSales() {
           title: '13. Final Day Close Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
-            ['Total Net Sales Inc. VAT',    fmt(totalSalesV)],
-            ['Total Discount',              fmt(discountV)],
-            ['Total Collection',            fmt(totalPaidV)],
-            ['Opening Cash / Float',        fmt(openingCash)],
-            ['Expected Cash in Drawer',     fmt(expectedCash)],
-            ['Cash Sales',                  fmt(cashSalesV)],
+            ['Total Net Sales Inc. VAT', fmt(totalSalesV)],
+            ['Total Discount', fmt(discountV)],
+            ['Total Collection', fmt(totalPaidV)],
+            ['Opening Cash / Float', fmt(openingCash)],
+            ['Expected Cash in Drawer', fmt(expectedCash)],
+            ['Cash Sales', fmt(cashSalesV)],
           ],
         },
       ],
@@ -4391,55 +4740,56 @@ export default function POSSales() {
     const zSessions = zReportData?.sessions || [];
     const zInvoices = zReportData?.invoices || [];
     const fmt = (n) => Number(Number(n).toFixed(2));
-    const totalSalesV  = fmt(zSummary.totalSales  ?? 0);
-    const cashSalesV   = fmt(zSummary.cashSales   ?? 0);
-    const cardSalesV   = fmt(zSummary.cardSales   ?? 0);
+    const totalSalesV = fmt(zSummary.totalSales ?? 0);
+    const cashSalesV = fmt(zSummary.cashSales ?? 0);
+    const cardSalesV = fmt(zSummary.cardSales ?? 0);
     const creditSalesV = fmt(zSummary.creditSales ?? 0);
-    const totalTaxV    = fmt(zSummary.totalTax    ?? 0);
-    const salesExTaxV  = fmt(zSummary.salesAmountExTax ?? 0);
-    const discountV    = fmt(zSummary.totalDiscount    ?? 0);
-    const itemsSold    = zSummary.totalItemsSold ?? 0;
-    const invoiceCount = zSummary.invoiceCount   ?? 0;
-    const openingCash  = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
+    const totalTaxV = fmt(zSummary.totalTax ?? 0);
+    const salesExTaxV = fmt(zSummary.salesAmountExTax ?? 0);
+    const discountV = fmt(zSummary.totalDiscount ?? 0);
+    const itemsSold = zSummary.totalItemsSold ?? 0;
+    const invoiceCount = zSummary.invoiceCount ?? 0;
+    const openingCash = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
     const expectedCash = fmt(openingCash + cashSalesV);
     const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-    const creditTotal  = fmt(creditInvoices.reduce((s, inv) => s + Number(inv.invoiceTotal || 0), 0));
-    const invNums      = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
+    const creditTotal = fmt(creditInvoices.reduce((s, inv) => s + Number(inv.invoiceTotal || 0), 0));
+    const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
 
     return [
       // Sales summary rows tagged with section header
-      { Section: 'Sales Summary',          Description: 'Gross Sales',             Count: '',         Amount: totalSalesV },
-      { Section: '',                        Description: 'Total Discount',           Count: '',         Amount: discountV },
-      { Section: '',                        Description: 'Net Sales Before VAT',     Count: '',         Amount: salesExTaxV },
-      { Section: '',                        Description: 'VAT Amount (5%)',          Count: '',         Amount: totalTaxV },
-      { Section: '',                        Description: 'Net Sales Including VAT',  Count: '',         Amount: totalSalesV },
-      { Section: 'Payment / Tender',        Description: 'Cash',                     Count: zSummary.cashInvoiceCount ?? 0,   Amount: cashSalesV },
-      { Section: '',                        Description: 'Card',                     Count: zSummary.cardInvoiceCount ?? 0,   Amount: cardSalesV },
-      { Section: '',                        Description: 'Credit',                   Count: zSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      { Section: '',                        Description: 'Total Collected',          Count: invoiceCount, Amount: totalSalesV },
-      { Section: 'Cash Drawer',             Description: 'Opening Cash / Float',    Count: '',         Amount: openingCash },
-      { Section: '',                        Description: 'Cash Sales',               Count: '',         Amount: cashSalesV },
-      { Section: '',                        Description: 'Expected Cash in Drawer',  Count: '',         Amount: expectedCash },
-      { Section: 'VAT / Tax',               Description: 'VAT 5% — Taxable Amount', Count: '',         Amount: salesExTaxV },
-      { Section: '',                        Description: 'VAT 5% — Tax Amount',     Count: '',         Amount: totalTaxV },
-      { Section: '',                        Description: 'Total Inc. VAT',           Count: '',         Amount: totalSalesV },
-      { Section: 'Discount',                Description: 'Total Discount',           Count: '',         Amount: discountV },
-      { Section: 'Returns / Refund',        Description: 'Sales Returns',            Count: zSummary.salesReturnCount ?? 0, Amount: fmt(zSummary.salesReturnTotal ?? 0) },
-      { Section: '',                        Description: 'Refunds Processed',        Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
-      { Section: '',                        Description: 'Credit Notes Issued',      Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
-      { Section: '',                        Description: 'Exchange Transactions',    Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
-      { Section: 'Item Movement',           Description: 'Total Items Sold',         Count: String(itemsSold), Amount: totalSalesV },
-      { Section: '',                        Description: 'Total Items Returned',     Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
-      { Section: '',                        Description: 'Net Quantity Sold',        Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
+      { Section: 'Sales Summary', Description: 'Gross Sales', Count: '', Amount: totalSalesV },
+      { Section: '', Description: 'Total Discount', Count: '', Amount: discountV },
+      { Section: '', Description: 'Net Sales Before VAT', Count: '', Amount: salesExTaxV },
+      { Section: '', Description: 'VAT Amount (5%)', Count: '', Amount: totalTaxV },
+      { Section: '', Description: 'Net Sales Including VAT', Count: '', Amount: totalSalesV },
+      { Section: 'Payment / Tender', Description: 'Cash', Count: zSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
+      { Section: '', Description: 'Card', Count: zSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
+      { Section: '', Description: 'Credit', Count: zSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
+      { Section: '', Description: 'Total Collected', Count: invoiceCount, Amount: totalSalesV },
+      { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCash },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
+      { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
+      { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
+      { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
+      { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
+      { Section: 'Discount', Description: 'Total Discount', Count: '', Amount: discountV },
+      { Section: 'Returns / Refund', Description: 'Sales Returns', Count: zSummary.salesReturnCount ?? 0, Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '', Description: 'Refunds Processed', Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
+      { Section: '', Description: 'Credit Notes Issued', Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
+      { Section: '', Description: 'Exchange Transactions', Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
+      { Section: '', Description: 'Total Refunds (Tender)', Count: zSummary.totalRefundCount ?? 0, Amount: fmt(zSummary.totalRefunds ?? 0) },
+      { Section: 'Item Movement', Description: 'Total Items Sold', Count: String(itemsSold), Amount: totalSalesV },
+      { Section: '', Description: 'Total Items Returned', Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
+      { Section: '', Description: 'Net Quantity Sold', Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
       ...(Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map((it, i) => ({
         Section: i === 0 ? 'Top Selling Items' : '',
         Description: `${it.itemCode || '—'} — ${it.itemName || '—'}`,
         Count: it.quantity ?? 0,
         Amount: fmt(it.amount ?? 0),
       })),
-      { Section: 'Customer Credit',         Description: 'Credit Sales',             Count: creditInvoices.length, Amount: creditTotal },
-      { Section: 'Invoice Range',           Description: 'First Invoice',            Count: invNums[0] || '—', Amount: '' },
-      { Section: '',                        Description: 'Last Invoice',             Count: invNums[invNums.length - 1] || '—', Amount: '' },
+      { Section: 'Customer Credit', Description: 'Credit Sales', Count: creditInvoices.length, Amount: creditTotal },
+      { Section: 'Invoice Range', Description: 'First Invoice', Count: invNums[0] || '—', Amount: '' },
+      { Section: '', Description: 'Last Invoice', Count: invNums[invNums.length - 1] || '—', Amount: '' },
       ...(Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).map((c, i) => ({
         Section: i === 0 ? 'Cashier Wise' : '',
         Description: c.cashier || '—',
@@ -4451,55 +4801,57 @@ export default function POSSales() {
 
   // ── X-Report: build A4 view-model for print/PDF ───────────────────────────
   const buildXReportViewModel = () => {
-    const xSummary  = xReportData?.summary  || {};
+    const xSummary = xReportData?.summary || {};
     const xInvoices = xReportData?.invoices || [];
     const sess = xReportData?.session || currentSession;
     const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
-    const openingCashVal  = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-    const cashSalesV      = Number(xSummary.cashSales    ?? 0);
-    const cardSalesV      = Number(xSummary.cardSales    ?? 0);
-    const creditSalesV    = Number(xSummary.creditSales  ?? 0);
-    const totalSalesV     = Number(xSummary.totalSales   ?? 0);
-    const totalTaxV       = Number(xSummary.totalTax     ?? 0);
-    const salesExTaxV     = Number(xSummary.salesAmountExTax ?? 0);
-    const discountV       = Number(xSummary.totalDiscount ?? 0);
-    const cashDropIn      = Number(xSummary.cashDropIn   ?? 0);
-    const cashDropOut     = Number(xSummary.cashDropOut  ?? 0);
-    const invoiceCount    = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
+    const openingCashVal = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
+    const cashSalesV = Number(xSummary.cashSales ?? 0);
+    const cardSalesV = Number(xSummary.cardSales ?? 0);
+    const creditSalesV = Number(xSummary.creditSales ?? 0);
+    const bankTransferSalesV = Number(xSummary.bankTransferSales ?? 0);
+    const totalSalesV = Number(xSummary.totalSales ?? 0);
+    const totalTaxV = Number(xSummary.totalTax ?? 0);
+    const salesExTaxV = Number(xSummary.salesAmountExTax ?? 0);
+    const discountV = Number(xSummary.totalDiscount ?? 0);
+    const cashDropIn = Number(xSummary.cashDropIn ?? 0);
+    const cashDropOut = Number(xSummary.cashDropOut ?? 0);
+    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
     const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
     const reportDenominations = getReportClosingDenominations();
-    const actualCash      = calculateDenominationTotal(reportDenominations);
-    const cashVariance    = actualCash - expectedCashVal;
-    const varStatus       = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
+    const actualCash = calculateDenominationTotal(reportDenominations);
+    const cashVariance = actualCash - expectedCashVal;
+    const varStatus = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
     const sessId = sess?.id || currentSession?.id;
-    const reportNo = sessId ? `XR-${String(sessId).padStart(9,'0')}` : '—';
-    const denomKeys   = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
-    const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
+    const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
+    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
+    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
 
-    const cardPayCount   = Number(xSummary.cardInvoiceCount ?? 0);
-    const refundTotal    = Number(xSummary.totalRefunds ?? 0);
+    const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
+    const refundTotal = Number(xSummary.totalRefunds ?? 0);
     const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
     const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
     const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
-    const netCardSettle  = cardSalesV - cardRefundTotal;
-    const netCardCount   = Math.max(0, cardPayCount - cardRefundCount);
+    const netCardSettle = cardSalesV - cardRefundTotal;
+    const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
+    const cardTypeBreakdown = Array.isArray(xSummary.cardTypeBreakdown) ? xSummary.cardTypeBreakdown : [];
     const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
     // Detailed void/removal data from the backend audit trail + persisted voided lines.
-    const postedVoids    = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
-    const cartRemovals   = Array.isArray(xReportData?.cartRemovals) ? xReportData.cartRemovals : [];
-    const cashierRows    = Array.isArray(xReportData?.cashiers) ? xReportData.cashiers : [];
-    const totalVoids     = Number(xSummary.voidItemCount ?? sess?.totalVoids ?? 0);
-    const totalPaidV     = Number(xSummary.totalPaid ?? totalSalesV);
-    const voidAmountV    = Number(xSummary.voidAmount ?? 0);
-    const sessInfo       = xReportData?.sessionInfo || {};
-    const fmtTs          = (t) => {
+    const postedVoids = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
+    const cartRemovals = Array.isArray(xReportData?.cartRemovals) ? xReportData.cartRemovals : [];
+    const cashierRows = Array.isArray(xReportData?.cashiers) ? xReportData.cashiers : [];
+    const totalVoids = Number(xSummary.voidItemCount ?? sess?.totalVoids ?? 0);
+    const totalPaidV = Number(xSummary.totalPaid ?? totalSalesV);
+    const voidAmountV = Number(xSummary.voidAmount ?? 0);
+    const sessInfo = xReportData?.sessionInfo || {};
+    const fmtTs = (t) => {
       const d = parseUTCDate(t);
       if (!d) return '—';
       const pad = (n) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
 
-    const fmtDuration    = (seconds) => {
+    const fmtDuration = (seconds) => {
       const total = Math.max(0, Math.floor(Number(seconds) || 0));
       if (!total) return '0m';
       const h = Math.floor(total / 3600);
@@ -4513,13 +4865,13 @@ export default function POSSales() {
 
     return {
       reportTitle: 'X-Report / Session Close Report',
-      note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6,'0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0,10)}`,
+      note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
       reportMeta: [
         { label: 'Report No', value: reportNo },
-        { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6,'0')}` },
+        { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}` },
         { label: 'Cashier', value: sessInfo.cashier || sess?.openedBy || '-' },
         { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) },
+        { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) },
         { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
       ],
       kpis: [
@@ -4528,6 +4880,7 @@ export default function POSSales() {
         { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
         { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
         { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
+        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
         { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
         { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
         { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + cash sales', icon: 'EC' },
@@ -4539,17 +4892,17 @@ export default function POSSales() {
           title: '0. Session Information', type: 'table',
           cols: ['Field', 'Value'],
           rows: [
-            ['Session No.',  sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6,'0')}`],
-            ['Branch',       sessInfo.branch || sess?.branchName || '—'],
-            ['Terminal',     sessInfo.terminalId || sess?.terminalId || '—'],
-            ['Counter',      sessInfo.counter || sess?.counterName || '—'],
-            ['Device',       sessInfo.device || '—'],
+            ['Session No.', sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}`],
+            ['Branch', sessInfo.branch || sess?.branchName || '—'],
+            ['Terminal', sessInfo.terminalId || sess?.terminalId || '—'],
+            ['Counter', sessInfo.counter || sess?.counterName || '—'],
+            ['Device', sessInfo.device || '—'],
             ...(sessInfo.deviceInfo ? [['Device Info', sessInfo.deviceInfo.substring(0, 48)]] : []),
-            ['Shift',        sessInfo.shift || '—'],
-            ['Cashier',      sessInfo.cashier || sess?.openedBy || '—'],
-            ['Opened At',    fmtTs(sessInfo.openedAt || sess?.openedAt)],
-            ['Closed At',    fmtTs(sessInfo.closedAt || sess?.closedAt)],
-            ['Duration',     fmtDuration(durationSeconds)],
+            ['Shift', sessInfo.shift || '—'],
+            ['Cashier', sessInfo.cashier || sess?.openedBy || '—'],
+            ['Opened At', fmtTs(sessInfo.openedAt || sess?.openedAt)],
+            ['Closed At', fmtTs(sessInfo.closedAt || sess?.closedAt)],
+            ['Duration', fmtDuration(durationSeconds)],
           ],
         },
         {
@@ -4562,12 +4915,12 @@ export default function POSSales() {
           title: '2. Cash Drawer Summary', type: 'table',
           cols: ['Description', 'Amount'],
           rows: [
-            ['Opening Cash / Float',      fmt(openingCashVal)],
-            ['Cash Sales',                 fmt(cashSalesV)],
-            ['Cash Drop In',               fmt(cashDropIn)],
-            ['Cash Drop Out',              fmt(cashDropOut)],
-            ['Expected Cash in Drawer',    fmt(expectedCashVal)],
-            ['Actual Cash Counted',        fmt(actualCash)],
+            ['Opening Cash / Float', fmt(openingCashVal)],
+            ['Cash Sales', fmt(cashSalesV)],
+            ['Cash Drop In', fmt(cashDropIn)],
+            ['Cash Drop Out', fmt(cashDropOut)],
+            ['Expected Cash in Drawer', fmt(expectedCashVal)],
+            ['Actual Cash Counted', fmt(actualCash)],
           ],
           footer: ['Cash Variance (' + varStatus + ')', fmt(Math.abs(cashVariance))],
         },
@@ -4575,11 +4928,11 @@ export default function POSSales() {
           title: '3. Payment / Tender Summary', type: 'table',
           cols: ['Payment Mode', 'Count', 'Amount'],
           rows: [
-            ['Cash',   String(xSummary.cashInvoiceCount   ?? '—'), fmt(cashSalesV)],
-            ['Card',   String(xSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
+            ['Cash', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
+            ['Card', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
             ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
             ...((xSummary.otherSales ?? 0) > 0
-              ? [['Other', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
+              ? [['Online', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
               : []),
           ],
           // Total Collected = actual tender taken across every mode, not invoice count/value.
@@ -4589,9 +4942,10 @@ export default function POSSales() {
           title: '4. Card / Bank Settlement Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Card Sales',          String(cardPayCount),   fmt(cardSalesV)],
-            ['Card Refunds',        String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
-            ['Net Card Settlement', String(netCardCount),    fmt(netCardSettle)],
+            ...cardTypeBreakdown.map(row => [row.cardType, String(row.count ?? 0), fmt(row.amount ?? 0)]),
+            ['Card Sales', String(cardPayCount), fmt(cardSalesV)],
+            ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
+            ['Net Card Settlement', String(netCardCount), fmt(netCardSettle)],
             ['Card Machine Batch No.', sessInfo.cardBatchNo || xReportCardBatchNo || '—', ''],
             ['Card Settlement Verified', (sessInfo.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No', ''],
           ],
@@ -4600,10 +4954,10 @@ export default function POSSales() {
           title: '5. Invoice / Transaction Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Invoices',   String(invoiceCount),    fmt(totalSalesV)],
-            ['Cash Invoices',    String(xSummary.cashInvoiceCount   ?? '—'), fmt(cashSalesV)],
-            ['Card Invoices',    String(xSummary.cardInvoiceCount   ?? '—'), fmt(cardSalesV)],
-            ['Credit Invoices',  String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
+            ['Total Invoices', String(invoiceCount), fmt(totalSalesV)],
+            ['Cash Invoices', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
+            ['Card Invoices', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
+            ['Credit Invoices', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
           ],
         },
         {
@@ -4625,8 +4979,8 @@ export default function POSSales() {
           title: '8. Return / Refund Summary', type: 'table',
           cols: ['Description', 'Count', 'Amount'],
           rows: [
-            ['Total Refunds',  String(totalRefundCount), fmt(refundTotal)],
-            ['Card Refunds',   String(cardRefundCount),  fmt(cardRefundTotal)],
+            ['Total Refunds', String(totalRefundCount), fmt(refundTotal)],
+            ['Card Refunds', String(cardRefundCount), fmt(cardRefundTotal)],
           ],
         },
         {
@@ -4641,15 +4995,15 @@ export default function POSSales() {
           cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
           rows: postedVoids.length
             ? postedVoids.map(v => [
-                v.invoiceNumber || '—',
-                `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-                String(v.quantity ?? 0),
-                fmt(Number(v.unitPrice ?? 0)),
-                fmt(Number(v.lineTotal ?? 0)),
-                v.voidReason || '—',
-                v.voidedBy || '—',
-                v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-              ])
+              v.invoiceNumber || '—',
+              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
+              String(v.quantity ?? 0),
+              fmt(Number(v.unitPrice ?? 0)),
+              fmt(Number(v.lineTotal ?? 0)),
+              v.voidReason || '—',
+              v.voidedBy || '—',
+              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+            ])
             : [['—', 'No voided items', '', '', '', '', '', '']],
           footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
         },
@@ -4660,12 +5014,12 @@ export default function POSSales() {
           cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
           rows: cartRemovals.length
             ? cartRemovals.map(r => [
-                r.itemCode || '—',
-                r.description || '—',
-                r.voidedBy || '—',
-                r.terminalId || '—',
-                r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-              ])
+              r.itemCode || '—',
+              r.description || '—',
+              r.voidedBy || '—',
+              r.terminalId || '—',
+              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
+            ])
             : [['—', 'No cart removals', '', '', '']],
         },
         {
@@ -4683,34 +5037,34 @@ export default function POSSales() {
 
   // ── X-Report: Excel flat rows ─────────────────────────────────────────────
   const buildXReportExcelRows = () => {
-    const xSummary  = xReportData?.summary  || {};
+    const xSummary = xReportData?.summary || {};
     const xInvoices = xReportData?.invoices || [];
     const sess = xReportData?.session || currentSession;
     const fmt = (n) => Number(Number(n).toFixed(2));
-    const openingCashVal  = fmt(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-    const cashSalesV      = fmt(xSummary.cashSales   ?? 0);
-    const cardSalesV      = fmt(xSummary.cardSales   ?? 0);
-    const creditSalesV    = fmt(xSummary.creditSales ?? 0);
-    const totalSalesV     = fmt(xSummary.totalSales  ?? 0);
-    const totalTaxV       = fmt(xSummary.totalTax    ?? 0);
-    const salesExTaxV     = fmt(xSummary.salesAmountExTax ?? 0);
-    const discountV       = fmt(xSummary.totalDiscount ?? 0);
-    const cashDropIn      = fmt(xSummary.cashDropIn  ?? 0);
-    const cashDropOut     = fmt(xSummary.cashDropOut ?? 0);
-    const invoiceCount    = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    const expectedCash    = fmt(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
+    const openingCashVal = fmt(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
+    const cashSalesV = fmt(xSummary.cashSales ?? 0);
+    const cardSalesV = fmt(xSummary.cardSales ?? 0);
+    const creditSalesV = fmt(xSummary.creditSales ?? 0);
+    const totalSalesV = fmt(xSummary.totalSales ?? 0);
+    const totalTaxV = fmt(xSummary.totalTax ?? 0);
+    const salesExTaxV = fmt(xSummary.salesAmountExTax ?? 0);
+    const discountV = fmt(xSummary.totalDiscount ?? 0);
+    const cashDropIn = fmt(xSummary.cashDropIn ?? 0);
+    const cashDropOut = fmt(xSummary.cashDropOut ?? 0);
+    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
+    const expectedCash = fmt(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
     const reportDenominations = getReportClosingDenominations();
-    const actualCash      = fmt(calculateDenominationTotal(reportDenominations));
-    const variance        = fmt(actualCash - expectedCash);
-    const refundTotal     = fmt(xSummary.totalRefunds ?? 0);
+    const actualCash = fmt(calculateDenominationTotal(reportDenominations));
+    const variance = fmt(actualCash - expectedCash);
+    const refundTotal = fmt(xSummary.totalRefunds ?? 0);
     const totalRefundCount = xSummary.totalRefundCount ?? 0;
     const cardRefundTotal = fmt(xSummary.cardRefundSales ?? 0);
     const cardRefundCount = xSummary.cardRefundCount ?? 0;
-    const otherSalesV     = fmt(xSummary.otherSales ?? 0);
-    const totalPaidV      = fmt(xSummary.totalPaid ?? totalSalesV);
+    const otherSalesV = fmt(xSummary.otherSales ?? 0);
+    const totalPaidV = fmt(xSummary.totalPaid ?? totalSalesV);
     const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
-    const denomKeys       = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
-    const denomLabels     = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
+    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
+    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
 
     return [
       ...denomKeys.map((k, i) => ({
@@ -4719,33 +5073,37 @@ export default function POSSales() {
         Count: reportDenominations[k] || 0,
         Amount: fmt((reportDenominations[k] || 0) * parseFloat(k)),
       })),
-      { Section: 'Cash Drawer',     Description: 'Opening Cash / Float',       Count: '',  Amount: openingCashVal },
-      { Section: '',                Description: 'Cash Sales',                  Count: '',  Amount: cashSalesV },
-      { Section: '',                Description: 'Cash Drop In',                Count: '',  Amount: cashDropIn },
-      { Section: '',                Description: 'Cash Drop Out',               Count: '',  Amount: cashDropOut },
-      { Section: '',                Description: 'Expected Cash in Drawer',     Count: '',  Amount: expectedCash },
-      { Section: '',                Description: 'Actual Cash Counted',         Count: '',  Amount: actualCash },
-      { Section: '',                Description: 'Cash Variance',               Count: '',  Amount: variance },
-      { Section: 'Payment Tender',  Description: 'Cash',                        Count: xSummary.cashInvoiceCount   ?? 0, Amount: cashSalesV },
-      { Section: '',                Description: 'Card',                        Count: xSummary.cardInvoiceCount   ?? 0, Amount: cardSalesV },
-      { Section: '',                Description: 'Credit',                      Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      ...(otherSalesV > 0 ? [{ Section: '', Description: 'Other', Count: xSummary.otherInvoiceCount ?? 0, Amount: otherSalesV }] : []),
-      { Section: '',                Description: 'Total',                       Count: totalTenderCountV, Amount: totalPaidV },
-      { Section: 'VAT / Tax',       Description: 'VAT 5% — Taxable Amount',    Count: '',  Amount: salesExTaxV },
-      { Section: '',                Description: 'VAT 5% — Tax Amount',        Count: '',  Amount: totalTaxV },
-      { Section: '',                Description: 'Total Inc. VAT',              Count: '',  Amount: totalSalesV },
-      { Section: 'Discount',        Description: 'Bill Level Discount',         Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
-      { Section: '',                Description: 'Line Item Discount',          Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
-      { Section: '',                Description: 'Total Discount',              Count: '',  Amount: discountV },
-      { Section: 'Return / Refund', Description: 'Total Refunds',               Count: totalRefundCount, Amount: refundTotal },
-      { Section: 'Card Settlement', Description: 'Card Refunds',                Count: cardRefundCount, Amount: cardRefundTotal },
-      { Section: '',                Description: 'Net Card Settlement',         Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
-      { Section: '',                Description: 'Card Machine Batch No.',      Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
-      { Section: '',                Description: 'Card Settlement Verified',    Count: '', Amount: (sess?.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No' },
-      { Section: 'Invoice Count',   Description: 'Total Invoices',              Count: invoiceCount, Amount: totalSalesV },
+      { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCashVal },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
+      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
+      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
+      { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
+      { Section: '', Description: 'Actual Cash Counted', Count: '', Amount: actualCash },
+      { Section: '', Description: 'Cash Variance', Count: '', Amount: variance },
+      { Section: 'Payment Tender', Description: 'Cash', Count: xSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
+      { Section: '', Description: 'Card', Count: xSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
+      { Section: '', Description: 'Credit', Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
+      ...(otherSalesV > 0 ? [{ Section: '', Description: 'Online', Count: xSummary.otherInvoiceCount ?? 0, Amount: otherSalesV }] : []),
+      { Section: '', Description: 'Total', Count: totalTenderCountV, Amount: totalPaidV },
+      { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
+      { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
+      { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
+      { Section: 'Discount', Description: 'Bill Level Discount', Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
+      { Section: '', Description: 'Line Item Discount', Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
+      { Section: '', Description: 'Total Discount', Count: '', Amount: discountV },
+      { Section: 'Return / Refund', Description: 'Sales Returns', Count: xSummary.salesReturnCount ?? 0, Amount: fmt(xSummary.salesReturnTotal ?? 0) },
+      { Section: '', Description: 'Refunds Processed', Count: xSummary.refundCount ?? 0, Amount: fmt(xSummary.refundTotal ?? 0) },
+      { Section: '', Description: 'Credit Notes Issued', Count: xSummary.creditNoteCount ?? 0, Amount: fmt(xSummary.creditNoteTotal ?? 0) },
+      { Section: '', Description: 'Exchange Transactions', Count: xSummary.exchangeCount ?? 0, Amount: fmt(xSummary.exchangeTotal ?? 0) },
+      { Section: '', Description: 'Total Refunds (In-session)', Count: totalRefundCount, Amount: refundTotal },
+      { Section: 'Card Settlement', Description: 'Card Refunds', Count: cardRefundCount, Amount: cardRefundTotal },
+      { Section: '', Description: 'Net Card Settlement', Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
+      { Section: '', Description: 'Card Machine Batch No.', Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
+      { Section: '', Description: 'Card Settlement Verified', Count: '', Amount: (sess?.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No' },
+      { Section: 'Invoice Count', Description: 'Total Invoices', Count: invoiceCount, Amount: totalSalesV },
       ...xInvoices.slice(0, 200).map((inv, i) => ({
         Section: i === 0 ? 'Invoice List' : '',
-        Description: inv.invoiceNumber || `Invoice #${i+1}`,
+        Description: inv.invoiceNumber || `Invoice #${i + 1}`,
         Count: inv.paymentMode || '—',
         Amount: fmt(inv.invoiceTotal || 0),
       })),
@@ -4777,7 +5135,7 @@ export default function POSSales() {
       terminalId: currentTerminal?.terminalId || null,
     });
     if (!printer) {
-      alert('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
+      notifyPrintFallback('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
       return;
     }
     try {
@@ -4786,21 +5144,21 @@ export default function POSSales() {
       await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
     } catch (err) {
       console.warn('ESC/POS print failed for report print', err);
-      alert(`Report failed to print: ${err?.message || 'printer error'}.`);
+      notifyPrintFallback(`Report failed to print: ${err?.message || 'printer error'}.`);
     }
   };
 
   const handleZReportPrint = () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
-    const vm  = buildZReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildZReportViewModel();
+    const cp = reportCompanyProfile();
     printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
   };
 
   const handleZReportPreview = () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
-    const vm  = buildZReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildZReportViewModel();
+    const cp = reportCompanyProfile();
     const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
@@ -4808,11 +5166,11 @@ export default function POSSales() {
 
   const handleZReportExportPDF = async () => {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
-    const vm  = buildZReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildZReportViewModel();
+    const cp = reportCompanyProfile();
     // PDF export always uses the A4 template (a thermal roll PDF is not useful here).
     const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
-    const filename = `Z-Report_${zReportDate || new Date().toISOString().slice(0,10)}`;
+    const filename = `Z-Report_${zReportDate || new Date().toISOString().slice(0, 10)}`;
     try { await downloadPdfViaServer(html, filename); } catch {
       const { downloadPdf } = await import('../../utils/printGenerator');
       await downloadPdf(html, filename);
@@ -4823,13 +5181,13 @@ export default function POSSales() {
     if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
     const rows = buildZReportExcelSections();
     const cols = [
-      { header: 'Section',     key: 'Section',      width: 22 },
-      { header: 'Description', key: 'Description',  width: 32 },
-      { header: 'Count',       key: 'Count',        width: 12 },
-      { header: `Amount (${activeCurrency})`,key: 'Amount',        width: 18 },
+      { header: 'Section', key: 'Section', width: 22 },
+      { header: 'Description', key: 'Description', width: 32 },
+      { header: 'Count', key: 'Count', width: 12 },
+      { header: `Amount (${activeCurrency})`, key: 'Amount', width: 18 },
     ];
     const cp = reportCompanyProfile();
-    await exportToExcel(rows, cols, `Z-Report_${zReportDate || new Date().toISOString().slice(0,10)}`, {
+    await exportToExcel(rows, cols, `Z-Report_${zReportDate || new Date().toISOString().slice(0, 10)}`, {
       companyProfile: cp,
       branch: cp.companyName,
       dateFrom: zReportDate,
@@ -4838,28 +5196,28 @@ export default function POSSales() {
   };
 
   const handleXReportPrint = () => {
-    const vm  = buildXReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildXReportViewModel();
+    const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
   };
 
   const handleXReportPreview = () => {
-    const vm  = buildXReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildXReportViewModel();
+    const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
 
   const handleXReportExportPDF = async () => {
-    const vm  = buildXReportViewModel();
-    const cp  = reportCompanyProfile();
+    const vm = buildXReportViewModel();
+    const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
     // PDF export always uses the A4 template.
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0,10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
-    const filename = `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6,'0')}` : new Date().toISOString().slice(0,10)}`;
+    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const filename = `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6, '0')}` : new Date().toISOString().slice(0, 10)}`;
     try { await downloadPdfViaServer(html, filename); } catch {
       const { downloadPdf } = await import('../../utils/printGenerator');
       await downloadPdf(html, filename);
@@ -4869,14 +5227,14 @@ export default function POSSales() {
   const handleXReportExportExcel = async () => {
     const rows = buildXReportExcelRows();
     const cols = [
-      { header: 'Section',     key: 'Section',      width: 22 },
-      { header: 'Description', key: 'Description',  width: 32 },
-      { header: 'Count',       key: 'Count',        width: 16 },
-      { header: `Amount (${activeCurrency})`,key: 'Amount',        width: 18 },
+      { header: 'Section', key: 'Section', width: 22 },
+      { header: 'Description', key: 'Description', width: 32 },
+      { header: 'Count', key: 'Count', width: 16 },
+      { header: `Amount (${activeCurrency})`, key: 'Amount', width: 18 },
     ];
-    const cp   = reportCompanyProfile();
+    const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    await exportToExcel(rows, cols, `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6,'0')}` : new Date().toISOString().slice(0,10)}`, {
+    await exportToExcel(rows, cols, `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6, '0')}` : new Date().toISOString().slice(0, 10)}`, {
       companyProfile: cp,
       branch: cp.companyName,
       dateFrom: sess?.sessionDate,
@@ -4933,7 +5291,7 @@ export default function POSSales() {
               ['Report Date', zReportDate || new Date().toLocaleDateString()],
               ['Sessions', String(zSessionCount)],
               ['Report Type', 'Z-Report (End-of-Day)'],
-            ].map(([k,v]) => (
+            ].map(([k, v]) => (
               <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
             ))}
           </div>
@@ -4943,7 +5301,7 @@ export default function POSSales() {
               ['Total Sales', formatCurrencyStr(zTotalSales)],
               ['Cash Sales', formatCurrencyStr(zCashSales)],
               ['Card Sales', formatCurrencyStr(zCardSales)],
-            ].map(([k,v]) => (
+            ].map(([k, v]) => (
               <div key={k} className="flex gap-2"><span className="text-gray-500 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
             ))}
           </div>
@@ -4977,25 +5335,25 @@ export default function POSSales() {
           <span className="text-sm text-[#1E293B]">{title}</span>
         </div>
         <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-[#F7F7FA] text-gray-500">
-              {cols.map((c,i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i>0 && cols.length>2 ? 'text-right' : i===cols.length-1 && cols.length===2 ? 'text-right' : ''}`}>{c}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r,ri) => (
-              <tr key={ri} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                {r.map((cell,ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci>0 && cols.length>2 ? 'text-right' : ci===cols.length-1 && cols.length===2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#F7F7FA] text-gray-500">
+                {cols.map((c, i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i > 0 && cols.length > 2 ? 'text-right' : i === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{c}</th>)}
               </tr>
-            ))}
-            {footerRow && (
-              <tr className="bg-[#F7F7FA] border-t border-[#327F74]/20">
-                {footerRow.map((cell,ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci>0 && cols.length>2 ? 'text-right' : ci===cols.length-1 && cols.length===2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr key={ri} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                  {r.map((cell, ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                </tr>
+              ))}
+              {footerRow && (
+                <tr className="bg-[#F7F7FA] border-t border-[#327F74]/20">
+                  {footerRow.map((cell, ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -5040,377 +5398,381 @@ export default function POSSales() {
     );
 
     return (
-    <div className="bg-[#F7F7FA] min-h-full p-6">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-              <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
-              <ChevronRight className="h-3 w-3" />
-              <span>POS</span>
-              <ChevronRight className="h-3 w-3" />
-              <span className="text-[#327F74]">Z-Report</span>
+      <div className="bg-[#F7F7FA] min-h-full p-6">
+        {/* Sticky Header */}
+        <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+                <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
+                <ChevronRight className="h-3 w-3" />
+                <span>POS</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className="text-[#327F74]">Z-Report</span>
+              </div>
+              <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
+              <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
             </div>
-            <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
-              <option value="a4">A4</option>
-              <option value="80mm">Thermal 80mm</option>
-              <option value="58mm">Thermal 58mm</option>
-            </select>
-            <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-            <button onClick={handleZReportPrint} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-            <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-            <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-            <button
-              onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
-              disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
-              className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-              <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
+                <option value="a4">A4</option>
+                <option value="80mm">Thermal 80mm</option>
+                <option value="58mm">Thermal 58mm</option>
+              </select>
+              <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
+              <button onClick={handleZReportPrint} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button
+                onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
+                disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
+                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
+                <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {zrFilterBar}
+        {zrFilterBar}
 
-      {zReportData?.isDayClosed && (
-        <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
-          <Lock className="h-4 w-4" />
-          This business day has been officially closed. Showing finalized snapshot.
-        </div>
-      )}
+        {zReportData?.isDayClosed && (
+          <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
+            <Lock className="h-4 w-4" />
+            This business day has been officially closed. Showing finalized snapshot.
+          </div>
+        )}
 
-      {zReportBlocked ? zrPendingBlocker : (<>
-      {zrInfoCard}
-      {zrKpiCards}
+        {zReportBlocked ? zrPendingBlocker : (<>
+          {zrInfoCard}
+          {zrKpiCards}
 
-      {/* Section 1: Sales Summary */}
-      <ZRTable
-        title="1. Sales Summary"
-        icon={<BarChart2 className="h-4 w-4" />}
-        cols={['Description', 'Amount']}
-        rows={[
-          ['Gross Sales', <CurrencyAmount key="z1g" amount={zTotalSales} />],
-          ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z1d" amount={0} />],
-          ['Net Sales Before VAT', <CurrencyAmount key="z1n" amount={zSalesExTax} />],
-          ['VAT Amount (5%)', <CurrencyAmount key="z1v" amount={zTotalTax} />],
-          ['Net Sales Including VAT', <span key="z1s" className="font-semibold text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>],
-        ]}
-      />
+          {/* Section 1: Sales Summary */}
+          <ZRTable
+            title="1. Sales Summary"
+            icon={<BarChart2 className="h-4 w-4" />}
+            cols={['Description', 'Amount']}
+            rows={[
+              ['Gross Sales', <CurrencyAmount key="z1g" amount={zTotalSales} />],
+              ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z1d" amount={0} />],
+              ['Net Sales Before VAT', <CurrencyAmount key="z1n" amount={zSalesExTax} />],
+              ['VAT Amount (5%)', <CurrencyAmount key="z1v" amount={zTotalTax} />],
+              ['Net Sales Including VAT', <span key="z1s" className="font-semibold text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>],
+            ]}
+          />
 
-      {/* Section 2: Invoice / Transaction Summary */}
-      <ZRTable
-        title="2. Invoice / Transaction Summary"
-        icon={<FileText className="h-4 w-4" />}
-        cols={['Description', 'Count', 'Amount']}
-        rows={[
-          ['Total Sales Invoices', String(zInvoiceCount), <CurrencyAmount key="z2s" amount={zTotalSales} />],
-        ]}
-      />
+          {/* Section 2: Invoice / Transaction Summary */}
+          <ZRTable
+            title="2. Invoice / Transaction Summary"
+            icon={<FileText className="h-4 w-4" />}
+            cols={['Description', 'Count', 'Amount']}
+            rows={[
+              ['Total Sales Invoices', String(zInvoiceCount), <CurrencyAmount key="z2s" amount={zTotalSales} />],
+            ]}
+          />
 
-      {/* Section 3: Payment / Tender Summary */}
-      <ZRTable
-        title="3. Payment / Tender Summary"
-        icon={<CreditCard className="h-4 w-4" />}
-        cols={['Payment Mode', 'Count', 'Amount']}
-        rows={[
-          ['Cash', zSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="z3c" amount={zCashSales} />],
-          ['Card', zSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="z3d" amount={zCardSales} />],
-          ['Credit', zSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="z3cr" amount={zCreditSales} />],
-        ]}
-        footerRow={['Total Collected', String(zInvoiceCount), <span key="z3t" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>]}
-      />
+          {/* Section 3: Payment / Tender Summary */}
+          <ZRTable
+            title="3. Payment / Tender Summary"
+            icon={<CreditCard className="h-4 w-4" />}
+            cols={['Payment Mode', 'Count', 'Amount']}
+            rows={[
+              ['Cash', zSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="z3c" amount={zCashSales} />],
+              ['Card', zSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="z3d" amount={zCardSales} />],
+              ['Credit', zSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="z3cr" amount={zCreditSales} />],
+              ...((zSummary.otherSales ?? 0) > 0
+                ? [['Online', zSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="z3o" amount={zSummary.otherSales} />]]
+                : []),
+            ]}
+            footerRow={['Total Collected', String(zInvoiceCount), <span key="z3t" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>]}
+          />
 
-      {/* Section 4: Cash Drawer Summary */}
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-          <span className="text-[#327F74]"><Banknote className="h-4 w-4" /></span>
-          <span className="text-sm text-[#1E293B]">4. Cash Drawer Summary</span>
-        </div>
-        <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-[#F7F7FA] text-gray-500">
-              <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
-              <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ['Opening Cash / Float', <CurrencyAmount key="z4oc" amount={zOpeningCash} />],
-              ['Cash Sales', <CurrencyAmount key="z4cs" amount={zCashSales} />],
-              ['Expected Cash in Drawer', <CurrencyAmount key="z4ec" amount={zExpectedCash} />],
-            ].map(([d,a], i) => (
-              <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                <td className="px-4 py-2 text-[#1E293B]">{d}</td>
-                <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </div>
-
-      {/* Section 5: Card / Bank Settlement Summary */}
-      <ZRTable
-        title="5. Card / Bank Settlement Summary"
-        icon={<CreditCard className="h-4 w-4" />}
-        cols={['Description', 'Amount']}
-        rows={[
-          ['Total Card Sales', <CurrencyAmount key="z5c" amount={zCardSales} />],
-          ['Net Card Settlement Expected', <CurrencyAmount key="z5n" amount={zCardSales} />],
-        ]}
-      />
-
-      {/* Section 6: VAT / Tax Summary */}
-      <ZRTable
-        title="6. VAT / Tax Summary"
-        icon={<FileBarChart className="h-4 w-4" />}
-        cols={['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount']}
-        rows={[
-          ['VAT 5%',
-            <CurrencyAmount key="z6t" amount={zSalesExTax} />,
-            <CurrencyAmount key="z6a" amount={zTotalTax} />,
-            <CurrencyAmount key="z6g" amount={zTotalSales} />],
-        ]}
-        footerRow={[
-          'Total',
-          <CurrencyAmount key="z6ft" amount={zSalesExTax} />,
-          <CurrencyAmount key="z6fa" amount={zTotalTax} />,
-          <span key="z6fg" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>
-        ]}
-      />
-
-      {/* Section 7: Discount Summary */}
-      <ZRTable
-        title="7. Discount Summary"
-        icon={<Tag className="h-4 w-4" />}
-        cols={['Description', 'Amount']}
-        rows={[
-          ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z7d" amount={0} />],
-        ]}
-      />
-
-      {/* Section 8: Returns / Refund Summary */}
-      <ZRTable
-        title="8. Returns / Refund Summary"
-        icon={<RotateCcw className="h-4 w-4" />}
-        cols={['Description', 'Count', 'Amount']}
-        rows={[
-          ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount key="z8sr" amount={0} />],
-          ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
-          ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
-          ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
-        ]}
-      />
-
-      {/* Section 9: Item Movement Summary */}
-      {(() => {
-        const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
-        const itemsReturned = zSummary.totalItemsReturned ?? 0;
-        const netQty = zSummary.netQuantitySold ?? zTotalItemsSold;
-        return (
+          {/* Section 4: Cash Drawer Summary */}
           <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-              <span className="text-[#327F74]"><Package className="h-4 w-4" /></span>
-              <span className="text-sm text-[#1E293B]">9. Product / Item Movement Summary</span>
+              <span className="text-[#327F74]"><Banknote className="h-4 w-4" /></span>
+              <span className="text-sm text-[#1E293B]">4. Cash Drawer Summary</span>
             </div>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-[#F7F7FA] text-gray-500">
-                  <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
-                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Quantity</th>
-                  <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z9s" amount={zTotalSales} />],
-                  ['Total Items Returned', String(itemsReturned), itemsReturned > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal ?? 0)})` : <CurrencyAmount key="z9rt" amount={0} />],
-                  ['Net Quantity Sold', String(netQty), <CurrencyAmount key="z9n" amount={zTotalSales} />],
-                ].map(([d, q, a], i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                    <td className="px-4 py-2 text-[#1E293B]">{d}</td>
-                    <td className="px-4 py-2 text-right text-[#1E293B]">{q}</td>
-                    <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-[#F7F7FA] text-gray-500">
+                    <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
+                    <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {topItems.length > 0 && (
-              <div className="px-4 py-3 border-t border-[#327F74]/10">
-                <p className="text-xs font-semibold text-[#1E293B] mb-2">Top Selling Items</p>
+                </thead>
+                <tbody>
+                  {[
+                    ['Opening Cash / Float', <CurrencyAmount key="z4oc" amount={zOpeningCash} />],
+                    ['Cash Sales', <CurrencyAmount key="z4cs" amount={zCashSales} />],
+                    ['Expected Cash in Drawer', <CurrencyAmount key="z4ec" amount={zExpectedCash} />],
+                  ].map(([d, a], i) => (
+                    <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                      <td className="px-4 py-2 text-[#1E293B]">{d}</td>
+                      <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 5: Card / Bank Settlement Summary */}
+          <ZRTable
+            title="5. Card / Bank Settlement Summary"
+            icon={<CreditCard className="h-4 w-4" />}
+            cols={['Description', 'Amount']}
+            rows={[
+              ['Total Card Sales', <CurrencyAmount key="z5c" amount={zCardSales} />],
+              ['Net Card Settlement Expected', <CurrencyAmount key="z5n" amount={zCardSales} />],
+            ]}
+          />
+
+          {/* Section 6: VAT / Tax Summary */}
+          <ZRTable
+            title="6. VAT / Tax Summary"
+            icon={<FileBarChart className="h-4 w-4" />}
+            cols={['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount']}
+            rows={[
+              ['VAT 5%',
+                <CurrencyAmount key="z6t" amount={zSalesExTax} />,
+                <CurrencyAmount key="z6a" amount={zTotalTax} />,
+                <CurrencyAmount key="z6g" amount={zTotalSales} />],
+            ]}
+            footerRow={[
+              'Total',
+              <CurrencyAmount key="z6ft" amount={zSalesExTax} />,
+              <CurrencyAmount key="z6fa" amount={zTotalTax} />,
+              <span key="z6fg" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>
+            ]}
+          />
+
+          {/* Section 7: Discount Summary */}
+          <ZRTable
+            title="7. Discount Summary"
+            icon={<Tag className="h-4 w-4" />}
+            cols={['Description', 'Amount']}
+            rows={[
+              ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z7d" amount={0} />],
+            ]}
+          />
+
+          {/* Section 8: Returns / Refund Summary */}
+          <ZRTable
+            title="8. Returns / Refund Summary"
+            icon={<RotateCcw className="h-4 w-4" />}
+            cols={['Description', 'Count', 'Amount']}
+            rows={[
+              ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount key="z8sr" amount={0} />],
+              ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
+              ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
+              ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
+              ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), <CurrencyAmount key="z8tr" amount={zSummary.totalRefunds ?? 0} />],
+            ]}
+          />
+
+          {/* Section 9: Item Movement Summary */}
+          {(() => {
+            const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
+            const itemsReturned = zSummary.totalItemsReturned ?? 0;
+            const netQty = zSummary.netQuantitySold ?? zTotalItemsSold;
+            return (
+              <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                  <span className="text-[#327F74]"><Package className="h-4 w-4" /></span>
+                  <span className="text-sm text-[#1E293B]">9. Product / Item Movement Summary</span>
+                </div>
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-gray-500">
-                      <th className="px-2 py-1 text-left font-medium">Item Code</th>
-                      <th className="px-2 py-1 text-left font-medium">Item Name</th>
-                      <th className="px-2 py-1 text-right font-medium">Qty</th>
-                      <th className="px-2 py-1 text-right font-medium">Amount</th>
+                    <tr className="bg-[#F7F7FA] text-gray-500">
+                      <th className="px-4 py-2 text-left font-medium border-b border-[#327F74]/10">Description</th>
+                      <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Quantity</th>
+                      <th className="px-4 py-2 text-right font-medium border-b border-[#327F74]/10">Amount</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {topItems.map((it, i) => (
-                      <tr key={i} className="border-t border-gray-50">
-                        <td className="px-2 py-1 text-[#327F74]">{it.itemCode || '—'}</td>
-                        <td className="px-2 py-1 text-[#1E293B]">{it.itemName || '—'}</td>
-                        <td className="px-2 py-1 text-right text-[#1E293B]">{it.quantity ?? 0}</td>
-                        <td className="px-2 py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.amount ?? 0} /></td>
+                    {[
+                      ['Total Items Sold', String(zTotalItemsSold), <CurrencyAmount key="z9s" amount={zTotalSales} />],
+                      ['Total Items Returned', String(itemsReturned), itemsReturned > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal ?? 0)})` : <CurrencyAmount key="z9rt" amount={0} />],
+                      ['Net Quantity Sold', String(netQty), <CurrencyAmount key="z9n" amount={zTotalSales} />],
+                    ].map(([d, q, a], i) => (
+                      <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                        <td className="px-4 py-2 text-[#1E293B]">{d}</td>
+                        <td className="px-4 py-2 text-right text-[#1E293B]">{q}</td>
+                        <td className="px-4 py-2 text-right text-[#1E293B]">{a}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                {topItems.length > 0 && (
+                  <div className="px-4 py-3 border-t border-[#327F74]/10">
+                    <p className="text-xs font-semibold text-[#1E293B] mb-2">Top Selling Items</p>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-gray-500">
+                          <th className="px-2 py-1 text-left font-medium">Item Code</th>
+                          <th className="px-2 py-1 text-left font-medium">Item Name</th>
+                          <th className="px-2 py-1 text-right font-medium">Qty</th>
+                          <th className="px-2 py-1 text-right font-medium">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topItems.map((it, i) => (
+                          <tr key={i} className="border-t border-gray-50">
+                            <td className="px-2 py-1 text-[#327F74]">{it.itemCode || '—'}</td>
+                            <td className="px-2 py-1 text-[#1E293B]">{it.itemName || '—'}</td>
+                            <td className="px-2 py-1 text-right text-[#1E293B]">{it.quantity ?? 0}</td>
+                            <td className="px-2 py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.amount ?? 0} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        );
-      })()}
+            );
+          })()}
 
-      {/* Section 10: Cashier Wise Summary — backend-aggregated per session owner, with
+          {/* Section 10: Cashier Wise Summary — backend-aggregated per session owner, with
           cash/card/credit split from actual tender (sales_payments), so a split
           Cash+Card sale correctly shows in both columns instead of landing nowhere
           (the per-session totalCashSales/totalCardSales counters never see "mixed"
           sales — those are bucketed into a separate totalMixedSales counter only). */}
-      {(() => {
-        const cashierWise = Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : [];
-        const cashierRows = cashierWise.map((c, i) => [
-          c.cashier || '—',
-          String(c.invoiceCount || 0),
-          <CurrencyAmount key={`c10ns${i}`} amount={c.netSales ?? 0} />,
-          <CurrencyAmount key={`c10ca${i}`} amount={c.cash ?? 0} />,
-          <CurrencyAmount key={`c10cd${i}`} amount={c.card ?? 0} />,
-          <CurrencyAmount key={`c10cr${i}`} amount={c.credit ?? 0} />,
-        ]);
-        return (
-          <ZRTable
-            title="10. Cashier Wise Summary"
-            icon={<Users className="h-4 w-4" />}
-            cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
-            rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
-            footerRow={['Total', String(zInvoiceCount), <CurrencyAmount key="c10tf" amount={zTotalSales} />, <CurrencyAmount key="c10cf" amount={zCashSales} />, <CurrencyAmount key="c10df" amount={zCardSales} />, <CurrencyAmount key="c10rf" amount={zCreditSales} />]}
-          />
-        );
-      })()}
+          {(() => {
+            const cashierWise = Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : [];
+            const cashierRows = cashierWise.map((c, i) => [
+              c.cashier || '—',
+              String(c.invoiceCount || 0),
+              <CurrencyAmount key={`c10ns${i}`} amount={c.netSales ?? 0} />,
+              <CurrencyAmount key={`c10ca${i}`} amount={c.cash ?? 0} />,
+              <CurrencyAmount key={`c10cd${i}`} amount={c.card ?? 0} />,
+              <CurrencyAmount key={`c10cr${i}`} amount={c.credit ?? 0} />,
+            ]);
+            return (
+              <ZRTable
+                title="10. Cashier Wise Summary"
+                icon={<Users className="h-4 w-4" />}
+                cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
+                rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
+                footerRow={['Total', String(zInvoiceCount), <CurrencyAmount key="c10tf" amount={zTotalSales} />, <CurrencyAmount key="c10cf" amount={zCashSales} />, <CurrencyAmount key="c10df" amount={zCardSales} />, <CurrencyAmount key="c10rf" amount={zCreditSales} />]}
+              />
+            );
+          })()}
 
-      {/* Section 11: Customer Credit Summary (derived from invoice data) */}
-      {(() => {
-        const zInvoices = zReportData?.invoices || [];
-        const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-        const creditTotal = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
-        return (
-          <ZRTable
-            title="11. Customer Credit Summary"
-            icon={<UserCheck className="h-4 w-4" />}
-            cols={['Description', 'Count', 'Amount']}
-            rows={[
-              ['Credit Sales', String(creditInvoices.length), <CurrencyAmount key="z11c" amount={creditTotal} />],
-              ['Outstanding Created Today', String(creditInvoices.length), <CurrencyAmount key="z11o" amount={creditTotal} />],
-            ]}
-          />
-        );
-      })()}
+          {/* Section 11: Customer Credit Summary (derived from invoice data) */}
+          {(() => {
+            const zInvoices = zReportData?.invoices || [];
+            const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
+            const creditTotal = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
+            return (
+              <ZRTable
+                title="11. Customer Credit Summary"
+                icon={<UserCheck className="h-4 w-4" />}
+                cols={['Description', 'Count', 'Amount']}
+                rows={[
+                  ['Credit Sales', String(creditInvoices.length), <CurrencyAmount key="z11c" amount={creditTotal} />],
+                  ['Outstanding Created Today', String(creditInvoices.length), <CurrencyAmount key="z11o" amount={creditTotal} />],
+                ]}
+              />
+            );
+          })()}
 
-      {/* Section 12: Opening and Closing Invoice Numbers (derived from invoices) */}
-      {(() => {
-        const zInvoices = zReportData?.invoices || [];
-        const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
-        const firstInv = invNums[0] || '—';
-        const lastInv = invNums[invNums.length - 1] || '—';
-        return (
-          <ZRTable
-            title="12. Opening &amp; Closing Invoice Numbers"
-            icon={<Hash className="h-4 w-4" />}
-            cols={['Document Type', 'Starting No.', 'Ending No.']}
-            rows={[
-              ['Sales Invoice', firstInv, lastInv],
-            ]}
-          />
-        );
-      })()}
+          {/* Section 12: Opening and Closing Invoice Numbers (derived from invoices) */}
+          {(() => {
+            const zInvoices = zReportData?.invoices || [];
+            const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
+            const firstInv = invNums[0] || '—';
+            const lastInv = invNums[invNums.length - 1] || '—';
+            return (
+              <ZRTable
+                title="12. Opening &amp; Closing Invoice Numbers"
+                icon={<Hash className="h-4 w-4" />}
+                cols={['Document Type', 'Starting No.', 'Ending No.']}
+                rows={[
+                  ['Sales Invoice', firstInv, lastInv],
+                ]}
+              />
+            );
+          })()}
 
-      {/* Section 13: Final Day Close Summary */}
-      {(() => {
-        const zId = zReportData?.sessions?.[0]?.id;
-        const reportNo = zId ? `ZR-${String(zId).padStart(9,'0')}` : `ZR-${zReportDate?.replace(/-/g,'')}-001`;
-        const totalExpectedCash = zOpeningCash + zCashSales;
-        return (
-          <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-lg shadow p-4 mb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle className="h-4 w-4 text-[#F5C742]" />
-              <span className="text-sm text-white">13. Final Day Close Summary</span>
-              <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {[
-                ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
-                ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
-                ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]'],
-                ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white'],
-                ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white'],
-                ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-green-400'],
-              ].map(([l, v, c]) => (
-                <div key={l} className="bg-white/5 rounded p-2">
-                  <div className="text-xs text-gray-400">{l}</div>
-                  <div className={`text-sm font-bold ${c}`}>{v}</div>
+          {/* Section 13: Final Day Close Summary */}
+          {(() => {
+            const zId = zReportData?.sessions?.[0]?.id;
+            const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
+            const totalExpectedCash = zOpeningCash + zCashSales;
+            return (
+              <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-lg shadow p-4 mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle className="h-4 w-4 text-[#F5C742]" />
+                  <span className="text-sm text-white">13. Final Day Close Summary</span>
+                  <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
                 </div>
-              ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
+                    ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
+                    ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]'],
+                    ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white'],
+                    ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white'],
+                    ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-green-400'],
+                  ].map(([l, v, c]) => (
+                    <div key={l} className="bg-white/5 rounded p-2">
+                      <div className="text-xs text-gray-400">{l}</div>
+                      <div className={`text-sm font-bold ${c}`}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Declaration & Verification */}
+          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="h-4 w-4 text-[#327F74]" />
+              <span className="text-sm text-[#1E293B]">Declaration &amp; Verification</span>
+            </div>
+            <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
+              I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="text-xs text-gray-500">Cashier Signature</label>
+                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Supervisor / Manager Signature</label>
+                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Closing Remarks</label>
+                <textarea className="mt-1 w-full border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] text-xs p-1.5 text-[#1E293B] resize-none focus:outline-none focus:ring-1 focus:ring-[#327F74]" placeholder="Enter remarks..." />
+              </div>
             </div>
           </div>
-        );
-      })()}
 
-      {/* Declaration & Verification */}
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4 p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Shield className="h-4 w-4 text-[#327F74]" />
-          <span className="text-sm text-[#1E293B]">Declaration &amp; Verification</span>
-        </div>
-        <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
-          I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div>
-            <label className="text-xs text-gray-500">Cashier Signature</label>
-            <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+          {/* System Notes */}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+            <div className="flex items-center gap-1 mb-1.5">
+              <Info className="h-3.5 w-3.5 text-amber-600" />
+              <span className="text-xs text-amber-700">System Notes</span>
+            </div>
+            <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
+              <li>Once Z-Report is generated and day is closed, no direct edit is allowed for that closed POS session.</li>
+              <li>Any correction after Z-Report should be handled through authorized adjustment entries, credit notes, or manager-approved transactions.</li>
+              <li>Z-Report is printable in A4 and POS thermal format.</li>
+              <li>Report is filterable by Branch, POS Terminal, Cashier, Shift, and Business Date.</li>
+              <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
+            </ul>
           </div>
-          <div>
-            <label className="text-xs text-gray-500">Supervisor / Manager Signature</label>
-            <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
-          </div>
-          <div>
-            <label className="text-xs text-gray-500">Closing Remarks</label>
-            <textarea className="mt-1 w-full border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] text-xs p-1.5 text-[#1E293B] resize-none focus:outline-none focus:ring-1 focus:ring-[#327F74]" placeholder="Enter remarks..." />
-          </div>
-        </div>
+        </>)}
       </div>
-
-      {/* System Notes */}
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-        <div className="flex items-center gap-1 mb-1.5">
-          <Info className="h-3.5 w-3.5 text-amber-600" />
-          <span className="text-xs text-amber-700">System Notes</span>
-        </div>
-        <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
-          <li>Once Z-Report is generated and day is closed, no direct edit is allowed for that closed POS session.</li>
-          <li>Any correction after Z-Report should be handled through authorized adjustment entries, credit notes, or manager-approved transactions.</li>
-          <li>Z-Report is printable in A4 and POS thermal format.</li>
-          <li>Report is filterable by Branch, POS Terminal, Cashier, Shift, and Business Date.</li>
-          <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
-        </ul>
-      </div>
-      </>)}
-    </div>
-  );
+    );
   };
 
   // X-Report View (Session Close Report)
   const renderXReport = () => {
-    const denomKeys = ['1000','500','200','100','50','20','10','5','1','0.50','0.25'];
-    const denomLabels = {'1000':'AED 1000','500':'AED 500','200':'AED 200','100':'AED 100','50':'AED 50','20':'AED 20','10':'AED 10','5':'AED 5','1':'AED 1 Coin','0.50':'AED 0.50 Coin','0.25':'AED 0.25 Coin'};
+    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
+    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
     // Once closed, reportDenominations comes from the immutable backend snapshot and
@@ -5444,18 +5806,18 @@ export default function POSSales() {
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-[#F7F7FA] text-gray-500">
-              {cols.map((c,i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i>0?'text-right':''}`}>{c}</th>)}
+              {cols.map((c, i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i > 0 ? 'text-right' : ''}`}>{c}</th>)}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r,ri) => (
-              <tr key={ri} className={`border-b border-gray-50 ${highlightLast && ri===rows.length-1 ? 'bg-[#FFF8DC]' : 'hover:bg-[#F7F7FA]/60'}`}>
-                {r.map((cell,ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci>0?'text-right':''} ${highlightLast && ri===rows.length-1 ? 'font-semibold' : ''}`}>{renderAED(cell)}</td>)}
+            {rows.map((r, ri) => (
+              <tr key={ri} className={`border-b border-gray-50 ${highlightLast && ri === rows.length - 1 ? 'bg-[#FFF8DC]' : 'hover:bg-[#F7F7FA]/60'}`}>
+                {r.map((cell, ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci > 0 ? 'text-right' : ''} ${highlightLast && ri === rows.length - 1 ? 'font-semibold' : ''}`}>{renderAED(cell)}</td>)}
               </tr>
             ))}
             {footerRow && (
               <tr className="bg-[#F5C742]/10 border-t border-[#F5C742]/30">
-                {footerRow.map((cell,ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci>0?'text-right':''}`}>{renderAED(cell)}</td>)}
+                {footerRow.map((cell, ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci > 0 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
               </tr>
             )}
           </tbody>
@@ -5464,579 +5826,612 @@ export default function POSSales() {
     );
 
     return (
-    <div className="bg-[#F7F7FA] min-h-full flex flex-col">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-10 bg-[#F7F7FA] border-b border-[#327F74]/10 px-6 pt-4 pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-              <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
-              <ChevronRight className="h-3 w-3" />
-              <span>POS</span>
-              <ChevronRight className="h-3 w-3" />
-              <span className="text-[#327F74]">X-Report / Close Session</span>
+      <div className="bg-[#F7F7FA] min-h-full flex flex-col">
+        {/* Sticky Header */}
+        <div className="sticky top-0 z-10 bg-[#F7F7FA] border-b border-[#327F74]/10 px-6 pt-4 pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+                <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
+                <ChevronRight className="h-3 w-3" />
+                <span>POS</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className="text-[#327F74]">X-Report / Close Session</span>
+              </div>
+              <h1 className="text-xl text-[#1E293B]">X-Report / Close Session</h1>
+              <p className="text-xs text-gray-500 mt-0.5">Close the current POS session, verify cash drawer balance, enter denomination count, and generate the session closing report.</p>
             </div>
-            <h1 className="text-xl text-[#1E293B]">X-Report / Close Session</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Close the current POS session, verify cash drawer balance, enter denomination count, and generate the session closing report.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-gray-300 text-gray-600 text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
-              <option value="a4">A4</option>
-              <option value="80mm">Thermal 80mm</option>
-              <option value="58mm">Thermal 58mm</option>
-            </select>
-            <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-            <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-            <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-            <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-            <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
-              {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
-            </button>
-            <button
-              onClick={openCloseSessionDialog}
-              disabled={currentSession?.status !== 'OPEN'}
-              className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-              <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
-            </button>
-          </div>
-        </div>
-        {/* Status strip */}
-        {(() => {
-          const sessStatus = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
-          const sessId = xReportData?.session?.id || currentSession?.id;
-          const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
-          const sessionStatusColor = sessStatus === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600';
-          return (
-            <div className="flex items-center gap-3 mt-2">
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Session Status:</span><span className={`text-xs rounded px-2 py-0.5 ${sessionStatusColor}`}>{sessStatus === 'OPEN' ? 'Open' : sessStatus === 'CLOSED' ? 'Closed' : sessStatus}</span></div>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Cash Status:</span><span className={`text-xs rounded px-2 py-0.5 ${isBalanced ? 'bg-green-100 text-green-700' : cashVariance < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{actualCash === 0 ? 'Pending' : varStatus}</span></div>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Supervisor Approval:</span><span className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{!isBalanced && actualCash > 0 ? 'Required' : 'Not Required'}</span></div>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Report No.:</span><span className="text-xs text-[#327F74]">{reportNo}</span></div>
-            </div>
-          );
-        })()}
-      </div>
-
-      <div className="p-6 flex-1">
-        {/* Filter / Session Info Bar */}
-        {(() => {
-          const sess = xReportData?.session || currentSession;
-          const sessionNo = sess?.id ? `SESS-${String(sess.id).padStart(9, '0')}` : '—';
-          const businessDate = sess?.sessionDate || new Date().toISOString().slice(0, 10);
-          const branchName = sess?.branchName || currentTerminal?.branchName || '—';
-          const terminalId = sess?.terminalId || currentTerminal?.terminalId || '—';
-          const cashier = sess?.openedBy || '—';
-          const openedAt = sess?.openedAt ? parseUTCDate(sess.openedAt)?.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
-          const currentTime = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-          return (
-            <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
-              {[
-                {label:'Business Date', val: businessDate, type:'date'},
-                {label:'Branch / Outlet', val: branchName, type:'text'},
-                {label:'POS Terminal', val: terminalId, type:'text'},
-                {label:'Cashier', val: cashier, type:'text'},
-                {label:'Session No.', val: sessionNo, type:'text'},
-                {label:'Session Opened Time', val: openedAt, type:'text'},
-                {label:'Current Time', val: currentTime, type:'text'},
-              ].map(f => (
-                <div key={f.label} className="flex flex-col gap-1 min-w-[120px]">
-                  <label className="text-xs text-gray-500">{f.label}</label>
-                  <input readOnly value={f.val} type={f.type==='date'?'date':'text'} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-[#F7F7FA] focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                </div>
-              ))}
-              <button onClick={loadXReport} className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-4 py-2 rounded flex items-center gap-1"><Search className="h-3 w-3" />Refresh</button>
-            </div>
-          );
-        })()}
-
-        {/* Session Information Card */}
-        {xReportLoading && (
-          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4 text-sm text-blue-600">
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            Loading session data...
-          </div>
-        )}
-        <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1 text-xs">
-              {[
-                ['Branch / Outlet', xReportData?.session?.branchName || currentSession?.branchName || '—'],
-                ['POS Terminal', xReportData?.session?.terminalId || currentTerminal?.terminalId || '—'],
-                ['Counter', xReportData?.session?.counterName || currentTerminal?.counterName || '—'],
-                ['Report Type', 'X-Report / Close Session Report'],
-              ].map(([k,v]) => (
-                <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-              ))}
-            </div>
-            <div className="space-y-1 text-xs">
-              {[
-                ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6,'0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6,'0')}` : '—'],
-                ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
-                ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
-                ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
-                ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
-                ['Invoice Count', String(invoiceCount)],
-              ].map(([k,v]) => (
-                <div key={k} className="flex gap-2"><span className="text-gray-500 w-40 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-gray-300 text-gray-600 text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
+                <option value="a4">A4</option>
+                <option value="80mm">Thermal 80mm</option>
+                <option value="58mm">Thermal 58mm</option>
+              </select>
+              <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
+              <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
+                {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
+              </button>
+              <button
+                onClick={openCloseSessionDialog}
+                disabled={currentSession?.status !== 'OPEN'}
+                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
+                <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
+              </button>
             </div>
           </div>
+          {/* Status strip */}
+          {(() => {
+            const sessStatus = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+            const sessId = xReportData?.session?.id || currentSession?.id;
+            const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
+            const sessionStatusColor = sessStatus === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600';
+            return (
+              <div className="flex items-center gap-3 mt-2">
+                <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Session Status:</span><span className={`text-xs rounded px-2 py-0.5 ${sessionStatusColor}`}>{sessStatus === 'OPEN' ? 'Open' : sessStatus === 'CLOSED' ? 'Closed' : sessStatus}</span></div>
+                <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Cash Status:</span><span className={`text-xs rounded px-2 py-0.5 ${isBalanced ? 'bg-green-100 text-green-700' : cashVariance < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{actualCash === 0 ? 'Pending' : varStatus}</span></div>
+                <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Supervisor Approval:</span><span className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{!isBalanced && actualCash > 0 ? 'Required' : 'Not Required'}</span></div>
+                <div className="flex items-center gap-1"><span className="text-xs text-gray-400">Report No.:</span><span className="text-xs text-[#327F74]">{reportNo}</span></div>
+              </div>
+            );
+          })()}
         </div>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
-          {[
-            {label:'Opening Cash / Float',value:<CurrencyAmount amount={openingCashVal} />,icon:<Wallet className="h-4 w-4" />},
-            {label:'Total Sales',value:<CurrencyAmount amount={totalSales} />,icon:<TrendingUp className="h-4 w-4" />},
-            {label:'Cash Sales',value:<CurrencyAmount amount={cashSales} />,icon:<Banknote className="h-4 w-4" />},
-            {label:'Card Sales',value:<CurrencyAmount amount={cardSales} />,icon:<CreditCard className="h-4 w-4" />},
-            {label:'Expected Cash',value:<CurrencyAmount amount={expectedCashVal} />,icon:<Calculator className="h-4 w-4" />},
-            {label:'Actual Cash Counted',value:<CurrencyAmount amount={actualCash} />,icon:<CheckCircle className="h-4 w-4" />},
-            {label:'Cash Variance',value:<CurrencyAmount amount={Math.abs(cashVariance)} />,icon:<AlertCircle className="h-4 w-4" />,badge:actualCash===0?'Pending':varStatus,badgeColor:isBalanced?'bg-green-100 text-green-700':cashVariance<0?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'},
-          ].map(k => (
-            <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-3 flex flex-col gap-1">
-              <div className="flex items-center gap-1 text-[#327F74]">{k.icon}<span className="text-xs text-gray-400 leading-tight">{k.label}</span></div>
-              <div className="text-sm font-bold text-[#1E293B]">{k.value}</div>
-              {k.badge && <span className={`text-xs rounded px-1.5 py-0.5 w-fit ${k.badgeColor}`}>{k.badge}</span>}
-            </div>
-          ))}
-        </div>
-
-        {/* Two-column layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* LEFT COLUMN */}
-          <div>
-            {/* Section 1: Denomination Count */}
-            <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-                <span className="text-[#327F74]"><Calculator className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">1. Denomination Count</span>
-              </div>
-              <div className="px-4 py-2">
-                <p className="text-xs text-gray-500 mb-2">Enter the physical cash count available in the drawer before closing the session.</p>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-[#F7F7FA] text-gray-500">
-                      <th className="px-2 py-1.5 text-left font-medium">Denomination</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Quantity</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Total Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {denomKeys.map(k => (
-                      <tr key={k} className="border-t border-gray-50">
-                        <td className="px-2 py-1.5 text-[#1E293B]">{renderAED(denomLabels[k])}</td>
-                        <td className="px-2 py-1.5 text-right">
-                          <input
-                            type="number"
-                            min="0"
-                            value={reportDenominations[k] || 0}
-                            onChange={e => setClosingDenominations({...closingDenominations, [k]: parseInt(e.target.value)||0})}
-                            disabled={isSessionClosed}
-                            className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5 text-right text-[#1E293B]">
-                          <DirhamSymbol /> {(parseFloat(k) * (reportDenominations[k]||0)).toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#F5C742]/30 bg-[#FFF8DC] px-2 py-1.5 rounded">
-                  <span className="text-xs font-semibold text-[#1E293B]">Total Cash Counted</span>
-                  <span className="text-sm font-bold text-[#327F74]"><DirhamSymbol /> {actualCash.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 2: Cash Drawer Expected */}
-            <XRTable
-              title="2. Cash Drawer Expected Amount"
-              icon={<Banknote className="h-4 w-4" />}
-              cols={['Description','Amount']}
-              rows={[
-                ['Opening Cash / Float',<CurrencyAmount key="oc" amount={openingCashVal} />],
-                ['Cash Sales',<CurrencyAmount key="cs" amount={cashSales} />],
-                ['Cash Paid In',<CurrencyAmount key="ci" amount={cashDropIn} />],
-                ['Less: Cash Paid Out',cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="co" amount={0} />],
-                ['Expected Cash in Drawer',<span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCashVal} /></span>],
-              ]}
-              highlightLast
-            />
-
-            {/* Section 3: Cash Variance Summary */}
-            <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-                <span className="text-[#327F74]"><AlertCircle className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">3. Cash Variance Summary</span>
-              </div>
-              <div className="p-4 space-y-2 text-xs">
+        <div className="p-6 flex-1">
+          {/* Filter / Session Info Bar */}
+          {(() => {
+            const sess = xReportData?.session || currentSession;
+            const sessionNo = sess?.id ? `SESS-${String(sess.id).padStart(9, '0')}` : '—';
+            const businessDate = sess?.sessionDate || new Date().toISOString().slice(0, 10);
+            const branchName = sess?.branchName || currentTerminal?.branchName || '—';
+            const terminalId = sess?.terminalId || currentTerminal?.terminalId || '—';
+            const cashier = sess?.openedBy || '—';
+            const openedAt = sess?.openedAt ? parseUTCDate(sess.openedAt)?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+            const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return (
+              <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
                 {[
-                  ['Expected Cash in Drawer',<CurrencyAmount amount={expectedCashVal} />,'text-[#1E293B]'],
-                  ['Actual Cash Counted',<CurrencyAmount amount={actualCash} />,'text-[#1E293B]'],
-                  ['Cash Difference / Variance',<>{cashVariance<0?'(':''}<CurrencyAmount amount={Math.abs(cashVariance)} />{cashVariance<0?')':''}</>, cashVariance<0?'text-red-600':cashVariance>0?'text-amber-600':'text-green-600'],
-                ].map(([l,v,c]) => (
-                  <div key={l} className="flex justify-between items-center py-1.5 border-b border-gray-50">
-                    <span className="text-gray-600">{l}</span>
-                    <span className={`font-semibold ${c}`}>{v}</span>
+                  { label: 'Business Date', val: businessDate, type: 'date' },
+                  { label: 'Branch / Outlet', val: branchName, type: 'text' },
+                  { label: 'POS Terminal', val: terminalId, type: 'text' },
+                  { label: 'Cashier', val: cashier, type: 'text' },
+                  { label: 'Session No.', val: sessionNo, type: 'text' },
+                  { label: 'Session Opened Time', val: openedAt, type: 'text' },
+                  { label: 'Current Time', val: currentTime, type: 'text' },
+                ].map(f => (
+                  <div key={f.label} className="flex flex-col gap-1 min-w-[120px]">
+                    <label className="text-xs text-gray-500">{f.label}</label>
+                    <input readOnly value={f.val} type={f.type === 'date' ? 'date' : 'text'} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-[#F7F7FA] focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                   </div>
                 ))}
-                <div className="flex items-center gap-2 py-1.5">
-                  <span className="text-gray-600">Cash Status:</span>
-                  <span className={`text-xs rounded px-2 py-0.5 font-semibold ${isBalanced?'bg-green-100 text-green-700':cashVariance<0?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>
-                    {actualCash===0?'Pending — Enter Count':varStatus}
-                  </span>
-                </div>
-                <div className="mt-2">
-                  <label className="text-xs text-gray-500 mb-1 block">Variance Reason / Remarks {!isBalanced && actualCash>0 && <span className="text-red-500">*</span>}</label>
-                  <textarea
-                    value={xReportVarianceRemarks}
-                    onChange={e => setXReportVarianceRemarks(e.target.value)}
-                    placeholder="Enter variance reason..."
-                    className="w-full border border-[#327F74]/30 rounded p-2 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]"
-                  />
-                </div>
-                {!isBalanced && actualCash>0 && (
-                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded p-2">
-                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                    <span className="text-xs text-amber-700">Variance exceeds allowed limit. Supervisor approval is required to close session.</span>
-                  </div>
-                )}
+                <button onClick={loadXReport} className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-4 py-2 rounded flex items-center gap-1"><Search className="h-3 w-3" />Refresh</button>
               </div>
+            );
+          })()}
+
+          {/* Session Information Card */}
+          {xReportLoading && (
+            <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4 text-sm text-blue-600">
+              <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              Loading session data...
             </div>
-
-            {/* Section 13: Manual Actions */}
-            {(() => {
-              // Reuses the same backend-computed bill-discount figures as Section 8
-              // (no separate client recompute of the same number), and sources
-              // "Session Reopened" from the audit log rather than a hardcoded '0'.
-              const discountCount = xSummary.billDiscountCount ?? 0;
-              const discountTotal = xSummary.billDiscount ?? 0;
-              const reopenedCount = xSummary.sessionReopenedCount ?? 0;
-              return (
-                <XRTable
-                  title="13. Manual Actions / Exception Summary"
-                  icon={<AlertTriangle className="h-4 w-4" />}
-                  cols={['Action Type','Count','Remarks']}
-                  rows={[
-                    ['Manual Discount', String(discountCount), discountTotal > 0 ? formatCurrencyStr(discountTotal) : '—'],
-                    ['Item Void', String(xSummary.voidItemCount ?? 0), xSummary.voidItemCount > 0 ? `${xSummary.voidItemCount} items` : '—'],
-                    ['Session Reopened', String(reopenedCount), reopenedCount > 0 ? `${reopenedCount} time(s)` : '—'],
-                  ]}
-                />
-              );
-            })()}
-
-            {/* Section 14: Checklist — every flag below is derived live from real
-                session/cash/card/hold-bill state, never from user input. Cashiers
-                cannot tick these; they reflect actual validation outcomes. */}
-            <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-                <span className="text-[#327F74]"><CheckCircle className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">14. Close Session Confirmation</span>
+          )}
+          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1 text-xs">
+                {[
+                  ['Branch / Outlet', xReportData?.session?.branchName || currentSession?.branchName || '—'],
+                  ['POS Terminal', xReportData?.session?.terminalId || currentTerminal?.terminalId || '—'],
+                  ['Counter', xReportData?.session?.counterName || currentTerminal?.counterName || '—'],
+                  ['Report Type', 'X-Report / Close Session Report'],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
+                ))}
               </div>
-              <div className="p-4 space-y-2">
-                {(() => {
-                  const sessionStatusNow = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
-                  const supervisorApprovalRequired = !isBalanced && actualCash > 0;
-                  const closeChecklist = {
-                    cashCount: actualCash > 0,
-                    varianceReviewed: actualCash > 0 && (isBalanced || xReportVarianceRemarks.trim().length > 0),
-                    cardSettlement: xReportCardVerified,
-                    holdBills: (heldSales || []).length === 0,
-                    supervisorApproval: !supervisorApprovalRequired,
-                    sessionClosed: sessionStatusNow === 'CLOSED',
-                  };
-                  return [
-                    ['cashCount', 'Cash Count Completed'],
-                    ['varianceReviewed', 'Variance Reviewed'],
-                    ['cardSettlement', 'Card Settlement Verified'],
-                    ['holdBills', 'Pending Hold Bills Checked'],
-                    ['supervisorApproval', 'Supervisor Approval'],
-                    ['sessionClosed', 'Session Closed Successfully'],
-                  ].map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2 cursor-not-allowed">
-                      <input
-                        type="checkbox"
-                        checked={closeChecklist[key]}
-                        disabled
-                        readOnly
-                        className="h-3.5 w-3.5 accent-[#327F74] rounded cursor-not-allowed disabled:opacity-100"
-                      />
-                      <span className={`text-xs transition-colors duration-200 ${closeChecklist[key] ? 'text-green-700 line-through' : 'text-[#1E293B]'}`}>{label}</span>
-                      {closeChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
-                    </label>
-                  ));
-                })()}
+              <div className="space-y-1 text-xs">
+                {[
+                  ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6, '0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6, '0')}` : '—'],
+                  ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
+                  ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
+                  ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
+                  ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
+                  ['Invoice Count', String(invoiceCount)],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex gap-2"><span className="text-gray-500 w-40 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* RIGHT COLUMN */}
-          <div>
-            {/* Section 4: Payment / Tender Summary */}
-            <XRTable
-              title="4. Payment / Tender Summary"
-              icon={<CreditCard className="h-4 w-4" />}
-              cols={['Payment Mode','Count','Amount']}
-              rows={[
-                ['Cash', xSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="cs4" amount={cashSales} />],
-                ['Card', xSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="cd4" amount={cardSales} />],
-                ['Credit', xSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="cr4" amount={creditSales} />],
-                ...((xSummary.otherSales ?? 0) > 0
-                  ? [['Other', xSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="ot4" amount={xSummary.otherSales} />]]
-                  : []),
-              ].filter(r => r[2] !== undefined)}
-              // Total Collection = actual tender taken across every mode (cash+card+credit+other),
-              // not the invoice count/value — they can differ (e.g. credit notes, rounding).
-              footerRow={['Total Collection', String(xSummary.totalTenderCount ?? invoiceCount), <CurrencyAmount key="tc4" amount={xSummary.totalPaid ?? totalSales} />]}
-            />
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+            {[
+              { label: 'Opening Cash / Float', value: <CurrencyAmount amount={openingCashVal} />, icon: <Wallet className="h-4 w-4" /> },
+              { label: 'Total Sales', value: <CurrencyAmount amount={totalSales} />, icon: <TrendingUp className="h-4 w-4" /> },
+              { label: 'Cash Sales', value: <CurrencyAmount amount={cashSales} />, icon: <Banknote className="h-4 w-4" /> },
+              { label: 'Card Sales', value: <CurrencyAmount amount={cardSales} />, icon: <CreditCard className="h-4 w-4" /> },
+              { label: 'Credit Sales', value: <CurrencyAmount amount={creditSales} />, icon: <FileText className="h-4 w-4" /> },
+              { label: 'Expected Cash', value: <CurrencyAmount amount={expectedCashVal} />, icon: <Calculator className="h-4 w-4" /> },
+              { label: 'Actual Cash Counted', value: <CurrencyAmount amount={actualCash} />, icon: <CheckCircle className="h-4 w-4" /> },
+              { label: 'Cash Variance', value: <CurrencyAmount amount={Math.abs(cashVariance)} />, icon: <AlertCircle className="h-4 w-4" />, badge: actualCash === 0 ? 'Pending' : varStatus, badgeColor: isBalanced ? 'bg-green-100 text-green-700' : cashVariance < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700' },
+            ].map(k => (
+              <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-3 flex flex-col gap-1">
+                <div className="flex items-center gap-1 text-[#327F74]">{k.icon}<span className="text-xs text-gray-400 leading-tight">{k.label}</span></div>
+                <div className="text-sm font-bold text-[#1E293B]">{k.value}</div>
+                {k.badge && <span className={`text-xs rounded px-1.5 py-0.5 w-fit ${k.badgeColor}`}>{k.badge}</span>}
+              </div>
+            ))}
+          </div>
 
-            {/* Section 5: Card / Bank Settlement */}
-            {(() => {
-              // Sourced from the same authoritative tender aggregate as the "Card Sales" KPI
-              // and Section 4 (xSummary.cardSales/cardInvoiceCount) — not re-derived from
-              // invoice.paymentMode text-matching, which double-counted split payments and
-              // could disagree with the rest of the report. Refunds come from real refund
-              // Payment rows for this session (xSummary.cardRefundSales/cardRefundCount),
-              // not the unrelated item-void counter.
-              const cardPayTotal = Number(cardSales) || 0;
-              const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
-              const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
-              const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
-              const netCardSettle = cardPayTotal - cardRefundTotal;
-              const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
-              const bankTotal = Number(xSummary.bankTransferSales ?? 0);
-              const onlineTotal = Number(xSummary.walletSales ?? 0);
-              const cardRows = [
-                ['Card Payments', String(cardPayCount), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
-                ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(cardRefundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
-                ['Net Card Settlement', String(netCardCount), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
-                ...(bankTotal > 0 ? [['Bank Transfer Payments', '—', <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
-                ...(onlineTotal > 0 ? [['Online / Wallet Payments', '—', <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
-              ];
-              return (
-                <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-                    <span className="text-[#327F74]"><CreditCard className="h-4 w-4" /></span>
-                    <span className="text-sm text-[#1E293B]">5. Card / Bank Settlement Summary</span>
-                  </div>
+          {/* Two-column layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* LEFT COLUMN */}
+            <div>
+              {/* Section 1: Denomination Count */}
+              <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                  <span className="text-[#327F74]"><Calculator className="h-4 w-4" /></span>
+                  <span className="text-sm text-[#1E293B]">1. Denomination Count</span>
+                </div>
+                <div className="px-4 py-2">
+                  <p className="text-xs text-gray-500 mb-2">Enter the physical cash count available in the drawer before closing the session.</p>
                   <table className="w-full text-xs">
-                    <thead><tr className="bg-[#F7F7FA] text-gray-500">{['Description','Count','Amount'].map((c,i)=><th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i>0?'text-right':''}`}>{c}</th>)}</tr></thead>
+                    <thead>
+                      <tr className="bg-[#F7F7FA] text-gray-500">
+                        <th className="px-2 py-1.5 text-left font-medium">Denomination</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Quantity</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Total Amount</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {cardRows.map((r,i)=>(
-                        <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                          {r.map((cell,ci)=><td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci>0?'text-right':''}`}>{cell}</td>)}
+                      {denomKeys.map(k => (
+                        <tr key={k} className="border-t border-gray-50">
+                          <td className="px-2 py-1.5 text-[#1E293B]">{renderAED(denomLabels[k])}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              value={reportDenominations[k] || 0}
+                              onChange={e => setClosingDenominations({ ...closingDenominations, [k]: parseInt(e.target.value) || 0 })}
+                              disabled={isSessionClosed}
+                              className="w-16 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-[#1E293B]">
+                            <DirhamSymbol /> {(parseFloat(k) * (reportDenominations[k] || 0)).toFixed(2)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <div className="p-4 border-t border-[#327F74]/10 flex items-center gap-6">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-500">Card Machine Batch No.</label>
-                      <input value={xReportCardBatchNo} onChange={e=>setXReportCardBatchNo(e.target.value)} placeholder="BATCH-001" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-gray-500">Card Settlement Verified:</label>
-                      <button onClick={()=>setXReportCardVerified(!xReportCardVerified)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${xReportCardVerified?'bg-[#327F74]':'bg-gray-200'}`}>
-                        <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${xReportCardVerified?'translate-x-4':'translate-x-0.5'}`} />
-                      </button>
-                      <span className={`text-xs ${xReportCardVerified?'text-green-600':'text-gray-400'}`}>{xReportCardVerified?'Yes':'No'}</span>
-                    </div>
+                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#F5C742]/30 bg-[#FFF8DC] px-2 py-1.5 rounded">
+                    <span className="text-xs font-semibold text-[#1E293B]">Total Cash Counted</span>
+                    <span className="text-sm font-bold text-[#327F74]"><DirhamSymbol /> {actualCash.toFixed(2)}</span>
                   </div>
                 </div>
-              );
-            })()}
-
-            {/* Section 6: Session Summary */}
-            <XRTable
-              title="6. Session Summary"
-              icon={<BarChart2 className="h-4 w-4" />}
-              cols={['Description','Value']}
-              rows={[
-                ['Opening Cash / Float',<CurrencyAmount key="s6oc" amount={openingCashVal} />],
-                ['Total Sales Invoices', String(invoiceCount)],
-                ['Total Sales Amount',<CurrencyAmount key="s6ts" amount={xSummary.salesAmountExTax ?? totalSales} />],
-                ['Total Discount',xSummary.totalDiscount > 0 ? `(${formatCurrencyStr(xSummary.totalDiscount ?? 0)})` : <CurrencyAmount key="s6td" amount={0} />],
-                ['VAT Amount',<CurrencyAmount key="s6vat" amount={xSummary.totalTax ?? 0} />],
-                ['Net Sales Including VAT',<span key="s6ns" className="font-bold text-[#327F74]"><CurrencyAmount amount={totalSales} /></span>],
-              ]}
-              highlightLast
-            />
-
-            {/* Section 7: Invoice / Transaction Summary */}
-            <XRTable
-              title="7. Invoice / Transaction Summary"
-              icon={<FileText className="h-4 w-4" />}
-              cols={['Description','Count','Amount']}
-              rows={[
-                ['Sales Invoices', String(invoiceCount), <CurrencyAmount key="s7si" amount={totalSales} />],
-                ['Void Items', String(xSummary.voidItemCount ?? 0), '—'],
-              ]}
-            />
-
-            {/* Section 8: Discount & Promotion Summary */}
-            {(() => {
-              // Sourced entirely from the backend's authoritative discount aggregation
-              // (xSummary.billDiscount/lineDiscount + counts) instead of recomputing only
-              // the bill-level figure from raw invoices client-side — that left line-item
-              // discounts silently missing, so the footer (which used totalDiscount, bill+line)
-              // never matched the sum of the rows actually shown.
-              const billDiscountCount = xSummary.billDiscountCount ?? 0;
-              const billDiscountTotal = xSummary.billDiscount ?? 0;
-              const lineDiscountCount = xSummary.lineDiscountCount ?? 0;
-              const lineDiscountTotal = xSummary.lineDiscount ?? 0;
-              const totalDiscount = xSummary.totalDiscount ?? (billDiscountTotal + lineDiscountTotal);
-              const totalDiscountCount = billDiscountCount + lineDiscountCount;
-              return (
-                <XRTable
-                  title="8. Discount Summary"
-                  icon={<Tag className="h-4 w-4" />}
-                  cols={['Discount Type','Count','Amount']}
-                  rows={[
-                    ['Bill Level Discount', String(billDiscountCount), <CurrencyAmount key="d8b" amount={billDiscountTotal} />],
-                    ['Line Item Discount', String(lineDiscountCount), <CurrencyAmount key="d8l" amount={lineDiscountTotal} />],
-                  ]}
-                  footerRow={['Total Discount', String(totalDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
-                />
-              );
-            })()}
-
-            {/* Section 9: Returns / Refund Summary */}
-            <XRTable
-              title="9. Returns / Refund Summary"
-              icon={<RotateCcw className="h-4 w-4" />}
-              cols={['Description','Count','Amount']}
-              rows={[
-                ['Total Refunds', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
-              ]}
-            />
-
-            {/* Section 10: VAT / Tax Summary */}
-            <XRTable
-              title="10. VAT / Tax Summary"
-              icon={<FileBarChart className="h-4 w-4" />}
-              cols={['Tax Type','Taxable Amount','Tax Amount','Total Amount']}
-              rows={[
-                ['VAT 5%',
-                  <CurrencyAmount key="vat5t" amount={xSummary.salesAmountExTax ?? 0} />,
-                  <CurrencyAmount key="vat5a" amount={xSummary.totalTax ?? 0} />,
-                  <CurrencyAmount key="vat5g" amount={totalSales} />],
-              ]}
-              footerRow={[
-                'Total',
-                <CurrencyAmount key="vatft" amount={xSummary.salesAmountExTax ?? 0} />,
-                <CurrencyAmount key="vatfa" amount={xSummary.totalTax ?? 0} />,
-                <CurrencyAmount key="vatfg" amount={totalSales} />
-              ]}
-            />
-
-            {/* Section 11: Item Movement */}
-            <XRTable
-              title="11. Item Movement Summary"
-              icon={<Package className="h-4 w-4" />}
-              cols={['Description','Quantity','Amount']}
-              rows={[
-                ['Total Items Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im1" amount={totalSales} />],
-                ['Net Quantity Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im3" amount={totalSales} />],
-              ]}
-            />
-
-            {/* Section 12: Document Numbers */}
-            {(() => {
-              const xInvoices = xReportData?.invoices || [];
-              const invNums = xInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
-              const firstInv = invNums[0] || '—';
-              const lastInv = invNums[invNums.length - 1] || '—';
-              return (
-                <XRTable
-                  title="12. Opening & Closing Document Numbers"
-                  icon={<Hash className="h-4 w-4" />}
-                  cols={['Document Type','Starting No.','Ending No.']}
-                  rows={[
-                    ['Sales Invoice', firstInv, lastInv],
-                  ]}
-                />
-              );
-            })()}
-
-            {/* Section 15: Declaration & Approval */}
-            <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-                <span className="text-[#327F74]"><Shield className="h-4 w-4" /></span>
-                <span className="text-sm text-[#1E293B]">15. Declaration &amp; Approval</span>
               </div>
-              <div className="p-4">
-                <p className="text-xs text-gray-600 mb-3 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
-                  I confirm that the above sales, collections, refunds, cash drawer balance, and denomination count have been verified for this POS session.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500">Cashier Name</label>
-                    <input value={xReportCashierName} onChange={e=>setXReportCashierName(e.target.value)} className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+
+              {/* Section 2: Cash Drawer Expected */}
+              <XRTable
+                title="2. Cash Drawer Expected Amount"
+                icon={<Banknote className="h-4 w-4" />}
+                cols={['Description', 'Amount']}
+                rows={[
+                  ['Opening Cash / Float', <CurrencyAmount key="oc" amount={openingCashVal} />],
+                  ['Cash Sales', <CurrencyAmount key="cs" amount={cashSales} />],
+                  ['Cash Paid In', <CurrencyAmount key="ci" amount={cashDropIn} />],
+                  ['Less: Cash Paid Out', cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="co" amount={0} />],
+                  ['Expected Cash in Drawer', <span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCashVal} /></span>],
+                ]}
+                highlightLast
+              />
+
+              {/* Section 3: Cash Variance Summary */}
+              <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                  <span className="text-[#327F74]"><AlertCircle className="h-4 w-4" /></span>
+                  <span className="text-sm text-[#1E293B]">3. Cash Variance Summary</span>
+                </div>
+                <div className="p-4 space-y-2 text-xs">
+                  {[
+                    ['Expected Cash in Drawer', <CurrencyAmount amount={expectedCashVal} />, 'text-[#1E293B]'],
+                    ['Actual Cash Counted', <CurrencyAmount amount={actualCash} />, 'text-[#1E293B]'],
+                    ['Cash Difference / Variance', <>{cashVariance < 0 ? '(' : ''}<CurrencyAmount amount={Math.abs(cashVariance)} />{cashVariance < 0 ? ')' : ''}</>, cashVariance < 0 ? 'text-red-600' : cashVariance > 0 ? 'text-amber-600' : 'text-green-600'],
+                  ].map(([l, v, c]) => (
+                    <div key={l} className="flex justify-between items-center py-1.5 border-b border-gray-50">
+                      <span className="text-gray-600">{l}</span>
+                      <span className={`font-semibold ${c}`}>{v}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2 py-1.5">
+                    <span className="text-gray-600">Cash Status:</span>
+                    <span className={`text-xs rounded px-2 py-0.5 font-semibold ${isBalanced ? 'bg-green-100 text-green-700' : cashVariance < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {actualCash === 0 ? 'Pending — Enter Count' : varStatus}
+                    </span>
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-500">Supervisor / Manager Name</label>
-                    <input value={xReportSupervisorName} onChange={e=>setXReportSupervisorName(e.target.value)} placeholder="Enter name" className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                  <div className="mt-2">
+                    <label className="text-xs text-gray-500 mb-1 block">Variance Reason / Remarks {!isBalanced && actualCash > 0 && <span className="text-red-500">*</span>}</label>
+                    <textarea
+                      value={xReportVarianceRemarks}
+                      onChange={e => setXReportVarianceRemarks(e.target.value)}
+                      placeholder="Enter variance reason..."
+                      className="w-full border border-[#327F74]/30 rounded p-2 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]"
+                    />
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-500">Cashier Signature</label>
-                    <div className="mt-0.5 border border-[#327F74]/30 rounded h-10 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">Supervisor Signature</label>
-                    <div className="mt-0.5 border border-[#327F74]/30 rounded h-10 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs text-gray-500">Closing Remarks</label>
-                    <textarea value={xReportClosingRemarks} onChange={e=>setXReportClosingRemarks(e.target.value)} placeholder="Enter remarks..." className="mt-0.5 w-full border border-[#327F74]/30 rounded p-2 text-xs resize-none h-14 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                  </div>
+                  {!isBalanced && actualCash > 0 && (
+                    <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded p-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                      <span className="text-xs text-amber-700">Variance exceeds allowed limit. Supervisor approval is required to close session.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 13: Manual Actions */}
+              {(() => {
+                // Reuses the same backend-computed bill-discount figures as Section 8
+                // (no separate client recompute of the same number), and sources
+                // "Session Reopened" from the audit log rather than a hardcoded '0'.
+                const discountCount = xSummary.billDiscountCount ?? 0;
+                const discountTotal = xSummary.billDiscount ?? 0;
+                const reopenedCount = xSummary.sessionReopenedCount ?? 0;
+                return (
+                  <XRTable
+                    title="14. Manual Actions / Exception Summary"
+                    icon={<AlertTriangle className="h-4 w-4" />}
+                    cols={['Action Type', 'Count', 'Remarks']}
+                    rows={[
+                      ['Manual Discount', String(discountCount), discountTotal > 0 ? formatCurrencyStr(discountTotal) : '—'],
+                      ['Item Void', String(xSummary.voidItemCount ?? 0), xSummary.voidItemCount > 0 ? `${xSummary.voidItemCount} items` : '—'],
+                      ['Session Reopened', String(reopenedCount), reopenedCount > 0 ? `${reopenedCount} time(s)` : '—'],
+                    ]}
+                  />
+                );
+              })()}
+
+              {/* Section 14: Checklist — every flag below is derived live from real
+                session/cash/card/hold-bill state, never from user input. Cashiers
+                cannot tick these; they reflect actual validation outcomes. */}
+              <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                  <span className="text-[#327F74]"><CheckCircle className="h-4 w-4" /></span>
+                  <span className="text-sm text-[#1E293B]">15. Close Session Confirmation</span>
+                </div>
+                <div className="p-4 space-y-2">
+                  {(() => {
+                    const sessionStatusNow = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+                    const supervisorApprovalRequired = !isBalanced && actualCash > 0;
+                    const closeChecklist = {
+                      cashCount: actualCash > 0,
+                      varianceReviewed: actualCash > 0 && (isBalanced || xReportVarianceRemarks.trim().length > 0),
+                      cardSettlement: xReportCardVerified,
+                      holdBills: (heldSales || []).length === 0,
+                      supervisorApproval: !supervisorApprovalRequired,
+                      sessionClosed: sessionStatusNow === 'CLOSED',
+                    };
+                    return [
+                      ['cashCount', 'Cash Count Completed'],
+                      ['varianceReviewed', 'Variance Reviewed'],
+                      ['cardSettlement', 'Card Settlement Verified'],
+                      ['holdBills', 'Pending Hold Bills Checked'],
+                      ['supervisorApproval', 'Supervisor Approval'],
+                      ['sessionClosed', 'Session Closed Successfully'],
+                    ].map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 cursor-not-allowed">
+                        <input
+                          type="checkbox"
+                          checked={closeChecklist[key]}
+                          disabled
+                          readOnly
+                          className="h-3.5 w-3.5 accent-[#327F74] rounded cursor-not-allowed disabled:opacity-100"
+                        />
+                        <span className={`text-xs transition-colors duration-200 ${closeChecklist[key] ? 'text-green-700 line-through' : 'text-[#1E293B]'}`}>{label}</span>
+                        {closeChecklist[key] && <span className="text-xs text-green-500 ml-auto">&#x2713;</span>}
+                      </label>
+                    ));
+                  })()}
                 </div>
               </div>
             </div>
 
-            {/* System Control Notes */}
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-              <div className="flex items-center gap-1 mb-1.5"><Info className="h-3.5 w-3.5 text-amber-600" /><span className="text-xs text-amber-700">System Control Notes</span></div>
-              <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
-                <li>X-Report must be generated before closing the current cashier/POS session.</li>
-                <li>Cashier cannot close session without entering denomination count.</li>
-                <li>If cash variance exists, remarks are mandatory.</li>
-                <li>If variance exceeds allowed limit, supervisor approval is required.</li>
-                <li>After session close, no further billing is allowed in the same session.</li>
-                <li>Session can be reopened only with supervisor or admin approval.</li>
-                <li>X-Report is printable in POS thermal format and A4 format.</li>
-                <li>X-Report number auto-generated for audit: <strong>{xReportData?.session?.id ? `XR-${String(xReportData.session.id).padStart(9,'0')}` : currentSession?.id ? `XR-${String(currentSession.id).padStart(9,'0')}` : 'XR-—'}</strong></li>
-              </ul>
+            {/* RIGHT COLUMN */}
+            <div>
+              {/* Section 4: Payment / Tender Summary */}
+              <XRTable
+                title="4. Payment / Tender Summary"
+                icon={<CreditCard className="h-4 w-4" />}
+                cols={['Payment Mode', 'Count', 'Amount']}
+                rows={[
+                  ['Cash', xSummary.cashInvoiceCount ?? '—', <CurrencyAmount key="cs4" amount={cashSales} />],
+                  ['Card', xSummary.cardInvoiceCount ?? '—', <CurrencyAmount key="cd4" amount={cardSales} />],
+                  ['Credit', xSummary.creditInvoiceCount ?? '—', <CurrencyAmount key="cr4" amount={creditSales} />],
+                  ...((xSummary.otherSales ?? 0) > 0
+                    ? [['Online', xSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="ot4" amount={xSummary.otherSales} />]]
+                    : []),
+                ].filter(r => r[2] !== undefined)}
+                // Total Collection = actual tender taken across every mode (cash+card+credit+other),
+                // not the invoice count/value — they can differ (e.g. credit notes, rounding).
+                footerRow={['Total Collection', String(xSummary.totalTenderCount ?? invoiceCount), <CurrencyAmount key="tc4" amount={xSummary.totalPaid ?? totalSales} />]}
+              />
+
+              {/* Section 5: Card / Bank Settlement */}
+              {(() => {
+                // Sourced from the same authoritative tender aggregate as the "Card Sales" KPI
+                // and Section 4 (xSummary.cardSales/cardInvoiceCount) — not re-derived from
+                // invoice.paymentMode text-matching, which double-counted split payments and
+                // could disagree with the rest of the report. Refunds come from real refund
+                // Payment rows for this session (xSummary.cardRefundSales/cardRefundCount),
+                // not the unrelated item-void counter.
+                const cardPayTotal = Number(cardSales) || 0;
+                const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
+                const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
+                const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
+                const netCardSettle = cardPayTotal - cardRefundTotal;
+                const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
+                const bankTotal = Number(xSummary.bankTransferSales ?? 0);
+                const onlineTotal = Number(xSummary.walletSales ?? 0);
+                const cardTypeBreakdown = Array.isArray(xSummary.cardTypeBreakdown) ? xSummary.cardTypeBreakdown : [];
+                const cardRows = [
+                  ...cardTypeBreakdown.map((row, i) => [row.cardType, String(row.count ?? 0), <CurrencyAmount key={`cs5ct${i}`} amount={row.amount ?? 0} />]),
+                  ['Card Payments', String(cardPayCount), <CurrencyAmount key="cs5cp" amount={cardPayTotal} />],
+                  ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? <span key="cs5rf" className="text-red-600">({formatCurrencyStr(cardRefundTotal)})</span> : <CurrencyAmount key="cs5rf0" amount={0} />],
+                  ['Net Card Settlement', String(netCardCount), <CurrencyAmount key="cs5nc" amount={netCardSettle} />],
+                  ...(bankTotal > 0 ? [['Bank Transfer Payments', '—', <CurrencyAmount key="cs5bt" amount={bankTotal} />]] : []),
+                  ...(onlineTotal > 0 ? [['Online / Wallet Payments', '—', <CurrencyAmount key="cs5ow" amount={onlineTotal} />]] : []),
+                ];
+                return (
+                  <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                      <span className="text-[#327F74]"><CreditCard className="h-4 w-4" /></span>
+                      <span className="text-sm text-[#1E293B]">5. Card / Bank Settlement Summary</span>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-[#F7F7FA] text-gray-500">{['Description', 'Count', 'Amount'].map((c, i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i > 0 ? 'text-right' : ''}`}>{c}</th>)}</tr></thead>
+                      <tbody>
+                        {cardRows.map((r, i) => (
+                          <tr key={i} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
+                            {r.map((cell, ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci > 0 ? 'text-right' : ''}`}>{cell}</td>)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="p-4 border-t border-[#327F74]/10 flex items-center gap-6">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-500">Card Machine Batch No.</label>
+                        <input value={xReportCardBatchNo} onChange={e => setXReportCardBatchNo(e.target.value)} placeholder="BATCH-001" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">Card Settlement Verified:</label>
+                        <button onClick={() => setXReportCardVerified(!xReportCardVerified)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${xReportCardVerified ? 'bg-[#327F74]' : 'bg-gray-200'}`}>
+                          <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${xReportCardVerified ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </button>
+                        <span className={`text-xs ${xReportCardVerified ? 'text-green-600' : 'text-gray-400'}`}>{xReportCardVerified ? 'Yes' : 'No'}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Section 6: Session Summary */}
+              <XRTable
+                title="6. Session Summary"
+                icon={<BarChart2 className="h-4 w-4" />}
+                cols={['Description', 'Value']}
+                rows={[
+                  ['Opening Cash / Float', <CurrencyAmount key="s6oc" amount={openingCashVal} />],
+                  ['Total Sales Invoices', String(invoiceCount)],
+                  ['Total Sales Amount', <CurrencyAmount key="s6ts" amount={xSummary.salesAmountExTax ?? totalSales} />],
+                  ['Total Discount', xSummary.totalDiscount > 0 ? `(${formatCurrencyStr(xSummary.totalDiscount ?? 0)})` : <CurrencyAmount key="s6td" amount={0} />],
+                  ['VAT Amount', <CurrencyAmount key="s6vat" amount={xSummary.totalTax ?? 0} />],
+                  ['Net Sales Including VAT', <span key="s6ns" className="font-bold text-[#327F74]"><CurrencyAmount amount={totalSales} /></span>],
+                ]}
+                highlightLast
+              />
+
+              {/* Section 7: Invoice / Transaction Summary */}
+              <XRTable
+                title="7. Invoice / Transaction Summary"
+                icon={<FileText className="h-4 w-4" />}
+                cols={['Description', 'Count', 'Amount']}
+                rows={[
+                  ['Sales Invoices', String(invoiceCount), <CurrencyAmount key="s7si" amount={totalSales} />],
+                  ['Void Items', String(xSummary.voidItemCount ?? 0), '—'],
+                ]}
+              />
+
+              {/* Section 8: Credit Sales Summary */}
+              {(() => {
+                // Per-invoice credit breakdown, filtered the same way as the Z-Report's
+                // credit invoice list (paymentMode contains "credit", excludes "credit card")
+                // so this section's invoice rows agree with the creditSales KPI/Section 4 total.
+                const xInvoices = xReportData?.invoices || [];
+                const creditInvoicesList = xInvoices.filter(inv =>
+                  inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
+                const creditRows = creditInvoicesList.length > 0
+                  ? creditInvoicesList.map((inv, i) => [
+                    inv.invoiceNumber || '—',
+                    inv.customerName || inv.customer?.name || '—',
+                    <CurrencyAmount key={`cs8-${i}`} amount={inv.invoiceTotal ?? 0} />,
+                  ])
+                  : [['—', 'No credit sales this session', <CurrencyAmount key="cs8-0" amount={0} />]];
+                return (
+                  <XRTable
+                    title="8. Credit Sales Summary"
+                    icon={<FileText className="h-4 w-4" />}
+                    cols={['Invoice No.', 'Customer', 'Amount']}
+                    rows={creditRows}
+                    footerRow={['Total Credit Sales', String(xSummary.creditInvoiceCount ?? creditInvoicesList.length), <CurrencyAmount key="cs8t" amount={creditSales} />]}
+                  />
+                );
+              })()}
+
+              {/* Section 9: Discount & Promotion Summary */}
+              {(() => {
+                // Sourced entirely from the backend's authoritative discount aggregation
+                // (xSummary.billDiscount/lineDiscount + counts) instead of recomputing only
+                // the bill-level figure from raw invoices client-side — that left line-item
+                // discounts silently missing, so the footer (which used totalDiscount, bill+line)
+                // never matched the sum of the rows actually shown.
+                const billDiscountCount = xSummary.billDiscountCount ?? 0;
+                const billDiscountTotal = xSummary.billDiscount ?? 0;
+                const lineDiscountCount = xSummary.lineDiscountCount ?? 0;
+                const lineDiscountTotal = xSummary.lineDiscount ?? 0;
+                const totalDiscount = xSummary.totalDiscount ?? (billDiscountTotal + lineDiscountTotal);
+                const totalDiscountCount = billDiscountCount + lineDiscountCount;
+                return (
+                  <XRTable
+                    title="9. Discount Summary"
+                    icon={<Tag className="h-4 w-4" />}
+                    cols={['Discount Type', 'Count', 'Amount']}
+                    rows={[
+                      ['Bill Level Discount', String(billDiscountCount), <CurrencyAmount key="d8b" amount={billDiscountTotal} />],
+                      ['Line Item Discount', String(lineDiscountCount), <CurrencyAmount key="d8l" amount={lineDiscountTotal} />],
+                    ]}
+                    footerRow={['Total Discount', String(totalDiscountCount), totalDiscount > 0 ? `(${formatCurrencyStr(totalDiscount)})` : <CurrencyAmount key="d8t" amount={0} />]}
+                  />
+                );
+              })()}
+
+              {/* Section 10: Returns / Refund Summary */}
+              <XRTable
+                title="10. Returns / Refund Summary"
+                icon={<RotateCcw className="h-4 w-4" />}
+                cols={['Description', 'Count', 'Amount']}
+                rows={[
+                  ['Sales Returns', String(xSummary.salesReturnCount ?? 0), xSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(xSummary.salesReturnTotal)})` : <CurrencyAmount key="r9sr" amount={0} />],
+                  ['Refunds Processed', String(xSummary.refundCount ?? 0), xSummary.refundTotal > 0 ? `(${formatCurrencyStr(xSummary.refundTotal)})` : <CurrencyAmount key="r9rf" amount={0} />],
+                  ['Credit Notes Issued', String(xSummary.creditNoteCount ?? 0), xSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(xSummary.creditNoteTotal)})` : <CurrencyAmount key="r9cn" amount={0} />],
+                  ['Exchange Transactions', String(xSummary.exchangeCount ?? 0), <CurrencyAmount key="r9ex" amount={xSummary.exchangeTotal ?? 0} />],
+                  ['Total Refunds (In-session)', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
+                ]}
+              />
+
+              {/* Section 11: VAT / Tax Summary */}
+              <XRTable
+                title="11. VAT / Tax Summary"
+                icon={<FileBarChart className="h-4 w-4" />}
+                cols={['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount']}
+                rows={[
+                  ['VAT 5%',
+                    <CurrencyAmount key="vat5t" amount={xSummary.salesAmountExTax ?? 0} />,
+                    <CurrencyAmount key="vat5a" amount={xSummary.totalTax ?? 0} />,
+                    <CurrencyAmount key="vat5g" amount={totalSales} />],
+                ]}
+                footerRow={[
+                  'Total',
+                  <CurrencyAmount key="vatft" amount={xSummary.salesAmountExTax ?? 0} />,
+                  <CurrencyAmount key="vatfa" amount={xSummary.totalTax ?? 0} />,
+                  <CurrencyAmount key="vatfg" amount={totalSales} />
+                ]}
+              />
+
+              {/* Section 12: Item Movement */}
+              <XRTable
+                title="12. Item Movement Summary"
+                icon={<Package className="h-4 w-4" />}
+                cols={['Description', 'Quantity', 'Amount']}
+                rows={[
+                  ['Total Items Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im1" amount={totalSales} />],
+                  ['Net Quantity Sold', String(xSummary.totalItemsSold ?? 0), <CurrencyAmount key="im3" amount={totalSales} />],
+                ]}
+              />
+
+              {/* Section 13: Document Numbers */}
+              {(() => {
+                const xInvoices = xReportData?.invoices || [];
+                const invNums = xInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
+                const firstInv = invNums[0] || '—';
+                const lastInv = invNums[invNums.length - 1] || '—';
+                return (
+                  <XRTable
+                    title="13. Opening & Closing Document Numbers"
+                    icon={<Hash className="h-4 w-4" />}
+                    cols={['Document Type', 'Starting No.', 'Ending No.']}
+                    rows={[
+                      ['Sales Invoice', firstInv, lastInv],
+                    ]}
+                  />
+                );
+              })()}
+
+              {/* Section 15: Declaration & Approval */}
+              <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
+                  <span className="text-[#327F74]"><Shield className="h-4 w-4" /></span>
+                  <span className="text-sm text-[#1E293B]">16. Declaration &amp; Approval</span>
+                </div>
+                <div className="p-4">
+                  <p className="text-xs text-gray-600 mb-3 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
+                    I confirm that the above sales, collections, refunds, cash drawer balance, and denomination count have been verified for this POS session.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-500">Cashier Name</label>
+                      <input value={xReportCashierName} onChange={e => setXReportCashierName(e.target.value)} className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Supervisor / Manager Name</label>
+                      <input value={xReportSupervisorName} onChange={e => setXReportSupervisorName(e.target.value)} placeholder="Enter name" className="mt-0.5 w-full border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Cashier Signature</label>
+                      <div className="mt-0.5 border border-[#327F74]/30 rounded h-10 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Supervisor Signature</label>
+                      <div className="mt-0.5 border border-[#327F74]/30 rounded h-10 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs text-gray-500">Closing Remarks</label>
+                      <textarea value={xReportClosingRemarks} onChange={e => setXReportClosingRemarks(e.target.value)} placeholder="Enter remarks..." className="mt-0.5 w-full border border-[#327F74]/30 rounded p-2 text-xs resize-none h-14 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* System Control Notes */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <div className="flex items-center gap-1 mb-1.5"><Info className="h-3.5 w-3.5 text-amber-600" /><span className="text-xs text-amber-700">System Control Notes</span></div>
+                <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
+                  <li>X-Report must be generated before closing the current cashier/POS session.</li>
+                  <li>Cashier cannot close session without entering denomination count.</li>
+                  <li>If cash variance exists, remarks are mandatory.</li>
+                  <li>If variance exceeds allowed limit, supervisor approval is required.</li>
+                  <li>After session close, no further billing is allowed in the same session.</li>
+                  <li>Session can be reopened only with supervisor or admin approval.</li>
+                  <li>X-Report is printable in POS thermal format and A4 format.</li>
+                  <li>X-Report number auto-generated for audit: <strong>{xReportData?.session?.id ? `XR-${String(xReportData.session.id).padStart(9, '0')}` : currentSession?.id ? `XR-${String(currentSession.id).padStart(9, '0')}` : 'XR-—'}</strong></li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Sticky Footer Action Bar */}
-      <div className="sticky bottom-0 bg-white border-t border-[#327F74]/20 px-6 py-3 flex items-center justify-between shadow-lg">
-        <button onClick={() => setCurrentView('dashboard')} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3 w-3 rotate-180" />Back to POS</button>
-        <div className="flex items-center gap-2">
-          <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview Report</button>
-          <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-          <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-          <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
-          {!isBalanced && actualCash > 0 ? (
-            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
-          ) : (
-            <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
-          )}
-          <button
-            onClick={openCloseSessionDialog}
-            disabled={currentSession?.status !== 'OPEN'}
-            className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-5 py-2 rounded flex items-center gap-1">
-            <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
-          </button>
+        {/* Sticky Footer Action Bar */}
+        <div className="sticky bottom-0 bg-white border-t border-[#327F74]/20 px-6 py-3 flex items-center justify-between shadow-lg">
+          <button onClick={() => setCurrentView('dashboard')} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3 w-3 rotate-180" />Back to POS</button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview Report</button>
+            <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+            <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+            <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
+            {!isBalanced && actualCash > 0 ? (
+              <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
+            ) : (
+              <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
+            )}
+            <button
+              onClick={openCloseSessionDialog}
+              disabled={currentSession?.status !== 'OPEN'}
+              className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-5 py-2 rounded flex items-center gap-1">
+              <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
   };
 
   // Customer Management View — see POS/CustomerView.jsx
@@ -6058,7 +6453,7 @@ export default function POSSales() {
     tplReturnHeader, setTplReturnHeader, tplReturnFooter, setTplReturnFooter, tplReturnPaper, setTplReturnPaper,
     tplReturnShowLogo, tplReturnShowTrn, tplReturnShowStamp, tplReturnShowCompanyDetails, tplReturnShowCustomerDetails,
     tplReturnColItemCode, tplReturnColBatchNo, tplReturnColDiscount, tplReturnColVatPct, tplReturnColVatAmt,
-    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature,
+    tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, tplReturnShowCreditBalance,
     tplJobCardFooter, setTplJobCardFooter, tplJobCardPaper, setTplJobCardPaper,
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails,
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
@@ -6070,7 +6465,7 @@ export default function POSSales() {
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
-    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt,
+    setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
@@ -6153,9 +6548,14 @@ export default function POSSales() {
 
       const newCust = await createCustomer(payload);
       await loadPosCustomers();
-      setSelectedCustomer(newCust.id);
+      // posCustomers (via mapPosCustomer) always stores id as a string, so the
+      // freshly-created customer's raw numeric id must be coerced to match —
+      // otherwise the strict-equality lookups in selectedCustomerData /
+      // creditCustomerData silently miss and the UI falls back to Walk-in.
+      const newCustId = String(newCust.id);
+      setSelectedCustomer(newCustId);
       if (quickCustomerCreditCtxRef.current) {
-        setCheckoutCreditCustomer(newCust.id);
+        setCheckoutCreditCustomer(newCustId);
         setCheckoutCreditCustomerSearch('');
         quickCustomerCreditCtxRef.current = false;
       }
@@ -6256,7 +6656,7 @@ export default function POSSales() {
     filteredCustomerOptions, customerHistory, customerHistoryLoading,
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
-    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy,
+    guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
@@ -6297,32 +6697,68 @@ export default function POSSales() {
 
   return (
     <div className="min-h-screen bg-[#F7F7FA]">
+      {/* ─── IDLE LOCK OVERLAY ─── */}
+      {isIdleLocked && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-100 text-center p-8 space-y-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <Lock className="h-8 w-8 text-amber-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-800">Session Locked</h2>
+            <p className="text-sm text-gray-500">This terminal was locked due to inactivity.</p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={() => setIsIdleLocked(false)}
+                className="w-full py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600"
+              >
+                Resume My Session
+              </button>
+              <button
+                onClick={() => { setIsIdleLocked(false); setShowTakeoverDialog(true); }}
+                className="w-full py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-gray-50"
+              >
+                Supervisor Takeover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SUPERVISOR TAKEOVER DIALOG ─── */}
+      {showTakeoverDialog && currentSession?.id && (
+        <SupervisorTakeoverDialog
+          sessionId={currentSession.id}
+          onSuccess={(session) => { setCurrentSession(session); setShowTakeoverDialog(false); }}
+          onCancel={() => setShowTakeoverDialog(false)}
+        />
+      )}
+
       {/* ─── TERMINAL LOCKED BY ACTIVE CASHIER (SHIFT HANDOVER OVERLAY) ─── */}
       {terminalLockedBy && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100">
-            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-8 text-center text-white relative">
-              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-4 border border-white/20 shadow-inner">
-                <Lock className="h-10 w-10 text-white animate-pulse" />
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <Lock className="h-7 w-7 sm:h-10 sm:w-10 text-white animate-pulse" />
               </div>
-              <h2 className="text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
-              <p className="text-white/80 text-sm font-medium">This POS Terminal has an ongoing session</p>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Terminal in Active Use</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">This POS Terminal has an ongoing session</p>
             </div>
-            <div className="p-8 space-y-6">
-              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 flex items-center gap-4 shadow-sm">
-                <div className="w-12 h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-                  <UserCheck className="h-6 w-6" />
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4 shadow-sm">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+                  <UserCheck className="h-5 w-5 sm:h-6 sm:w-6" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Current Occupant</p>
-                  <p className="text-lg font-extrabold text-slate-800">{terminalLockedBy}</p>
+                  <p className="text-base sm:text-lg font-extrabold text-slate-800 break-words">{terminalLockedBy}</p>
                   <p className="text-xs text-slate-500 mt-0.5">Session is strictly isolated to prevent multi-device collision.</p>
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-5 space-y-3">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5 space-y-3">
                 <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                  <Shield className="h-5 w-5 text-amber-600" />
+                  <Shield className="h-5 w-5 text-amber-600 shrink-0" />
                   <span>Supervisor Override &amp; Shift Handover</span>
                 </div>
                 <p className="text-xs text-amber-700 leading-relaxed">
@@ -6339,7 +6775,7 @@ export default function POSSales() {
                       value={handoverEmail}
                       onChange={(e) => { setHandoverEmail(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   <div>
@@ -6351,7 +6787,7 @@ export default function POSSales() {
                       value={handoverPassword}
                       onChange={(e) => { setHandoverPassword(e.target.value); setHandoverError(''); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleHandoverSubmit(); }}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
+                      className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#327F74] ${handoverError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'}`}
                     />
                   </div>
                   {handoverError && (
@@ -6362,7 +6798,7 @@ export default function POSSales() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -6372,7 +6808,7 @@ export default function POSSales() {
                     setTerminalLockedBy(null);
                     showFeedback('Viewing dashboard in read-only mode', 'info');
                   }}
-                  className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
                 >
                   Dismiss (Read-Only)
                 </button>
@@ -6380,7 +6816,7 @@ export default function POSSales() {
                   type="button"
                   disabled={handoverBusy}
                   onClick={handleHandoverSubmit}
-                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-[#327F74] to-[#256660] hover:from-[#2a6b61] hover:to-[#1c4d48] text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <CheckCircle className="h-4 w-4" />
                   {handoverBusy ? 'Verifying…' : 'Authorize Handover'}
@@ -6413,8 +6849,51 @@ export default function POSSales() {
       {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} />}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
+
+      {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}
+      <Dialog open={!!prevDaySessionOpenMsg} onOpenChange={(o) => { if (!o) setPrevDaySessionOpenMsg(null); }}>
+        <DialogContent className="sm:max-w-md border-0 shadow-xl bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-[#1E293B] flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Previous Day Not Closed
+            </DialogTitle>
+            <DialogDescription>{prevDaySessionOpenMsg}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setPrevDaySessionOpenMsg(null)}>Cancel</Button>
+            <Button
+              className="bg-[#327F74] hover:bg-[#286660] text-white"
+              onClick={async () => {
+                const sessionId = prevDaySessionOpenId;
+                setPrevDaySessionOpenMsg(null);
+                setPrevDaySessionOpenId(null);
+                setShowStartSessionDialog(false);
+                if (!sessionId) {
+                  // Couldn't parse the session id out of the server message — fall
+                  // back to the old (best-effort) behavior rather than dead-ending.
+                  setCurrentView('x-report');
+                  return;
+                }
+                try {
+                  const session = await getPosSessionById(sessionId);
+                  setCurrentSession(session);
+                  setXReportData(null);
+                  setZReportData(null);
+                  setSessionNowMs(Date.now());
+                  setCurrentView('x-report');
+                } catch (err) {
+                  alert(err?.response?.data?.message || 'Failed to load the stale session. Please close it manually.');
+                }
+              }}
+            >
+              Go to Close Session
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Start Session Dialog */}
       <Dialog open={showStartSessionDialog} onOpenChange={setShowStartSessionDialog}>
@@ -6425,7 +6904,7 @@ export default function POSSales() {
               Enter opening cash drawer amount and denomination breakdown
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4">
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Opening Cash Drawer Amount</Label>
@@ -6444,7 +6923,7 @@ export default function POSSales() {
 
             <div>
               <Label className="text-[#1E293B] mb-3 block">Denomination Breakdown</Label>
-              
+
               {/* Bank Notes */}
               <div className="mb-4">
                 <div className="flex items-center gap-2 mb-2">
@@ -6551,11 +7030,10 @@ export default function POSSales() {
           <div className="flex gap-1 p-1 bg-gray-100 rounded-xl flex-shrink-0">
             {([['cash', 'Cash Count', Banknote], ['card', 'Card Settlement', CreditCard]]).map(([id, label, Icon]) => (
               <button key={id} type="button" onClick={() => setCloseSessionTab(id)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${
-                  closeSessionTab === id
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${closeSessionTab === id
                     ? 'bg-white text-[#1E293B] shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
-                }`}>
+                  }`}>
                 <Icon className="h-4 w-4" />
                 {label}
               </button>
@@ -6663,23 +7141,46 @@ export default function POSSales() {
                 {/* Session card summary */}
                 {(() => {
                   const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
+                  const cardTypeBreakdown = Array.isArray(xReportData?.summary?.cardTypeBreakdown)
+                    ? xReportData.summary.cardTypeBreakdown : [];
+                  const amountByType = {};
+                  const countByType = {};
+                  cardTypeBreakdown.forEach(row => {
+                    const key = String(row.cardType || '').toLowerCase();
+                    amountByType[key] = (amountByType[key] || 0) + (Number(row.amount) || 0);
+                    countByType[key] = (countByType[key] || 0) + (Number(row.count) || 0);
+                  });
+                  const visaMastercardAmount = (amountByType['visa'] || 0) + (amountByType['mastercard'] || 0) + (amountByType['card'] || 0);
+                  const visaMastercardCount = (countByType['visa'] || 0) + (countByType['mastercard'] || 0) + (countByType['card'] || 0);
+                  const amexAmount = amountByType['amex'] || 0;
+                  const amexCount = countByType['amex'] || 0;
+                  const walletAmount = Number(xReportData?.summary?.walletSales) || 0;
+                  const walletCount = Number(xReportData?.summary?.walletInvoiceCount) || 0;
+                  const cardRows = [
+                    { label: 'Visa / Mastercard', amount: visaMastercardAmount, count: visaMastercardCount },
+                    { label: 'American Express', amount: amexAmount, count: amexCount },
+                    { label: 'Apple / Google Pay', amount: walletAmount, count: walletCount },
+                  ];
+                  const totalCardSales = sessionCardTotal + walletAmount;
                   return (
                     <div className="rounded-xl border border-[#327F74]/30 bg-[#327F74]/5 p-4">
                       <p className="text-xs font-bold uppercase tracking-wide text-[#327F74] mb-3">Session Card Totals</p>
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between py-1.5 border-b border-[#327F74]/10">
-                          <div className="flex items-center gap-2">
-                            <CreditCard className="h-3.5 w-3.5 text-[#327F74]" />
-                            <span className="text-sm text-[#1E293B]">Card / POS Payments</span>
-                            <span className="text-[10px] text-gray-400">({currentSession?.invoiceCount || 0} invoices total)</span>
+                        {cardRows.map((row, i) => (
+                          <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#327F74]/10">
+                            <div className="flex items-center gap-2">
+                              <CreditCard className="h-3.5 w-3.5 text-[#327F74]" />
+                              <span className="text-sm text-[#1E293B]">{row.label}</span>
+                              <span className="text-[10px] text-gray-400">({row.count} txn)</span>
+                            </div>
+                            <span className={`text-sm font-bold ${row.amount > 0 ? 'text-[#327F74]' : 'text-gray-300'}`}>
+                              {formatCurrency(row.amount)}
+                            </span>
                           </div>
-                          <span className={`text-sm font-bold ${sessionCardTotal > 0 ? 'text-[#327F74]' : 'text-gray-300'}`}>
-                            {formatCurrency(sessionCardTotal)}
-                          </span>
-                        </div>
+                        ))}
                         <div className="flex items-center justify-between pt-2">
                           <span className="text-sm font-bold text-[#1E293B]">Total Card Sales</span>
-                          <span className="text-base font-black text-[#327F74]">{formatCurrency(sessionCardTotal)}</span>
+                          <span className="text-base font-black text-[#327F74]">{formatCurrency(totalCardSales)}</span>
                         </div>
                       </div>
                     </div>
@@ -6709,23 +7210,24 @@ export default function POSSales() {
                       <Label className="text-sm text-[#1E293B] mb-1 block">Batch / Reference No.</Label>
                       <Input
                         placeholder="e.g. BATCH-20240526-001"
-                        value={cardSettlementRef}
-                        onChange={e => setCardSettlementRef(e.target.value)}
+                        value={xReportCardBatchNo}
+                        onChange={e => setXReportCardBatchNo(e.target.value)}
                       />
                     </div>
                   </div>
 
-                  {/* Variance */}
+                  {/* Variance — also drives cardSettlementVerified, which is what
+                      actually gets persisted on close (see handleCloseSession and the
+                      sync effect near the state declarations). */}
                   {(() => {
                     const sessionCardTotal = Number(xReportData?.summary?.cardSales) || 0;
                     const settled = parseFloat(cardSettlementAmount) || 0;
                     const cardVariance = settled - sessionCardTotal;
                     return cardSettlementAmount ? (
-                      <div className={`mt-3 flex justify-between items-center p-3 rounded border ${
-                        Math.abs(cardVariance) < 0.01
+                      <div className={`mt-3 flex justify-between items-center p-3 rounded border ${Math.abs(cardVariance) < 0.01
                           ? 'bg-green-50 border-green-300'
                           : 'bg-red-50 border-[#E63946]'
-                      }`}>
+                        }`}>
                         <span className={`text-sm font-semibold ${Math.abs(cardVariance) < 0.01 ? 'text-green-700' : 'text-[#E63946]'}`}>
                           {Math.abs(cardVariance) < 0.01 ? '✓ Settled — no variance' : 'Variance:'}
                         </span>
@@ -6774,6 +7276,7 @@ export default function POSSales() {
             setCheckoutSettling(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
+            setSelectedCustomer(WALK_IN_CUSTOMER.id);
           };
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -6790,7 +7293,7 @@ export default function POSSales() {
                 <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/30 px-6 py-4 text-center">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Amount Paid</p>
                   <p className="text-4xl font-black text-[#1E293B]">
-                    <DirhamSymbol /> {(lastPaidInvoice.paidAmount || lastPaidInvoice.total || 0).toFixed(2)}
+                    <DirhamSymbol /> {(lastPaidInvoice.paidAmount ?? lastPaidInvoice.total ?? 0).toFixed(2)}
                   </p>
                   <p className="text-[10px] text-gray-500 mt-1 font-semibold">Successfully settled via {lastPaidInvoice.paymentMode || 'Cash'}</p>
                 </div>
@@ -6803,13 +7306,23 @@ export default function POSSales() {
                     </span>
                   </div>
                 )}
+                {/* Credit Balance alert (only for a Credit sale with a remaining receivable) */}
+                {(lastPaidInvoice.creditBalance || 0) > 0 && (
+                  <div className="bg-orange-50 border-b border-orange-200 px-6 py-3 flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-orange-800">Credit Balance</span>
+                    <span className="text-lg font-black text-orange-700">
+                      <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
                 {/* Summary */}
                 <div className="px-6 py-4 space-y-2.5">
                   {[
                     ['Sale Amount', formatCurrencyStr(lastPaidInvoice.total)],
                     ...(lastPaidInvoice.depositAmount > 0 ? [['Deposit Applied', `−${formatCurrencyStr(lastPaidInvoice.depositAmount)}`]] : []),
-                    ['Paid Amount', formatCurrencyStr(lastPaidInvoice.paidAmount || 0)],
+                    ['Paid Amount', formatCurrencyStr(lastPaidInvoice.paidAmount ?? 0)],
                     ['Change Returned', formatCurrencyStr(lastPaidInvoice.changeAmount || 0)],
+                    ...(lastPaidInvoice.creditBalance > 0 ? [['Credit Balance', formatCurrencyStr(lastPaidInvoice.creditBalance)]] : []),
                     ['Pay Mode', lastPaidInvoice.paymentMode],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between items-center text-sm">
@@ -6853,23 +7366,24 @@ export default function POSSales() {
                       try {
                         const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
                         if (tplInvoicePaper === 'A4') {
-                          const template = buildPosA4Template(tplInvoiceFooter, { showLogo:tplInvoiceShowLogo, showCompanyDetails:tplInvoiceShowCompanyDetails, showTrn:tplInvoiceShowTrn, showCustomerDetails:tplInvoiceShowCustomerDetails, showTerms:tplInvoiceShowTerms, showNotes:tplInvoiceShowNotes, showBankDetails:tplInvoiceShowBankDetails, showQRCode:tplInvoiceShowQRCode, showStamp:tplInvoiceShowStamp, showSignature:tplInvoiceShowSignature, showGrandTotalBanner:tplInvoiceShowGrandTotalBanner, colItemCode:tplInvoiceColItemCode, colItemImage:tplInvoiceColItemImage, colBarcode:tplInvoiceColBarcode, colBatchNo:tplInvoiceColBatchNo, colDiscount:tplInvoiceColDiscount, colVatPct:tplInvoiceColVatPct, colVatAmt:tplInvoiceColVatAmt });
+                          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
                           const data = buildPosPrintData(full, tplInvoiceFooter);
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
-                          const isWalkInPrint = !full.customerName || full.customerName === 'Walk-in Customer';
-                          let creditPrevBalPrint = null;
-                          if (tplInvoiceShowBankDetails && !isWalkInPrint && full.customerCode) {
-                            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalPrint = cr.outstanding ?? null; } catch (_) {}
-                          }
+                          // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
+                          // rather than re-querying posCreditBalance — by now it already reflects
+                          // this invoice and would be mislabeled as "previous balance".
                           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
                             customerPhone: lastPaidInvoice?.customer?.phone,
                             customerEmail: lastPaidInvoice?.customer?.email,
-                            creditPreviousBalance: creditPrevBalPrint,
+                            creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
+                            creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
+                            creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
+                            creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                           });
                           await printThermalReceiptWithConfiguredPrinter({
                             full,
@@ -6908,20 +7422,52 @@ export default function POSSales() {
         const effectiveDue = Math.max(0, grandTotal - depositAmt);
         const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
         const now = new Date();
-        const dateStr = now.toLocaleDateString('en-AE', { day:'2-digit', month:'short', year:'numeric' });
-        const timeStr = now.toLocaleTimeString('en-AE', { hour:'2-digit', minute:'2-digit', hour12:true });
+        const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
+        const timeStr = now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit', hour12: true });
         const customer = selectedCustomerData;
 
-        // Keypad handler
+        // Strip an amount string down to digits + a single decimal point, so both
+        // physical-keyboard typing (onChange) and the on-screen keypad (handleKpad)
+        // produce the same shape of value.
+        const sanitizeAmountInput = (raw) => {
+          let next = String(raw).replace(/[^\d.]/g, '');
+          const dot = next.indexOf('.');
+          if (dot !== -1) next = next.slice(0, dot + 1) + next.slice(dot + 1).replace(/\./g, '');
+          return next;
+        };
+
+        // Mixed-payment fields (mixed-cash / mixed-card) auto-balance each other:
+        // whichever field the cashier edits — via keyboard or the on-screen keypad —
+        // is the "driving" amount, and the other field is recomputed as the
+        // remaining balance (bill total − driving amount) so the two always sum to
+        // the due amount without manual math.
+        const applyMixedAmount = (isCash, rawValue) => {
+          const next = sanitizeAmountInput(rawValue);
+          const drivingNum = parseFloat(next) || 0;
+          const remaining = Math.max(0, effectiveDue - drivingNum).toFixed(2);
+          if (isCash) { setMixedCashAmount(next); setMixedCardAmount(remaining); }
+          else { setMixedCardAmount(next); setMixedCashAmount(remaining); }
+        };
+
+        // On-screen keypad handler (touch terminals). Physical-keyboard typing is
+        // wired directly on each <input>'s onChange via sanitizeAmountInput /
+        // applyMixedAmount so both input methods work on the same POS screen.
         const handleKpad = (key) => {
-          const setter = checkoutKeypadTarget === 'tender' ? setTenderedAmount
-            : checkoutKeypadTarget === 'mixed-cash' ? setMixedCashAmount
-            : checkoutKeypadTarget === 'mixed-card' ? setMixedCardAmount
-            : setCheckoutCardRef;
-          const cur = checkoutKeypadTarget === 'tender' ? tenderedAmount
-            : checkoutKeypadTarget === 'mixed-cash' ? mixedCashAmount
-            : checkoutKeypadTarget === 'mixed-card' ? mixedCardAmount
-            : checkoutCardRef;
+          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card') {
+            const isCash = checkoutKeypadTarget === 'mixed-cash';
+            const cur = isCash ? mixedCashAmount : mixedCardAmount;
+            let next = cur;
+            if (key === 'C') next = '';
+            else if (key === '⌫') next = cur.slice(0, -1);
+            else if (key === '.' && cur.includes('.')) { /* noop */ }
+            else if (key === 'EXACT') next = effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '';
+            else next = cur + key;
+            applyMixedAmount(isCash, next);
+            return;
+          }
+
+          const setter = checkoutKeypadTarget === 'tender' ? setTenderedAmount : setCheckoutCardRef;
+          const cur = checkoutKeypadTarget === 'tender' ? tenderedAmount : checkoutCardRef;
           if (key === 'C') { setter(''); }
           else if (key === '⌫') { setter(cur.slice(0, -1)); }
           else if (key === '.' && cur.includes('.')) { /* noop */ }
@@ -6935,14 +7481,25 @@ export default function POSSales() {
         const change = tenderedNum - effectiveDue;
         const mixedDiff = Math.abs(mixedCashNum + mixedCardNum - effectiveDue);
 
+        // Partial receipt against a Credit sale — amount collected now is capped at
+        // the bill total; whatever's left posts to the customer's credit balance.
+        const creditReceivedNum = Math.min(parseFloat(checkoutCreditReceivedAmount) || 0, effectiveDue);
+        const creditBalanceNum = Math.max(0, effectiveDue - creditReceivedNum);
+        const creditReceivedModeReady =
+          !checkoutCreditReceivedMode || creditReceivedNum <= 0 ||
+          (checkoutCreditReceivedMode === 'Card' && !!checkoutCreditReceivedCardType) ||
+          ((checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && !!checkoutCreditReceivedBankAccountId) ||
+          checkoutCreditReceivedMode === 'Cash';
+
         const canSettle =
           (checkoutPayMode === 'cash' && tenderedNum >= effectiveDue) ||
           (checkoutPayMode === 'card' && !!checkoutCardType) ||
-          (checkoutPayMode === 'credit' && !!checkoutCreditCustomer) ||
-          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && !!mixedCardType);
+          (checkoutPayMode === 'credit' && !!checkoutCreditCustomer && creditReceivedModeReady) ||
+          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && !!mixedCardType) ||
+          (checkoutPayMode === 'online' && !!checkoutOnlineBankAccountId);
 
-        const numKeys = ['7','8','9','4','5','6','1','2','3','.','0','⌫'];
-        const alphaRows = [['Q','W','E','R','T','Y','U','I','O','P'],['A','S','D','F','G','H','J','K','L'],['Z','X','C','V','B','N','M','⌫']];
+        const numKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'];
+        const alphaRows = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'], ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫']];
 
         return (
           <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
@@ -7023,12 +7580,13 @@ export default function POSSales() {
                   {/* ── Pay Mode ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Payment Mode</p>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                       {([
-                        ['cash',  'Cash',   Banknote,   '#16a34a'],
-                        ['card',  'Card',   CreditCard, '#2563eb'],
-                        ['credit','Credit', Users,      '#9333ea'],
-                        ['mixed', 'Mixed',  Wallet,     '#ea580c'],
+                        ['cash', 'Cash', Banknote, '#16a34a'],
+                        ['card', 'Card', CreditCard, '#2563eb'],
+                        ['credit', 'Credit', Users, '#9333ea'],
+                        ['mixed', 'Mixed', Wallet, '#ea580c'],
+                        ['online', 'Online', Landmark, '#0891b2'],
                       ]).map(([id, label, Icon, color]) => (
                         <button key={id} type="button" onClick={() => { setCheckoutPayMode(id); setCheckoutKeypadTarget(id === 'mixed' ? 'mixed-cash' : id === 'card' ? 'ref' : 'tender'); }}
                           className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${checkoutPayMode === id ? 'border-[#F5C742] bg-[#F5C742]/10' : 'border-gray-200 hover:border-[#F5C742]/50 bg-gray-50'}`}>
@@ -7069,7 +7627,7 @@ export default function POSSales() {
                           // Standard 500, 1000 only if applicable
                           if (total > 100 && !rounds.includes(500)) rounds.push(500);
                           if (total > 400 && !rounds.includes(1000)) rounds.push(1000);
-                          return [...new Set(rounds)].sort((a,b)=>a-b).slice(0, 6).map(d => (
+                          return [...new Set(rounds)].sort((a, b) => a - b).slice(0, 6).map(d => (
                             <button key={d} type="button" onClick={() => { setTenderedAmount(d === total ? String(total.toFixed(2)) : String(d)); setCheckoutKeypadTarget('tender'); }}
                               className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${parseFloat(tenderedAmount) === d ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
                               {d === total ? 'Exact' : d}
@@ -7077,15 +7635,24 @@ export default function POSSales() {
                           ));
                         })()}
                       </div>
-                      {/* Tendered display */}
-                      <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer"
-                        onClick={() => { setCheckoutKeypadTarget('tender'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}>
-                        <span className="text-xs font-bold text-gray-500 uppercase">Tendered</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl font-black text-[#1E293B]"><DirhamSymbol /> {tenderedAmount || '0.00'}</span>
-                          <span className="text-[9px] text-gray-400 border border-gray-300 rounded px-1 py-0.5">tap to edit</span>
+                      {/* Tendered display — real input so it accepts both physical
+                          keyboard typing (desktop tills) and the on-screen keypad. */}
+                      <label className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between gap-2 cursor-text">
+                        <span className="text-xs font-bold text-gray-500 uppercase shrink-0">Tendered</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <DirhamSymbol />
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={tenderedAmount}
+                            placeholder="0.00"
+                            onFocus={() => { setCheckoutKeypadTarget('tender'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
+                            onChange={e => setTenderedAmount(sanitizeAmountInput(e.target.value))}
+                            className="w-28 bg-transparent text-2xl font-black text-[#1E293B] text-right outline-none"
+                          />
                         </div>
-                      </div>
+                      </label>
                       {/* Change / Balance */}
                       {tenderedNum > 0 && Math.round((tenderedNum - effectiveDue) * 100) / 100 > 0 && (
                         <div className="flex justify-between items-center px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl">
@@ -7107,7 +7674,7 @@ export default function POSSales() {
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                        {['Visa','Mastercard','Amex','Other'].map(ct => (
+                        {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setCheckoutCardType(ct)}
                             className={`py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
                             {ct}
@@ -7120,11 +7687,15 @@ export default function POSSales() {
                       </div>
                       <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Reference No. (optional)</label>
-                        <div className="mt-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 flex items-center justify-between cursor-pointer"
-                          onClick={() => { setCheckoutKeypadTarget('ref'); setCheckoutKeypadMode('alpha'); setCheckoutKeypadVisible(true); }}>
-                          <span className="text-sm text-gray-500">{checkoutCardRef || 'Tap to enter...'}</span>
-                          {checkoutKeypadTarget === 'ref' && checkoutKeypadVisible && <span className="w-0.5 h-4 bg-[#F5C742] animate-pulse" />}
-                        </div>
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          value={checkoutCardRef}
+                          placeholder="Enter reference…"
+                          onFocus={() => { setCheckoutKeypadTarget('ref'); setCheckoutKeypadMode('alpha'); setCheckoutKeypadVisible(true); }}
+                          onChange={e => setCheckoutCardRef(e.target.value)}
+                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
+                        />
                       </div>
                       {!checkoutCardType && <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>}
                     </div>
@@ -7190,7 +7761,7 @@ export default function POSSales() {
                           <div>
                             <label className="text-[10px] font-bold text-gray-400 uppercase">Credit Terms (Days)</label>
                             <select value={checkoutCreditTerms} onChange={e => setCheckoutCreditTerms(e.target.value)} className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                              {['7','14','30','45','60','90'].map(d => <option key={d}>{d}</option>)}
+                              {['7', '14', '30', '45', '60', '90'].map(d => <option key={d}>{d}</option>)}
                             </select>
                           </div>
                           <div>
@@ -7199,9 +7770,103 @@ export default function POSSales() {
                           </div>
                         </div>
                       )}
+                      {/* Partial receipt — collect part of the bill now, rest posts to receivable */}
+                      {creditCustomerData && (
+                        <div className="space-y-3 border-t border-gray-100 pt-3">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Received Now (optional)</p>
+                          <div className="grid grid-cols-4 gap-2">
+                            {['Cash', 'Card', 'Online', 'Bank'].map(m => (
+                              <button key={m} type="button"
+                                onClick={() => setCheckoutCreditReceivedMode(prev => prev === m ? '' : m)}
+                                className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCreditReceivedMode === m ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                          {checkoutCreditReceivedMode && (
+                            <>
+                              <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase">Amount Received</label>
+                                <div className="mt-1 border-2 border-gray-200 rounded-xl px-3 py-2.5 flex items-center gap-2 focus-within:border-[#F5C742]">
+                                  <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    value={checkoutCreditReceivedAmount}
+                                    placeholder="0.00"
+                                    onChange={e => {
+                                      const next = sanitizeAmountInput(e.target.value);
+                                      const num = parseFloat(next) || 0;
+                                      setCheckoutCreditReceivedAmount(num > effectiveDue ? String(effectiveDue.toFixed(2)) : next);
+                                    }}
+                                    className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
+                                  />
+                                  <button type="button" onClick={() => setCheckoutCreditReceivedAmount(effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '0')}
+                                    className="text-[10px] font-bold text-[#b8920e] shrink-0">FULL</button>
+                                </div>
+                              </div>
+                              {checkoutCreditReceivedMode === 'Card' && (
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                                  {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
+                                    <button key={ct} type="button" onClick={() => setCheckoutCreditReceivedCardType(ct)}
+                                      className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCreditReceivedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
+                                      {ct}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {(checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && (
+                                <div>
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase">Bank Account</label>
+                                  <select
+                                    value={checkoutCreditReceivedBankAccountId}
+                                    onChange={e => setCheckoutCreditReceivedBankAccountId(e.target.value)}
+                                    className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
+                                  >
+                                    <option value="" disabled>
+                                      {checkoutOnlineBankAccountsLoading
+                                        ? 'Loading bank accounts…'
+                                        : checkoutOnlineBankAccounts.length === 0
+                                          ? 'No bank accounts configured'
+                                          : 'Select bank account…'}
+                                    </option>
+                                    {checkoutOnlineBankAccounts.map(acc => (
+                                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase">Reference (optional)</label>
+                                <input
+                                  type="text"
+                                  autoComplete="off"
+                                  value={checkoutCreditReceivedRef}
+                                  placeholder="Enter reference…"
+                                  onChange={e => setCheckoutCreditReceivedRef(e.target.value)}
+                                  className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
+                                />
+                              </div>
+                              {checkoutCreditReceivedMode === 'Card' && !checkoutCreditReceivedCardType && (
+                                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>
+                              )}
+                              {(checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && !checkoutCreditReceivedBankAccountId && (
+                                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a bank account to proceed</span></div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {creditReceivedNum > 0 && (
+                        <div className="flex justify-between items-center px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl">
+                          <span className="text-sm font-semibold text-green-700">Received Now ({checkoutCreditReceivedMode})</span>
+                          <span className="text-lg font-black text-green-700"><CurrencyAmount amount={creditReceivedNum} /></span>
+                        </div>
+                      )}
                       <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
-                        <span className="text-xs font-bold text-gray-500 uppercase">Credit Amount</span>
-                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={effectiveDue} /></span>
+                        <span className="text-xs font-bold text-gray-500 uppercase">Credit Balance</span>
+                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={creditBalanceNum} /></span>
                       </div>
                     </div>
                   )}
@@ -7210,26 +7875,43 @@ export default function POSSales() {
                   {checkoutPayMode === 'mixed' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment — Cash + Card</p>
+                      <p className="text-[10px] text-gray-400 -mt-1">Enter one amount — the balance is applied to the other mode automatically.</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount</label>
-                          <div className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center justify-between cursor-pointer ${checkoutKeypadTarget==='mixed-cash'?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 bg-gray-50'}`}
-                            onClick={() => { setCheckoutKeypadTarget('mixed-cash'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}>
-                            <span className="text-xs text-gray-400"><DirhamSymbol /></span>
-                            <span className="text-lg font-black text-[#1E293B]">{mixedCashAmount || '0.00'}</span>
-                          </div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount{checkoutKeypadTarget === 'mixed-card' && mixedCashAmount ? ' (balance)' : ''}</label>
+                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-cash' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
+                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={mixedCashAmount}
+                              placeholder="0.00"
+                              onFocus={() => { setCheckoutKeypadTarget('mixed-cash'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
+                              onChange={e => applyMixedAmount(true, e.target.value)}
+                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
+                            />
+                          </label>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card Amount</label>
-                          <div className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center justify-between cursor-pointer ${checkoutKeypadTarget==='mixed-card'?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 bg-gray-50'}`}
-                            onClick={() => { setCheckoutKeypadTarget('mixed-card'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}>
-                            <span className="text-xs text-gray-400"><DirhamSymbol /></span>
-                            <span className="text-lg font-black text-[#1E293B]">{mixedCardAmount || '0.00'}</span>
-                          </div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card Amount{checkoutKeypadTarget === 'mixed-cash' && mixedCardAmount ? ' (balance)' : ''}</label>
+                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-card' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
+                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={mixedCardAmount}
+                              placeholder="0.00"
+                              onFocus={() => { setCheckoutKeypadTarget('mixed-card'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
+                              onChange={e => applyMixedAmount(false, e.target.value)}
+                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
+                            />
+                          </label>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                        {['Visa','Mastercard','Amex','Other'].map(ct => (
+                        {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
                           <button key={ct} type="button" onClick={() => setMixedCardType(ct)}
                             className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${mixedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
                             {ct}
@@ -7245,6 +7927,53 @@ export default function POSSales() {
                     </div>
                   )}
 
+                  {/* ── Online section ── */}
+                  {checkoutPayMode === 'online' && (
+                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Online Payment</p>
+                      <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-500 uppercase">Amount</span>
+                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={effectiveDue} /></span>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Bank Account</label>
+                        <select
+                          value={checkoutOnlineBankAccountId}
+                          onChange={e => setCheckoutOnlineBankAccountId(e.target.value)}
+                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
+                        >
+                          <option value="" disabled>
+                            {checkoutOnlineBankAccountsLoading
+                              ? 'Loading bank accounts…'
+                              : checkoutOnlineBankAccounts.length === 0
+                                ? 'No bank accounts configured'
+                                : 'Select bank account…'}
+                          </option>
+                          {checkoutOnlineBankAccounts.map(acc => (
+                            <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase">Transaction Reference (optional)</label>
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          value={checkoutOnlineReference}
+                          placeholder="UTR / transfer ref…"
+                          onChange={e => setCheckoutOnlineReference(e.target.value)}
+                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                      {!checkoutOnlineBankAccountId && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                          <span className="text-xs text-amber-700">Please select a bank account to proceed</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* ── On-Demand Keypad ── */}
                   {checkoutKeypadVisible && (
                     <div className="bg-white rounded-2xl border-2 border-[#F5C742]/50 p-4 shadow-md">
@@ -7255,16 +7984,16 @@ export default function POSSales() {
                           <span className="text-[10px] text-[#F5C742] font-semibold">
                             {checkoutKeypadTarget === 'tender' ? 'Cash Tendered'
                               : checkoutKeypadTarget === 'mixed-cash' ? 'Cash Amount'
-                              : checkoutKeypadTarget === 'mixed-card' ? 'Card Amount'
-                              : 'Reference / Text'}
+                                : checkoutKeypadTarget === 'mixed-card' ? 'Card Amount'
+                                  : 'Reference / Text'}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <div className="flex gap-0.5 bg-gray-100 p-0.5 rounded-lg">
                             <button type="button" onClick={() => setCheckoutKeypadMode('numeric')}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode==='numeric'?'bg-[#F5C742] text-[#1E293B]':'text-gray-500'}`}>123</button>
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode === 'numeric' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}>123</button>
                             <button type="button" onClick={() => setCheckoutKeypadMode('alpha')}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode==='alpha'?'bg-[#F5C742] text-[#1E293B]':'text-gray-500'}`}>ABC</button>
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode === 'alpha' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}>ABC</button>
                           </div>
                           <button type="button" onClick={() => setCheckoutKeypadVisible(false)}
                             className="w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors">
@@ -7276,7 +8005,7 @@ export default function POSSales() {
                         <div className="grid grid-cols-3 gap-2">
                           {numKeys.map(k => (
                             <button key={k} type="button" onClick={() => handleKpad(k)}
-                              className={`h-12 rounded-xl font-bold text-sm border-2 transition-all active:scale-95 ${k==='⌫'?'border-red-200 bg-red-50 text-red-500 hover:bg-red-100':'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
+                              className={`h-12 rounded-xl font-bold text-sm border-2 transition-all active:scale-95 ${k === '⌫' ? 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100' : 'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
                               {k}
                             </button>
                           ))}
@@ -7299,7 +8028,7 @@ export default function POSSales() {
                             <div key={ri} className="flex gap-1 justify-center">
                               {row.map(k => (
                                 <button key={k} type="button" onClick={() => handleKpad(k)}
-                                  className={`h-9 flex-1 rounded-lg font-bold text-xs border transition-all active:scale-95 ${k==='⌫'?'border-red-200 bg-red-50 text-red-500 hover:bg-red-100 px-3 flex-none':'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
+                                  className={`h-9 flex-1 rounded-lg font-bold text-xs border transition-all active:scale-95 ${k === '⌫' ? 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100 px-3 flex-none' : 'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
                                   {k}
                                 </button>
                               ))}
@@ -7331,8 +8060,8 @@ export default function POSSales() {
                       {/* Print */}
                       <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
                         <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillPrint?'bg-[#F5C742]':'bg-gray-100'}`}>
-                            <Printer className={`h-4 w-4 ${checkoutEbillPrint?'text-[#1E293B]':'text-gray-400'}`} />
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillPrint ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
+                            <Printer className={`h-4 w-4 ${checkoutEbillPrint ? 'text-[#1E293B]' : 'text-gray-400'}`} />
                           </div>
                           <span className="text-sm font-semibold text-[#1E293B]">Print Receipt</span>
                         </div>
@@ -7342,8 +8071,8 @@ export default function POSSales() {
                       <div>
                         <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
                           <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillSms?'bg-[#F5C742]':'bg-gray-100'}`}>
-                              <Smartphone className={`h-4 w-4 ${checkoutEbillSms?'text-[#1E293B]':'text-gray-400'}`} />
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillSms ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
+                              <Smartphone className={`h-4 w-4 ${checkoutEbillSms ? 'text-[#1E293B]' : 'text-gray-400'}`} />
                             </div>
                             <span className="text-sm font-semibold text-[#1E293B]">Send by SMS</span>
                           </div>
@@ -7355,8 +8084,8 @@ export default function POSSales() {
                       <div>
                         <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
                           <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillWhatsapp?'bg-[#F5C742]':'bg-gray-100'}`}>
-                              <Smartphone className={`h-4 w-4 ${checkoutEbillWhatsapp?'text-[#1E293B]':'text-gray-400'}`} />
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillWhatsapp ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
+                              <Smartphone className={`h-4 w-4 ${checkoutEbillWhatsapp ? 'text-[#1E293B]' : 'text-gray-400'}`} />
                             </div>
                             <span className="text-sm font-semibold text-[#1E293B]">Send by WhatsApp</span>
                           </div>
@@ -7368,8 +8097,8 @@ export default function POSSales() {
                       <div>
                         <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
                           <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillEmail?'bg-[#F5C742]':'bg-gray-100'}`}>
-                              <FileText className={`h-4 w-4 ${checkoutEbillEmail?'text-[#1E293B]':'text-gray-400'}`} />
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillEmail ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
+                              <FileText className={`h-4 w-4 ${checkoutEbillEmail ? 'text-[#1E293B]' : 'text-gray-400'}`} />
                             </div>
                             <span className="text-sm font-semibold text-[#1E293B]">Send by Email</span>
                           </div>
@@ -7397,7 +8126,7 @@ export default function POSSales() {
                     <p className={`text-base font-black ${canSettle ? 'text-green-700' : 'text-gray-400'}`}>
                       <DirhamSymbol /> {checkoutPayMode === 'cash' ? (tenderedNum > 0 ? tenderedNum.toFixed(2) : '0.00')
                         : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum).toFixed(2)
-                        : canSettle ? effectiveDue.toFixed(2) : '0.00'}
+                          : canSettle ? effectiveDue.toFixed(2) : '0.00'}
                     </p>
                   </div>
                   {(() => {
@@ -7423,7 +8152,7 @@ export default function POSSales() {
                 )}
                 {/* Action buttons */}
                 <div className="flex gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); }}
+                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
                     className="flex-none px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
@@ -7483,24 +8212,23 @@ export default function POSSales() {
                 )}
               </div>
               {supervisorApprovalMode !== 'PASSWORD' && (
-              <div className="grid grid-cols-3 gap-2">
-                {[1,2,3,4,5,6,7,8,9,'C',0,'✓'].map(k => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => {
-                      if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
-                      else if (k === '✓') handleSupervisorPinSubmit();
-                      else setSupervisorPinValue(p => (p + k).slice(0, 8));
-                    }}
-                    className={`py-3 rounded-xl text-sm font-bold transition-colors ${
-                      k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
-                      k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
-                      'bg-gray-100 hover:bg-gray-200 text-[#1E293B]'
-                    }`}
-                  >{k}</button>
-                ))}
-              </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '✓'].map(k => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
+                        else if (k === '✓') handleSupervisorPinSubmit();
+                        else setSupervisorPinValue(p => (p + k).slice(0, 8));
+                      }}
+                      className={`py-3 rounded-xl text-sm font-bold transition-colors ${k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
+                          k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
+                            'bg-gray-100 hover:bg-gray-200 text-[#1E293B]'
+                        }`}
+                    >{k}</button>
+                  ))}
+                </div>
               )}
               {supervisorApprovalMode === 'PASSWORD' && (
                 <button
@@ -7599,14 +8327,65 @@ export default function POSSales() {
             </button>
             <button
               onClick={handleCashDrop}
-              className={`h-10 px-6 text-sm font-semibold rounded-xl flex items-center gap-2 transition-colors ${
-                cashDropType === 'in'
+              className={`h-10 px-6 text-sm font-semibold rounded-xl flex items-center gap-2 transition-colors ${cashDropType === 'in'
                   ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'
                   : 'bg-red-500 hover:bg-red-600 text-white'
-              }`}
+                }`}
             >
               <CheckCircle className="h-4 w-4" />
               Record {cashDropType === 'in' ? 'Cash Drop' : 'Cash Out'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Close Day Reconciliation Variance Dialog */}
+      <Dialog open={!!closeDayVariance} onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-red-50">
+                  <AlertTriangle className="h-5 w-5 text-red-500" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#1E293B]">
+                    {closeDayVariance?.stage === 'CASH' ? 'Cash Reconciliation Failed' : 'Sales Reconciliation Failed'}
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">Close day was blocked — review the variance breakdown below</p>
+                </div>
+              </div>
+              <button onClick={() => setCloseDayVariance(null)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="px-6 py-5 space-y-3 max-h-[60vh] overflow-y-auto">
+            {closeDayVariance?.breakdown && Object.entries(closeDayVariance.breakdown).map(([key, value]) => {
+              const isVariance = key === 'variance';
+              const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase());
+              const num = Number(value);
+              return (
+                <div
+                  key={key}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg ${isVariance ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}
+                >
+                  <span className={`text-sm ${isVariance ? 'font-semibold text-red-600' : 'text-gray-600'}`}>{label}</span>
+                  <span className={`text-sm font-mono ${isVariance ? 'font-bold text-red-600' : 'text-[#1E293B]'}`}>
+                    {Number.isFinite(num) ? num.toFixed(2) : String(value)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="px-6 pb-6 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setCloseDayVariance(null)}
+              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            >
+              Close
             </button>
           </div>
         </DialogContent>
@@ -7694,8 +8473,9 @@ export default function POSSales() {
                 <div className="flex justify-between"><span className="text-gray-500">Invoice #</span><span className="font-semibold">{lastPaidInvoice.id}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-semibold">{lastPaidInvoice.customer?.name || 'Walk-in'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Amount</span><span className="font-semibold text-[#F5C742]">{formatCurrency(lastPaidInvoice.total)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold">{formatCurrency(lastPaidInvoice.paidAmount || lastPaidInvoice.total)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold">{formatCurrency(lastPaidInvoice.paidAmount ?? lastPaidInvoice.total)}</span></div>
                 {(lastPaidInvoice.changeAmount || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Change</span><span className="font-semibold text-green-600">{formatCurrency(lastPaidInvoice.changeAmount)}</span></div>}
+                {(lastPaidInvoice.creditBalance || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Credit Balance</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditBalance)}</span></div>}
                 <div className="flex justify-between"><span className="text-gray-500">Pay Mode</span><span className="font-semibold">{lastPaidInvoice.paymentMode || 'Cash'}</span></div>
                 <Separator />
                 <p className="text-xs text-gray-400 text-center">{lastPaidInvoice.items?.length || 0} item(s) · Session {currentSession?.id}</p>
@@ -7715,11 +8495,9 @@ export default function POSSales() {
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
-                  const isWalkInLR = !full.customerName || full.customerName === 'Walk-in Customer';
-                  let creditPrevBalLR = null;
-                  if (tplInvoiceShowBankDetails && !isWalkInLR && full.customerCode) {
-                    try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBalLR = cr.outstanding ?? null; } catch (_) {}
-                  }
+                  // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
+                  // rather than re-querying posCreditBalance — by now it already reflects
+                  // this invoice and would be mislabeled as "previous balance".
                   const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
@@ -7727,7 +8505,10 @@ export default function POSSales() {
                     changeAmount: lastPaidInvoice?.changeAmount,
                     customerPhone: lastPaidInvoice?.customer?.phone,
                     customerEmail: lastPaidInvoice?.customer?.email,
-                    creditPreviousBalance: creditPrevBalLR,
+                    creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
+                    creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
+                    creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
+                    creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                     cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
                   });
                   await printThermalReceiptWithConfiguredPrinter({
@@ -7801,19 +8582,19 @@ export default function POSSales() {
               {/* Filter Bar */}
               <div className="bg-white border-b border-[#327F74]/10 px-5 py-3 shrink-0">
                 <div className="flex flex-wrap gap-2 items-end">
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e=>setReprintFilterDateFrom(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e=>setReprintFilterDateTo(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e=>setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e=>setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e=>setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e => setReprintFilterDateFrom(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e => setReprintFilterDateTo(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e => setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e => setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Payment Mode</label>
-                    <select value={reprintFilterPayMode} onChange={e=>setReprintFilterPayMode(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All','Cash','Card','Mixed','Credit'].map(o=><option key={o}>{o}</option>)}
+                    <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                      {['All', 'Cash', 'Card', 'Mixed', 'Credit'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Status</label>
-                    <select value={reprintFilterStatus} onChange={e=>setReprintFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All','Completed','Returned','Cancelled','Reprinted'].map(o=><option key={o}>{o}</option>)}
+                    <select value={reprintFilterStatus} onChange={e => setReprintFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                      {['All', 'Completed', 'Returned', 'Cancelled', 'Reprinted'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
                   <button onClick={fetchReprintInvoices} disabled={reprintLoading} className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-60 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />{reprintLoading ? 'Loading…' : 'Search'}</button>
@@ -7845,7 +8626,7 @@ export default function POSSales() {
                       <table className="w-full text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10">
                           <tr className="text-gray-500 border-b border-[#327F74]/10">
-                            {['Invoice No.','Date & Time','Customer','Cashier','Terminal','Pay Mode','Items','Amount','Status','Action'].map((h,i) => (
+                            {['Invoice No.', 'Date & Time', 'Customer', 'Cashier', 'Terminal', 'Pay Mode', 'Items', 'Amount', 'Status', 'Action'].map((h, i) => (
                               <th key={i} className={`px-3 py-2 text-left font-medium whitespace-nowrap ${i >= 6 ? 'text-right' : ''} ${i === 9 ? 'text-center' : ''}`}>{h}</th>
                             ))}
                           </tr>
@@ -7903,20 +8684,20 @@ export default function POSSales() {
                           <p className="text-gray-500">{selected._raw?.branchCode || ''}</p>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 border-b border-gray-100 pb-3">
-                          {[['Invoice No.',selected.id],['Date',selected.date || ''],['Time',selected.time],['Cashier',selected.cashier],['Terminal',selected.terminal],['Customer',selected.customer]].map(([k,v])=>(
+                          {[['Invoice No.', selected.id], ['Date', selected.date || ''], ['Time', selected.time], ['Cashier', selected.cashier], ['Terminal', selected.terminal], ['Customer', selected.customer]].map(([k, v]) => (
                             <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                           ))}
                         </div>
-                        {(selected._raw?.items || []).filter(i=>!i.voided).length > 0 ? (
+                        {(selected._raw?.items || []).filter(i => !i.voided).length > 0 ? (
                           <table className="w-full border-b border-gray-100 pb-2">
-                            <thead><tr className="text-gray-400">{['Item','Qty','Price','Total'].map(h=><th key={h} className={`py-0.5 text-left ${h!=='Item'?'text-right':''}`}>{h}</th>)}</tr></thead>
+                            <thead><tr className="text-gray-400">{['Item', 'Qty', 'Price', 'Total'].map(h => <th key={h} className={`py-0.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
                             <tbody>
-                              {(selected._raw.items).filter(i=>!i.voided).map((it,i)=>(
+                              {(selected._raw.items).filter(i => !i.voided).map((it, i) => (
                                 <tr key={i} className="border-t border-gray-50">
                                   <td className="py-0.5 text-[#1E293B]">{it.itemName || it.itemCode}</td>
                                   <td className="py-0.5 text-right text-[#1E293B]">{it.quantity}</td>
-                                  <td className="py-0.5 text-right text-[#1E293B]">{(it.price||0).toFixed(2)}</td>
-                                  <td className="py-0.5 text-right text-[#1E293B]">{(it.netAmount||it.quantity*(it.price||0)).toFixed(2)}</td>
+                                  <td className="py-0.5 text-right text-[#1E293B]">{(it.price || 0).toFixed(2)}</td>
+                                  <td className="py-0.5 text-right text-[#1E293B]">{(it.netAmount || it.quantity * (it.price || 0)).toFixed(2)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -7925,8 +8706,8 @@ export default function POSSales() {
                           <p className="text-gray-400 text-center py-2">Line items not loaded — click Print to fetch full invoice.</p>
                         )}
                         <div className="space-y-1">
-                          {[['Subtotal',(selected._raw?.subTotal||0).toFixed(2)],['VAT',(selected._raw?.taxTotal||0).toFixed(2)],['Total',(selected._raw?.invoiceTotal||0).toFixed(2)]].map(([l,v])=>(
-                            <div key={l} className={`flex justify-between ${l==='Total'?'font-bold text-[#1E293B] border-t border-gray-200 pt-1':''}`}><span className="text-gray-500">{l}</span><span>{v}</span></div>
+                          {[['Subtotal', (selected._raw?.subTotal || 0).toFixed(2)], ['VAT', (selected._raw?.taxTotal || 0).toFixed(2)], ['Total', (selected._raw?.invoiceTotal || 0).toFixed(2)]].map(([l, v]) => (
+                            <div key={l} className={`flex justify-between ${l === 'Total' ? 'font-bold text-[#1E293B] border-t border-gray-200 pt-1' : ''}`}><span className="text-gray-500">{l}</span><span>{v}</span></div>
                           ))}
                         </div>
                         <div className="border-t border-gray-100 pt-2 space-y-0.5">
@@ -7949,7 +8730,7 @@ export default function POSSales() {
                       {/* Audit Info */}
                       <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
                         <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Invoice Info</p>
-                        {[['Invoice No.',selected.id],['Date',selected.date||''],['Customer',selected.customer],['Cashier',selected.cashier],['Terminal',selected.terminal]].map(([k,v])=>(
+                        {[['Invoice No.', selected.id], ['Date', selected.date || ''], ['Customer', selected.customer], ['Cashier', selected.cashier], ['Terminal', selected.terminal]].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
@@ -7958,28 +8739,28 @@ export default function POSSales() {
                         <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Audit / Reprint History</p>
                         {[
                           ['Original Printed By', selected.cashier || '—'],
-                          ['Original Printed Time', (() => { const raw = selected._raw?.createdAt; return raw ? new Date(raw).toLocaleString('en-US', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'; })()],
+                          ['Original Printed Time', (() => { const raw = selected._raw?.createdAt; return raw ? new Date(raw).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; })()],
                           ['Reprint Count', selected.reprints > 0 ? `${selected.reprints} Times` : '0 Times'],
                           ['Last Reprinted By', selected.reprints > 0 ? (selected.lastReprintedBy || '—') : '—'],
                           ['Last Reprinted Time', selected.reprints > 0 ? (selected.lastReprintedTime || '—') : '—'],
-                        ].map(([k,v])=>(
+                        ].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                     </div>
                     {/* Print Actions */}
                     <div className="border-t border-[#327F74]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
-                      <button onClick={() => { setReprintPrintMode('thermal'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
-                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
-                        <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='thermal' ? 'Printing…' : 'Print Thermal Receipt'}
+                      <button onClick={() => { setReprintPrintMode('thermal'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
+                        <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
-                      <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
-                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-white border border-[#327F74]/40 text-[#327F74] hover:bg-[#327F74]/5'}`}>
-                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='a4' ? 'Printing…' : 'Print A4 Invoice'}
+                      <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#327F74]/40 text-[#327F74] hover:bg-[#327F74]/5'}`}>
+                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : 'Print A4 Invoice'}
                       </button>
-                      <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status==='Cancelled' || reprintPrinting}
-                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status==='Cancelled'?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
-                        <Download className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode==='pdf' ? 'Downloading…' : 'Download PDF'}
+                      <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                        <Download className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'pdf' ? 'Downloading…' : 'Download PDF'}
                       </button>
                       {selected.status === 'Cancelled' && (
                         <div className="w-full flex items-center gap-1 text-xs text-red-600 bg-red-50 rounded p-1.5 border border-red-200">
@@ -8008,6 +8789,18 @@ export default function POSSales() {
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${cashDropFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}>
           {cashDropFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
           {cashDropFeedback.message}
+        </div>
+      )}
+
+      {/* Print fallback toast — explains why a browser print-preview just opened
+          (no printer configured, or the configured one/agent didn't respond). */}
+      {printFeedback && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium bg-red-500 text-white max-w-md">
+          <Printer className="h-4 w-4 shrink-0" />
+          <span>{printFeedback.message}</span>
+          <button type="button" onClick={() => setPrintFeedback(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -8047,9 +8840,9 @@ export default function POSSales() {
           </DialogHeader>
           {(() => {
             const COUPON_RULES = [
-              { code: 'SAVE10',    label: 'SAVE10 — 10% off',               type: 'percent', value: 10 },
+              { code: 'SAVE10', label: 'SAVE10 — 10% off', type: 'percent', value: 10 },
               { code: 'WELCOME20', label: 'WELCOME20 — 20% off first purchase', type: 'percent', value: 20 },
-              { code: 'MEMBER15',  label: 'MEMBER15 — 15% for members',      type: 'percent', value: 15 },
+              { code: 'MEMBER15', label: 'MEMBER15 — 15% for members', type: 'percent', value: 15 },
             ];
             const matched = COUPON_RULES.find(r => r.code === couponCode);
             const applyAndClose = () => {
@@ -8063,37 +8856,37 @@ export default function POSSales() {
               showFeedback('success', `Coupon ${matched.code} applied — ${matched.type === 'percent' ? matched.value + '%' : 'AED ' + matched.value} off`);
             };
             return (
-          <div className="space-y-3 py-2">
-            <Label>Coupon Code</Label>
-            <Input placeholder="e.g. SAVE10, WELCOME20..." value={couponCode} onChange={e => setCouponCode(e.target.value.toUpperCase())}
-              onKeyDown={e => { if (e.key === 'Enter') applyAndClose(); }} />
-            {appliedCoupon && (
-              <div className="p-2.5 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 font-semibold flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2"><CheckCircle className="h-4 w-4" />Coupon "{appliedCoupon}" applied — {formatCurrency(couponDiscount)} off</span>
-                <button type="button" className="text-red-400 hover:text-red-600 text-[10px] font-bold" onClick={() => {
-                  setAppliedCoupon(null); setCouponDiscount(0);
-                  setCurrentInvoice(prev => recalculateInvoice(prev.items, 0));
-                  setCouponCode('');
-                }}>Remove</button>
+              <div className="space-y-3 py-2">
+                <Label>Coupon Code</Label>
+                <Input placeholder="e.g. SAVE10, WELCOME20..." value={couponCode} onChange={e => setCouponCode(e.target.value.toUpperCase())}
+                  onKeyDown={e => { if (e.key === 'Enter') applyAndClose(); }} />
+                {appliedCoupon && (
+                  <div className="p-2.5 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 font-semibold flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2"><CheckCircle className="h-4 w-4" />Coupon "{appliedCoupon}" applied — {formatCurrency(couponDiscount)} off</span>
+                    <button type="button" className="text-red-400 hover:text-red-600 text-[10px] font-bold" onClick={() => {
+                      setAppliedCoupon(null); setCouponDiscount(0);
+                      setCurrentInvoice(prev => recalculateInvoice(prev.items, 0));
+                      setCouponCode('');
+                    }}>Remove</button>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 font-semibold">Available Coupons</p>
+                  {COUPON_RULES.map(c => (
+                    <button key={c.code} type="button" onClick={() => setCouponCode(c.code)}
+                      className={`w-full text-left text-xs px-3 py-2 rounded-lg border transition-colors ${couponCode === c.code ? 'bg-pink-100 border-pink-300 text-pink-800' : 'bg-pink-50 hover:bg-pink-100 border-pink-100 text-pink-700'}`}>{c.label}</button>
+                  ))}
+                </div>
               </div>
-            )}
-            <div className="space-y-1">
-              <p className="text-xs text-gray-500 font-semibold">Available Coupons</p>
-              {COUPON_RULES.map(c => (
-                <button key={c.code} type="button" onClick={() => setCouponCode(c.code)}
-                  className={`w-full text-left text-xs px-3 py-2 rounded-lg border transition-colors ${couponCode === c.code ? 'bg-pink-100 border-pink-300 text-pink-800' : 'bg-pink-50 hover:bg-pink-100 border-pink-100 text-pink-700'}`}>{c.label}</button>
-              ))}
-            </div>
-          </div>
             );
           })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCouponsDialog(false)}>Cancel</Button>
             <Button className="bg-pink-500 hover:bg-pink-600 text-white" disabled={!couponCode} onClick={() => {
               const COUPON_RULES = [
-                { code: 'SAVE10',    type: 'percent', value: 10 },
+                { code: 'SAVE10', type: 'percent', value: 10 },
                 { code: 'WELCOME20', type: 'percent', value: 20 },
-                { code: 'MEMBER15',  type: 'percent', value: 15 },
+                { code: 'MEMBER15', type: 'percent', value: 15 },
               ];
               const matched = COUPON_RULES.find(r => r.code === couponCode);
               if (!matched) { showFeedback('error', `Unknown coupon code: ${couponCode}`); return; }
@@ -8159,7 +8952,7 @@ export default function POSSales() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div className="p-3 bg-indigo-50 rounded-lg text-sm">
-              <p className="font-semibold text-indigo-800">{currentInvoice.items.filter(i=>!i.isVoided).length} items · {formatCurrency(currentInvoice.total)}</p>
+              <p className="font-semibold text-indigo-800">{currentInvoice.items.filter(i => !i.isVoided).length} items · {formatCurrency(currentInvoice.total)}</p>
               <p className="text-indigo-600 text-xs mt-0.5">Customer: {selectedCustomerData?.name || 'Walk-in'}</p>
             </div>
             {saveOrderError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{saveOrderError}</p>}
@@ -8168,7 +8961,7 @@ export default function POSSales() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowSaveOrderDialog(false); setOrderNotes(''); setSaveOrderError(''); }}>Cancel</Button>
-            <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" disabled={saveOrderBusy || currentInvoice.items.filter(i=>!i.isVoided).length === 0} onClick={async () => {
+            <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" disabled={saveOrderBusy || currentInvoice.items.filter(i => !i.isVoided).length === 0} onClick={async () => {
               setSaveOrderBusy(true); setSaveOrderError('');
               try {
                 const soNumber = await getNextSalesOrderNumber();
@@ -8552,9 +9345,9 @@ export default function POSSales() {
                     renderOption={(opt, active) => (
                       <div className="flex items-center gap-3 p-2">
                         {opt.image ? (
-                           <img src={opt.image.startsWith('data:') || opt.image.startsWith('http') ? opt.image : `data:image/jpeg;base64,${opt.image}`} alt="" className="w-10 h-10 object-cover rounded" />
+                          <img src={opt.image.startsWith('data:') || opt.image.startsWith('http') ? opt.image : `data:image/jpeg;base64,${opt.image}`} alt="" className="w-10 h-10 object-cover rounded" />
                         ) : (
-                           <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center shrink-0"><Search className="h-5 w-5 text-gray-400" /></div>
+                          <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center shrink-0"><Search className="h-5 w-5 text-gray-400" /></div>
                         )}
                         <div className="flex-1 overflow-hidden">
                           <p className="font-bold text-sm text-gray-900 leading-tight truncate">{opt.name}</p>
@@ -8619,7 +9412,7 @@ export default function POSSales() {
                           </div>
                         </div>
                       </div>
-                      
+
                       {/* Right: Pricing & Stock */}
                       <div className="md:w-64 shrink-0 bg-gray-50 rounded-xl p-4 flex flex-col justify-center border border-gray-100 relative">
                         <div className="absolute -top-3 right-4">
@@ -8627,7 +9420,7 @@ export default function POSSales() {
                             {foundProduct.stock > 0 ? `${foundProduct.stock} in Stock` : 'Out of Stock'}
                           </span>
                         </div>
-                        
+
                         <div className="text-center mt-3 mb-4">
                           <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">Selling Price</p>
                           <div className="text-3xl font-black text-[#327F74] flex items-center justify-center gap-1">
@@ -8635,7 +9428,7 @@ export default function POSSales() {
                           </div>
                           <p className="text-[10px] text-gray-500 mt-1.5 font-medium">VAT {vatRate}% Included</p>
                         </div>
-                        
+
                         <div className="space-y-1.5 pt-3 border-t border-gray-200">
                           <div className="flex justify-between text-[11px] font-semibold">
                             <span className="text-gray-500">Base Price:</span>
@@ -8691,14 +9484,32 @@ export default function POSSales() {
                 </div>
                 <button onClick={() => setShowCreditBalance(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0">
-                <input value={creditBalanceQuery} onChange={e=>setCreditBalanceQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doCreditSearch()}
-                  placeholder="Scan loyalty card / enter mobile / customer code..." className="flex-1 border border-[#327F74]/30 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" autoFocus />
-                <button onClick={doCreditSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Search className="h-3.5 w-3.5" />Search</button>
-                <button onClick={()=>{setCreditBalanceQuery('');setCreditBalanceResult(null);}} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
+              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0 overflow-visible">
+                <div className="flex-1">
+                  <CustomerPicker
+                    customers={posCustomers}
+                    value={creditBalanceQuery}
+                    onChange={async (customerId) => {
+                      setCreditBalanceQuery(customerId || '');
+                      if (!customerId) {
+                        setCreditBalanceResult(null);
+                        return;
+                      }
+                      const c = posCustomers.find(x => x.id === customerId);
+                      if (!c) return;
+                      setCreditBalanceResult('searching');
+                      try {
+                        const res = await posCreditBalance(c.code || c.mobile || String(customerId));
+                        setCreditBalanceResult(res.found ? res : 'notfound');
+                      } catch { setCreditBalanceResult('notfound'); }
+                    }}
+                    placeholder="Search or select customer..."
+                  />
+                </div>
+                <button onClick={() => { setCreditBalanceQuery(''); setCreditBalanceResult(null); }} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
               </div>
               <div className="overflow-auto flex-1 p-5">
-                {creditBalanceResult === null && <div className="flex flex-col items-center justify-center h-40 text-center"><Star className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan loyalty card or enter mobile number to check balance.</p></div>}
+                {creditBalanceResult === null && <div className="flex flex-col items-center justify-center h-40 text-center"><Star className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Search customer to check balance.</p></div>}
                 {creditBalanceResult === 'searching' && <div className="flex flex-col items-center justify-center h-40 text-center"><div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" /><p className="text-sm text-gray-400">Searching...</p></div>}
                 {creditBalanceResult === 'notfound' && <div className="flex flex-col items-center justify-center h-40 text-center"><AlertCircle className="h-10 w-10 text-gray-300 mb-3" /><p className="text-sm text-gray-500">No customer found for the scanned card.</p></div>}
                 {data && (
@@ -8713,7 +9524,7 @@ export default function POSSales() {
                         <span className={`text-xs rounded px-2 py-0.5 ${data.customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{data.customer.status || '—'}</span>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                        {[['Mobile', data.customer.mobile||'—'], ['Email', data.customer.email||'—'], ['Type', data.customer.groupType||'—']].map(([k,v])=>(
+                        {[['Mobile', data.customer.mobile || '—'], ['Email', data.customer.email || '—'], ['Type', data.customer.groupType || '—']].map(([k, v]) => (
                           <div key={k}><span className="text-gray-400">{k}:</span><span className="ml-1 text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
@@ -8721,10 +9532,10 @@ export default function POSSales() {
                     {/* KPI Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {[
-                        {label:'Outstanding',val:<CurrencyAmount amount={toNumber(data.outstanding,0)} />,sub:'unpaid invoices',color:'text-red-600'},
-                        {label:'Credit Limit',val:<CurrencyAmount amount={toNumber(data.creditLimit,0)} />,sub:'approved limit',color:'text-[#327F74]'},
-                        {label:'Advance Balance',val:<CurrencyAmount amount={toNumber(data.advanceBalance,0)} />,sub:'available deposit',color:'text-violet-600'},
-                      ].map(k=>(
+                        { label: 'Outstanding', val: <CurrencyAmount amount={toNumber(data.outstanding, 0)} />, sub: 'unpaid invoices', color: 'text-red-600' },
+                        { label: 'Credit Limit', val: <CurrencyAmount amount={toNumber(data.creditLimit, 0)} />, sub: 'approved limit', color: 'text-[#327F74]' },
+                        { label: 'Advance Balance', val: <CurrencyAmount amount={toNumber(data.advanceBalance, 0)} />, sub: 'available deposit', color: 'text-violet-600' },
+                      ].map(k => (
                         <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg p-4 text-center shadow-sm">
                           <p className="text-[11px] text-gray-400 mb-1">{k.label}</p>
                           <p className={`text-lg font-bold ${k.color}`}>{k.val}</p>
@@ -8734,7 +9545,7 @@ export default function POSSales() {
                     </div>
                     {/* Credit limit utilisation bar */}
                     {toNumber(data.creditLimit, 0) > 0 && (() => {
-                      const pct = Math.min(100, (toNumber(data.outstanding,0) / toNumber(data.creditLimit,0)) * 100);
+                      const pct = Math.min(100, (toNumber(data.outstanding, 0) / toNumber(data.creditLimit, 0)) * 100);
                       const color = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-400' : 'bg-[#327F74]';
                       return (
                         <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
@@ -8743,7 +9554,7 @@ export default function POSSales() {
                             <span>{pct.toFixed(0)}%</span>
                           </div>
                           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div className={`h-full ${color} rounded-full transition-all`} style={{width:`${pct}%`}} />
+                            <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
                           </div>
                         </div>
                       );
@@ -8752,7 +9563,7 @@ export default function POSSales() {
                 )}
               </div>
               <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                <button onClick={()=>setShowCreditBalance(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
+                <button onClick={() => setShowCreditBalance(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
           </div>
@@ -8784,7 +9595,7 @@ export default function POSSales() {
           };
         });
         const selected = filtered.find(l => l.entityId === selectedLayawayId) || null;
-        const statusColor = (s) => ({Active:'bg-green-100 text-green-700','Partially Paid':'bg-blue-100 text-blue-700','Ready to Convert':'bg-[#F5C742]/20 text-amber-700','Converted to Sale':'bg-gray-100 text-gray-600',Cancelled:'bg-red-100 text-red-600',Expired:'bg-red-50 text-red-500'}[s] || 'bg-gray-100 text-gray-500');
+        const statusColor = (s) => ({ Active: 'bg-green-100 text-green-700', 'Partially Paid': 'bg-blue-100 text-blue-700', 'Ready to Convert': 'bg-[#F5C742]/20 text-amber-700', 'Converted to Sale': 'bg-gray-100 text-gray-600', Cancelled: 'bg-red-100 text-red-600', Expired: 'bg-red-50 text-red-500' }[s] || 'bg-gray-100 text-gray-500');
         return (
           <div className="fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowLayawaysList(false)} />
@@ -8794,23 +9605,23 @@ export default function POSSales() {
                   <div className="flex items-center gap-2"><Pause className="h-4 w-4 text-amber-500" /><span className="text-base font-semibold text-[#1E293B]">Layaways</span></div>
                   <p className="text-xs text-gray-500 mt-0.5">View and manage all sales reserved using Save Layaway.</p>
                 </div>
-                <button onClick={()=>setShowLayawaysList(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowLayawaysList(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               {/* Filters */}
               <div className="bg-white border-b border-gray-100 px-5 py-2.5 flex flex-wrap gap-2 items-end shrink-0">
-                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Layaway No.</label><input value={layawaysFilterNo} onChange={e=>setLayawaysFilterNo(e.target.value)} placeholder="LAY-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Customer</label><input value={layawaysFilterCustomer} onChange={e=>setLayawaysFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Layaway No.</label><input value={layawaysFilterNo} onChange={e => setLayawaysFilterNo(e.target.value)} placeholder="LAY-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Customer</label><input value={layawaysFilterCustomer} onChange={e => setLayawaysFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
                 <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Status</label>
-                  <select value={layawaysFilterStatus} onChange={e=>setLayawaysFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                    {['All','Active','Partially Paid','Ready to Convert','Converted to Sale','Cancelled','Expired'].map(o=><option key={o}>{o}</option>)}
+                  <select value={layawaysFilterStatus} onChange={e => setLayawaysFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                    {['All', 'Active', 'Partially Paid', 'Ready to Convert', 'Converted to Sale', 'Cancelled', 'Expired'].map(o => <option key={o}>{o}</option>)}
                   </select>
                 </div>
-                <button onClick={()=>loadLayaways()} className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                <button onClick={()=>{setLayawaysFilterStatus('All');setLayawaysFilterCustomer('');setLayawaysFilterNo('');setTimeout(loadLayaways,0);}} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
-                <button onClick={()=>{setShowLayawaysList(false);setShowSaveLayaway(true);}} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
+                <button onClick={() => loadLayaways()} className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
+                <button onClick={() => { setLayawaysFilterStatus('All'); setLayawaysFilterCustomer(''); setLayawaysFilterNo(''); setTimeout(loadLayaways, 0); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
+                <button onClick={() => { setShowLayawaysList(false); setShowSaveLayaway(true); }} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
               </div>
               <div className="flex flex-1 min-h-0">
-                <div className={`flex flex-col overflow-hidden ${selected?'w-1/2 lg:w-[55%]':'w-full'} border-r border-[#327F74]/10`}>
+                <div className={`flex flex-col overflow-hidden ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10`}>
                   <div className="overflow-auto flex-1">
                     {layawaysLoading ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
@@ -8821,12 +9632,12 @@ export default function POSSales() {
                     ) : (
                       <table className="w-full text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10 border-b border-[#327F74]/10">
-                          <tr className="text-gray-500">{['Layaway No.','Date & Time','Customer','Cashier','Items','Sale Amt','Deposit','Balance','Due Date','Status','Action'].map((h,i)=><th key={i} className={`px-3 py-2 text-left font-medium ${i>=4&&i<=7?'text-right':''} ${i===10?'text-center':''}`}>{h}</th>)}</tr>
+                          <tr className="text-gray-500">{['Layaway No.', 'Date & Time', 'Customer', 'Cashier', 'Items', 'Sale Amt', 'Deposit', 'Balance', 'Due Date', 'Status', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2 text-left font-medium ${i >= 4 && i <= 7 ? 'text-right' : ''} ${i === 10 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                         </thead>
                         <tbody>
-                          {filtered.map(l=>(
-                            <tr key={l.entityId} onClick={()=>setSelectedLayawayId(l.entityId===selectedLayawayId?null:l.entityId)}
-                              className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status==='Expired'?'bg-red-50/30':''} ${l.entityId===selectedLayawayId?'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]':'hover:bg-white'}`}>
+                          {filtered.map(l => (
+                            <tr key={l.entityId} onClick={() => setSelectedLayawayId(l.entityId === selectedLayawayId ? null : l.entityId)}
+                              className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status === 'Expired' ? 'bg-red-50/30' : ''} ${l.entityId === selectedLayawayId ? 'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]' : 'hover:bg-white'}`}>
                               <td className="px-3 py-2 font-semibold text-[#1E293B] whitespace-nowrap">
                                 {l.id}
                                 {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
@@ -8842,8 +9653,9 @@ export default function POSSales() {
                               <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(l.status)}`}>{l.status}</span></td>
                               <td className="px-3 py-2">
                                 <div className="flex items-center justify-center gap-1">
-                                  <button onClick={e=>{e.stopPropagation();setSelectedLayawayId(l.entityId);}} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
-                                  {l.isOpen && <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded" onClick={e=>{e.stopPropagation();startLayawayConversion(l.entityId);}}>Convert</button>}
+                                  <button onClick={e => { e.stopPropagation(); setSelectedLayawayId(l.entityId); }} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
+                                  {l.isOpen && <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded" onClick={e => { e.stopPropagation(); startLayawayConversion(l.entityId); }}>Convert</button>}
+                                  {l.isOpen && <button disabled={layawayBusyId === l.entityId} className="border border-red-300 text-red-600 text-[10px] px-1.5 py-0.5 rounded hover:bg-red-50 disabled:opacity-40" onClick={e => { e.stopPropagation(); handleCancelLayaway(l.entityId); }}>{layawayBusyId === l.entityId ? '…' : 'Delete'}</button>}
                                 </div>
                               </td>
                             </tr>
@@ -8857,11 +9669,11 @@ export default function POSSales() {
                   <div className="w-1/2 lg:w-[45%] flex flex-col bg-white overflow-hidden">
                     <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
-                      <button onClick={()=>setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="overflow-auto flex-1 p-4 space-y-3 text-xs">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                        {[['Customer',selected.customer],['Cashier',selected.cashier],['Sale Amount',<CurrencyAmount amount={selected.saleAmt} />],['Deposit Paid',<CurrencyAmount amount={selected.deposit} />],['Balance Due',<CurrencyAmount amount={selected.balance} />],['Due Date',selected.due],['Status',selected.status],['Created',selected.date+' '+selected.time]].map(([k,v])=>(
+                        {[['Customer', selected.customer], ['Cashier', selected.cashier], ['Sale Amount', <CurrencyAmount amount={selected.saleAmt} />], ['Deposit Paid', <CurrencyAmount amount={selected.deposit} />], ['Balance Due', <CurrencyAmount amount={selected.balance} />], ['Due Date', selected.due], ['Status', selected.status], ['Created', selected.date + ' ' + selected.time]].map(([k, v]) => (
                           <div key={k} className="flex gap-1"><span className="text-gray-400 w-24 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
                         ))}
                       </div>
@@ -8873,37 +9685,79 @@ export default function POSSales() {
                         {(!selectedLayawayDetail || selectedLayawayDetail.id !== selected.entityId) ? (
                           <p className="text-[11px] text-gray-400 py-2">Loading items…</p>
                         ) : (
-                        <table className="w-full text-xs">
-                          <thead><tr className="text-gray-400">{['Item','Qty','Rate','Amount'].map(h=><th key={h} className={`py-0.5 text-left ${h!=='Item'?'text-right':''}`}>{h}</th>)}</tr></thead>
-                          <tbody>
-                            {(selectedLayawayDetail.items || []).map((it,i)=>(
-                              <tr key={i} className="border-t border-gray-50">
-                                <td className="py-1 text-[#1E293B]">{it.itemName}{it.pinnedBatchNumber && <span className="ml-1 text-[9px] text-amber-600">[{it.pinnedBatchNumber}]</span>}</td>
-                                <td className="py-1 text-right text-[#1E293B]">{it.quantity}</td>
-                                <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.price||0} /></td>
-                                <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={(it.price||0)*(it.quantity||0)*(1-(it.discount||0)/100)} /></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                          <table className="w-full text-xs">
+                            <thead><tr className="text-gray-400">{['Item', 'Qty', 'Rate', 'Amount'].map(h => <th key={h} className={`py-0.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
+                            <tbody>
+                              {(selectedLayawayDetail.items || []).map((it, i) => (
+                                <tr key={i} className="border-t border-gray-50">
+                                  <td className="py-1 text-[#1E293B]">{it.itemName}{it.pinnedBatchNumber && <span className="ml-1 text-[9px] text-amber-600">[{it.pinnedBatchNumber}]</span>}</td>
+                                  <td className="py-1 text-right text-[#1E293B]">{it.quantity}</td>
+                                  <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.price || 0} /></td>
+                                  <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={(it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100)} /></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         )}
                       </div>
                     </div>
                     <div className="border-t border-[#327F74]/10 p-3 flex flex-wrap gap-2 shrink-0">
-                      {selected.isOpen && <button onClick={()=>startLayawayConversion(selected.entityId)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Zap className="h-3 w-3" />Convert to Sale</button>}
-                      {selected.isOpen && <button disabled={layawayBusyId===selected.entityId} onClick={()=>handleCancelLayaway(selected.entityId)} className="border border-red-300 text-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-50 flex items-center gap-1 disabled:opacity-40"><XCircle className="h-3 w-3" />{layawayBusyId===selected.entityId?'Cancelling…':'Cancel'}</button>}
+                      {selected.isOpen && <button onClick={() => startLayawayConversion(selected.entityId)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Zap className="h-3 w-3" />Convert to Sale</button>}
+                      {selected.isOpen && <button disabled={layawayBusyId === selected.entityId} onClick={() => handleCancelLayaway(selected.entityId)} className="border border-red-300 text-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-50 flex items-center gap-1 disabled:opacity-40"><XCircle className="h-3 w-3" />{layawayBusyId === selected.entityId ? 'Cancelling…' : 'Cancel'}</button>}
                       {selected.raw?.convertedInvoiceNumber && <span className="text-[11px] text-gray-500 self-center">Converted → {selected.raw.convertedInvoiceNumber}</span>}
                     </div>
                   </div>
                 )}
               </div>
               <div className="bg-white border-t border-[#327F74]/10 px-5 py-2.5 flex justify-end shrink-0">
-                <button onClick={()=>setShowLayawaysList(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
+                <button onClick={() => setShowLayawaysList(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* ─── CONFIRM ACTION MODAL ─── */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-[700] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !confirmAction.busy && setConfirmAction(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="h-7 w-7 text-red-500" />
+              </div>
+              <h3 className="text-lg font-bold text-[#1E293B] mb-1">{confirmAction.title}</h3>
+              <p className="text-sm text-gray-500">{confirmAction.message}</p>
+              {confirmAction.error && (
+                <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600 font-medium">
+                  {confirmAction.error}
+                </div>
+              )}
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button
+                onClick={() => setConfirmAction(null)}
+                disabled={confirmAction.busy}
+                className="flex-1 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <div className="w-px bg-gray-100" />
+              <button
+                onClick={confirmAction.onConfirm}
+                disabled={confirmAction.busy}
+                className="flex-1 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {confirmAction.busy ? (
+                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" />Deleting…</>
+                ) : (
+                  <><Trash2 className="h-3.5 w-3.5" />Delete</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── SAVE LAYAWAY MODAL ─── */}
       {showSaveLayaway && (() => {
@@ -8911,12 +9765,12 @@ export default function POSSales() {
         if (activeLayawayId) {
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center">
-              <div className="absolute inset-0 bg-black/50" onClick={()=>setShowSaveLayaway(false)} />
+              <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
               <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
                 <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto" />
                 <p className="text-sm font-semibold text-[#1E293B]">Layaway Conversion In Progress</p>
                 <p className="text-xs text-gray-500">Complete or cancel the current layaway conversion before saving a new one.</p>
-                <button onClick={()=>setShowSaveLayaway(false)} className="mt-2 bg-[#327F74] text-white text-sm px-4 py-2 rounded hover:bg-[#286660]">OK</button>
+                <button onClick={() => setShowSaveLayaway(false)} className="mt-2 bg-[#327F74] text-white text-sm px-4 py-2 rounded hover:bg-[#286660]">OK</button>
               </div>
             </div>
           );
@@ -8929,14 +9783,14 @@ export default function POSSales() {
         const canSave = hasCustomer && activeCartItems.length > 0 && !saveLayawayBusy;
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/50" onClick={()=>setShowSaveLayaway(false)} />
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
             <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
                 <div>
                   <div className="flex items-center gap-2"><Archive className="h-4 w-4 text-amber-500" /><span className="text-base font-semibold text-[#1E293B]">Save Layaway</span></div>
                   <p className="text-xs text-gray-500 mt-0.5">Reserve the current sale for the customer with or without deposit and print a layaway receipt.</p>
                 </div>
-                <button onClick={()=>setShowSaveLayaway(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowSaveLayaway(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               <div className="overflow-auto flex-1">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
@@ -8953,32 +9807,32 @@ export default function POSSales() {
                           <p className="text-gray-500">{selectedCustomerData?.phone} · {selectedCustomerData?.code}</p>
                         </div>
                       )}
-                      <button onClick={()=>{ setShowSaveLayaway(false); setShowCustomerDropdown(true); }} className="mt-2 text-xs text-[#327F74] border border-[#327F74]/30 rounded px-2 py-1 hover:bg-[#327F74]/5 flex items-center gap-1"><UserPlus className="h-3 w-3" />Search / Add Customer</button>
+                      <button onClick={() => { setShowSaveLayaway(false); setShowCustomerDropdown(true); }} className="mt-2 text-xs text-[#327F74] border border-[#327F74]/30 rounded px-2 py-1 hover:bg-[#327F74]/5 flex items-center gap-1"><UserPlus className="h-3 w-3" />Search / Add Customer</button>
                     </div>
                     {/* Cart Items */}
                     <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Cart Items</div>
                       <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead><tr className="text-gray-400 border-b border-gray-100">{['Item','Qty','Rate','Disc','VAT','Total'].map(h=><th key={h} className={`px-3 py-1.5 text-left ${h!=='Item'?'text-right':''}`}>{h}</th>)}</tr></thead>
-                        <tbody>
-                          {activeCartItems.length === 0 && currentInvoice.items.filter(i=>i.isVoided).length === 0 ? (
-                            <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No items in cart</td></tr>
-                          ) : currentInvoice.items.map((item,i)=>(
-                            <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60 opacity-70' : ''}`}>
-                              <td className="px-3 py-1.5">
-                                <span className={item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}>{item.name}</span>
-                                {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">VOIDED</span>}
-                              </td>
-                              <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{item.quantity}</td>
-                              <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.price} /></td>
-                              <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-300' : 'text-red-500'}`}>{item.discount>0?`${item.discount}%`:'—'}</td>
-                              <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{toNumber(item.taxRate,5)}%</td>
-                              <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.isVoided ? 0 : item.quantity*item.price*(1-item.discount/100)} /></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                        <table className="w-full text-xs">
+                          <thead><tr className="text-gray-400 border-b border-gray-100">{['Item', 'Qty', 'Rate', 'Disc', 'VAT', 'Total'].map(h => <th key={h} className={`px-3 py-1.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
+                          <tbody>
+                            {activeCartItems.length === 0 && currentInvoice.items.filter(i => i.isVoided).length === 0 ? (
+                              <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No items in cart</td></tr>
+                            ) : currentInvoice.items.map((item, i) => (
+                              <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60 opacity-70' : ''}`}>
+                                <td className="px-3 py-1.5">
+                                  <span className={item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}>{item.name}</span>
+                                  {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">VOIDED</span>}
+                                </td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{item.quantity}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.price} /></td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-300' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
+                                <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.isVoided ? 0 : item.quantity * item.price * (1 - item.discount / 100)} /></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </div>
@@ -8993,20 +9847,20 @@ export default function POSSales() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-gray-600">Deposit Required</span>
-                        <button onClick={()=>setSaveLayawayDepositReq(!saveLayawayDepositReq)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${saveLayawayDepositReq?'bg-[#327F74]':'bg-gray-200'}`}>
-                          <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${saveLayawayDepositReq?'translate-x-4':'translate-x-0.5'}`} />
+                        <button onClick={() => setSaveLayawayDepositReq(!saveLayawayDepositReq)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${saveLayawayDepositReq ? 'bg-[#327F74]' : 'bg-gray-200'}`}>
+                          <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${saveLayawayDepositReq ? 'translate-x-4' : 'translate-x-0.5'}`} />
                         </button>
                       </div>
                       {saveLayawayDepositReq && (
                         <>
                           <div>
                             <label className="text-xs text-gray-500 block mb-0.5">Deposit Amount (<DirhamSymbol />)</label>
-                            <input type="number" value={saveLayawayDeposit} onChange={e=>setSaveLayawayDeposit(e.target.value)} placeholder="0.00" className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                            <input type="number" value={saveLayawayDeposit} onChange={e => setSaveLayawayDeposit(e.target.value)} placeholder="0.00" className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                           </div>
                           <div>
                             <label className="text-xs text-gray-500 block mb-0.5">Deposit Payment Mode</label>
-                            <select value={saveLayawayPayMode} onChange={e=>setSaveLayawayPayMode(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                              {['Cash','Card','Bank Transfer','Wallet'].map(o=><option key={o}>{o}</option>)}
+                            <select value={saveLayawayPayMode} onChange={e => setSaveLayawayPayMode(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                              {['Cash', 'Card', 'Bank Transfer', 'Wallet'].map(o => <option key={o}>{o}</option>)}
                             </select>
                           </div>
                         </>
@@ -9017,21 +9871,21 @@ export default function POSSales() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 block mb-0.5">Due / Expiry Date</label>
-                        <input type="date" value={saveLayawayDueDate} onChange={e=>setSaveLayawayDueDate(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                        <input type="date" value={saveLayawayDueDate} onChange={e => setSaveLayawayDueDate(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 block mb-0.5">Remarks</label>
-                        <textarea value={saveLayawayRemarks} onChange={e=>setSaveLayawayRemarks(e.target.value)} placeholder="Collection instructions, notes..." className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs resize-none h-14 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                        <textarea value={saveLayawayRemarks} onChange={e => setSaveLayawayRemarks(e.target.value)} placeholder="Collection instructions, notes..." className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs resize-none h-14 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
                     </div>
                     {/* Options */}
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2">
                       <p className="text-xs font-semibold text-[#1E293B] mb-1">Options</p>
-                      {([['Reserve Stock',saveLayawayReserveStock,setSaveLayawayReserveStock],['Print Layaway Receipt',saveLayawayPrintReceipt,setSaveLayawayPrintReceipt],['Send SMS / WhatsApp',saveLayawaySendSms,setSaveLayawaySendSms]]).map(([label,val,setter])=>(
+                      {([['Reserve Stock', saveLayawayReserveStock, setSaveLayawayReserveStock], ['Print Layaway Receipt', saveLayawayPrintReceipt, setSaveLayawayPrintReceipt], ['Send SMS / WhatsApp', saveLayawaySendSms, setSaveLayawaySendSms]]).map(([label, val, setter]) => (
                         <div key={label} className="flex items-center justify-between">
                           <span className="text-xs text-gray-600">{label}</span>
-                          <button onClick={()=>setter(!val)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${val?'bg-[#327F74]':'bg-gray-200'}`}>
-                            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${val?'translate-x-4':'translate-x-0.5'}`} />
+                          <button onClick={() => setter(!val)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${val ? 'bg-[#327F74]' : 'bg-gray-200'}`}>
+                            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${val ? 'translate-x-4' : 'translate-x-0.5'}`} />
                           </button>
                         </div>
                       ))}
@@ -9043,7 +9897,7 @@ export default function POSSales() {
                         <p className="text-center font-bold text-[#1E293B]">{tplOutletName}</p>
                         <p className="text-center text-gray-500 text-[10px]">{tplOutletAddress}</p>
                         <div className="border-t border-gray-100 my-1 pt-1 text-[10px] text-amber-700 font-semibold text-center">NOT A TAX INVOICE — LAYAWAY RECEIPT</div>
-                        {[['Layaway No.','Auto (LAY-…)'],['Date',new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})],['Customer',hasCustomer ? selectedCustomerData?.name : '—'],['Total',<CurrencyAmount amount={total} />],['Deposit',<CurrencyAmount amount={dep} />],['Balance Due',<CurrencyAmount amount={balance} />],['Expiry',saveLayawayDueDate]].map(([k,v])=>(
+                        {[['Layaway No.', 'Auto (LAY-…)'], ['Date', new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })], ['Customer', hasCustomer ? selectedCustomerData?.name : '—'], ['Total', <CurrencyAmount amount={total} />], ['Deposit', <CurrencyAmount amount={dep} />], ['Balance Due', <CurrencyAmount amount={balance} />], ['Expiry', saveLayawayDueDate]].map(([k, v]) => (
                           <div key={k} className="flex justify-between text-[10px]"><span className="text-gray-400">{k}</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                         <p className="text-center text-[10px] text-gray-400 border-t border-gray-100 pt-1 mt-1">Items will be reserved until the due date. Balance must be paid on collection.</p>
@@ -9056,9 +9910,9 @@ export default function POSSales() {
                 <div className="bg-red-50 border-t border-red-200 px-5 py-2 text-xs text-red-600 shrink-0">{saveLayawayError}</div>
               )}
               <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                <button onClick={()=>setShowSaveLayaway(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                <button disabled={!canSave} onClick={()=>saveCurrentLayaway(false)} className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Archive className="h-3.5 w-3.5" />{saveLayawayBusy ? 'Saving…' : 'Save Layaway'}</button>
-                <button disabled={!canSave} onClick={()=>saveCurrentLayaway(true)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Printer className="h-3.5 w-3.5" />Save &amp; Print Receipt</button>
+                <button onClick={() => setShowSaveLayaway(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
+                <button disabled={!canSave} onClick={() => saveCurrentLayaway(false)} className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Archive className="h-3.5 w-3.5" />{saveLayawayBusy ? 'Saving…' : 'Save Layaway'}</button>
+                <button disabled={!canSave} onClick={() => saveCurrentLayaway(true)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Printer className="h-3.5 w-3.5" />Save &amp; Print Receipt</button>
               </div>
             </div>
           </div>
@@ -9073,11 +9927,17 @@ export default function POSSales() {
           const qty = returnSelectedItems[it.itemCode] || 0;
           return s + qty * parseFloat(it.unitPrice || 0);
         }, 0);
+        const returnDiscount = returnableItems.reduce((s, it) => {
+          const qty = returnSelectedItems[it.itemCode] || 0;
+          return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.discountPercent || 0) / 100);
+        }, 0);
         const returnVAT = returnableItems.reduce((s, it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
-          return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.taxRate || 5) / 100);
+          const gross = qty * parseFloat(it.unitPrice || 0);
+          const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
+          return s + (gross - disc) * (parseFloat(it.taxRate || 5) / 100);
         }, 0);
-        const returnNet = returnSubtotal + returnVAT;
+        const returnNet = returnSubtotal - returnDiscount + returnVAT;
         const anyItemSelected = activeItems.length > 0;
 
         const doSearchInvoice = async () => {
@@ -9111,31 +9971,55 @@ export default function POSSales() {
           setReturnItemsLoading(true);
           try {
             const batches = await getReturnableBatches(returnInvoiceFound.invoiceNumber);
+            const pastReturnsPage = await getSalesReturnsPage({ search: returnInvoiceFound.invoiceNumber, size: 100 });
+            const pastReturns = pastReturnsPage?.content || [];
+
+            const alreadyReturnedMap = {};
+            pastReturns.forEach(ret => {
+              if (ret.status === 'DRAFT' || ret.status === 'REJECTED') return;
+              (ret.items || []).forEach(ri => {
+                if (ri.itemCode) {
+                  alreadyReturnedMap[ri.itemCode] = (alreadyReturnedMap[ri.itemCode] || 0) + (Number(ri.returnQty) || 0);
+                }
+              });
+            });
+
             const grouped = {};
             (batches || []).forEach(b => {
               const key = b.itemCode;
               if (!grouped[key]) {
-                grouped[key] = { itemCode: b.itemCode, itemName: b.itemName, unit: b.unit,
-                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 5, batches: [] };
+                grouped[key] = {
+                  itemCode: b.itemCode, itemName: b.itemName, unit: b.unit,
+                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 5, discountPercent: 0, batches: []
+                };
               }
               grouped[key].soldQty += parseFloat(b.originalQty || 0);
-              grouped[key].alreadyReturned += parseFloat(b.alreadyReturnedQty || 0);
-              grouped[key].returnable += parseFloat(b.returnableQty || 0);
               grouped[key].batches.push(b);
             });
             const invoiceItems = returnInvoiceFound.items || [];
-            Object.values(grouped).forEach(g => {
-              const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
-              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 5); }
-            });
+
             invoiceItems.forEach(invItem => {
               if (!grouped[invItem.itemCode] && !invItem.voided) {
-                grouped[invItem.itemCode] = { itemCode: invItem.itemCode, itemName: invItem.itemName,
+                grouped[invItem.itemCode] = {
+                  itemCode: invItem.itemCode, itemName: invItem.itemName,
                   unit: invItem.unit || 'Each', soldQty: parseFloat(invItem.quantity || 0),
-                  alreadyReturned: 0, returnable: parseFloat(invItem.quantity || 0),
-                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 5), batches: [] };
+                  alreadyReturned: 0, returnable: 0,
+                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 5),
+                  discountPercent: parseFloat(invItem.discount || 0), batches: []
+                };
               }
             });
+
+            Object.values(grouped).forEach(g => {
+              const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
+              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 5); g.discountPercent = parseFloat(invItem.discount || 0); }
+
+              const totalSold = g.soldQty;
+              const alreadyRet = alreadyReturnedMap[g.itemCode] || 0;
+              g.alreadyReturned = alreadyRet;
+              g.returnable = Math.max(0, totalSold - alreadyRet);
+            });
+
             setReturnableItems(Object.values(grouped));
           } catch { setReturnableItems([]); } finally { setReturnItemsLoading(false); }
         };
@@ -9156,15 +10040,22 @@ export default function POSSales() {
                 // "Damaged/Scrap" strings this used to send never matched, so every POS-originated
                 // return was silently treated as scrap (no stock restored, no COGS reversed).
                 const itemStatus = returnItemConditions[it.itemCode] || 'Good';
-                const itemTotal = qty * parseFloat(it.unitPrice || 0) * (1 + parseFloat(it.taxRate || 5) / 100);
+                const grossAmt = qty * parseFloat(it.unitPrice || 0);
+                const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
+                const netAmt = grossAmt - discountAmt;
+                const taxAmt = netAmt * (parseFloat(it.taxRate || 5) / 100);
+                const itemTotal = netAmt + taxAmt;
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
                   batchNumber: b.batchNumber, binCode: b.binCode, quantity: 1, expiryDate: b.expiryDate,
                 }));
-                return { itemCode: it.itemCode, itemName: it.itemName, unit: it.unit,
+                return {
+                  itemCode: it.itemCode, itemName: it.itemName, unit: it.unit,
                   soldQty: it.soldQty, returnQty: qty, price: it.unitPrice, taxRate: it.taxRate,
-                  taxAmount: qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.taxRate || 5) / 100),
-                  total: itemTotal, itemStatus, reason: returnReasons[it.itemCode] || '', batches: batchesForItem };
+                  discountPercent: it.discountPercent || 0, discountAmount: discountAmt,
+                  taxAmount: taxAmt,
+                  total: itemTotal, itemStatus, reason: returnReasons[it.itemCode] || '', batches: batchesForItem
+                };
               });
             const payload = {
               linkedInvoice: inv.invoiceNumber, returnDate: new Date().toISOString().split('T')[0],
@@ -9188,6 +10079,7 @@ export default function POSSales() {
                 customerPhone: inv.customerPhone || '',
                 paymentMode: returnRefundMethod,
                 subTotal: returnSubtotal,
+                discountTotal: returnDiscount,
                 taxTotal: returnVAT,
                 invoiceTotal: returnNet,
                 items: itemsPayload.map(i => ({
@@ -9209,13 +10101,14 @@ export default function POSSales() {
                   desc: `Orig. Invoice: ${inv.invoiceNumber}`,
                   qty: i.returnQty,
                   price: i.price,
-                  disc: 0,
+                  discountPercent: i.discountPercent || 0,
+                  discountAmount: i.discountAmount || 0,
                   tax: i.taxRate || 5,
                   taxAmt: i.taxAmount || 0,
                   total: i.total,
                   batchNumber: i.batches?.[0]?.batchNumber || '',
                 })),
-                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, discountAmount: 0, billDiscountAmount: 0 },
+                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, itemDiscountAmount: returnDiscount, billDiscountAmount: 0 },
                 meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
               };
               if (tplReturnPaper === 'A4') {
@@ -9237,11 +10130,11 @@ export default function POSSales() {
                   terminalId: currentTerminal?.terminalId || null,
                 });
                 if (!returnPrinter) {
-                  alert('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
+                  notifyPrintFallback('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
                 } else {
                   try {
                     const qrContent = tplReturnShowQRCode ? buildQrContent(returnA4Data, tplOutletName) : null;
-                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone });
+                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
                     const returnEscPosBase64 = await buildEscPosReceiptBase64(tplReturnPaper, returnInvoiceData, {
                       companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
                       showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE',
@@ -9251,11 +10144,19 @@ export default function POSSales() {
                       showQRCode: tplReturnShowQRCode, qrContent,
                       showCustomerDetails: tplReturnShowCustomerDetails, showFooterText: tplReturnShowTerms,
                       customerPhone: returnInvoiceData.customerPhone, currency: activeCurrency,
+                      cashierName: cashierDisplayName,
+                      terminalId: currentTerminal?.terminalId,
+                      counterName: currentTerminal?.counterName,
+                      showCreditBalance: tplReturnShowCreditBalance,
+                      creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
+                      creditInvoiceCredit: returnNet,
+                      creditAmountPaid: 0,
+                      creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null),
                     });
                     await sendEscPosReceiptToConfiguredPrinter(returnPrinter, { dataBase64: returnEscPosBase64, receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
                   } catch (err) {
                     console.warn('ESC/POS print failed for return receipt', err);
-                    alert(`The credit note was saved, but it didn't print: ${err?.message || 'printer error'}.`);
+                    notifyPrintFallback(`The credit note was saved, but it didn't print: ${err?.message || 'printer error'}.`);
                   }
                 }
               }
@@ -9269,27 +10170,27 @@ export default function POSSales() {
             alert(err?.response?.data?.message || err?.message || 'Error processing return.');
           } finally { setReturnSaving(false); }
         };
-        const steps = ['Scan Invoice','Select Items','Refund Method','Confirm Return'];
+        const steps = ['Scan Invoice', 'Select Items', 'Refund Method', 'Confirm Return'];
         return (
           <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={()=>setShowReturn(false)} />
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowReturn(false)} />
             <div className="relative ml-auto w-full max-w-4xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
                 <div>
                   <div className="flex items-center gap-2"><RotateCcw className="h-4 w-4 text-purple-600" /><span className="text-base font-semibold text-[#1E293B]">Sales Return</span></div>
                   <p className="text-xs text-gray-500 mt-0.5">Scan the old invoice, select returned items and quantities, and process refund or credit voucher.</p>
                 </div>
-                <button onClick={()=>setShowReturn(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowReturn(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               {/* Step Progress */}
               <div className="bg-white border-b border-gray-100 px-5 py-3 flex items-center gap-0 shrink-0">
-                {steps.map((s,i)=>(
+                {steps.map((s, i) => (
                   <React.Fragment key={s}>
                     <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${returnStep>i+1?'bg-[#327F74] text-white':returnStep===i+1?'bg-[#F5C742] text-[#1E293B]':'bg-gray-100 text-gray-400'}`}>{returnStep>i+1?'✓':i+1}</div>
-                      <span className={`text-xs ${returnStep===i+1?'font-semibold text-[#1E293B]':'text-gray-400'}`}>{s}</span>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
+                      <span className={`text-xs ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                     </div>
-                    {i<steps.length-1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
+                    {i < steps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
                   </React.Fragment>
                 ))}
               </div>
@@ -9339,22 +10240,22 @@ export default function POSSales() {
                         <div>
                           <label className="text-xs text-gray-400 block mb-0.5">Customer Mobile</label>
                           <input value={returnCustomerMobile}
-                            onChange={e=>{setReturnCustomerMobile(e.target.value);setReturnInvoiceFound(null);setReturnInvoiceError('');}}
-                            onKeyDown={e=>e.key==='Enter'&&doSearchInvoice()}
+                            onChange={e => { setReturnCustomerMobile(e.target.value); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
+                            onKeyDown={e => e.key === 'Enter' && doSearchInvoice()}
                             placeholder="+971 XX XXX XXXX" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                         </div>
                         <div>
                           <label className="text-xs text-gray-400 block mb-0.5">From Date</label>
-                          <input type="date" value={returnDateFrom} onChange={e=>setReturnDateFrom(e.target.value)}
+                          <input type="date" value={returnDateFrom} onChange={e => setReturnDateFrom(e.target.value)}
                             className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button id="searchInvoiceBtn" onClick={doSearchInvoice} disabled={returnInvoiceLoading||(!returnInvoiceQuery.trim()&&!returnCustomerMobile.trim())}
+                        <button id="searchInvoiceBtn" onClick={doSearchInvoice} disabled={returnInvoiceLoading || (!returnInvoiceQuery.trim() && !returnCustomerMobile.trim())}
                           className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded flex items-center gap-1">
-                          <Search className="h-3.5 w-3.5" />{returnInvoiceLoading?'Searching…':'Search Invoice'}
+                          <Search className="h-3.5 w-3.5" />{returnInvoiceLoading ? 'Searching…' : 'Search Invoice'}
                         </button>
-                        <button onClick={()=>{setReturnInvoiceQuery('');setReturnCustomerMobile('');setReturnDateFrom('');setReturnInvoiceFound(null);setReturnInvoiceError('');}}
+                        <button onClick={() => { setReturnInvoiceQuery(''); setReturnCustomerMobile(''); setReturnDateFrom(''); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
                           className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
                       </div>
                     </div>
@@ -9373,12 +10274,12 @@ export default function POSSales() {
                         {[
                           ['Invoice No.', returnInvoiceFound.invoiceNumber],
                           ['Date', returnInvoiceFound.invoiceDate],
-                          ['Customer', returnInvoiceFound.customerName||returnInvoiceFound.customerCode||'Walk-in'],
-                          ['Terminal', returnInvoiceFound.posCounterName||returnInvoiceFound.posTerminalId||'—'],
-                          ['Payment Mode', returnInvoiceFound.paymentMode||'—'],
-                          ['Invoice Total', <CurrencyAmount amount={parseFloat(returnInvoiceFound.invoiceTotal||0)} />],
+                          ['Customer', returnInvoiceFound.customerName || returnInvoiceFound.customerCode || 'Walk-in'],
+                          ['Terminal', returnInvoiceFound.posCounterName || returnInvoiceFound.posTerminalId || '—'],
+                          ['Payment Mode', returnInvoiceFound.paymentMode || '—'],
+                          ['Invoice Total', <CurrencyAmount amount={parseFloat(returnInvoiceFound.invoiceTotal || 0)} />],
                           ['Status', returnInvoiceFound.status],
-                        ].map(([k,v])=>(
+                        ].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
@@ -9404,49 +10305,51 @@ export default function POSSales() {
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="text-gray-500 border-b border-[#327F74]/10">
-                                  {['Code','Item','Sold','Returned','Returnable','Return Qty','Rate','VAT','Return Amt','Condition','Reason'].map(h=>(
+                                  {['Code', 'Item', 'Sold', 'Returned', 'Returnable', 'Return Qty', 'Rate', 'VAT', 'Return Amt', 'Condition', 'Reason'].map(h => (
                                     <th key={h} className="px-2 py-2 text-left font-medium">{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {returnableItems.map(it=>{
-                                  const returnable=parseFloat(it.returnable||0);
-                                  const selQty=returnSelectedItems[it.itemCode]||0;
-                                  const lineAmt=selQty*parseFloat(it.unitPrice||0)*(1+parseFloat(it.taxRate||5)/100);
+                                {returnableItems.map(it => {
+                                  const returnable = parseFloat(it.returnable || 0);
+                                  const selQty = returnSelectedItems[it.itemCode] || 0;
+                                  const lineGross = selQty * parseFloat(it.unitPrice || 0);
+                                  const lineDisc = lineGross * (parseFloat(it.discountPercent || 0) / 100);
+                                  const lineAmt = (lineGross - lineDisc) * (1 + parseFloat(it.taxRate || 5) / 100);
                                   return (
-                                    <tr key={it.itemCode} className={`border-b border-gray-50 ${returnable===0?'bg-gray-50 opacity-60':''}`}>
+                                    <tr key={it.itemCode} className={`border-b border-gray-50 ${returnable === 0 ? 'bg-gray-50 opacity-60' : ''}`}>
                                       <td className="px-2 py-2 text-gray-500">{it.itemCode}</td>
                                       <td className="px-2 py-2 text-[#1E293B]">{it.itemName}</td>
                                       <td className="px-2 py-2 text-center">{it.soldQty}</td>
                                       <td className="px-2 py-2 text-center text-amber-600">{it.alreadyReturned}</td>
                                       <td className="px-2 py-2 text-center text-green-700">{returnable}</td>
                                       <td className="px-2 py-2">
-                                        {returnable>0?(
+                                        {returnable > 0 ? (
                                           <input type="number" min={0} max={returnable} value={selQty}
-                                            onChange={e=>setReturnSelectedItems(prev=>({...prev,[it.itemCode]:Math.min(returnable,Math.max(0,parseInt(e.target.value)||0))}))}
+                                            onChange={e => setReturnSelectedItems(prev => ({ ...prev, [it.itemCode]: Math.min(returnable, Math.max(0, parseInt(e.target.value) || 0)) }))}
                                             className="w-14 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-center text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                                        ):<span className="text-[10px] bg-gray-100 text-gray-400 rounded px-1.5 py-0.5">N/A</span>}
+                                        ) : <span className="text-[10px] bg-gray-100 text-gray-400 rounded px-1.5 py-0.5">N/A</span>}
                                       </td>
-                                      <td className="px-2 py-2 text-right"><CurrencyAmount amount={parseFloat(it.unitPrice||0)} /></td>
-                                      <td className="px-2 py-2 text-right">{it.taxRate||5}%</td>
+                                      <td className="px-2 py-2 text-right"><CurrencyAmount amount={parseFloat(it.unitPrice || 0)} /></td>
+                                      <td className="px-2 py-2 text-right">{it.taxRate || 5}%</td>
                                       <td className="px-2 py-2 text-right font-semibold text-[#327F74]"><CurrencyAmount amount={lineAmt} /></td>
                                       <td className="px-2 py-2">
-                                        {returnable>0?(
-                                          <select value={returnItemConditions[it.itemCode]||'Good'} onChange={e=>setReturnItemConditions(prev=>({...prev,[it.itemCode]:e.target.value}))}
+                                        {returnable > 0 ? (
+                                          <select value={returnItemConditions[it.itemCode] || 'Good'} onChange={e => setReturnItemConditions(prev => ({ ...prev, [it.itemCode]: e.target.value }))}
                                             className="border border-[#327F74]/30 rounded px-1 py-0.5 text-[10px] focus:outline-none w-20">
                                             <option>Good</option><option>Damaged</option>
                                           </select>
-                                        ):<span className="text-[10px] text-gray-400">—</span>}
+                                        ) : <span className="text-[10px] text-gray-400">—</span>}
                                       </td>
                                       <td className="px-2 py-2">
-                                        {returnable>0?(
-                                          <select value={returnReasons[it.itemCode]||''} onChange={e=>setReturnReasons(prev=>({...prev,[it.itemCode]:e.target.value}))}
+                                        {returnable > 0 ? (
+                                          <select value={returnReasons[it.itemCode] || ''} onChange={e => setReturnReasons(prev => ({ ...prev, [it.itemCode]: e.target.value }))}
                                             className="border border-[#327F74]/30 rounded px-1 py-0.5 text-[10px] focus:outline-none w-28">
                                             <option value="">Select…</option>
-                                            {['Damaged Goods','Wrong item','Changed mind','Expired item','Price issue','Defective','Other'].map(o=><option key={o}>{o}</option>)}
+                                            {['Damaged Goods', 'Wrong item', 'Changed mind', 'Expired item', 'Price issue', 'Defective', 'Other'].map(o => <option key={o}>{o}</option>)}
                                           </select>
-                                        ):<span className="text-[10px] text-gray-400">—</span>}
+                                        ) : <span className="text-[10px] text-gray-400">—</span>}
                                       </td>
                                     </tr>
                                   );
@@ -9468,8 +10371,8 @@ export default function POSSales() {
                   <div className="max-w-lg mx-auto space-y-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <p className="text-sm font-semibold text-[#1E293B] mb-3">Return Summary</p>
-                      {[['Subtotal',returnSubtotal],['VAT Reversal',returnVAT],['Net Refund Amount',returnNet]].map(([k,v])=>(
-                        <div key={k} className={`flex justify-between py-1 ${k==='Net Refund Amount'?'font-bold border-t border-gray-200 pt-2':''}`}>
+                      {[['Subtotal', returnSubtotal], ['VAT Reversal', returnVAT], ['Net Refund Amount', returnNet]].map(([k, v]) => (
+                        <div key={k} className={`flex justify-between py-1 ${k === 'Net Refund Amount' ? 'font-bold border-t border-gray-200 pt-2' : ''}`}>
                           <span className="text-gray-500 text-sm">{k}</span><span className="text-sm"><CurrencyAmount amount={v} /></span>
                         </div>
                       ))}
@@ -9477,22 +10380,22 @@ export default function POSSales() {
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <p className="text-sm font-semibold text-[#1E293B] mb-3">Select Refund Method</p>
                       <div className="space-y-2">
-                        {['Cash Back','Card Refund','Credit Voucher','Customer Credit Balance','Exchange Adjustment'].map(method=>(
+                        {['Cash Back', 'Card Refund', 'Credit Voucher', 'Customer Credit Balance', 'Exchange Adjustment'].map(method => (
                           <label key={method} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-[#F7F7FA]">
-                            <input type="radio" name="refund" value={method} checked={returnRefundMethod===method} onChange={()=>setReturnRefundMethod(method)} className="accent-[#327F74]" />
+                            <input type="radio" name="refund" value={method} checked={returnRefundMethod === method} onChange={() => setReturnRefundMethod(method)} className="accent-[#327F74]" />
                             <span className="text-sm text-[#1E293B]">{method}</span>
                           </label>
                         ))}
                       </div>
-                      {returnRefundMethod==='Credit Voucher'&&(
+                      {returnRefundMethod === 'Credit Voucher' && (
                         <div className="mt-3 p-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded space-y-2 text-xs">
                           <div className="flex justify-between"><span className="text-gray-500">Voucher Amount</span><span className="font-semibold"><CurrencyAmount amount={returnNet} /></span></div>
                           <div><label className="text-gray-500 block mb-0.5">Voucher Expiry</label>
-                            <input type="date" value={returnVoucherExpiry} onChange={e=>setReturnVoucherExpiry(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                            <input type="date" value={returnVoucherExpiry} onChange={e => setReturnVoucherExpiry(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                           </div>
                         </div>
                       )}
-                      {returnRefundMethod==='Cash Back'&&(
+                      {returnRefundMethod === 'Cash Back' && (
                         <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 flex items-center gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0" />Cash refund requires manager approval. Please request supervisor authorization.</div>
                       )}
                     </div>
@@ -9504,14 +10407,14 @@ export default function POSSales() {
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2 text-xs">
                       <p className="text-sm font-semibold text-[#1E293B] mb-2">Confirm Return</p>
                       {[
-                        ['Original Invoice', returnInvoiceFound?.invoiceNumber||'—'],
-                        ['Customer', returnInvoiceFound?.customerName||returnInvoiceFound?.customerCode||'Walk-in'],
+                        ['Original Invoice', returnInvoiceFound?.invoiceNumber || '—'],
+                        ['Customer', returnInvoiceFound?.customerName || returnInvoiceFound?.customerCode || 'Walk-in'],
                         ['Items Selected', `${activeItems.length} line(s)`],
                         ['Refund Method', returnRefundMethod],
                         ['Subtotal', <CurrencyAmount amount={returnSubtotal} />],
                         ['VAT Reversal', <CurrencyAmount amount={returnVAT} />],
                         ['Net Refund Amount', <CurrencyAmount amount={returnNet} />],
-                      ].map(([k,v])=>(
+                      ].map(([k, v]) => (
                         <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0">
                           <span className="text-gray-400 w-40 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span>
                         </div>
@@ -9521,27 +10424,56 @@ export default function POSSales() {
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                       <div>Every return is recorded in the audit log. Stock will be updated based on return condition. VAT will be reversed correctly.</div>
                     </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Return Receipt Preview</div>
-                      <div className="p-3 text-[10px] space-y-0.5">
-                        <p className="text-center font-bold text-sm">{returnInvoiceFound?.branchName||'BillBull'}</p>
-                        <p className="text-center text-purple-600 font-bold border-t border-b border-gray-100 py-1 my-1">SALES RETURN / CREDIT NOTE</p>
-                        {[
-                          ['Original Invoice', returnInvoiceFound?.invoiceNumber||'—'],
-                          ['Customer', returnInvoiceFound?.customerName||'Walk-in'],
-                          ['Refund Method', returnRefundMethod],
-                          ['Net Refund', <CurrencyAmount amount={returnNet} />],
-                        ].map(([k,v])=>(
-                          <div key={k} className="flex justify-between"><span className="text-gray-400">{k}</span><span className="text-[#1E293B]">{v}</span></div>
-                        ))}
-                        <div className="border-t border-gray-100 mt-1 pt-1 space-y-0.5">
-                          {activeItems.map(it=>(
-                            <div key={it.itemCode} className="flex justify-between">
-                              <span className="text-gray-500">{it.itemName} ×{returnSelectedItems[it.itemCode]}</span>
-                              <CurrencyAmount amount={(returnSelectedItems[it.itemCode]||0)*parseFloat(it.unitPrice||0)*(1+parseFloat(it.taxRate||5)/100)} />
-                            </div>
-                          ))}
-                        </div>
+                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden flex flex-col">
+                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B] flex-shrink-0">Return Receipt Preview</div>
+                      <div className="bg-[#f0f0f3] flex-1 min-h-[300px] flex items-center justify-center p-4">
+                        <iframe
+                          title="return-preview"
+                          srcDoc={buildThermalReceiptHtml(tplReturnPaper, {
+                            invoiceNumber: returnInvoiceFound?.invoiceNumber || 'PREVIEW',
+                            invoiceDate: new Date().toISOString(),
+                            customerName: returnInvoiceFound?.customerName || 'Walk-in Customer',
+                            paymentMode: returnRefundMethod,
+                            subTotal: returnSubtotal,
+                            discountTotal: returnDiscount,
+                            taxTotal: returnVAT,
+                            invoiceTotal: returnNet,
+                            items: activeItems.map(it => {
+                              const returnQty = returnSelectedItems[it.itemCode] || 0;
+                              return {
+                                itemName: it.itemName,
+                                quantity: returnQty,
+                                unitPrice: it.unitPrice,
+                                netAmount: returnQty * (parseFloat(it.unitPrice) || 0) * (1 + (parseFloat(it.taxRate) || 0) / 100),
+                              };
+                            }).filter(i => i.quantity > 0)
+                          }, {
+                            companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
+                            showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
+                            logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
+                            stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                            showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
+                            showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
+                            showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
+                            showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                            cashierName: cashierDisplayName,
+                            terminalId: currentTerminal?.terminalId,
+                            counterName: currentTerminal?.counterName,
+                            customerPhone: returnInvoiceFound?.customerPhone,
+                            customerEmail: returnInvoiceFound?.customerEmail,
+                            creditPreviousBalance: tplReturnShowCreditBalance ? 0 : null,
+                            creditInvoiceCredit: tplReturnShowCreditBalance ? returnNet : null,
+                            creditAmountPaid: 0,
+                            creditUpdatedBalance: tplReturnShowCreditBalance ? returnNet : null
+                          })}
+                          style={{
+                            width: tplReturnPaper === '58mm' ? '240px' : '320px',
+                            height: '400px',
+                            border: 'none',
+                            background: '#fff',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
@@ -9550,33 +10482,33 @@ export default function POSSales() {
               {/* Footer */}
               <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex items-center justify-between shrink-0">
                 <div className="flex gap-2">
-                  {returnStep>1&&!returnSaving&&<button onClick={()=>setReturnStep(s=>s-1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
-                  <button onClick={()=>setShowReturn(false)} disabled={returnSaving} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                  {returnStep > 1 && !returnSaving && <button onClick={() => setReturnStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
+                  <button onClick={() => setShowReturn(false)} disabled={returnSaving} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50">Cancel</button>
                 </div>
                 <div className="flex gap-2">
-                  {returnStep===1&&(
-                    <button onClick={doAdvanceToItems} disabled={!returnInvoiceFound||returnInvoiceFound===false||returnInvoiceLoading}
+                  {returnStep === 1 && (
+                    <button onClick={doAdvanceToItems} disabled={!returnInvoiceFound || returnInvoiceFound === false || returnInvoiceLoading}
                       className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-5 py-2 rounded">Next →</button>
                   )}
-                  {returnStep===2&&(
-                    <button onClick={()=>setReturnStep(3)} disabled={!anyItemSelected}
-                      className={`text-sm px-5 py-2 rounded ${!anyItemSelected?'bg-gray-100 text-gray-400 cursor-not-allowed':'bg-[#327F74] hover:bg-[#286660] text-white'}`}>Next →</button>
+                  {returnStep === 2 && (
+                    <button onClick={() => setReturnStep(3)} disabled={!anyItemSelected}
+                      className={`text-sm px-5 py-2 rounded ${!anyItemSelected ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#327F74] hover:bg-[#286660] text-white'}`}>Next →</button>
                   )}
-                  {returnStep===3&&(
-                    <button onClick={()=>setReturnStep(4)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
+                  {returnStep === 3 && (
+                    <button onClick={() => setReturnStep(4)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
                   )}
-                  {returnStep===4&&(<>
-                    <button onClick={()=>doSaveReturn(false,false)} disabled={returnSaving||!anyItemSelected}
+                  {returnStep === 4 && (<>
+                    <button onClick={() => doSaveReturn(false, false)} disabled={returnSaving || !anyItemSelected}
                       className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-50">
-                      {returnSaving?'Saving…':'Save Draft'}
+                      {returnSaving ? 'Saving…' : 'Save Draft'}
                     </button>
-                    <button onClick={()=>doSaveReturn(true,false)} disabled={returnSaving||!anyItemSelected}
+                    <button onClick={() => doSaveReturn(true, false)} disabled={returnSaving || !anyItemSelected}
                       className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
-                      <RotateCcw className="h-3.5 w-3.5" />{returnSaving?'Processing…':'Confirm Return'}
+                      <RotateCcw className="h-3.5 w-3.5" />{returnSaving ? 'Processing…' : 'Confirm Return'}
                     </button>
-                    <button onClick={()=>doSaveReturn(true,true)} disabled={returnSaving||!anyItemSelected}
+                    <button onClick={() => doSaveReturn(true, true)} disabled={returnSaving || !anyItemSelected}
                       className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-50">
-                      <Printer className="h-3.5 w-3.5" />{returnSaving?'Processing…':'Confirm & Print'}
+                      <Printer className="h-3.5 w-3.5" />{returnSaving ? 'Processing…' : 'Confirm & Print'}
                     </button>
                   </>)}
                 </div>
@@ -9601,7 +10533,7 @@ export default function POSSales() {
             <div>
               <Label>Shipping Method</Label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
-                {[{id:'standard',label:'Standard',price:'15'},{id:'express',label:'Express',price:'35'},{id:'same-day',label:'Same Day',price:'60'}].map(m => (
+                {[{ id: 'standard', label: 'Standard', price: '15' }, { id: 'express', label: 'Express', price: '35' }, { id: 'same-day', label: 'Same Day', price: '60' }].map(m => (
                   <button key={m.id} type="button" onClick={() => { setShippingMethod(m.id); setShippingCost(m.price); }}
                     className={`p-2 rounded-lg border-2 text-center transition-colors ${shippingMethod === m.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200'}`}>
                     <p className="text-xs font-semibold text-[#1E293B]">{m.label}</p>
@@ -9705,24 +10637,24 @@ export default function POSSales() {
           setSerialBatchQuery(''); setSerialBatchInvoiceNo(''); setSerialBatchItemCode('');
           setSerialBatchCustomerMobile(''); setSerialBatchResult(null); setSerialBatchSelectedItem(null);
         };
-        const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—';
-        const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+        const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+        const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
         return (
           <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={()=>setShowSerialBatch(false)} />
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowSerialBatch(false)} />
             <div className="relative ml-auto w-full max-w-3xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
               {/* Header */}
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
                 <div>
                   <div className="flex items-center gap-2">
-                    {isConvert && <button onClick={()=>setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
-                    {isService && <button onClick={()=>setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
+                    {isConvert && <button onClick={() => setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
+                    {isService && <button onClick={() => setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
                     <Hash className="h-4 w-4 text-teal-600" />
                     <span className="text-base font-semibold text-[#1E293B]">{isConvert ? 'Convert to Return' : isService ? 'Create Service Job' : 'Serial / Batch Check'}</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">{isConvert ? 'Process return for this serial/batch item.' : isService ? 'Create a service repair job for this item.' : 'Search sold batch or serial items, view invoice details, and convert eligible items to return.'}</p>
                 </div>
-                <button onClick={()=>setShowSerialBatch(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+                <button onClick={() => setShowSerialBatch(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
 
               {/* ── CHECK VIEW ── */}
@@ -9731,42 +10663,42 @@ export default function POSSales() {
                   {/* Search */}
                   <div className="bg-white border-b border-gray-100 px-5 py-3 space-y-2 shrink-0">
                     <AsyncSearchableDropdown
-                        value={null}
-                        inputValue={serialBatchQuery}
-                        onInputChange={setSerialBatchQuery}
-                        placeholder="Scan or search batch number..."
-                        fetchOptions={async (query) => {
-                          if (!query) return [];
-                          try {
-                            const res = await posBatchCheck({ batchNumber: query, invoiceNumber: serialBatchInvoiceNo, itemCode: serialBatchItemCode, customerMobile: serialBatchCustomerMobile });
-                            if (res && res.results) {
-                              return res.results;
-                            }
-                          } catch { return []; }
-                          return [];
-                        }}
-                        renderOption={(opt, active) => (
-                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
-                            <div>
-                              <p className="font-bold text-sm text-[#1E293B]">{opt.batchNumber}</p>
-                              <p className="text-xs text-gray-500">{opt.itemName}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-bold text-xs text-gray-700">Inv: {opt.invoiceNumber}</p>
-                              <p className="text-[10px] text-gray-400">Qty: {opt.soldQty}</p>
-                            </div>
-                          </div>
-                        )}
-                        onSelect={(opt) => {
-                          if (opt) {
-                            setSerialBatchQuery(opt.batchNumber || '');
-                            if (opt.invoiceNumber) setSerialBatchInvoiceNo(opt.invoiceNumber);
-                            if (opt.itemCode) setSerialBatchItemCode(opt.itemCode);
-                            setTimeout(() => doBatchSearch(), 50);
+                      value={null}
+                      inputValue={serialBatchQuery}
+                      onInputChange={setSerialBatchQuery}
+                      placeholder="Scan or search batch number..."
+                      fetchOptions={async (query) => {
+                        if (!query) return [];
+                        try {
+                          const res = await posBatchCheck({ batchNumber: query, invoiceNumber: serialBatchInvoiceNo, itemCode: serialBatchItemCode, customerMobile: serialBatchCustomerMobile });
+                          if (res && res.results) {
+                            return res.results;
                           }
-                        }}
-                        className="w-full text-sm"
-                        debounceMs={400}
+                        } catch { return []; }
+                        return [];
+                      }}
+                      renderOption={(opt, active) => (
+                        <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
+                          <div>
+                            <p className="font-bold text-sm text-[#1E293B]">{opt.batchNumber}</p>
+                            <p className="text-xs text-gray-500">{opt.itemName}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-xs text-gray-700">Inv: {opt.invoiceNumber}</p>
+                            <p className="text-[10px] text-gray-400">Qty: {opt.soldQty}</p>
+                          </div>
+                        </div>
+                      )}
+                      onSelect={(opt) => {
+                        if (opt) {
+                          setSerialBatchQuery(opt.batchNumber || '');
+                          if (opt.invoiceNumber) setSerialBatchInvoiceNo(opt.invoiceNumber);
+                          if (opt.itemCode) setSerialBatchItemCode(opt.itemCode);
+                          setTimeout(() => doBatchSearch(), 50);
+                        }
+                      }}
+                      className="w-full text-sm"
+                      debounceMs={400}
                     />
                     <div className="flex flex-wrap gap-2">
                       <div className="flex-1 min-w-[140px]">
@@ -9905,7 +10837,7 @@ export default function POSSales() {
                           <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 shadow-sm">
                             <p className="text-xs font-semibold text-[#1E293B] mb-2 flex items-center gap-1"><Package className="h-3.5 w-3.5 text-[#327F74]" />Item Details</p>
                             <div className="space-y-0.5 text-xs">
-                              {[['Item Code', selectedItem.itemCode||'—'], ['Batch No.', selectedItem.batchNumber||'—'], ['Expiry', fmtDate(selectedItem.expiryDate)], ['Sold Qty', selectedItem.soldQty]].map(([k,v])=>(
+                              {[['Item Code', selectedItem.itemCode || '—'], ['Batch No.', selectedItem.batchNumber || '—'], ['Expiry', fmtDate(selectedItem.expiryDate)], ['Sold Qty', selectedItem.soldQty]].map(([k, v]) => (
                                 <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                               ))}
                             </div>
@@ -9913,22 +10845,22 @@ export default function POSSales() {
                           <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 shadow-sm">
                             <p className="text-xs font-semibold text-[#1E293B] mb-2 flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#327F74]" />Invoice Details</p>
                             <div className="space-y-0.5 text-xs">
-                              {[['Invoice No.', selectedItem.invoiceNumber], ['Date', fmtDateTime(selectedItem.invoiceCreatedAt||selectedItem.invoiceDate)], ['Customer', selectedItem.customerName||'—'], ['Cashier', selectedItem.cashierName||'—'], ['Branch', selectedItem.branchName||'—'], ['Payment', selectedItem.paymentMode||'—'], ['Item Net', <CurrencyAmount amount={selectedItem.itemNetAmount||0} />], ['VAT', <CurrencyAmount amount={selectedItem.itemTaxAmount||0} />]].map(([k,v])=>(
+                              {[['Invoice No.', selectedItem.invoiceNumber], ['Date', fmtDateTime(selectedItem.invoiceCreatedAt || selectedItem.invoiceDate)], ['Customer', selectedItem.customerName || '—'], ['Cashier', selectedItem.cashierName || '—'], ['Branch', selectedItem.branchName || '—'], ['Payment', selectedItem.paymentMode || '—'], ['Item Net', <CurrencyAmount amount={selectedItem.itemNetAmount || 0} />], ['VAT', <CurrencyAmount amount={selectedItem.itemTaxAmount || 0} />]].map(([k, v]) => (
                                 <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                               ))}
                             </div>
                           </div>
                         </div>
                         <div className="border-t border-[#327F74]/10 p-3 flex flex-wrap gap-2 shrink-0">
-                          <button onClick={()=>setSerialBatchSubView('convert')} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><RotateCcw className="h-3 w-3" />Convert to Return</button>
-                          <button onClick={()=>setSerialBatchSubView('service')} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Wrench className="h-3 w-3" />Create Service Job</button>
+                          <button onClick={() => setSerialBatchSubView('convert')} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><RotateCcw className="h-3 w-3" />Convert to Return</button>
+                          <button onClick={() => setSerialBatchSubView('service')} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Wrench className="h-3 w-3" />Create Service Job</button>
                         </div>
                       </div>
                     )}
                   </div>
                   {!selectedItem && (
                     <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                      <button onClick={()=>setShowSerialBatch(false)} className="border border-gray-300 text-gray-500 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
+                      <button onClick={() => setShowSerialBatch(false)} className="border border-gray-300 text-gray-500 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
                     </div>
                   )}
                 </>
@@ -9948,7 +10880,7 @@ export default function POSSales() {
                         ['Item Code', selectedItem?.itemCode || '—'],
                         ['Batch No.', selectedItem?.batchNumber || '—'],
                         ['Sold Qty', selectedItem?.soldQty ?? '—'],
-                      ].map(([k,v])=>(
+                      ].map(([k, v]) => (
                         <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0"><span className="text-gray-400 w-36 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
                       ))}
                     </div>
@@ -9957,26 +10889,26 @@ export default function POSSales() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Return Quantity (max: {selectedItem?.soldQty ?? 1})</label>
-                          <input type="number" min={1} max={selectedItem?.soldQty ?? 1} value={serialBatchReturnQty} onChange={e=>setSerialBatchReturnQty(Math.min(selectedItem?.soldQty??1,Math.max(1,parseInt(e.target.value)||1)))} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                          <input type="number" min={1} max={selectedItem?.soldQty ?? 1} value={serialBatchReturnQty} onChange={e => setSerialBatchReturnQty(Math.min(selectedItem?.soldQty ?? 1, Math.max(1, parseInt(e.target.value) || 1)))} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                         </div>
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Return Reason</label>
-                          <select value={serialBatchReturnReason} onChange={e=>setSerialBatchReturnReason(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                          <select value={serialBatchReturnReason} onChange={e => setSerialBatchReturnReason(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                             <option value="">Select reason…</option>
-                            {['Damaged','Wrong item','Customer changed mind','Warranty claim','Defective item','Expired item','Other'].map(o=><option key={o}>{o}</option>)}
+                            {['Damaged', 'Wrong item', 'Customer changed mind', 'Warranty claim', 'Defective item', 'Expired item', 'Other'].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Return Condition</label>
-                          <select value={serialBatchReturnCondition} onChange={e=>setSerialBatchReturnCondition(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                          <select value={serialBatchReturnCondition} onChange={e => setSerialBatchReturnCondition(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                             <option value="">Select condition…</option>
-                            {['Resalable','Damaged','Defective','Warranty claim','Scrap','Needs service inspection'].map(o=><option key={o}>{o}</option>)}
+                            {['Resalable', 'Damaged', 'Defective', 'Warranty claim', 'Scrap', 'Needs service inspection'].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Refund Method</label>
-                          <select value={serialBatchRefundMethod} onChange={e=>setSerialBatchRefundMethod(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            {['Cash Back','Card Refund','Credit Voucher','Customer Credit Balance','Exchange Adjustment'].map(o=><option key={o}>{o}</option>)}
+                          <select value={serialBatchRefundMethod} onChange={e => setSerialBatchRefundMethod(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                            {['Cash Back', 'Card Refund', 'Credit Voucher', 'Customer Credit Balance', 'Exchange Adjustment'].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </div>
                       </div>
@@ -9984,7 +10916,7 @@ export default function POSSales() {
                         <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-700">
                           <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                           Item condition requires service inspection. Consider creating a Service Job instead of direct refund.
-                          <button onClick={()=>setSerialBatchSubView('service')} className="ml-auto text-[#327F74] underline whitespace-nowrap">Create Service Job</button>
+                          <button onClick={() => setSerialBatchSubView('service')} className="ml-auto text-[#327F74] underline whitespace-nowrap">Create Service Job</button>
                         </div>
                       )}
                     </div>
@@ -9994,7 +10926,7 @@ export default function POSSales() {
                     </div>
                   </div>
                   <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                    <button onClick={()=>setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
+                    <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><RotateCcw className="h-3.5 w-3.5" />Confirm Return</button>
                     <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Confirm &amp; Print</button>
                   </div>
@@ -10012,7 +10944,7 @@ export default function POSSales() {
                         ['Item', selectedItem?.itemName || '—'],
                         ['Batch No.', selectedItem?.batchNumber || '—'],
                         ['Invoice Ref', selectedItem?.invoiceNumber || '—'],
-                      ].map(([k,v])=>(
+                      ].map(([k, v]) => (
                         <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                       ))}
                     </div>
@@ -10027,7 +10959,7 @@ export default function POSSales() {
                           <label className="text-xs text-gray-500 block mb-1">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                             <option>Select…</option>
-                            {['Display issue','Battery issue','Charging issue','Software issue','Speaker/mic issue','Network issue','Camera issue','Physical damage','Water damage','Other'].map(o=><option key={o}>{o}</option>)}
+                            {['Display issue', 'Battery issue', 'Charging issue', 'Software issue', 'Speaker/mic issue', 'Network issue', 'Camera issue', 'Physical damage', 'Water damage', 'Other'].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
@@ -10044,7 +10976,7 @@ export default function POSSales() {
                           <label className="text-xs text-gray-500 block mb-1">Assign Technician</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                             <option>Select Technician</option>
-                            {['Mohammed Al-Rashid','Rajan Kumar','Ali Hassan'].map(t=><option key={t}>{t}</option>)}
+                            {['Mohammed Al-Rashid', 'Rajan Kumar', 'Ali Hassan'].map(t => <option key={t}>{t}</option>)}
                           </select>
                         </div>
                       </div>
@@ -10055,8 +10987,8 @@ export default function POSSales() {
                     </div>
                   </div>
                   <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
-                    <button onClick={()=>setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                    <button onClick={()=>{setShowSerialBatch(false); setShowServiceRepair(true); setServiceView('new-job'); setServiceJobStep(1);}} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Wrench className="h-3.5 w-3.5" />Create Service Job</button>
+                    <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
+                    <button onClick={() => { setShowSerialBatch(false); setShowServiceRepair(true); setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Wrench className="h-3.5 w-3.5" />Create Service Job</button>
                   </div>
                 </>
               )}
@@ -10069,47 +11001,47 @@ export default function POSSales() {
       {showServiceRepair && (() => {
         const mockJobs = [];
         const statusColor = (s) => ({
-          'New':'bg-blue-100 text-blue-700','Inspection Pending':'bg-amber-100 text-amber-700',
-          'Under Warranty':'bg-green-100 text-green-700','Warranty Rejected':'bg-red-100 text-red-600',
-          'Waiting for Parts':'bg-orange-100 text-orange-700','Estimate Shared':'bg-cyan-100 text-cyan-700',
-          'Pending Customer Approval':'bg-purple-100 text-purple-700','Approved':'bg-teal-100 text-teal-700',
-          'In Repair':'bg-sky-100 text-sky-700','Ready for Delivery':'bg-lime-100 text-lime-700',
-          'Delivered':'bg-gray-100 text-gray-600','Cancelled':'bg-red-50 text-red-500'
-        }[s]||'bg-gray-100 text-gray-500');
-        const warrantyColor = (w) => w==='Under Warranty'?'text-green-700':w==='Warranty Expired'?'text-red-600':'text-gray-500';
-        const filteredJobs = mockJobs.filter(j=>{
-          if(serviceJobFilter.status!=='All'&&j.status!==serviceJobFilter.status) return false;
-          if(serviceJobFilter.customer&&!j.customer.toLowerCase().includes(serviceJobFilter.customer.toLowerCase())) return false;
-          if(serviceJobFilter.jobNo&&!j.no.toLowerCase().includes(serviceJobFilter.jobNo.toLowerCase())) return false;
-          if(serviceJobFilter.serial&&!j.serial.toLowerCase().includes(serviceJobFilter.serial.toLowerCase())) return false;
-          if(serviceJobFilter.technician&&!j.tech.toLowerCase().includes(serviceJobFilter.technician.toLowerCase())) return false;
-          if(serviceJobFilter.warranty!=='All'&&j.warranty!==serviceJobFilter.warranty) return false;
+          'New': 'bg-blue-100 text-blue-700', 'Inspection Pending': 'bg-amber-100 text-amber-700',
+          'Under Warranty': 'bg-green-100 text-green-700', 'Warranty Rejected': 'bg-red-100 text-red-600',
+          'Waiting for Parts': 'bg-orange-100 text-orange-700', 'Estimate Shared': 'bg-cyan-100 text-cyan-700',
+          'Pending Customer Approval': 'bg-purple-100 text-purple-700', 'Approved': 'bg-teal-100 text-teal-700',
+          'In Repair': 'bg-sky-100 text-sky-700', 'Ready for Delivery': 'bg-lime-100 text-lime-700',
+          'Delivered': 'bg-gray-100 text-gray-600', 'Cancelled': 'bg-red-50 text-red-500'
+        }[s] || 'bg-gray-100 text-gray-500');
+        const warrantyColor = (w) => w === 'Under Warranty' ? 'text-green-700' : w === 'Warranty Expired' ? 'text-red-600' : 'text-gray-500';
+        const filteredJobs = mockJobs.filter(j => {
+          if (serviceJobFilter.status !== 'All' && j.status !== serviceJobFilter.status) return false;
+          if (serviceJobFilter.customer && !j.customer.toLowerCase().includes(serviceJobFilter.customer.toLowerCase())) return false;
+          if (serviceJobFilter.jobNo && !j.no.toLowerCase().includes(serviceJobFilter.jobNo.toLowerCase())) return false;
+          if (serviceJobFilter.serial && !j.serial.toLowerCase().includes(serviceJobFilter.serial.toLowerCase())) return false;
+          if (serviceJobFilter.technician && !j.tech.toLowerCase().includes(serviceJobFilter.technician.toLowerCase())) return false;
+          if (serviceJobFilter.warranty !== 'All' && j.warranty !== serviceJobFilter.warranty) return false;
           return true;
         });
         const kpis = [
-          {label:'Open Jobs',val:'—',icon:<ClipboardList className="h-4 w-4" />,color:'text-sky-700',bg:'bg-sky-50'},
-          {label:'Under Warranty',val:'—',icon:<Shield className="h-4 w-4" />,color:'text-green-700',bg:'bg-green-50'},
-          {label:'Pending Approval',val:'—',icon:<AlertCircle className="h-4 w-4" />,color:'text-purple-700',bg:'bg-purple-50'},
-          {label:'Ready for Delivery',val:'—',icon:<PackageCheck className="h-4 w-4" />,color:'text-lime-700',bg:'bg-lime-50'},
-          {label:'Delivered Today',val:'—',icon:<Truck className="h-4 w-4" />,color:'text-gray-600',bg:'bg-gray-50'},
-          {label:'Chargeable',val:'—',icon:<DollarSign className="h-4 w-4" />,color:'text-amber-700',bg:'bg-amber-50'},
-          {label:'Parts Value',val:'—',icon:<Package className="h-4 w-4" />,color:'text-[#327F74]',bg:'bg-teal-50'},
+          { label: 'Open Jobs', val: '—', icon: <ClipboardList className="h-4 w-4" />, color: 'text-sky-700', bg: 'bg-sky-50' },
+          { label: 'Under Warranty', val: '—', icon: <Shield className="h-4 w-4" />, color: 'text-green-700', bg: 'bg-green-50' },
+          { label: 'Pending Approval', val: '—', icon: <AlertCircle className="h-4 w-4" />, color: 'text-purple-700', bg: 'bg-purple-50' },
+          { label: 'Ready for Delivery', val: '—', icon: <PackageCheck className="h-4 w-4" />, color: 'text-lime-700', bg: 'bg-lime-50' },
+          { label: 'Delivered Today', val: '—', icon: <Truck className="h-4 w-4" />, color: 'text-gray-600', bg: 'bg-gray-50' },
+          { label: 'Chargeable', val: '—', icon: <DollarSign className="h-4 w-4" />, color: 'text-amber-700', bg: 'bg-amber-50' },
+          { label: 'Parts Value', val: '—', icon: <Package className="h-4 w-4" />, color: 'text-[#327F74]', bg: 'bg-teal-50' },
         ];
-        const serviceSteps = ['Customer Details','Item & Warranty','Problem Details','Technician & Parts','Estimate','Service Invoice','Delivery'];
-        const detailTabs = ['overview','warranty','diagnosis','parts','estimate','invoice','payments','delivery','activity'];
+        const serviceSteps = ['Customer Details', 'Item & Warranty', 'Problem Details', 'Technician & Parts', 'Estimate', 'Service Invoice', 'Delivery'];
+        const detailTabs = ['overview', 'warranty', 'diagnosis', 'parts', 'estimate', 'invoice', 'payments', 'delivery', 'activity'];
         return (
           <div className="fixed inset-0 z-50 flex flex-col bg-[#F7F7FA]">
             {/* Top Bar */}
             <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-6 py-3 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <button onClick={()=>setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
+                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
                 <span className="text-gray-600">/</span>
                 <span className="text-white flex items-center gap-2"><Wrench className="h-4 w-4 text-[#F5C742]" />Service &amp; Repair Management</span>
               </div>
               <div className="flex items-center gap-2">
-                {serviceView!=='new-job' && <button onClick={()=>{setServiceView('new-job');setServiceJobStep(1);}} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-1.5 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />New Service Job</button>}
-                {serviceView!=='settings' && <button onClick={()=>setServiceView('settings')} className="border border-gray-600 text-gray-300 text-sm px-3 py-1.5 rounded hover:border-gray-400 flex items-center gap-1"><Settings className="h-3.5 w-3.5" />Settings</button>}
-                <button onClick={()=>setShowServiceRepair(false)} className="text-gray-400 hover:text-white"><X className="h-5 w-5" /></button>
+                {serviceView !== 'new-job' && <button onClick={() => { setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-1.5 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />New Service Job</button>}
+                {serviceView !== 'settings' && <button onClick={() => setServiceView('settings')} className="border border-gray-600 text-gray-300 text-sm px-3 py-1.5 rounded hover:border-gray-400 flex items-center gap-1"><Settings className="h-3.5 w-3.5" />Settings</button>}
+                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white"><X className="h-5 w-5" /></button>
               </div>
             </div>
 
@@ -10122,7 +11054,7 @@ export default function POSSales() {
                 </div>
                 {/* KPIs */}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
-                  {kpis.map(k=>(
+                  {kpis.map(k => (
                     <div key={k.label} className={`${k.bg} border border-[#327F74]/10 rounded-lg p-3 flex flex-col gap-1`}>
                       <div className={`flex items-center gap-1 ${k.color}`}>{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
                       <p className={`text-xl font-bold ${k.color}`}>{k.val}</p>
@@ -10132,39 +11064,39 @@ export default function POSSales() {
                 {/* Filters */}
                 <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 flex flex-wrap gap-2 items-end shadow-sm">
                   {[
-                    {label:'Job No.',key:'jobNo',ph:'SRV-...'},
-                    {label:'Customer',key:'customer',ph:'Name / Mobile'},
-                    {label:'Serial / Batch',key:'serial',ph:'Serial No.'},
-                    {label:'Technician',key:'technician',ph:'Name'},
-                  ].map(f=>(
+                    { label: 'Job No.', key: 'jobNo', ph: 'SRV-...' },
+                    { label: 'Customer', key: 'customer', ph: 'Name / Mobile' },
+                    { label: 'Serial / Batch', key: 'serial', ph: 'Serial No.' },
+                    { label: 'Technician', key: 'technician', ph: 'Name' },
+                  ].map(f => (
                     <div key={f.label} className="flex flex-col gap-0.5">
                       <label className="text-xs text-gray-400">{f.label}</label>
-                      <input value={serviceJobFilter[f.key]} onChange={e=>setServiceJobFilter(p=>({...p,[f.key]:e.target.value}))} placeholder={f.ph} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                      <input value={serviceJobFilter[f.key]} onChange={e => setServiceJobFilter(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.ph} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                     </div>
                   ))}
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Status</label>
-                    <select value={serviceJobFilter.status} onChange={e=>setServiceJobFilter(p=>({...p,status:e.target.value}))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All','New','Inspection Pending','Under Warranty','Warranty Rejected','Waiting for Parts','Estimate Shared','Pending Customer Approval','Approved','In Repair','Ready for Delivery','Delivered','Cancelled'].map(s=><option key={s}>{s}</option>)}
+                    <select value={serviceJobFilter.status} onChange={e => setServiceJobFilter(p => ({ ...p, status: e.target.value }))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                      {['All', 'New', 'Inspection Pending', 'Under Warranty', 'Warranty Rejected', 'Waiting for Parts', 'Estimate Shared', 'Pending Customer Approval', 'Approved', 'In Repair', 'Ready for Delivery', 'Delivered', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Warranty</label>
-                    <select value={serviceJobFilter.warranty} onChange={e=>setServiceJobFilter(p=>({...p,warranty:e.target.value}))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All','Under Warranty','Warranty Expired','No Warranty','Warranty Rejected'].map(s=><option key={s}>{s}</option>)}
+                    <select value={serviceJobFilter.warranty} onChange={e => setServiceJobFilter(p => ({ ...p, warranty: e.target.value }))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                      {['All', 'Under Warranty', 'Warranty Expired', 'No Warranty', 'Warranty Rejected'].map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <button className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                  <button onClick={()=>setServiceJobFilter({status:'All',customer:'',jobNo:'',serial:'',technician:'',warranty:'All'})} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
+                  <button onClick={() => setServiceJobFilter({ status: 'All', customer: '', jobNo: '', serial: '', technician: '', warranty: 'All' })} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
                 </div>
                 {/* Table */}
                 <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                   <table className="w-full text-xs">
                     <thead className="bg-[#F7F7FA] border-b border-[#327F74]/10">
-                      <tr className="text-gray-500">{['Job No.','Job Date','Customer','Item Name','Serial/Batch','Warranty','Problem','Technician','Est. Amt','Status','Delivery Date','Action'].map((h,i)=><th key={i} className={`px-3 py-2.5 text-left font-medium ${i===11?'text-center':''}`}>{h}</th>)}</tr>
+                      <tr className="text-gray-500">{['Job No.', 'Job Date', 'Customer', 'Item Name', 'Serial/Batch', 'Warranty', 'Problem', 'Technician', 'Est. Amt', 'Status', 'Delivery Date', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2.5 text-left font-medium ${i === 11 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
-                      {filteredJobs.map(j=>(
+                      {filteredJobs.map(j => (
                         <tr key={j.no} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                          <td className="px-3 py-2 font-semibold text-[#327F74] cursor-pointer hover:underline" onClick={()=>setServiceView('detail')}>{j.no}</td>
+                          <td className="px-3 py-2 font-semibold text-[#327F74] cursor-pointer hover:underline" onClick={() => setServiceView('detail')}>{j.no}</td>
                           <td className="px-3 py-2 text-gray-500">{j.date}</td>
                           <td className="px-3 py-2 text-[#1E293B]">{j.customer}</td>
                           <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{j.item}</td>
@@ -10172,14 +11104,14 @@ export default function POSSales() {
                           <td className="px-3 py-2"><span className={`text-[10px] font-medium ${warrantyColor(j.warranty)}`}>{j.warranty}</span></td>
                           <td className="px-3 py-2 text-gray-500">{j.problem}</td>
                           <td className="px-3 py-2 text-gray-500">{j.tech}</td>
-                          <td className="px-3 py-2 text-right">{j.estAmt>0?<CurrencyAmount amount={j.estAmt} />:'—'}</td>
+                          <td className="px-3 py-2 text-right">{j.estAmt > 0 ? <CurrencyAmount amount={j.estAmt} /> : '—'}</td>
                           <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(j.status)}`}>{j.status}</span></td>
                           <td className="px-3 py-2 text-gray-500">{j.delivery}</td>
                           <td className="px-3 py-2">
                             <div className="flex items-center justify-center gap-1">
-                              <button onClick={()=>setServiceView('detail')} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
+                              <button onClick={() => setServiceView('detail')} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
                               <button className="border border-gray-200 text-gray-500 text-[10px] px-1.5 py-0.5 rounded hover:bg-gray-50">Edit</button>
-                              {j.status==='Ready for Delivery'&&<button className="bg-[#F5C742] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#e6b838]">Deliver</button>}
+                              {j.status === 'Ready for Delivery' && <button className="bg-[#F5C742] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#e6b838]">Deliver</button>}
                             </div>
                           </td>
                         </tr>
@@ -10195,24 +11127,24 @@ export default function POSSales() {
               <div className="flex-1 overflow-auto">
                 {/* Step bar */}
                 <div className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-0 shrink-0">
-                  {serviceSteps.map((s,i)=>(
+                  {serviceSteps.map((s, i) => (
                     <React.Fragment key={s}>
-                      <div className="flex items-center gap-2 cursor-pointer" onClick={()=>setServiceJobStep(i+1)}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${serviceJobStep>i+1?'bg-[#327F74] text-white':serviceJobStep===i+1?'bg-[#F5C742] text-[#1E293B]':'bg-gray-100 text-gray-400'}`}>{serviceJobStep>i+1?'✓':i+1}</div>
-                        <span className={`text-xs ${serviceJobStep===i+1?'font-semibold text-[#1E293B]':'text-gray-400'}`}>{s}</span>
+                      <div className="flex items-center gap-2 cursor-pointer" onClick={() => setServiceJobStep(i + 1)}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
+                        <span className={`text-xs ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                       </div>
-                      {i<serviceSteps.length-1&&<div className="flex-1 h-px bg-gray-200 mx-2"/>}
+                      {i < serviceSteps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
                     </React.Fragment>
                   ))}
                 </div>
                 <div className="p-6">
                   {/* Step 1: Customer */}
-                  {serviceJobStep===1&&(
+                  {serviceJobStep === 1 && (
                     <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
                       <div className="flex items-center gap-2 mb-1"><Users className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">A. Customer Details</p></div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {[{l:'Customer Name',ph:'Full name'},{l:'Mobile Number',ph:'+971 XX XXX XXXX'},{l:'Email',ph:'email@example.com'},{l:'Customer Code',ph:'CUS-XXXXX'},{l:'Address',ph:'Street, City, Emirate'}].map(f=>(
-                          <div key={f.l} className={f.l==='Address'?'col-span-2':''}>
+                        {[{ l: 'Customer Name', ph: 'Full name' }, { l: 'Mobile Number', ph: '+971 XX XXX XXXX' }, { l: 'Email', ph: 'email@example.com' }, { l: 'Customer Code', ph: 'CUS-XXXXX' }, { l: 'Address', ph: 'Street, City, Emirate' }].map(f => (
+                          <div key={f.l} className={f.l === 'Address' ? 'col-span-2' : ''}>
                             <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
                             <input placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                           </div>
@@ -10222,12 +11154,12 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 2: Item & Warranty */}
-                  {serviceJobStep===2&&(
+                  {serviceJobStep === 2 && (
                     <div className="max-w-2xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">B. Product / Item Details</p></div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {[{l:'Invoice Number',ph:'SI-POS-...'},{l:'Serial Number',ph:'SXXXXX-XXXXX'},{l:'Batch Number',ph:'BT-XXXX'},{l:'Item Code',ph:'PRD-...'},{l:'Item Name',ph:'Product name'},{l:'Brand',ph:'Brand name'},{l:'Model',ph:'Model No.'},{l:'Category',ph:'Category'}].map(f=>(
+                          {[{ l: 'Invoice Number', ph: 'SI-POS-...' }, { l: 'Serial Number', ph: 'SXXXXX-XXXXX' }, { l: 'Batch Number', ph: 'BT-XXXX' }, { l: 'Item Code', ph: 'PRD-...' }, { l: 'Item Name', ph: 'Product name' }, { l: 'Brand', ph: 'Brand name' }, { l: 'Model', ph: 'Model No.' }, { l: 'Category', ph: 'Category' }].map(f => (
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
                               <input placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -10243,7 +11175,7 @@ export default function POSSales() {
                           <span className="text-xs bg-green-100 text-green-700 border border-green-300 rounded px-2 py-0.5">Free Repair Eligible</span>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
-                          {[['Warranty Status','Under Warranty'],['Start Date','12 Mar 2026'],['Expiry Date','12 Mar 2027'],['Warranty Period','12 Months'],['Covered','Yes'],['Repair Charge','AED 0.00']].map(([k,v])=>(
+                          {[['Warranty Status', 'Under Warranty'], ['Start Date', '12 Mar 2026'], ['Expiry Date', '12 Mar 2027'], ['Warranty Period', '12 Months'], ['Covered', 'Yes'], ['Repair Charge', 'AED 0.00']].map(([k, v]) => (
                             <div key={k} className="flex gap-1"><span className="text-green-600 w-28 shrink-0">{k}:</span><span className="text-green-800 font-medium">{renderAED(v)}</span></div>
                           ))}
                         </div>
@@ -10252,7 +11184,7 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 3: Problem */}
-                  {serviceJobStep===3&&(
+                  {serviceJobStep === 3 && (
                     <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
                       <div className="flex items-center gap-2 mb-1"><Stethoscope className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">D. Problem / Complaint Details</p></div>
                       <div>
@@ -10264,7 +11196,7 @@ export default function POSSales() {
                           <label className="text-xs text-gray-500 block mb-0.5">Problem Category</label>
                           <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                             <option>Select…</option>
-                            {['Display issue','Battery issue','Charging issue','Software issue','Speaker/mic issue','Network issue','Camera issue','Physical damage','Water damage','Other'].map(o=><option key={o}>{o}</option>)}
+                            {['Display issue', 'Battery issue', 'Charging issue', 'Software issue', 'Speaker/mic issue', 'Network issue', 'Camera issue', 'Physical damage', 'Water damage', 'Other'].map(o => <option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
@@ -10285,7 +11217,7 @@ export default function POSSales() {
                       <div>
                         <p className="text-xs text-gray-500 mb-2">Accessories Received</p>
                         <div className="flex flex-wrap gap-2">
-                          {['Charger','Cable','Box','SIM tray','Memory card','Cover','Other'].map(a=>(
+                          {['Charger', 'Cable', 'Box', 'SIM tray', 'Memory card', 'Cover', 'Other'].map(a => (
                             <label key={a} className="flex items-center gap-1.5 text-xs cursor-pointer">
                               <input type="checkbox" className="accent-[#327F74]" />{a}
                             </label>
@@ -10295,7 +11227,7 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 4: Technician & Parts */}
-                  {serviceJobStep===4&&(
+                  {serviceJobStep === 4 && (
                     <div className="max-w-3xl mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Wrench className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">E. Technician Diagnosis</p></div>
@@ -10304,7 +11236,7 @@ export default function POSSales() {
                             <label className="text-xs text-gray-500 block mb-0.5">Technician</label>
                             <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
                               <option>Select…</option>
-                              {['Mohammed Al-Rashid','Rajan Kumar','Ali Hassan'].map(t=><option key={t}>{t}</option>)}
+                              {['Mohammed Al-Rashid', 'Rajan Kumar', 'Ali Hassan'].map(t => <option key={t}>{t}</option>)}
                             </select>
                           </div>
                           <div>
@@ -10312,7 +11244,7 @@ export default function POSSales() {
                             <input type="number" placeholder="0.00" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                           </div>
                         </div>
-                        {[{l:'Problems Found',ph:'Describe findings...'},{l:'Root Cause',ph:'Identified root cause...'},{l:'Recommended Fix',ph:'Recommended repair steps...'}].map(f=>(
+                        {[{ l: 'Problems Found', ph: 'Describe findings...' }, { l: 'Root Cause', ph: 'Identified root cause...' }, { l: 'Recommended Fix', ph: 'Recommended repair steps...' }].map(f => (
                           <div key={f.l}>
                             <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
                             <textarea placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -10325,7 +11257,7 @@ export default function POSSales() {
                           <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />Add Part</button>
                         </div>
                         <table className="w-full text-xs">
-                          <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Part Code','Part Name','Stock Avail.','Qty','Unit Price','Disc.','VAT','Net Amt',''].map(h=><th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>)}</tr></thead>
+                          <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Part Code', 'Part Name', 'Stock Avail.', 'Qty', 'Unit Price', 'Disc.', 'VAT', 'Net Amt', ''].map(h => <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>)}</tr></thead>
                           <tbody>
                             <tr className="border-b border-gray-50">
                               <td className="px-2 py-1.5 text-gray-400 text-[10px]">PRT-0041</td>
@@ -10344,19 +11276,19 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 5: Estimate */}
-                  {serviceJobStep===5&&(
+                  {serviceJobStep === 5 && (
                     <div className="max-w-lg mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-2">
                         <div className="flex items-center gap-2 mb-2"><DollarSign className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">G. Estimate &amp; Customer Approval</p></div>
-                        {[['Labour Charge','AED 0.00'],['Parts Total','AED 294.00'],['Discount','—'],['VAT (5%)','AED 14.70'],['Total Estimated','AED 308.70'],['Warranty Covered','AED 308.70'],['Customer Payable','AED 0.00']].map(([k,v])=>(
-                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 ${k==='Customer Payable'?'font-bold text-[#1E293B] border-t-2 border-[#327F74]/20 pt-2':''}`}>
+                        {[['Labour Charge', 'AED 0.00'], ['Parts Total', 'AED 294.00'], ['Discount', '—'], ['VAT (5%)', 'AED 14.70'], ['Total Estimated', 'AED 308.70'], ['Warranty Covered', 'AED 308.70'], ['Customer Payable', 'AED 0.00']].map(([k, v]) => (
+                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 ${k === 'Customer Payable' ? 'font-bold text-[#1E293B] border-t-2 border-[#327F74]/20 pt-2' : ''}`}>
                             <span className="text-sm text-gray-500">{k}</span><span className="text-sm">{renderAED(v)}</span>
                           </div>
                         ))}
                       </div>
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2">
                         <p className="text-sm font-semibold text-[#1E293B] mb-2">Customer Approval</p>
-                        {[['Estimate Shared','Yes'],['Customer Approved','Pending'],['Approval Date','—']].map(([k,v])=>(
+                        {[['Estimate Shared', 'Yes'], ['Customer Approved', 'Pending'], ['Approval Date', '—']].map(([k, v]) => (
                           <div key={k} className="flex justify-between text-xs py-1 border-b border-gray-50"><span className="text-gray-500">{k}</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                         <div className="flex gap-2 pt-1">
@@ -10368,12 +11300,12 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 6: Service Invoice */}
-                  {serviceJobStep===6&&(
+                  {serviceJobStep === 6 && (
                     <div className="max-w-lg mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-2">
                         <div className="flex items-center gap-2 mb-2"><FileText className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">H. Service Invoice</p></div>
-                        {[['Service Job No.','—'],['Customer','—'],['Labour Charge','AED 0.00'],['Parts Amount','AED 0.00'],['VAT','AED 0.00'],['Total Invoice Amount','AED 0.00'],['Warranty Covered','AED 0.00'],['Customer Payable','AED 0.00'],['Advance Paid','AED 0.00'],['Balance Due','AED 0.00']].map(([k,v])=>(
-                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 text-sm ${k==='Customer Payable'?'font-bold text-[#327F74]':''}`}>
+                        {[['Service Job No.', '—'], ['Customer', '—'], ['Labour Charge', 'AED 0.00'], ['Parts Amount', 'AED 0.00'], ['VAT', 'AED 0.00'], ['Total Invoice Amount', 'AED 0.00'], ['Warranty Covered', 'AED 0.00'], ['Customer Payable', 'AED 0.00'], ['Advance Paid', 'AED 0.00'], ['Balance Due', 'AED 0.00']].map(([k, v]) => (
+                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 text-sm ${k === 'Customer Payable' ? 'font-bold text-[#327F74]' : ''}`}>
                             <span className="text-gray-500">{k}</span><span>{renderAED(v)}</span>
                           </div>
                         ))}
@@ -10386,15 +11318,15 @@ export default function POSSales() {
                     </div>
                   )}
                   {/* Step 7: Delivery */}
-                  {serviceJobStep===7&&(
+                  {serviceJobStep === 7 && (
                     <div className="max-w-lg mx-auto space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
                         <div className="flex items-center gap-2 mb-1"><Truck className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">I. Delivery / Completion</p></div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {[{l:'Ready for Delivery Date',t:'date'},{l:'Delivered Date',t:'date'},{l:'Delivered By',t:'text',ph:'Staff name'},{l:'Received By (Customer)',t:'text',ph:'Customer name'}].map(f=>(
+                          {[{ l: 'Ready for Delivery Date', t: 'date' }, { l: 'Delivered Date', t: 'date' }, { l: 'Delivered By', t: 'text', ph: 'Staff name' }, { l: 'Received By (Customer)', t: 'text', ph: 'Customer name' }].map(f => (
                             <div key={f.l}>
                               <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
-                              <input type={f.t} placeholder={(f).ph||''} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                              <input type={f.t} placeholder={(f).ph || ''} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                             </div>
                           ))}
                         </div>
@@ -10417,13 +11349,13 @@ export default function POSSales() {
                 {/* Step nav footer */}
                 <div className="bg-white border-t border-gray-100 px-6 py-3 flex justify-between items-center shrink-0 sticky bottom-0">
                   <div className="flex gap-2">
-                    {serviceJobStep>1&&<button onClick={()=>setServiceJobStep(s=>s-1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
-                    <button onClick={()=>setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
+                    {serviceJobStep > 1 && <button onClick={() => setServiceJobStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
+                    <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                   </div>
                   <div className="flex gap-2">
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5">Save Draft</button>
-                    {serviceJobStep<serviceSteps.length ? <button onClick={()=>setServiceJobStep(s=>s+1)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
-                    : <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Complete Job</button>}
+                    {serviceJobStep < serviceSteps.length ? <button onClick={() => setServiceJobStep(s => s + 1)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
+                      : <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Complete Job</button>}
                   </div>
                 </div>
               </div>
@@ -10433,7 +11365,7 @@ export default function POSSales() {
             {serviceView === 'detail' && (
               <div className="flex-1 overflow-auto p-6">
                 <div className="flex items-center gap-3 mb-4">
-                  <button onClick={()=>setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back to List</button>
+                  <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back to List</button>
                   <span className="text-[#1E293B] font-semibold">Service Job</span>
                   <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5">—</span>
                   <div className="ml-auto flex gap-2">
@@ -10443,35 +11375,35 @@ export default function POSSales() {
                 </div>
                 {/* Tabs */}
                 <div className="flex gap-0 border-b border-[#327F74]/20 mb-4">
-                  {detailTabs.map(t=>(
-                    <button key={t} onClick={()=>setServiceDetailTab(t)}
-                      className={`px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab===t?'border-[#F5C742] text-[#1E293B] font-semibold':'border-transparent text-gray-400 hover:text-gray-600'}`}>
-                      {t==='activity'?'Activity Log':t}
+                  {detailTabs.map(t => (
+                    <button key={t} onClick={() => setServiceDetailTab(t)}
+                      className={`px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                      {t === 'activity' ? 'Activity Log' : t}
                     </button>
                   ))}
                 </div>
-                {serviceDetailTab==='overview'&&(
+                {serviceDetailTab === 'overview' && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <p className="text-sm font-semibold text-[#1E293B] mb-3">Job Timeline</p>
                       <div className="space-y-3">
                         {[
-                          {label:'Job Created',time:'Pending',done:false},
-                          {label:'Warranty Checked',time:'Pending',done:false},
-                          {label:'Inspection Completed',time:'Pending',done:false},
-                          {label:'Estimate Shared',time:'Pending',done:false},
-                          {label:'Customer Approved',time:'Pending',done:false},
-                          {label:'Repair Started',time:'Pending',done:false},
-                          {label:'Parts Consumed',time:'Pending',done:false},
-                          {label:'Invoice Generated',time:'Pending',done:false},
-                          {label:'Ready for Delivery',time:'Pending',done:false},
-                          {label:'Delivered',time:'Pending',done:false},
-                        ].map((ev,i)=>(
+                          { label: 'Job Created', time: 'Pending', done: false },
+                          { label: 'Warranty Checked', time: 'Pending', done: false },
+                          { label: 'Inspection Completed', time: 'Pending', done: false },
+                          { label: 'Estimate Shared', time: 'Pending', done: false },
+                          { label: 'Customer Approved', time: 'Pending', done: false },
+                          { label: 'Repair Started', time: 'Pending', done: false },
+                          { label: 'Parts Consumed', time: 'Pending', done: false },
+                          { label: 'Invoice Generated', time: 'Pending', done: false },
+                          { label: 'Ready for Delivery', time: 'Pending', done: false },
+                          { label: 'Delivered', time: 'Pending', done: false },
+                        ].map((ev, i) => (
                           <div key={i} className="flex items-start gap-3">
-                            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ev.done?'bg-[#327F74]':'bg-gray-100'}`}>
-                              {ev.done?<CheckCircle className="h-3 w-3 text-white"/>:<div className="w-1.5 h-1.5 rounded-full bg-gray-300"/>}
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ev.done ? 'bg-[#327F74]' : 'bg-gray-100'}`}>
+                              {ev.done ? <CheckCircle className="h-3 w-3 text-white" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
                             </div>
-                            <div><p className={`text-xs ${ev.done?'text-[#1E293B] font-medium':'text-gray-400'}`}>{ev.label}</p><p className="text-[10px] text-gray-400">{ev.time}</p></div>
+                            <div><p className={`text-xs ${ev.done ? 'text-[#1E293B] font-medium' : 'text-gray-400'}`}>{ev.label}</p><p className="text-[10px] text-gray-400">{ev.time}</p></div>
                           </div>
                         ))}
                       </div>
@@ -10479,14 +11411,14 @@ export default function POSSales() {
                     <div className="space-y-4">
                       <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm text-xs space-y-1">
                         <p className="text-sm font-semibold text-[#1E293B] mb-2">Customer &amp; Item</p>
-                        {[['Customer','—'],['Mobile','—'],['Item','—'],['Serial','—'],['Warranty','—'],['Technician','—'],['Priority','—'],['Expected Delivery','—']].map(([k,v])=>(
+                        {[['Customer', '—'], ['Mobile', '—'], ['Item', '—'], ['Serial', '—'], ['Warranty', '—'], ['Technician', '—'], ['Priority', '—'], ['Expected Delivery', '—']].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                     </div>
                   </div>
                 )}
-                {serviceDetailTab!=='overview'&&(
+                {serviceDetailTab !== 'overview' && (
                   <div className="bg-white border border-[#327F74]/20 rounded-lg p-6 shadow-sm flex items-center justify-center h-48">
                     <p className="text-sm text-gray-400 capitalize">{serviceDetailTab} details will appear here</p>
                   </div>
@@ -10498,25 +11430,25 @@ export default function POSSales() {
             {serviceView === 'settings' && (
               <div className="flex-1 overflow-auto p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <button onClick={()=>setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back</button>
+                  <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back</button>
                   <h1 className="text-xl text-[#1E293B]">Service &amp; Repair Settings</h1>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {[
-                    {title:'1. Warranty Rules',icon:<Shield className="h-4 w-4 text-[#327F74]" />,fields:['Default warranty period','Warranty by product category','Warranty by brand','Allow warranty without invoice: Yes/No','Warranty validation based on invoice date']},
-                    {title:'2. Service Charges',icon:<DollarSign className="h-4 w-4 text-[#327F74]" />,fields:['Default inspection charge (AED)','Default labour charge (AED)','Urgent service charge (AED)','Minimum repair charge (AED)','VAT applicable: Yes/No']},
-                    {title:'3. Approval Rules',icon:<CheckCircle className="h-4 w-4 text-[#327F74]" />,fields:['Manager approval for warranty rejection','Customer approval before repair','Approval required for high-value parts','Approval required for free repair without invoice']},
-                    {title:'4. Inventory Consumption',icon:<Package className="h-4 w-4 text-[#327F74]" />,fields:['Consume parts on estimate approval','Consume parts on invoice confirmation','Consume parts on delivery','Allow negative stock: Yes/No','Default warehouse for service parts']},
-                    {title:'5. Print Templates',icon:<Printer className="h-4 w-4 text-[#327F74]" />,fields:['Job card template','Estimate receipt template','Service invoice template','Delivery receipt template','Warranty receipt template']},
-                    {title:'6. Notification Settings',icon:<Smartphone className="h-4 w-4 text-[#327F74]" />,fields:['SMS/WhatsApp when job created','Estimate shared notification','Customer approval received','Ready for delivery alert','Delivered confirmation']},
-                  ].map(section=>(
+                    { title: '1. Warranty Rules', icon: <Shield className="h-4 w-4 text-[#327F74]" />, fields: ['Default warranty period', 'Warranty by product category', 'Warranty by brand', 'Allow warranty without invoice: Yes/No', 'Warranty validation based on invoice date'] },
+                    { title: '2. Service Charges', icon: <DollarSign className="h-4 w-4 text-[#327F74]" />, fields: ['Default inspection charge (AED)', 'Default labour charge (AED)', 'Urgent service charge (AED)', 'Minimum repair charge (AED)', 'VAT applicable: Yes/No'] },
+                    { title: '3. Approval Rules', icon: <CheckCircle className="h-4 w-4 text-[#327F74]" />, fields: ['Manager approval for warranty rejection', 'Customer approval before repair', 'Approval required for high-value parts', 'Approval required for free repair without invoice'] },
+                    { title: '4. Inventory Consumption', icon: <Package className="h-4 w-4 text-[#327F74]" />, fields: ['Consume parts on estimate approval', 'Consume parts on invoice confirmation', 'Consume parts on delivery', 'Allow negative stock: Yes/No', 'Default warehouse for service parts'] },
+                    { title: '5. Print Templates', icon: <Printer className="h-4 w-4 text-[#327F74]" />, fields: ['Job card template', 'Estimate receipt template', 'Service invoice template', 'Delivery receipt template', 'Warranty receipt template'] },
+                    { title: '6. Notification Settings', icon: <Smartphone className="h-4 w-4 text-[#327F74]" />, fields: ['SMS/WhatsApp when job created', 'Estimate shared notification', 'Customer approval received', 'Ready for delivery alert', 'Delivered confirmation'] },
+                  ].map(section => (
                     <div key={section.title} className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
                       <div className="flex items-center gap-2 mb-3">{section.icon}<p className="text-sm font-semibold text-[#1E293B]">{section.title}</p></div>
                       <div className="space-y-2">
-                        {section.fields.map(f=>(
+                        {section.fields.map(f => (
                           <div key={f} className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0">
                             <span className="text-xs text-gray-600">{f}</span>
-                            {f.includes('Yes/No')||f.includes('Yes / No') ? (
+                            {f.includes('Yes/No') || f.includes('Yes / No') ? (
                               <div className="relative inline-flex h-5 w-9 items-center rounded-full bg-[#327F74]"><span className="inline-block h-4 w-4 rounded-full bg-white translate-x-4" /></div>
                             ) : (
                               <input placeholder="—" className="border border-[#327F74]/20 rounded px-2 py-0.5 text-xs w-28 text-right focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
@@ -10612,11 +11544,10 @@ export default function POSSales() {
                         else if (id === 'compact') { setHideCategoriesPanel(true); setHideItemsPanel(false); }
                         else if (id === 'focus') { setHideCategoriesPanel(true); setHideItemsPanel(true); }
                       }}
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
-                        posTemplate === id
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${posTemplate === id
                           ? 'border-[#F5C742] bg-[#FEF9E7]'
                           : 'border-gray-100 bg-white hover:border-gray-300'
-                      }`}
+                        }`}
                     >
                       <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${posTemplate === id ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
                         <Icon className={`h-4 w-4 ${posTemplate === id ? 'text-white' : 'text-gray-500'}`} />
@@ -10631,6 +11562,48 @@ export default function POSSales() {
                 </div>
               </div>
 
+              {/* Tax Mode */}
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Tax Mode</h3>
+                <p className="text-[10px] text-gray-500 mb-3">Decide whether product prices already include VAT or VAT is added at checkout.</p>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {[
+                    [false, 'Exclusive', 'VAT added on top'],
+                    [true, 'Inclusive', 'VAT extracted from price'],
+                  ].map(([val, label, desc]) => (
+                    <button
+                      key={String(val)}
+                      type="button"
+                      onClick={() => patchTaxSettings({ taxInclusive: val })}
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${!!posSettings?.taxInclusive === val
+                          ? 'border-[#F5C742] bg-[#FEF9E7]'
+                          : 'border-gray-100 bg-white hover:border-gray-300'
+                        }`}
+                    >
+                      <p className={`text-xs font-semibold ${!!posSettings?.taxInclusive === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">{desc}</p>
+                      {!!posSettings?.taxInclusive === val && <CheckCircle className="h-3.5 w-3.5 text-[#F5C742] mt-1.5" />}
+                    </button>
+                  ))}
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Default VAT Rate (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    defaultValue={toNumber(posSettings?.defaultTaxRate, 5)}
+                    onBlur={(e) => {
+                      const rate = e.target.value === '' ? 0 : Number(e.target.value);
+                      if (rate !== toNumber(posSettings?.defaultTaxRate, 5)) patchTaxSettings({ defaultTaxRate: rate });
+                    }}
+                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Used when a product has no VAT rate of its own.</p>
+                </div>
+              </div>
+
               {/* Button Visibility — only shown when in Cart Focus template */}
               {posTemplate === 'focus' && (
                 <div>
@@ -10638,6 +11611,7 @@ export default function POSSales() {
                   <p className="text-[10px] text-gray-400 mb-3">Toggle which action buttons appear in the Cart Focus right panel.</p>
                   <div className="space-y-1.5">
                     {[
+                      { id: 'hold', label: 'Hold Bill' },
                       { id: 'add-qty', label: 'Add Qty' },
                       { id: 'remove', label: 'Remove Item' },
                       { id: 'discount', label: 'Discount' },
@@ -10737,10 +11711,10 @@ export default function POSSales() {
                           const q = (deliveryCustomerSearch || '').toLowerCase();
                           if (!q) return true;
                           return (c.name || '').toLowerCase().includes(q) ||
-                                 (c.phone || '').toLowerCase().includes(q) ||
-                                 (c.mobile || '').toLowerCase().includes(q) ||
-                                 (c.email || '').toLowerCase().includes(q) ||
-                                 (c.trn || '').toLowerCase().includes(q);
+                            (c.phone || '').toLowerCase().includes(q) ||
+                            (c.mobile || '').toLowerCase().includes(q) ||
+                            (c.email || '').toLowerCase().includes(q) ||
+                            (c.trn || '').toLowerCase().includes(q);
                         })
                         .slice(0, 5)
                         .map(c => (
@@ -10894,8 +11868,9 @@ export default function POSSales() {
           try {
             const cashAmt = deliverySettlePayMode === 'Cash' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCash : 0;
             const cardAmt = deliverySettlePayMode === 'Card' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCard : 0;
-            await settleDeliveryOrder(sel.id, {
-              paymentMode: deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode,
+            const displayPaymentMode = deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode;
+            const settledInvoice = await settleDeliveryOrder(sel.id, {
+              paymentMode: displayPaymentMode,
               amountTendered: selBalance,
               cashAmount: cashAmt,
               cardAmount: cardAmt,
@@ -10903,6 +11878,32 @@ export default function POSSales() {
               terminalId: currentTerminal?.terminalId || null,
               branchId: currentTerminal?.branchId || null,
             });
+
+            if (tplInvoicePaper !== 'A4') {
+              try {
+                // recordPayment() stamps the invoice's own paymentMode per settlement leg
+                // (last write wins for a split Cash+Card settle), so the receipt shows the
+                // mode actually selected here rather than trusting that stamp.
+                const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
+                const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
+                const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                  full: receiptInvoice,
+                  cashGiven: selBalance,
+                  customerPhone: custRec?.phone,
+                  customerEmail: custRec?.email,
+                });
+                await printThermalReceiptWithConfiguredPrinter({
+                  full: receiptInvoice,
+                  html,
+                  text,
+                  escPosBase64,
+                  title: `Delivery Settled ${settledInvoice?.invoiceNumber || sel.invoice || ''}`.trim(),
+                });
+              } catch (printErr) {
+                console.warn('Delivery settlement receipt print failed', printErr);
+              }
+            }
+
             setDeliverySettleSelected(null);
             setDeliverySettleMixCash('');
             setDeliverySettleMixCard('');
@@ -10999,10 +12000,10 @@ export default function POSSales() {
                               </div>
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                                 {[
-                                  { label: 'Invoice Amt',     val: o.invoiceAmt,     highlight: false, red: false },
+                                  { label: 'Invoice Amt', val: o.invoiceAmt, highlight: false, red: false },
                                   { label: 'Delivery Charge', val: o.deliveryCharge, highlight: false, red: false },
-                                  { label: 'Paid Amt',        val: o.paidAmt,        highlight: true,  red: false },
-                                  { label: 'Balance Due',     val: selBalance,       highlight: false, red: selBalance > 0 },
+                                  { label: 'Paid Amt', val: o.paidAmt, highlight: true, red: false },
+                                  { label: 'Balance Due', val: selBalance, highlight: false, red: selBalance > 0 },
                                 ].map(r => (
                                   <div key={r.label} className={`rounded-xl p-2.5 border text-center ${r.highlight ? 'bg-[#327F74]/10 border-[#327F74]/30' : r.red ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
                                     <p className="text-[9px] font-bold uppercase tracking-wide text-gray-500 mb-1">{r.label}</p>

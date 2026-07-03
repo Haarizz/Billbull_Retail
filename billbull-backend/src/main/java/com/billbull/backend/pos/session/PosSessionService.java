@@ -123,16 +123,34 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
         }
 
-        // Check if there is already an open session for this terminal
+        // 0b. Guard against silently rolling into a new day while a prior day's session is
+        // still open/suspended (BBQA-5.3-013): surface it as a distinct, machine-readable
+        // status so the frontend can prompt the user to close it instead of just failing.
+        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, LocalDate.now());
+        if (!stale.isEmpty()) {
+            PosSession oldest = stale.get(0);
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "PREVIOUS_DAY_SESSION_OPEN: Session #" + oldest.getId() + " on " + oldest.getSessionDate()
+                            + " (terminal " + oldest.getTerminalId() + ") is still " + oldest.getStatus()
+                            + ". Close the previous day's session before starting a new one.");
+        }
+
+        // Resolve terminal entity for the DB-level lock
+        PosTerminal terminal = terminalRepository.findByTerminalId(terminalId).orElse(null);
+
+        // App-level duplicate check: if same user returns to their own session, hand it back
         Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
             }
-            // Return existing open session instead of throwing — cashier may have refreshed
             return existing.get();
         }
 
+        // Snapshot settings for idle / hard-limit timeout
+        PosSettings settings = posSettingsRepository.findByBranchId(branchId).orElse(new PosSettings());
+
+        LocalDateTime now = LocalDateTime.now();
         PosSession session = new PosSession();
         session.setBranchId(branchId);
         session.setBranchName(branch.getName());
@@ -140,7 +158,8 @@ public class PosSessionService {
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
         session.setSessionDate(LocalDate.now());
-        session.setOpenedAt(LocalDateTime.now());
+        session.setOpenedAt(now);
+        session.setLastActivityAt(now);
         session.setDurationSeconds(null);
         session.setStatus(PosSessionStatus.OPEN);
         session.setOpeningCash(openingCash != null ? openingCash : BigDecimal.ZERO);
@@ -150,9 +169,48 @@ public class PosSessionService {
         session.setTotalCreditSales(BigDecimal.ZERO);
         session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
+
+        if (terminal != null) {
+            session.setTerminalPk(terminal.getId());
+            if (terminal.getCounterId() != null) session.setCounterId(terminal.getCounterId());
+        }
+        Integer idleTimeout = settings.getSessionIdleTimeoutMinutes();
+        if (idleTimeout != null && idleTimeout > 0) session.setIdleTimeoutMinutes(idleTimeout);
+        Integer maxHours = settings.getSessionMaxDurationHours();
+        if (maxHours != null && maxHours > 0) session.setSessionTimeoutAt(now.plusHours(maxHours));
+
         PosSession saved = repo.save(session);
+
+        // Atomically acquire terminal lock (DB partial unique index is the concurrency safety net)
+        if (terminal != null) {
+            int acquired = terminalRepository.setOpenSession(terminal.getId(), saved.getId());
+            if (acquired == 0) {
+                repo.delete(saved);
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Terminal is already occupied by another session.");
+            }
+        }
+
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         return saved;
+    }
+
+    /**
+     * Reassigns the open session on a terminal to a new cashier after a supervisor-authorized
+     * shift handover, so the incoming cashier can resume the existing session (its cash drawer,
+     * invoices, etc.) instead of being forced into "Start Session".
+     */
+    @Transactional
+    public void reassignSessionOwner(String terminalId, String newOwnerUsername) {
+        if (terminalId == null || terminalId.isBlank() || newOwnerUsername == null || newOwnerUsername.isBlank()) {
+            return;
+        }
+        Branch branch = branchAccessService.getRequiredCurrentUserBranch();
+        repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
+                .ifPresent(session -> {
+                    session.setOpenedBy(newOwnerUsername);
+                    repo.save(session);
+                });
     }
 
     @Transactional(readOnly = true)
@@ -199,8 +257,11 @@ public class PosSessionService {
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks) {
         PosSession session = getById(sessionId);
-        if (session.getStatus() != PosSessionStatus.OPEN) {
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
+        }
+        if (session.getStatus() != PosSessionStatus.OPEN && session.getStatus() != PosSessionStatus.SUSPENDED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session cannot be closed from status: " + session.getStatus());
         }
 
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
@@ -262,6 +323,11 @@ public class PosSessionService {
 
         PosSession closed = repo.save(session);
 
+        // Release terminal lock so the terminal can accept a new session
+        if (closed.getTerminalPk() != null) {
+            terminalRepository.clearOpenSession(closed.getTerminalPk(), closed.getId());
+        }
+
         // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
         try {
             Branch branch = closed.getBranchId() != null
@@ -285,6 +351,69 @@ public class PosSessionService {
         return closeSession(sessionId, closingCash, notes, false);
     }
 
+    // -------------------------------------------------------------------------
+    // Session suspend / resume / supervisor takeover
+    // -------------------------------------------------------------------------
+
+    @Transactional
+    public PosSession suspendSession(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only OPEN sessions can be suspended.");
+        }
+        session.setStatus(PosSessionStatus.SUSPENDED);
+        return repo.save(session);
+    }
+
+    @Transactional
+    public PosSession resumeSession(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.SUSPENDED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only SUSPENDED sessions can be resumed.");
+        }
+        session.setStatus(PosSessionStatus.OPEN);
+        session.setLastActivityAt(LocalDateTime.now());
+        return repo.save(session);
+    }
+
+    /**
+     * Supervisor takeover: verifies the supervisor PIN then transfers the session's
+     * openedBy to the current user so they become the session owner.
+     */
+    @Transactional
+    public PosSession supervisorTakeover(Long sessionId, String supervisorPin) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot take over a closed session.");
+        }
+
+        // Validate supervisor PIN (BCrypt)
+        if (session.getBranchId() != null) {
+            PosSettings settings = posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null);
+            if (settings != null && settings.isSupervisorPinSet()) {
+                org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder =
+                        new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+                if (supervisorPin == null || !encoder.matches(supervisorPin, settings.getSupervisorPin())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid supervisor PIN.");
+                }
+            }
+        }
+
+        session.setOpenedBy(currentUser());
+        session.setStatus(PosSessionStatus.OPEN);
+        session.setLastActivityAt(LocalDateTime.now());
+        PosSession updated = repo.save(session);
+
+        auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
+        return updated;
+    }
+
+    /** Touch lastActivityAt — called by the sales/payment path to reset the idle clock. */
+    @Transactional
+    public void touchActivity(Long sessionId) {
+        repo.touchLastActivity(sessionId, LocalDateTime.now());
+    }
+
     private String buildZReportSnapshot(PosSession s, BigDecimal expectedCash, BigDecimal closingCash) {
         return "{\"sessionId\":" + s.getId()
                 + ",\"terminalId\":\"" + safe(s.getTerminalId()) + "\""
@@ -295,6 +424,7 @@ public class PosSessionService {
                 + ",\"totalCashSales\":" + nz(s.getTotalCashSales())
                 + ",\"totalCardSales\":" + nz(s.getTotalCardSales())
                 + ",\"totalCreditSales\":" + nz(s.getTotalCreditSales())
+                + ",\"totalOnlineSales\":" + nz(s.getTotalOnlineSales())
                 + ",\"invoiceCount\":" + (s.getInvoiceCount() != null ? s.getInvoiceCount() : 0)
                 + ",\"expectedCash\":" + expectedCash
                 + ",\"closingCash\":" + closingCash
@@ -348,6 +478,7 @@ public class PosSessionService {
         BigDecimal cardDelta   = BigDecimal.ZERO;
         BigDecimal creditDelta = BigDecimal.ZERO;
         BigDecimal mixedDelta  = BigDecimal.ZERO;
+        BigDecimal onlineDelta = BigDecimal.ZERO;
 
         if (mode.contains("cash") && mode.contains("card")) {
             mixedDelta = total;
@@ -357,6 +488,8 @@ public class PosSessionService {
             cardDelta = total;
         } else if (mode.contains("credit")) {
             creditDelta = total;
+        } else if (mode.contains("online") || mode.contains("bank") || mode.contains("transfer")) {
+            onlineDelta = total;
         } else {
             cashDelta = total; // default fallback (Voucher, etc.) treated as cash
         }
@@ -370,7 +503,9 @@ public class PosSessionService {
         }
 
         // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
-        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, voidDelta);
+        repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, onlineDelta, voidDelta);
+        // Reset the idle clock so a cashier actively ringing sales is never auto-suspended.
+        repo.touchLastActivity(sessionId, LocalDateTime.now());
     }
 
     /** Explicit shift X-Report run by an open terminal. Stamps {@code xReportGeneratedAt}
@@ -427,6 +562,19 @@ public class PosSessionService {
         summary.put("voidAmount", voids.voidAmount);
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
+
+        // Sales Return module figures for this session's branch+date — same source and
+        // shape as the Z-Report's Returns/Refund Summary, so the two reports agree.
+        ReturnsSummary returns = buildReturnsSummary(session.getBranchId(), session.getSessionDate());
+        summary.put("salesReturnCount", returns.totalCount);
+        summary.put("salesReturnTotal", returns.totalAmount);
+        summary.put("creditNoteCount", returns.creditNoteCount);
+        summary.put("creditNoteTotal", returns.creditNoteTotal);
+        summary.put("refundCount", returns.refundCount);
+        summary.put("refundTotal", returns.refundTotal);
+        summary.put("exchangeCount", returns.exchangeCount);
+        summary.put("exchangeTotal", returns.exchangeTotal);
+        summary.put("totalItemsReturned", returns.totalQtyReturned);
 
         // Reopen tracking: more than one SESSION_OPENED audit entry for this session id
         // means the terminal was reopened after an earlier open (first open isn't a "reopen").
@@ -499,6 +647,9 @@ public class PosSessionService {
                     .toList();
 
         TenderTotals tender = aggregateTender(invoices);
+        // Actual tender refunded (paymentType = MADE) across the day's invoices — same
+        // source and shape as the X-Report's "Returns" KPI, so the two reports agree.
+        TenderTotals refunds = aggregateRefunds(invoices);
 
         int invoiceCount = sessions.stream()
                 .mapToInt(s -> s.getInvoiceCount() != null ? s.getInvoiceCount() : 0).sum();
@@ -516,12 +667,15 @@ public class PosSessionService {
         summary.put("postedVoidCount", voids.postedVoids.size());
         summary.put("cartRemovalCount", voids.cartRemovals.size());
         summary.put("voidAmount", voids.voidAmount);
+        summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO));
+        summary.put("cardRefundCount", refunds.countByBucket.getOrDefault("card", 0L));
+        summary.put("totalRefunds", refunds.total);
+        summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
         // Returns / Refund Summary — sourced from the Sales Return module for this branch+date
         // (a Sales Return is a separate post-sale transaction, not a session-scoped concept,
         // so it's queried by branch/date like the rest of the Z-Report rather than by session).
         ReturnsSummary returns = buildReturnsSummary(branchId, date);
-        summary.put("totalRefunds", returns.refundTotal);
         summary.put("salesReturnCount", returns.totalCount);
         summary.put("salesReturnTotal", returns.totalAmount);
         summary.put("creditNoteCount", returns.creditNoteCount);
@@ -606,23 +760,57 @@ public class PosSessionService {
         BigDecimal creditSales = (BigDecimal) summary.getOrDefault("creditSales", BigDecimal.ZERO);
         BigDecimal otherSales = (BigDecimal) summary.getOrDefault("otherSales", BigDecimal.ZERO);
         
+        BigDecimal bankTransferSales = (BigDecimal) summary.getOrDefault("bankTransferSales", BigDecimal.ZERO);
+        BigDecimal walletSales = (BigDecimal) summary.getOrDefault("walletSales", BigDecimal.ZERO);
+        BigDecimal voucherSales = (BigDecimal) summary.getOrDefault("voucherSales", BigDecimal.ZERO);
+        BigDecimal onlineSales = bankTransferSales.add(walletSales).add(voucherSales);
+        BigDecimal roundOff = (BigDecimal) summary.getOrDefault("roundOff", BigDecimal.ZERO);
+        BigDecimal totalRefunds = (BigDecimal) summary.getOrDefault("totalRefunds", BigDecimal.ZERO);
+        BigDecimal salesReturnTotal = (BigDecimal) summary.getOrDefault("salesReturnTotal", BigDecimal.ZERO);
+
         BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales);
-        if (totalSales.subtract(computedTotalSales).abs().compareTo(new BigDecimal("0.05")) > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
-                "Cannot close day: Sales reconciliation failed. Variance: " + totalSales.subtract(computedTotalSales));
+        BigDecimal salesVariance = totalSales.subtract(computedTotalSales);
+        if (salesVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
+            breakdown.put("expectedTotalSales", totalSales);
+            breakdown.put("computedTotalSales", computedTotalSales);
+            breakdown.put("variance", salesVariance);
+            breakdown.put("cash", cashSales);
+            breakdown.put("card", cardSales);
+            breakdown.put("credit", creditSales);
+            breakdown.put("online", onlineSales);
+            breakdown.put("other", otherSales.subtract(onlineSales));
+            breakdown.put("returns", salesReturnTotal);
+            breakdown.put("refunds", totalRefunds);
+            breakdown.put("rounding", roundOff);
+            throw new com.billbull.backend.exception.ReconciliationException(
+                "SALES",
+                "Cannot close day: Sales reconciliation failed. Variance: " + salesVariance,
+                breakdown);
         }
-        
+
         BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
         // Cash paid in/out is recorded in sessions.
         BigDecimal cashPaidIn = allSessions.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashPaidOut = allSessions.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
-        
+
         // Let's compute actual expected cash from sessions directly
         BigDecimal expectedCashSessions = allSessions.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (expectedCashComputed.subtract(expectedCashSessions).abs().compareTo(new BigDecimal("0.05")) > 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
-                "Cannot close day: Cash reconciliation failed. Variance: " + expectedCashComputed.subtract(expectedCashSessions));
+        BigDecimal cashVariance = expectedCashComputed.subtract(expectedCashSessions);
+        if (cashVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
+            breakdown.put("openingCash", openingCash);
+            breakdown.put("cashSales", cashSales);
+            breakdown.put("cashPaidIn", cashPaidIn);
+            breakdown.put("cashPaidOut", cashPaidOut);
+            breakdown.put("expectedCashComputed", expectedCashComputed);
+            breakdown.put("expectedCashSessions", expectedCashSessions);
+            breakdown.put("variance", cashVariance);
+            throw new com.billbull.backend.exception.ReconciliationException(
+                "CASH",
+                "Cannot close day: Cash reconciliation failed. Variance: " + cashVariance,
+                breakdown);
         }
 
         report.put("isDayClosed", true);
@@ -828,7 +1016,7 @@ public class PosSessionService {
                 || m.contains("amex") || m.contains("mada")) return "card";
         if (m.contains("cash")) return "cash";
         if (m.contains("credit")) return "credit";
-        if (m.contains("bank") || m.contains("transfer")) return "bankTransfer";
+        if (m.contains("bank") || m.contains("transfer") || m.contains("online")) return "bankTransfer";
         if (m.contains("wallet") || m.contains("apple") || m.contains("google")) return "wallet";
         if (m.contains("voucher") || m.contains("gift")) return "voucher";
         if (m.contains("cheque") || m.contains("check")) return "cheque";
@@ -841,11 +1029,28 @@ public class PosSessionService {
     private static final class TenderTotals {
         final Map<String, BigDecimal> byBucket = new java.util.LinkedHashMap<>();
         final Map<String, Long> countByBucket = new java.util.LinkedHashMap<>();
+        // Card-only breakdown by network/brand (raw paymentMode label, e.g. "Visa", "Mastercard", "Card").
+        final Map<String, BigDecimal> cardByType = new java.util.LinkedHashMap<>();
+        final Map<String, Long> cardCountByType = new java.util.LinkedHashMap<>();
         final List<Map<String, Object>> lines = new java.util.ArrayList<>();
         BigDecimal cash = BigDecimal.ZERO;
         BigDecimal card = BigDecimal.ZERO;
         BigDecimal credit = BigDecimal.ZERO;
         BigDecimal total = BigDecimal.ZERO;
+    }
+
+    /** Normalizes a raw card paymentMode label into a display card-type name
+     *  (e.g. "VISA DEBIT" -&gt; "Visa"). Falls back to the trimmed raw label,
+     *  or "Card" if blank, so unrecognized brands still get their own row. */
+    private static String cardTypeLabel(String rawMode) {
+        String m = rawMode == null ? "" : rawMode.trim();
+        String lower = m.toLowerCase();
+        if (lower.contains("visa")) return "Visa";
+        if (lower.contains("master")) return "Mastercard";
+        if (lower.contains("amex")) return "Amex";
+        if (lower.contains("mada")) return "Mada";
+        if (m.isEmpty() || lower.equals("card")) return "Card";
+        return m;
     }
 
     /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.
@@ -867,7 +1072,12 @@ public class PosSessionService {
             t.countByBucket.merge(bucket, count, Long::sum);
             t.total = t.total.add(amount);
             if ("cash".equals(bucket)) t.cash = t.cash.add(amount);
-            else if ("card".equals(bucket)) t.card = t.card.add(amount);
+            else if ("card".equals(bucket)) {
+                t.card = t.card.add(amount);
+                String cardType = cardTypeLabel(rawMode);
+                t.cardByType.merge(cardType, amount, BigDecimal::add);
+                t.cardCountByType.merge(cardType, count, Long::sum);
+            }
             else if ("credit".equals(bucket)) t.credit = t.credit.add(amount);
         }
         for (Payment p : paymentRepository.findTenderForInvoices(numbers)) {
@@ -904,6 +1114,11 @@ public class PosSessionService {
             t.byBucket.merge(bucket, amount, BigDecimal::add);
             t.countByBucket.merge(bucket, count, Long::sum);
             t.total = t.total.add(amount);
+            if ("card".equals(bucket)) {
+                String cardType = cardTypeLabel(rawMode);
+                t.cardByType.merge(cardType, amount, BigDecimal::add);
+                t.cardCountByType.merge(cardType, count, Long::sum);
+            }
         }
         return t;
     }
@@ -923,11 +1138,25 @@ public class PosSessionService {
         int billDiscountCount = 0;
         int lineDiscountCount = 0;
         BigDecimal highest = null, lowest = null;
+        // Sales attributed to Credit = each invoice's own outstanding balance (invoiceTotal
+        // minus whatever was actually collected/synced via recordPayment+ReceiptVoucher).
+        // A fully-settled cash/card/online sale has balance=0 here; an unpaid or
+        // partially-paid Credit sale has a positive balance. Sourced from the invoice
+        // itself rather than the Payment/tender ledger, because a $0-collected Credit
+        // sale never creates a Payment row at all (see aggregateTender/tenderBucket,
+        // which only ever see ACTUAL collected tender and can't represent "sold on credit").
+        BigDecimal creditSales = BigDecimal.ZERO;
+        long creditInvoiceCount = 0;
 
         for (SalesInvoice inv : invoices) {
             totalSales = totalSales.add(nz(inv.getInvoiceTotal()));
             totalTax = totalTax.add(nz(inv.getTaxTotal()));
             billDiscount = billDiscount.add(nz(inv.getBillDiscountAmount()));
+            BigDecimal outstandingBalance = nz(inv.getBalance());
+            if (outstandingBalance.signum() > 0) {
+                creditSales = creditSales.add(outstandingBalance);
+                creditInvoiceCount++;
+            }
             if (nz(inv.getBillDiscountAmount()).signum() > 0) billDiscountCount++;
             deliveryCharge = deliveryCharge.add(nz(inv.getDeliveryCharge()));
             roundOff = roundOff.add(nz(inv.getRoundOff()));
@@ -991,12 +1220,14 @@ public class PosSessionService {
         s.put("highestInvoice", highest != null ? highest : BigDecimal.ZERO);
         s.put("lowestInvoice", lowest != null ? lowest : BigDecimal.ZERO);
 
-        // Payment summary = ACTUAL tender collected, bucketed.
+        // Payment summary = ACTUAL tender collected, bucketed — except Credit, which is
+        // sourced from invoice.balance above (a Credit sale may have collected nothing).
         s.put("cashSales", tender.byBucket.getOrDefault("cash", BigDecimal.ZERO));
         s.put("cardSales", tender.byBucket.getOrDefault("card", BigDecimal.ZERO));
-        s.put("creditSales", tender.byBucket.getOrDefault("credit", BigDecimal.ZERO));
+        s.put("creditSales", creditSales);
         s.put("bankTransferSales", tender.byBucket.getOrDefault("bankTransfer", BigDecimal.ZERO));
         s.put("walletSales", tender.byBucket.getOrDefault("wallet", BigDecimal.ZERO));
+        s.put("walletInvoiceCount", tender.countByBucket.getOrDefault("wallet", 0L));
         s.put("voucherSales", tender.byBucket.getOrDefault("voucher", BigDecimal.ZERO));
         // "Other" combines every bucket besides cash/card/credit (bank transfer, wallet,
         // voucher, cheque, loyalty, store credit, other) so cash+card+credit+other sums to
@@ -1015,8 +1246,20 @@ public class PosSessionService {
         s.put("totalPaid", tender.total);
         s.put("cashInvoiceCount", tender.countByBucket.getOrDefault("cash", 0L));
         s.put("cardInvoiceCount", tender.countByBucket.getOrDefault("card", 0L));
-        s.put("creditInvoiceCount", tender.countByBucket.getOrDefault("credit", 0L));
+        s.put("creditInvoiceCount", creditInvoiceCount);
         s.put("totalTenderCount", tender.countByBucket.values().stream().mapToLong(Long::longValue).sum());
+
+        // Card settlement split by network/brand (Visa/Mastercard/Amex/…), plus the
+        // existing single "cardSales" total above so both views stay available.
+        List<Map<String, Object>> cardTypeBreakdown = new java.util.ArrayList<>();
+        for (Map.Entry<String, BigDecimal> e : tender.cardByType.entrySet()) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("cardType", e.getKey());
+            row.put("count", tender.cardCountByType.getOrDefault(e.getKey(), 0L));
+            row.put("amount", e.getValue());
+            cardTypeBreakdown.add(row);
+        }
+        s.put("cardTypeBreakdown", cardTypeBreakdown);
         return s;
     }
 

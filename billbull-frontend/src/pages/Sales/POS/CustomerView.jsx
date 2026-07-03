@@ -1,4 +1,5 @@
 import React from 'react';
+import toast from 'react-hot-toast';
 import { Input } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -9,9 +10,18 @@ import {
 import { saveSalesPayment } from '../../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
+import { getBankAccounts } from '../../../api/ledgerApi';
+import { printHtml } from '../../../utils/printGenerator';
+import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
+import { exportToPDF } from '../../../utils/exportUtils';
+import { mapStatementEntriesForExport, STATEMENT_EXPORT_COLUMNS } from '../../../utils/statementUtils';
+import { generateSOAFilename } from '../../../utils/filenameUtils';
+import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '../../../context/BranchContext';
 import { DirhamSymbol } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import CustomerPicker from './CustomerPicker';
+import { buildReceiptVoucherThermalHtml, buildReceiptVoucherThermalText, buildStatementThermalHtml, buildStatementThermalText } from './posPrintUtils';
 
 const CUST_PAGE_SIZE = 30;
 const CUST_AVATAR_COLORS = [
@@ -23,7 +33,9 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal }) => {
+  const { company } = useCompany();
+  const { activeBranch } = useBranch();
   const [custTab, setCustTab]             = React.useState('list');
   const [custSearch, setCustSearch]       = React.useState('');
   const [custBalanceFilter, setCustBalanceFilter] = React.useState('all');
@@ -32,13 +44,26 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [receiptCust, setReceiptCust]     = React.useState(null);
   const [advanceCust, setAdvanceCust]     = React.useState(null);
   const [statementCust, setStatementCust] = React.useState(null);
+  const [bankAccountOptions, setBankAccountOptions] = React.useState([]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getBankAccounts()
+      .then(data => { if (!cancelled) setBankAccountOptions(Array.isArray(data) ? data : []); })
+      .catch(() => { if (!cancelled) setBankAccountOptions([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Receipt form state
   const [receiptAmount, setReceiptAmount]   = React.useState('');
   const [receiptMethod, setReceiptMethod]   = React.useState('');
+  const [receiptBank, setReceiptBank]       = React.useState('');
+  const [receiptChequeDate, setReceiptChequeDate] = React.useState('');
   const [receiptRef, setReceiptRef]         = React.useState('');
   const [receiptBusy, setReceiptBusy]       = React.useState(false);
   const [receiptSuccess, setReceiptSuccess] = React.useState(null);
+  const [lastPayment, setLastPayment]       = React.useState(null);
+  const [receiptPrintBusy, setReceiptPrintBusy] = React.useState(false);
 
   // Advance form state
   const [advAmount, setAdvAmount]   = React.useState('');
@@ -54,6 +79,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [stmtEntries, setStmtEntries]   = React.useState([]);
   const [stmtBusy, setStmtBusy]         = React.useState(false);
   const [stmtError, setStmtError]       = React.useState(null);
+  const [stmtPrintBusy, setStmtPrintBusy]   = React.useState(false);
+  const [stmtExportBusy, setStmtExportBusy] = React.useState(false);
 
   const handleTabChange = React.useCallback((id) => {
     setCustTab(id);
@@ -70,22 +97,28 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     if (!selected) return alert('Please select a customer.');
     if (!receiptAmount || Number(receiptAmount) <= 0) return alert('Enter a valid payment amount.');
     if (!receiptMethod) return alert('Please select a payment method.');
+    if (receiptMethod !== 'Cash' && !receiptBank) return alert('Please select a bank account for this payment method.');
     setReceiptBusy(true);
     setReceiptSuccess(null);
     try {
-      await saveSalesPayment({
+      const saved = await saveSalesPayment({
         paymentDate: new Date().toISOString().slice(0, 10),
         paymentType: 'RECEIVED',
         customerCode: selected.code,
         customerName: selected.name,
         amount: Number(receiptAmount),
         paymentMode: receiptMethod,
+        bankName: receiptMethod !== 'Cash' ? receiptBank : null,
+        chequeDate: receiptMethod === 'Cheque' && receiptChequeDate ? receiptChequeDate : null,
         referenceNumber: receiptRef || null,
         status: 'COMPLETED',
       });
+      setLastPayment(saved);
       setReceiptSuccess(`Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name}.`);
       setReceiptAmount('');
       setReceiptMethod('');
+      setReceiptBank('');
+      setReceiptChequeDate('');
       setReceiptRef('');
       if (typeof syncPosData === 'function') syncPosData();
     } catch (e) {
@@ -93,7 +126,49 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptRef, customerOptions, syncPosData]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, customerOptions, syncPosData]);
+
+  const handlePrintReceipt = React.useCallback(async () => {
+    if (!lastPayment) return;
+    setReceiptPrintBusy(true);
+    try {
+      const customer = customerOptions.find(c => c.code === lastPayment.customerCode) || null;
+      const opts = {
+        companyName: company?.companyName,
+        trn: company?.trn,
+        address: company?.address,
+        phone: company?.phone,
+        header: activeBranch?.name,
+        logoDataUrl: company?.logoUrl,
+        currency: company?.currency || 'AED',
+        customer,
+      };
+      // Print straight to the configured printer when one's reachable — only fall
+      // back to the browser print-preview dialog when there's genuinely no device.
+      const printer = resolvePrinterForContext(printerConfigs, {
+        deviceType: 'RECEIPT_PRINTER',
+        branchId: currentTerminal?.branchId || null,
+        terminalId: currentTerminal?.terminalId || null,
+      });
+      if (!printer) {
+        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
+        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
+        return;
+      }
+      const text = buildReceiptVoucherThermalText('80mm', lastPayment, opts);
+      try {
+        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim() });
+      } catch (err) {
+        console.warn('Configured printer failed for receipt voucher, falling back to browser print preview', err);
+        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
+      }
+    } catch (e) {
+      toast.error(e?.message || 'Failed to generate receipt print layout.');
+    } finally {
+      setReceiptPrintBusy(false);
+    }
+  }, [lastPayment, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
 
   const handleReceiveAdvance = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === advanceCust);
@@ -148,6 +223,75 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setStmtBusy(false);
     }
   }, [statementCust, stmtFromDate, stmtToDate, customerOptions]);
+
+  const handlePrintStatement = React.useCallback(async () => {
+    const selected = customerOptions.find(c => c.id === statementCust);
+    if (!selected) return alert('Please select a customer.');
+    setStmtPrintBusy(true);
+    try {
+      const from = stmtFromDate || '2000-01-01';
+      const to   = stmtToDate   || new Date().toISOString().slice(0, 10);
+      const freshStatement = await fetchStatementOfAccount('CUSTOMER', selected.code, from, to);
+      setStmtData(freshStatement);
+      setStmtEntries(freshStatement?.entries || freshStatement?.lines || []);
+      const opts = {
+        companyName: company?.companyName,
+        trn: company?.trn,
+        address: company?.address,
+        phone: company?.phone,
+        header: activeBranch?.name,
+        logoDataUrl: company?.logoUrl,
+        currency: company?.currency || 'AED',
+        customer: selected,
+        startDate: from,
+        endDate: to,
+      };
+      // Print straight to the configured printer when one's reachable — only fall
+      // back to the browser print-preview dialog when there's genuinely no device.
+      const printer = resolvePrinterForContext(printerConfigs, {
+        deviceType: 'RECEIPT_PRINTER',
+        branchId: currentTerminal?.branchId || null,
+        terminalId: currentTerminal?.terminalId || null,
+      });
+      if (!printer) {
+        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
+        printHtml(buildStatementThermalHtml('80mm', freshStatement, opts), { fast: true });
+        return;
+      }
+      const text = buildStatementThermalText('80mm', freshStatement, opts);
+      try {
+        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Statement ${selected.code || selected.name || ''}`.trim() });
+      } catch (err) {
+        console.warn('Configured printer failed for statement, falling back to browser print preview', err);
+        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+        printHtml(buildStatementThermalHtml('80mm', freshStatement, opts), { fast: true });
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e?.message || 'Failed to generate statement print layout.');
+    } finally {
+      setStmtPrintBusy(false);
+    }
+  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
+
+  const handleExportStatementPdf = React.useCallback(() => {
+    const selected = customerOptions.find(c => c.id === statementCust);
+    if (!stmtData || !selected) return;
+    setStmtExportBusy(true);
+    try {
+      const from = stmtFromDate || '2000-01-01';
+      const to   = stmtToDate   || new Date().toISOString().slice(0, 10);
+      const filename = generateSOAFilename(selected.name, selected.code, from, to, company?.currency || 'AED');
+      exportToPDF(
+        mapStatementEntriesForExport(stmtData),
+        STATEMENT_EXPORT_COLUMNS,
+        'Customer Statement of Account',
+        filename,
+        { companyProfile: company, branch: activeBranch?.name, dateFrom: from, dateTo: to },
+      );
+    } finally {
+      setStmtExportBusy(false);
+    }
+  }, [stmtData, statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch]);
 
   const realCustomers = React.useMemo(
     () => customerOptions.filter(c => c.id !== WALK_IN_CUSTOMER.id),
@@ -388,7 +532,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-700">Payment Method</label>
-                      <Select value={receiptMethod} onValueChange={setReceiptMethod}>
+                      <Select value={receiptMethod} onValueChange={v => { setReceiptMethod(v); if (v === 'Cash') { setReceiptBank(''); setReceiptChequeDate(''); } }}>
                         <SelectTrigger className="h-10 border-gray-200"><SelectValue placeholder="Select method…" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Cash">💵 Cash</SelectItem>
@@ -399,13 +543,34 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                       </Select>
                     </div>
                   </div>
+                  {receiptMethod && receiptMethod !== 'Cash' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-gray-700">Bank Account <span className="text-red-500">*</span></label>
+                        <Select value={receiptBank} onValueChange={setReceiptBank}>
+                          <SelectTrigger className="h-10 border-gray-200"><SelectValue placeholder="Select bank account…" /></SelectTrigger>
+                          <SelectContent>
+                            {bankAccountOptions.map(acc => (
+                              <SelectItem key={acc.id} value={acc.name}>{acc.code} — {acc.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {receiptMethod === 'Cheque' && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-gray-700">Cheque Date</label>
+                          <Input type="date" className="h-10 border-gray-200" value={receiptChequeDate} onChange={e => setReceiptChequeDate(e.target.value)} />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-gray-700">Reference / Notes</label>
                     <Input placeholder="Cheque no., transfer ref, or notes…" className="h-10 border-gray-200" value={receiptRef} onChange={e => setReceiptRef(e.target.value)} />
                   </div>
                   <div className="flex gap-3 pt-2">
                     <Button className="flex-1 bg-[#327F74] hover:bg-[#2a6b61] text-white h-10" disabled={receiptBusy} onClick={handleRecordPayment}><CheckCircle className="h-4 w-4 mr-2" /> {receiptBusy ? 'Saving…' : 'Record Payment'}</Button>
-                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled><Printer className="h-4 w-4 mr-2" /> Print Receipt</Button>
+                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled={!lastPayment || receiptPrintBusy} onClick={handlePrintReceipt}><Printer className="h-4 w-4 mr-2" /> {receiptPrintBusy ? 'Preparing…' : 'Print Receipt'}</Button>
                   </div>
                 </div>
               </div>
@@ -467,7 +632,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         {/* Statement — lazy mount */}
         <div style={{ display: custTab === 'statement' ? 'block' : 'none' }}>
           {visited.statement && (
-            <div className="py-5 max-w-3xl space-y-4">
+            <div className="py-5 w-full space-y-4">
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-transparent">
                   <div className="p-2 bg-indigo-100 rounded-lg"><FileText className="h-5 w-5 text-indigo-600" /></div>
@@ -485,8 +650,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-[#F7F7FA] rounded-lg p-4">
                     {[
                       { label: 'Opening Balance', value: stmtData ? Number(stmtData.openingBalance ?? 0).toFixed(2) : '0.00' },
-                      { label: 'Total Invoiced',  value: stmtData ? Number(stmtData.totalInvoiced ?? stmtData.totalDebits ?? 0).toFixed(2) : '0.00' },
-                      { label: 'Total Paid',      value: stmtData ? Number(stmtData.totalPaid ?? stmtData.totalCredits ?? 0).toFixed(2) : '0.00' },
+                      { label: 'Total Invoiced',  value: stmtData ? Number(stmtData.totalDebit ?? 0).toFixed(2) : '0.00' },
+                      { label: 'Total Paid',      value: stmtData ? Number(stmtData.totalCredit ?? 0).toFixed(2) : '0.00' },
                     ].map(s => (
                       <div key={s.label} className="text-center">
                         <p className="text-xs text-gray-500 mb-1">{s.label}</p>
@@ -497,8 +662,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   {stmtError && <div className="rounded-lg px-4 py-3 bg-red-50 border border-red-100 text-sm text-red-600">{stmtError}</div>}
                   <div className="flex gap-3 pt-1">
                     <Button className="flex-1 bg-[#327F74] hover:bg-[#2a6b61] text-white h-10" disabled={stmtBusy} onClick={handleViewStatement}><FileText className="h-4 w-4 mr-2" /> {stmtBusy ? 'Loading…' : 'View Statement'}</Button>
-                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled><Download className="h-4 w-4 mr-2" /> Export PDF</Button>
-                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled><Printer className="h-4 w-4 mr-2" /> Print</Button>
+                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled={!stmtData || stmtExportBusy} onClick={handleExportStatementPdf}><Download className="h-4 w-4 mr-2" /> {stmtExportBusy ? 'Exporting…' : 'Export PDF'}</Button>
+                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled={!statementCust || stmtPrintBusy} onClick={handlePrintStatement}><Printer className="h-4 w-4 mr-2" /> {stmtPrintBusy ? 'Preparing…' : 'Print'}</Button>
                   </div>
                   {stmtEntries.length > 0 && (
                     <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden">
@@ -516,7 +681,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                         <tbody className="divide-y divide-gray-50">
                           {stmtEntries.map((e, i) => (
                             <tr key={i} className="hover:bg-[#F7F7FA]/50">
-                              <td className="px-4 py-2 text-gray-500">{e.date || e.entryDate || '—'}</td>
+                              <td className="px-4 py-2 text-gray-500">{e.transactionDate || e.date || e.entryDate || '—'}</td>
                               <td className="px-4 py-2 text-[#1E293B]">{e.description || e.reference || e.type || '—'}</td>
                               <td className="px-4 py-2 text-right text-red-600">{(e.debit || e.debitAmount || 0) > 0 ? <span className="inline-flex items-center gap-0.5"><DirhamSymbol />{Number(e.debit || e.debitAmount || 0).toFixed(2)}</span> : '—'}</td>
                               <td className="px-4 py-2 text-right text-emerald-600">{(e.credit || e.creditAmount || 0) > 0 ? <span className="inline-flex items-center gap-0.5"><DirhamSymbol />{Number(e.credit || e.creditAmount || 0).toFixed(2)}</span> : '—'}</td>

@@ -112,10 +112,17 @@ public class PosCheckoutController {
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
         double cashAmt = request.getCashAmount() != null ? request.getCashAmount() : 0.0;
         double cardAmt = request.getCardAmount() != null ? request.getCardAmount() : 0.0;
-        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001;
+        double onlineAmt = request.getOnlineAmount() != null ? request.getOnlineAmount() : 0.0;
+        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001;
         double paymentAmount = hasSplitAmounts
-                ? Math.min(cashAmt + cardAmt, invoiceTotal)
+                ? Math.min(cashAmt + cardAmt + onlineAmt, invoiceTotal)
                 : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
+        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt < invoiceTotal) must
+        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online) belongs
+        // on the Payment/Receipt row, not on the invoice, so the remaining balance still reads as
+        // outstanding credit rather than looking like a plain Cash/Card sale.
+        boolean isCreditCheckout = "credit".equalsIgnoreCase(request.getPaymentMode());
+        String creditStamp = isCreditCheckout ? "Credit" : null;
 
         // Step 2: transition status while the invoice is still DRAFT so that
         // doUpdateStatus() fires: FEFO/batch reservation, auto-DN generation,
@@ -151,22 +158,26 @@ public class PosCheckoutController {
                 if (cardPayment > 0) {
                     invoiceService.recordPayment(saved.getId(), cardPayment, cardMode,
                             request.getCardReference(), LocalDate.now(),
-                            null, null, null, null);
+                            null, null, null, creditStamp);
                 }
                 if (cashPayment > 0) {
                     invoiceService.recordPayment(saved.getId(), cashPayment, "Cash",
-                            null, LocalDate.now(), null, null, null, null);
+                            null, LocalDate.now(), null, null, null, creditStamp);
                 }
             } else {
-                // Single-leg payment (pure Cash, pure Card, Credit, Bank Transfer, etc.)
+                // Single-leg payment (pure Cash, pure Card, pure Online, Credit partial receipt, etc.)
                 String paymentMode = hasSplitAmounts && cardAmt > 0.001
                         ? resolveCardMode(request)      // card-only with explicit cardAmt
+                        : hasSplitAmounts && onlineAmt > 0.001
+                        ? "Online"                       // online-only with explicit onlineAmt
                         : hasSplitAmounts               // cash-only with explicit cashAmt
                         ? "Cash"
                         : resolvePaymentMode(request);  // legacy: use paymentMode string
+                String combinedMode = request.getCombinedPaymentMode() != null
+                        ? request.getCombinedPaymentMode() : creditStamp;
                 invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode,
                         request.getCardReference(), LocalDate.now(),
-                        null, null, null, request.getCombinedPaymentMode());
+                        request.getBankAccountName(), null, null, combinedMode);
             }
         }
 
@@ -562,7 +573,11 @@ public class PosCheckoutController {
         if (req.getShippingCharge() != null && req.getShippingCharge() > 0) {
             inv.setShippingCharge(java.math.BigDecimal.valueOf(req.getShippingCharge()));
         }
-        inv.setTaxInclusive(Boolean.TRUE.equals(req.getTaxInclusive()));
+        boolean taxInclusive = Boolean.TRUE.equals(req.getTaxInclusive());
+        inv.setTaxInclusive(taxInclusive);
+        inv.setVatMode(taxInclusive
+                ? com.billbull.backend.sales.common.VatMode.INCLUSIVE
+                : com.billbull.backend.sales.common.VatMode.EXCLUSIVE);
 
         // Batch-loaded product pricings, keyed by item code — used both for the price-override
         // gate below and to snapshot each line's cost-at-sale (see the items-mapping loop
