@@ -14,6 +14,7 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
 import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
+import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage } from '../../api/salesInvoiceApi';
 import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
@@ -6566,7 +6567,7 @@ export default function POSSales() {
         }
       }
       setShowQuickCustomerModal(false);
-      showFeedback('Customer created and selected successfully!', 'success');
+      showFeedback('success', 'Customer created and selected successfully!');
     } catch (err) {
       setQuickCustomerError(err.response?.data?.message || err.message || 'Failed to create customer');
     } finally {
@@ -6593,6 +6594,12 @@ export default function POSSales() {
         }
       }
 
+      const units = await getUnits();
+      const defaultUnit = units.find(u => u.name?.toLowerCase() === quickProductForm.uom?.toLowerCase()) || units[0];
+      if (!defaultUnit) {
+        throw new Error('No units configured. Please create a unit under Inventory > Units first.');
+      }
+
       const formData = new FormData();
       const productReq = {
         product: {
@@ -6601,7 +6608,7 @@ export default function POSSales() {
           sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
           category: quickProductForm.category || 'General',
           status: quickProductForm.status === 'Active' ? 'ACTIVE' : 'DRAFT',
-          productType: 'GOODS',
+          productType: 'STOCK',
           isBatch: quickProductForm.isBatch,
           isSerial: quickProductForm.isSerial,
           isDiscountAllowed: quickProductForm.isDiscountAllowed,
@@ -6618,7 +6625,22 @@ export default function POSSales() {
           openingStock: parseFloat(quickProductForm.openingStock) || 0,
           minStock: parseFloat(quickProductForm.lowStockAlert) || 0,
           trackInventory: quickProductForm.trackInventory,
-          allowNegativeStock: quickProductForm.allowNegativeStock
+          allowNegativeStock: quickProductForm.allowNegativeStock,
+          defaultUnit: { id: defaultUnit.id },
+          packings: [
+            {
+              level: 'L1',
+              unit: defaultUnit.id,
+              conversion: 1,
+              baseQty: 1,
+              isSale: true,
+              isPurchase: true,
+              isLPO: false,
+              cost: parseFloat(quickProductForm.costPrice) || 0,
+              price: parseFloat(quickProductForm.salesPrice) || 0,
+              barcode: quickProductForm.barcode || ''
+            }
+          ]
         }
       };
 
@@ -6629,7 +6651,7 @@ export default function POSSales() {
 
       if (newProdRes && newProdRes.product) {
         addToInvoice(newProdRes.product);
-        showFeedback('Product created and added to cart successfully!', 'success');
+        showFeedback('success', `${newProdRes.product.name} created and added to cart!`);
       }
 
       setShowQuickProductModal(false);
@@ -7308,11 +7330,21 @@ export default function POSSales() {
                 )}
                 {/* Credit Balance alert (only for a Credit sale with a remaining receivable) */}
                 {(lastPaidInvoice.creditBalance || 0) > 0 && (
-                  <div className="bg-orange-50 border-b border-orange-200 px-6 py-3 flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-orange-800">Credit Balance</span>
-                    <span className="text-lg font-black text-orange-700">
-                      <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
-                    </span>
+                  <div className="bg-orange-50 border-b border-orange-200 px-6 py-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-orange-800">This Invoice Balance</span>
+                      <span className="text-lg font-black text-orange-700">
+                        <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
+                      </span>
+                    </div>
+                    {lastPaidInvoice.creditUpdatedBalance != null && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-orange-800">Customer Total Outstanding</span>
+                        <span className="text-base font-black text-orange-700">
+                          <DirhamSymbol /> {lastPaidInvoice.creditUpdatedBalance.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
                 {/* Summary */}
@@ -7322,7 +7354,9 @@ export default function POSSales() {
                     ...(lastPaidInvoice.depositAmount > 0 ? [['Deposit Applied', `−${formatCurrencyStr(lastPaidInvoice.depositAmount)}`]] : []),
                     ['Paid Amount', formatCurrencyStr(lastPaidInvoice.paidAmount ?? 0)],
                     ['Change Returned', formatCurrencyStr(lastPaidInvoice.changeAmount || 0)],
-                    ...(lastPaidInvoice.creditBalance > 0 ? [['Credit Balance', formatCurrencyStr(lastPaidInvoice.creditBalance)]] : []),
+                    ...(lastPaidInvoice.creditBalance > 0 ? [['This Invoice Balance', formatCurrencyStr(lastPaidInvoice.creditBalance)]] : []),
+                    ...(lastPaidInvoice.creditBalance > 0 && lastPaidInvoice.creditUpdatedBalance != null
+                      ? [['Customer Total Outstanding', formatCurrencyStr(lastPaidInvoice.creditUpdatedBalance)]] : []),
                     ['Pay Mode', lastPaidInvoice.paymentMode],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between items-center text-sm">
@@ -8475,7 +8509,8 @@ export default function POSSales() {
                 <div className="flex justify-between"><span className="text-gray-500">Amount</span><span className="font-semibold text-[#F5C742]">{formatCurrency(lastPaidInvoice.total)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Paid</span><span className="font-semibold">{formatCurrency(lastPaidInvoice.paidAmount ?? lastPaidInvoice.total)}</span></div>
                 {(lastPaidInvoice.changeAmount || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Change</span><span className="font-semibold text-green-600">{formatCurrency(lastPaidInvoice.changeAmount)}</span></div>}
-                {(lastPaidInvoice.creditBalance || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">Credit Balance</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditBalance)}</span></div>}
+                {(lastPaidInvoice.creditBalance || 0) > 0 && <div className="flex justify-between"><span className="text-gray-500">This Invoice Balance</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditBalance)}</span></div>}
+                {(lastPaidInvoice.creditBalance || 0) > 0 && lastPaidInvoice.creditUpdatedBalance != null && <div className="flex justify-between"><span className="text-gray-500">Customer Total Outstanding</span><span className="font-semibold text-orange-600">{formatCurrency(lastPaidInvoice.creditUpdatedBalance)}</span></div>}
                 <div className="flex justify-between"><span className="text-gray-500">Pay Mode</span><span className="font-semibold">{lastPaidInvoice.paymentMode || 'Cash'}</span></div>
                 <Separator />
                 <p className="text-xs text-gray-400 text-center">{lastPaidInvoice.items?.length || 0} item(s) · Session {currentSession?.id}</p>

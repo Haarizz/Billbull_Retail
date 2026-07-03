@@ -55,6 +55,9 @@ class PaymentServiceTest {
     @Mock
     private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
+    @Mock
+    private com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
+
     private PaymentService paymentService;
 
     @BeforeEach
@@ -68,6 +71,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "numberingService", numberingService);
         ReflectionTestUtils.setField(paymentService, "branchAccessService", branchAccessService);
         ReflectionTestUtils.setField(paymentService, "notifPublisher", notifPublisher);
+        ReflectionTestUtils.setField(paymentService, "advanceApplicationService", advanceApplicationService);
     }
 
     @Test
@@ -107,6 +111,82 @@ class PaymentServiceTest {
         assertNull(receipt.getSalesInvoiceId());
         assertEquals(9L, receipt.getOpeningInvoiceId());
         assertEquals(77L, saved.getReceiptVoucherRecordId());
+    }
+
+    // ---------------------------------------------------------------------
+    // General "Customer Receipt" (no invoice picked) must settle the
+    // customer's existing outstanding balance immediately, not just sit as
+    // an unapplied advance until some future invoice happens to be saved.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void generalReceiptWithNoLinkedInvoiceAppliesAgainstOutstandingBalance() {
+        Payment payment = new Payment();
+        payment.setPaymentNumber("PAY-2026-0010");
+        payment.setPaymentDate(LocalDate.of(2026, 6, 1));
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setCustomerCode("CUST-100");
+        payment.setCustomerName("Walk-in Co");
+        payment.setAmount(new java.math.BigDecimal("500.0"));
+        payment.setPaymentMode("Cash");
+        payment.setStatus(PaymentStatus.COMPLETED);
+        // No linkedInvoice — this is a general receipt against outstanding balance.
+
+        ReceiptVoucher savedReceipt = new ReceiptVoucher();
+        savedReceipt.setId(88L);
+        savedReceipt.setCustomerCode("CUST-100");
+        savedReceipt.setStatus("Completed");
+
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForCreate(SalesDocumentType.SALES_PAYMENT, "PAY-2026-0010"))
+                .thenReturn("PAY-2026-0010");
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(savedReceipt);
+        when(receiptVoucherService.isCompletedStatus("Completed")).thenReturn(true);
+
+        paymentService.savePayment(payment);
+
+        ArgumentCaptor<ReceiptVoucher> receiptCaptor = ArgumentCaptor.forClass(ReceiptVoucher.class);
+        verify(receiptVoucherService).createReceipt(receiptCaptor.capture(), any());
+        assertEquals(ReceiptPurpose.ADVANCE_RECEIVED, receiptCaptor.getValue().getPurpose());
+        assertNull(receiptCaptor.getValue().getSalesInvoiceId());
+
+        verify(advanceApplicationService).applyAgainstOutstandingInvoices("CUST-100", 88L);
+    }
+
+    @Test
+    void receiptLinkedToInvoiceDoesNotTriggerOutstandingBalanceSweep() {
+        Payment payment = new Payment();
+        payment.setPaymentNumber("PAY-2026-0011");
+        payment.setPaymentDate(LocalDate.of(2026, 6, 1));
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setCustomerCode("CUST-101");
+        payment.setLinkedInvoice("INV-500");
+        payment.setAmount(new java.math.BigDecimal("120.0"));
+        payment.setPaymentMode("Cash");
+        payment.setStatus(PaymentStatus.COMPLETED);
+
+        com.billbull.backend.sales.invoice.SalesInvoice invoice =
+                new com.billbull.backend.sales.invoice.SalesInvoice();
+        invoice.setId(5L);
+        invoice.setInvoiceNumber("INV-500");
+        invoice.setCustomerCode("CUST-101");
+
+        ReceiptVoucher savedReceipt = new ReceiptVoucher();
+        savedReceipt.setId(89L);
+        savedReceipt.setCustomerCode("CUST-101");
+        savedReceipt.setSalesInvoiceId(5L);
+        savedReceipt.setStatus("Completed");
+
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForCreate(SalesDocumentType.SALES_PAYMENT, "PAY-2026-0011"))
+                .thenReturn("PAY-2026-0011");
+        when(salesInvoiceRepository.findByInvoiceNumber("INV-500")).thenReturn(Optional.of(invoice));
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(savedReceipt);
+
+        paymentService.savePayment(payment);
+
+        verify(advanceApplicationService, org.mockito.Mockito.never())
+                .applyAgainstOutstandingInvoices(any(), any());
     }
 
     // ---------------------------------------------------------------------

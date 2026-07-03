@@ -4,6 +4,8 @@ import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.payment.PaymentVoucherRepository;
 import com.billbull.backend.purchase.vendor.VendorRepository;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
+import com.billbull.backend.sales.advance.AdvanceApplication;
+import com.billbull.backend.sales.advance.AdvanceApplicationRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
@@ -43,12 +45,18 @@ public class StatementService {
     private static final int PRI_RETURN_CREDIT        = 6;  // Row 7 — sales return / credit note
     private static final int PRI_REFUND               = 7;  // Row 8 — refund paid/received
     private static final int PRI_DEFAULT              = 4;  // Fallback (same slot as payment receipts)
+    private static final int PRI_ADVANCE_APPLICATION  = 3;  // Same slot as SO advance adjustment
+
+    private static final String ADVANCE_APPLICATION_TYPE = "ADVANCE_APPLICATION";
 
     @Autowired
     private SalesInvoiceRepository salesInvoiceRepository;
 
     @Autowired
     private ReceiptVoucherRepository receiptVoucherRepository;
+
+    @Autowired
+    private AdvanceApplicationRepository advanceApplicationRepository;
 
     @Autowired
     private PurchaseInvoiceRepository purchaseInvoiceRepository;
@@ -103,6 +111,13 @@ public class StatementService {
         List<StatementEntryDTO> payments = receiptVoucherRepository.findStatementEntriesByCustomerCode(
                 customerCode, startDate, endDate);
 
+        // Manual advance applications (AdvanceApplicationService.apply) post a GL journal
+        // reducing AR but never link salesInvoiceId back onto the original ReceiptVoucher,
+        // so they must be surfaced here as their own dated credit entries or the running
+        // balance never reflects the AR reduction that already happened in the ledger.
+        List<StatementEntryDTO> advanceApplications = buildAdvanceApplicationEntries(
+                customerCode, startDate, endDate);
+
         List<StatementEntryDTO> combined = new ArrayList<>();
         StatementEntryDTO openingEntry = buildOpeningBalanceEntry(startDate, openingBalance, openingInvoices);
         if (openingEntry != null) {
@@ -110,6 +125,7 @@ public class StatementService {
         }
         combined.addAll(invoices);
         combined.addAll(payments);
+        combined.addAll(advanceApplications);
 
         // 3. Enrich FIRST so sortPriority is set before we sort.
         enrichCustomerEntries(combined);
@@ -139,8 +155,13 @@ public class StatementService {
             BigDecimal debit = entry.getDebit() != null ? entry.getDebit() : BigDecimal.ZERO;
             BigDecimal credit = entry.getCredit() != null ? entry.getCredit() : BigDecimal.ZERO;
 
-            totalDebit = totalDebit.add(debit);
-            totalCredit = totalCredit.add(credit);
+            // Advance-application entries reclassify cash already counted as a credit
+            // when the advance was originally received; they must move the running
+            // balance but must not be double-counted in the Total Paid/Debit footer.
+            if (!ADVANCE_APPLICATION_TYPE.equals(entry.getType())) {
+                totalDebit = totalDebit.add(debit);
+                totalCredit = totalCredit.add(credit);
+            }
 
             // AR formula: Balance = Previous + Debit - Credit.
             // Unapplied customer advances are shown as a line item but held as a
@@ -158,6 +179,39 @@ public class StatementService {
         resp.setClosingBalance(runningBalance);
 
         return resp;
+    }
+
+    // Manual advance applications (via AdvanceApplicationService.apply) live only in the
+    // advance_applications table and post a GL journal, but never mutate the original
+    // ReceiptVoucher.salesInvoiceId. Surface each APPLIED row as its own credit entry
+    // dated on its appliedDate so the running AR balance reflects the reduction.
+    private List<StatementEntryDTO> buildAdvanceApplicationEntries(String customerCode, LocalDate startDate,
+            LocalDate endDate) {
+        List<ReceiptVoucher> advanceReceipts = receiptVoucherRepository.findByCustomerCodeAndPurpose(
+                customerCode, com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED);
+        if (advanceReceipts.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<StatementEntryDTO> entries = new ArrayList<>();
+        for (ReceiptVoucher rv : advanceReceipts) {
+            List<AdvanceApplication> applications = advanceApplicationRepository.findByAdvanceReceiptId(rv.getId());
+            for (AdvanceApplication app : applications) {
+                if (!"APPLIED".equals(app.getStatus())) continue;
+                LocalDate appliedDate = app.getAppliedDate();
+                if (appliedDate == null) continue;
+                if (startDate != null && appliedDate.isBefore(startDate)) continue;
+                if (endDate != null && appliedDate.isAfter(endDate)) continue;
+
+                StatementEntryDTO entry = new StatementEntryDTO(appliedDate, appliedDate.atStartOfDay(),
+                        rv.getVoucherId(), ADVANCE_APPLICATION_TYPE, BigDecimal.ZERO, app.getAppliedAmount());
+                entry.setSortPriority(PRI_ADVANCE_APPLICATION);
+                entry.setDescription("Advance Applied to Invoice " + app.getInvoiceNumber());
+                entry.setReference(app.getInvoiceNumber());
+                entries.add(entry);
+            }
+        }
+        return entries;
     }
 
     // QA-018: backfill description + reference per entry by batch-fetching the
@@ -265,6 +319,8 @@ public class StatementService {
                     entry.setSortPriority(PRI_DEFAULT);
                     entry.setReference("-");
                 }
+            } else if (ADVANCE_APPLICATION_TYPE.equals(type)) {
+                // sortPriority/description/reference already set in buildAdvanceApplicationEntries.
             } else {
                 entry.setSortPriority(PRI_DEFAULT);
                 if (entry.getDescription() == null) entry.setDescription(prettyType(type));

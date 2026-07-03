@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+
+<button onclick="test()">Connect</button>
+
+<script src="https://cdn.jsdelivr.net/npm/qz-tray/qz-tray.js"></script>
+
+<script>
+async function test() {
+    try {
+        await qz.websocket.connect();
+        alert("Connected");
+        const printers = await qz.printers.find();
+        console.log(printers);
+    } catch(e) {
+        console.error(e);
+    }
+}
+</script>
+
+</body>
+</html>

@@ -91,6 +91,7 @@ public class SalesInvoiceService {
     private final PaymentService paymentService;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final PosDayCloseRepository dayCloseRepository;
+    private final com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -117,7 +118,8 @@ public class SalesInvoiceService {
             BatchSelectionService batchSelectionService,
             PaymentService paymentService,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
-            PosDayCloseRepository dayCloseRepository) {
+            PosDayCloseRepository dayCloseRepository,
+            com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -144,6 +146,7 @@ public class SalesInvoiceService {
         this.paymentService = paymentService;
         this.notifPublisher = notifPublisher;
         this.dayCloseRepository = dayCloseRepository;
+        this.advanceApplicationService = advanceApplicationService;
     }
 
     // ----------------------------
@@ -450,37 +453,29 @@ public class SalesInvoiceService {
             // RV is only created for whatever the user collected on top of
             // the carried advance.
             BigDecimal remainingPaidToReceipt = paid;
+
+            // QA-032 (SO-carried advance): re-link ReceiptVouchers already posted
+            // against this invoice's Sales Order, so the cash isn't double-counted.
             if (refreshed.getLinkedSalesOrder() != null && !refreshed.getLinkedSalesOrder().isBlank()) {
                 com.billbull.backend.sales.salesorder.SalesOrder linkedSo =
                         salesOrderRepository.findBySoNumber(refreshed.getLinkedSalesOrder()).orElse(null);
                 if (linkedSo != null) {
-                    java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> advanceRvs =
+                    java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> soAdvances =
                             receiptVoucherRepo.findBySalesOrderIdOrderByDateDesc(linkedSo.getId());
-                    for (com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv : advanceRvs) {
-                        if (rv.getSalesInvoiceId() != null) continue; // already linked elsewhere
-                        if (rv.getAmount() == null) continue;
-                        BigDecimal rvAmt = rv.getAmount();
-                        // Skip non-positive RVs and any RV larger than what's left to apply (1-cent tolerance).
-                        if (rvAmt.signum() <= 0
-                                || rvAmt.compareTo(remainingPaidToReceipt.add(new BigDecimal("0.01"))) > 0) continue;
-                        rv.setSalesInvoiceId(refreshed.getId());
-                        rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.AGAINST_INVOICE);
-                        receiptVoucherRepo.save(rv);
-                        remainingPaidToReceipt = remainingPaidToReceipt.subtract(rvAmt);
-                        // Post the advance-application clearing entry:
-                        //   Dr Customer Advance (2060)   [rvAmt]
-                        //   Cr Accounts Receivable (1100) [rvAmt]
-                        // This clears the liability posted when the SO advance was received
-                        // and reduces AR to match the net amount the customer still owes.
-                        postingEngineService.createJournalFromAdvanceApplication(
-                                rv.getId(),
-                                refreshed.getInvoiceNumber(),
-                                rv.getAmount(),
-                                refreshed.getInvoiceDate() != null
-                                        ? refreshed.getInvoiceDate()
-                                        : java.time.LocalDate.now());
-                    }
+                    remainingPaidToReceipt = applyCustomerAdvances(refreshed, soAdvances, remainingPaidToReceipt);
                 }
+            }
+
+            // General advances (no Sales Order link) — e.g. collected via the
+            // "Receive Advance" tab. Applied FIFO (oldest first) against whatever
+            // of this invoice's paid amount the SO-advance step above didn't cover.
+            if (remainingPaidToReceipt.compareTo(new BigDecimal("0.01")) > 0
+                    && refreshed.getCustomerCode() != null && !refreshed.getCustomerCode().isBlank()) {
+                java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> generalAdvances =
+                        receiptVoucherRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
+                                refreshed.getCustomerCode(),
+                                com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED);
+                remainingPaidToReceipt = applyCustomerAdvances(refreshed, generalAdvances, remainingPaidToReceipt);
             }
 
             if (remainingPaidToReceipt.compareTo(new BigDecimal("0.01")) > 0) {
@@ -492,6 +487,25 @@ public class SalesInvoiceService {
                         refreshed.getInvoiceDate(),
                         null,   // bankAccount — not applicable for initial receipt
                         null);  // chequeDate  — not applicable for initial receipt
+            }
+        }
+
+        // Settle the invoice's remaining OUTSTANDING BALANCE (not just cash
+        // collected at sale time) against the customer's open advances. Covers
+        // invoices posted on credit (Paid = 0) for a customer who already has
+        // an advance sitting on account — the block above only reconciles cash
+        // handed over *at this invoice's own creation*, so an unpaid invoice
+        // never reached it and the customer's advance sat unused forever.
+        if (isNewlyFinalized) {
+            SalesInvoice withBalance = getById(saved.getId());
+            BigDecimal outstandingBalance = withBalance.getBalance() != null ? withBalance.getBalance() : BigDecimal.ZERO;
+            if (outstandingBalance.compareTo(new BigDecimal("0.01")) > 0
+                    && withBalance.getCustomerCode() != null && !withBalance.getCustomerCode().isBlank()) {
+                java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> generalAdvances =
+                        receiptVoucherRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
+                                withBalance.getCustomerCode(),
+                                com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED);
+                applyCustomerAdvances(withBalance, generalAdvances, outstandingBalance);
             }
         }
 
@@ -507,6 +521,47 @@ public class SalesInvoiceService {
         }
 
         return getById(saved.getId());
+    }
+
+    /**
+     * Applies as many of the given candidate advance ReceiptVouchers (already
+     * ordered FIFO by the caller) against {@code invoice} as needed to cover
+     * {@code remainingToCover}, via AdvanceApplicationService.apply() — the same
+     * path used by manual/user-triggered applications, so both flows produce a
+     * proper AdvanceApplication audit row and the same validation/locking.
+     *
+     * Deliberately lets AdvanceApplicationService.apply() exceptions propagate:
+     * apply() is @Transactional and joins this method's caller's (save()'s)
+     * transaction, so an exception here already marks the whole invoice-save
+     * transaction rollback-only regardless of whether it's caught. Swallowing it
+     * would only hide the failure and risk a later confusing
+     * UnexpectedRollbackException — better to fail the invoice save outright so
+     * advances are never left in an inconsistent state relative to the invoice.
+     *
+     * @return the remaining amount still not matched to an advance (0 if fully covered)
+     */
+    BigDecimal applyCustomerAdvances(SalesInvoice invoice,
+            List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> candidateAdvances,
+            BigDecimal remainingToCover) {
+        BigDecimal remaining = remainingToCover;
+        for (com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv : candidateAdvances) {
+            if (remaining.compareTo(new BigDecimal("0.01")) <= 0) break;
+            if (rv.getSalesInvoiceId() != null) continue; // already applied elsewhere
+
+            var openAdvances = advanceApplicationService.findOpenAdvances(rv.getCustomerCode());
+            BigDecimal openBalance = openAdvances.stream()
+                    .filter(a -> a.receiptId().equals(rv.getId()))
+                    .map(com.billbull.backend.sales.advance.AdvanceApplicationService.AdvanceBalance::openBalance)
+                    .findFirst()
+                    .orElse(BigDecimal.ZERO);
+            if (openBalance.signum() <= 0) continue;
+
+            BigDecimal toApply = openBalance.min(remaining);
+            advanceApplicationService.apply(rv.getId(), invoice.getInvoiceNumber(), toApply,
+                    invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : java.time.LocalDate.now());
+            remaining = remaining.subtract(toApply);
+        }
+        return remaining;
     }
 
     private List<DeliveryNoteItem> loadLinkedDeliveryItems(SalesInvoice invoice) {
