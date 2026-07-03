@@ -67,4 +67,17 @@ public class PosPrinterController {
         service.decommission(id);
         return ResponseEntity.noContent().build();
     }
+
+    // Server-relayed ESC/POS print for Network/IP printers — lets any device (phone,
+    // tablet, another PC) print without a local workstation agent installed. USB/
+    // Windows-queue printers still require the local agent since only the machine
+    // they're physically plugged into can reach them.
+    @PostMapping("/{id}/print/escpos")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.Map<String, Object>> printEscPos(@PathVariable Long id, @RequestBody PrintEscPosRequest req) {
+        service.printEscPos(id, req.dataBase64());
+        return ResponseEntity.ok(java.util.Map.of("ok", true, "message", "ESC/POS print job sent successfully."));
+    }
+
+    public record PrintEscPosRequest(String dataBase64) {}
 }

@@ -423,3 +423,24 @@ export const buildEscPosTestReceipt = ({
 };
 
 export const escPosPaperWidthDots = (paperSize) => PAPER_DOTS[String(paperSize || '').includes('58') ? 58 : 80];
+
+// Generic bridge for any receipt that's already rendered as fixed-width plain
+// text (layaway slips, POS X/Z reports, etc.) — wraps it with the same
+// init/heating/codepage preamble as the full receipt builder above so it gets
+// proper density/darkness on the print head instead of falling back to the
+// text/GDI agent path (which has no heat control and reads faint).
+export const buildEscPosFromPlainText = (text) => {
+  const w = new ByteWriter();
+  w.push(CMD.INIT);
+  w.push(CMD.SET_HEATING());
+  w.push(CMD.CODEPAGE_WPC1252);
+  w.push(CMD.SELECT_FONT_A);
+  w.push(CMD.LINE_SPACING(36));
+  w.push(CMD.ALIGN_LEFT);
+  String(text || '').split('\n').forEach((line) => w.line(line));
+  w.push(CMD.FEED(3));
+  w.push(CMD.CUT_PARTIAL);
+  return w.toUint8Array();
+};
+
+export const buildEscPosFromPlainTextBase64 = (text) => uint8ArrayToBase64(buildEscPosFromPlainText(text));

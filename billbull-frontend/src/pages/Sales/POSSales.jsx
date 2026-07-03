@@ -158,8 +158,8 @@ import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
-import { resolvePrinterForContext, sendReceiptToConfiguredPrinter, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
-import { buildEscPosReceiptBase64 } from '../../utils/escPosReceipt';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64 } from '../../utils/escPosReceipt';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -2558,9 +2558,8 @@ export default function POSSales() {
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
           };
-          const layawayHtml = buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts);
           if (tplReceiptPaper === 'A4') {
-            printHtml(layawayHtml, { fast: true });
+            printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts), { fast: true });
           } else {
             const printer = resolvePrinterForContext(printerConfigs, {
               deviceType: 'RECEIPT_PRINTER',
@@ -2568,16 +2567,15 @@ export default function POSSales() {
               terminalId: currentTerminal?.terminalId || null,
             });
             if (!printer) {
-              notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
-              printHtml(layawayHtml, { fast: true });
+              notifyPrintFallback('No receipt printer is configured for this terminal — the layaway was saved, but the slip did not print. Set one up in Settings → Devices.');
             } else {
               try {
                 const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
-                await sendReceiptToConfiguredPrinter(printer, { receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
+                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText);
+                await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
-                console.warn('Configured printer failed for layaway receipt, falling back to browser print preview', err);
-                notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
-                printHtml(layawayHtml, { fast: true });
+                console.warn('ESC/POS print failed for layaway receipt', err);
+                notifyPrintFallback(`The layaway was saved, but the slip didn't print: ${err?.message || 'printer error'}.`);
               }
             }
           }
@@ -2933,11 +2931,13 @@ export default function POSSales() {
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
   ]);
 
-  // When a thermal printer is configured and reachable, print straight to it — no
-  // browser print-preview dialog. Only fall back to the print-preview dialog when
-  // there's genuinely no device to print to (nothing configured, or the configured
-  // one/agent isn't responding) so the cashier still gets a receipt out one way or
-  // another instead of nothing.
+  // ESC/POS-only: this is the only path with real density/heat/font/logo
+  // control, so thermal receipts no longer fall back to the plain-text agent
+  // path or a browser/driver print dialog — a missing printer or a failed
+  // ESC/POS send throws instead of silently degrading to a worse printout.
+  // notifyPrintFallback now reports that failure via the dismissible toast
+  // (bottom-of-screen) instead of a blocking alert() — same UI as before, just
+  // no longer paired with an actual browser-print fallback.
   const notifyPrintFallback = useCallback((message) => {
     setPrintFeedback({ type: 'error', message });
     setTimeout(() => setPrintFeedback(null), 6000);
@@ -2945,7 +2945,6 @@ export default function POSSales() {
 
   const printThermalReceiptWithConfiguredPrinter = useCallback(async ({
     full,
-    html,
     text,
     escPosBase64,
     title = 'BillBull POS Receipt',
@@ -2956,31 +2955,14 @@ export default function POSSales() {
       terminalId: full.posTerminalId || currentTerminal?.terminalId || null,
     });
     if (!printer) {
-      notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead. Set one up in Settings → Printer Configuration to print silently.');
-      printHtml(html, { fast: true });
-      return { mode: 'browser-fallback', printer: null };
+      throw new Error('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
     }
-    // Prefer raw ESC/POS — it's the only path with real density/heat/font/logo
-    // control. Fall back to the plain-text agent path — both go straight to the
-    // configured printer with no OS/browser print dialog.
-    if (escPosBase64) {
-      try {
-        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
-        return { mode: 'agent-escpos', printer };
-      } catch (err) {
-        console.warn('ESC/POS print failed, falling back to plain-text agent print', err);
-      }
+    if (!escPosBase64) {
+      throw new Error('Could not build the ESC/POS receipt for this sale.');
     }
-    try {
-      await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title });
-      return { mode: 'agent', printer };
-    } catch (err) {
-      console.warn('Configured printer failed, falling back to browser print preview', err);
-      notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead. Check the print agent is running.`);
-      printHtml(html, { fast: true });
-      return { mode: 'browser-fallback', printer, error: err };
-    }
-  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs, notifyPrintFallback]);
+    await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+    return { mode: 'agent-escpos', printer };
+  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
 
   const processPayment = async () => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
@@ -3160,7 +3142,11 @@ export default function POSSales() {
 
       if (tplInvoicePaper !== 'A4') {
         try {
-          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+          let creditPrevBalAuto = null;
+          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
+            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
+          }
+          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             cashGiven: paid.paidAmount,
             changeAmount: changeDue,
@@ -3176,7 +3162,6 @@ export default function POSSales() {
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
-            html,
             text,
             escPosBase64,
             title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
@@ -3184,6 +3169,7 @@ export default function POSSales() {
           openCashDrawer('RECEIPT_PRINT');
         } catch (autoPrintErr) {
           console.warn('Automatic receipt print failed', autoPrintErr);
+          alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
         }
       }
 
@@ -3345,7 +3331,7 @@ export default function POSSales() {
           if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
             try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) { }
           }
-          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
             customerPhone: custRec?.phone,
@@ -3356,7 +3342,6 @@ export default function POSSales() {
           openCashDrawer('RECEIPT_PRINT');
           await printThermalReceiptWithConfiguredPrinter({
             full,
-            html,
             text,
             escPosBase64,
             title: `Reprint ${full.invoiceNumber || reprintSelectedInvoice || ''}`.trim(),
@@ -3365,6 +3350,7 @@ export default function POSSales() {
       }
     } catch (err) {
       console.warn('Reprint error', err);
+      alert(`Reprint failed: ${err?.message || 'printer error'}.`);
     } finally {
       setReprintPrinting(false);
       setReprintConfirmOpen(false);
@@ -5140,9 +5126,8 @@ export default function POSSales() {
   // print dialog); A4 reports keep using the browser dialog since the local
   // print agent only carries raw text/ESC-POS, not full HTML, today.
   const printReportWithConfiguredPrinter = async (vm, cp, meta) => {
-    const html = renderReportHtml(vm, cp, meta);
     if (reportPrintMode !== '80mm' && reportPrintMode !== '58mm') {
-      printHtml(html);
+      printHtml(renderReportHtml(vm, cp, meta));
       return;
     }
     const printer = resolvePrinterForContext(printerConfigs, {
@@ -5151,17 +5136,16 @@ export default function POSSales() {
       terminalId: currentTerminal?.terminalId || null,
     });
     if (!printer) {
-      notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
-      printHtml(html, { fast: true });
+      notifyPrintFallback('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
       return;
     }
     try {
       const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
-      await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+      const escPosBase64 = buildEscPosFromPlainTextBase64(text);
+      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
     } catch (err) {
-      console.warn('Configured printer failed for report print, falling back to browser print preview', err);
-      notifyPrintFallback(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
-      printHtml(html, { fast: true });
+      console.warn('ESC/POS print failed for report print', err);
+      notifyPrintFallback(`Report failed to print: ${err?.message || 'printer error'}.`);
     }
   };
 
@@ -7424,7 +7408,7 @@ export default function POSSales() {
                           // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
                           // rather than re-querying posCreditBalance — by now it already reflects
                           // this invoice and would be mislabeled as "previous balance".
-                          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
@@ -7437,13 +7421,12 @@ export default function POSSales() {
                           });
                           await printThermalReceiptWithConfiguredPrinter({
                             full,
-                            html,
                             text,
                             escPosBase64,
                             title: `Receipt ${full.invoiceNumber || ''}`.trim(),
                           });
                         }
-                      } catch (err) { console.warn('POS print error', err); }
+                      } catch (err) { console.warn('POS print error', err); alert(`Print failed: ${err?.message || 'printer error'}.`); }
                     }}
                       className="flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
                       <Printer className="h-4 w-4" />Print Receipt
@@ -8550,7 +8533,7 @@ export default function POSSales() {
                   // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
                   // rather than re-querying posCreditBalance — by now it already reflects
                   // this invoice and would be mislabeled as "previous balance".
-                  const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                  const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
                     cashGiven: lastPaidInvoice?.paidAmount,
@@ -8565,14 +8548,13 @@ export default function POSSales() {
                   });
                   await printThermalReceiptWithConfiguredPrinter({
                     full,
-                    html,
                     text,
                     escPosBase64,
                     title: `Reprint ${full.invoiceNumber || ''}`.trim(),
                   });
                 }
                 setShowLastReceiptDialog(false);
-              } catch (err) { console.warn('Last receipt reprint error', err); }
+              } catch (err) { console.warn('Last receipt reprint error', err); alert(`Reprint failed: ${err?.message || 'printer error'}.`); }
             }}>
               <Printer className="h-4 w-4 mr-2" />Reprint
             </Button>
@@ -10182,45 +10164,34 @@ export default function POSSales() {
                   branchId: inv.branchId || currentTerminal?.branchId || null,
                   terminalId: currentTerminal?.terminalId || null,
                 });
-                // Only build the HTML (incl. QR image) when it's actually needed for the
-                // print-preview fallback — the agent path below only needs plain text.
-                const buildReturnFallbackHtml = async () => {
-                  const qrContent = buildQrContent(returnA4Data, tplOutletName);
-                  const qrDataUrl = tplReturnShowQRCode ? await QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 }) : null;
-                  return buildThermalReceiptHtml(tplReturnPaper, returnInvoiceData, {
-                    companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
-                    showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
-                    logoDataUrl: tplLogoDataUrl, zatcaQrDataUrl: qrDataUrl,
-                    stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
-                    showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
-                    outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
-                    showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt,
-                    showPaymentDetails: tplReturnColDiscount, showQRCode: tplReturnShowQRCode,
-                    showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
-                    showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms,
-                    currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
-                    cashierName: cashierDisplayName,
-                    terminalId: currentTerminal?.terminalId,
-                    counterName: currentTerminal?.counterName,
-                    customerPhone: returnInvoiceFound?.customerPhone,
-                    customerEmail: returnInvoiceFound?.customerEmail,
-                    creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
-                    creditInvoiceCredit: returnNet,
-                    creditAmountPaid: 0,
-                    creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null)
-                  });
-                };
                 if (!returnPrinter) {
-                  notifyPrintFallback('No receipt printer is configured for this terminal — showing print preview instead.');
-                  printHtml(await buildReturnFallbackHtml(), { fast: true });
+                  notifyPrintFallback('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
                 } else {
                   try {
+                    const qrContent = tplReturnShowQRCode ? buildQrContent(returnA4Data, tplOutletName) : null;
                     const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
-                    await sendReceiptToConfiguredPrinter(returnPrinter, { receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
+                    const returnEscPosBase64 = await buildEscPosReceiptBase64(tplReturnPaper, returnInvoiceData, {
+                      companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
+                      showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE',
+                      logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
+                      showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
+                      showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
+                      showQRCode: tplReturnShowQRCode, qrContent,
+                      showCustomerDetails: tplReturnShowCustomerDetails, showFooterText: tplReturnShowTerms,
+                      customerPhone: returnInvoiceData.customerPhone, currency: activeCurrency,
+                      cashierName: cashierDisplayName,
+                      terminalId: currentTerminal?.terminalId,
+                      counterName: currentTerminal?.counterName,
+                      showCreditBalance: tplReturnShowCreditBalance,
+                      creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
+                      creditInvoiceCredit: returnNet,
+                      creditAmountPaid: 0,
+                      creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null),
+                    });
+                    await sendEscPosReceiptToConfiguredPrinter(returnPrinter, { dataBase64: returnEscPosBase64, receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
                   } catch (err) {
-                    console.warn('Configured printer failed for return receipt, falling back to browser print preview', err);
-                    notifyPrintFallback(`Couldn't reach "${returnPrinter.deviceName || returnPrinter.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
-                    printHtml(await buildReturnFallbackHtml(), { fast: true });
+                    console.warn('ESC/POS print failed for return receipt', err);
+                    notifyPrintFallback(`The credit note was saved, but it didn't print: ${err?.message || 'printer error'}.`);
                   }
                 }
               }

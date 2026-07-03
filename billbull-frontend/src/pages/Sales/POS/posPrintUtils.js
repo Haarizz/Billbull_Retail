@@ -1,4 +1,5 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
+import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -121,11 +122,11 @@ export const buildThermalPrintHtml = (paperSize, { companyName, trn, header, foo
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
@@ -241,11 +242,11 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const counter = counterName || invoice.posCounterName || '';
   const D = `<div class="d"></div>`;
 
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
@@ -454,12 +455,12 @@ export const buildSalesReturnThermalHtml = (paperSize, ret, {
   const customerName = ret.customerName || '';
   const D = `<div class="d"></div>`;
 
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
@@ -736,11 +737,11 @@ export const buildLayawayReceiptHtml = (paperSize, layaway, { companyName, trn, 
     ? new Date(layaway.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     : '';
   const items = layaway.items || [];
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
@@ -859,12 +860,12 @@ export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   const amount = payment?.amount || 0;
   const D = `<div class="d"></div>`;
 
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
@@ -918,12 +919,12 @@ export const buildStatementThermalHtml = (paperSize, statement, {
     .filter(e => e?.type !== 'OPENING_BALANCE'); // opening balance is already shown separately below
   const D = `<div class="d"></div>`;
 
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
-.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
+body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+.c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #444;margin:4px 0}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
@@ -1097,11 +1098,11 @@ export const buildThermalJobCardHtml = (paperSize, job, { companyName, trn, foot
   const jobDate = job.createdAt
     ? new Date(job.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 0;color:#000}
 .c{text-align:center}.b{font-weight:bold}.d{border-top:2px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between}
 </style></head><body>
@@ -1186,16 +1187,16 @@ export const buildThermalSampleHtml = (paperSize, {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const D = `<div style="border-top:2px dashed #000;margin:4px 0"></div>`;
+  const D = `<div style="border-top:2px dashed #444;margin:4px 0"></div>`;
   const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#000;margin:4px 0 2px">${t}</div>`;
   const invNo = isReturn ? 'SR-28-042' : 'DI-28-042';
   const total = isReturn ? 'AED -1,449.00' : 'AED 102.80';
 
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
 *{margin:0;padding:0;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 2px;color:#000;filter:contrast(1.35)}
+body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace;font-size:11px;font-weight:600;line-height:1.5;padding:4px 2px;color:#000}
 .row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
