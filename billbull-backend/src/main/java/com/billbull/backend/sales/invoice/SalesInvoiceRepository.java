@@ -24,6 +24,17 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         List<SalesInvoice> findByInvoiceDateBetween(LocalDate from, LocalDate to);
 
         /**
+         * A customer's invoices still carrying an outstanding balance, oldest
+         * first — used by the historical advance-application backfill to apply
+         * open advances FIFO against the oldest unsettled invoice first.
+         */
+        @Query("SELECT s FROM SalesInvoice s WHERE s.customerCode = :customerCode " +
+               "AND s.balance > 0 AND s.status <> 'CANCELLED' " +
+               "ORDER BY s.invoiceDate ASC, s.id ASC")
+        List<SalesInvoice> findOutstandingByCustomerCodeOrderByInvoiceDateAsc(
+                        @Param("customerCode") String customerCode);
+
+        /**
          * Sales-report loader: date-bounded invoices with their line items fetched
          * in a single query (no per-invoice N+1). Pass null dates for no bound.
          */

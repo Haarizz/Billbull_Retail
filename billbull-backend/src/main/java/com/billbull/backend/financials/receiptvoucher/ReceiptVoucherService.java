@@ -47,6 +47,7 @@ public class ReceiptVoucherService {
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
 
     public ReceiptVoucherService(
             ReceiptVoucherRepository repository,
@@ -56,6 +57,7 @@ public class ReceiptVoucherService {
             OpeningInvoiceRepository openingInvoiceRepository,
             CustomerRepository customerRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
         this.repository = repository;
         this.postingEngineService = postingEngineService;
@@ -64,6 +66,7 @@ public class ReceiptVoucherService {
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
         this.branchAccessService = branchAccessService;
+        this.advanceApplicationRepository = advanceApplicationRepository;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
         try {
@@ -391,6 +394,13 @@ public class ReceiptVoucherService {
                     .filter(Objects::nonNull)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+            // Advances applied via AdvanceApplicationService.apply() settle AR through
+            // a GL journal + AdvanceApplication row, not a ReceiptVoucher linked by
+            // salesInvoiceId — fold them in here so amountPaid/balance/status stay
+            // accurate for invoices settled wholly or partly by an advance.
+            totalPaid = totalPaid.add(
+                    advanceApplicationRepository.sumAppliedByInvoiceNumber(invoice.getInvoiceNumber()));
+
             BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
             BigDecimal balance = invoiceTotal.subtract(totalPaid).max(BigDecimal.ZERO);
 
@@ -400,6 +410,15 @@ public class ReceiptVoucherService {
 
             salesInvoiceRepository.save(invoice);
         });
+    }
+
+    /**
+     * Public entry point for AdvanceApplicationService: recompute an invoice's
+     * amountPaid/balance/status after an advance has been applied against it.
+     */
+    @Transactional
+    public void syncInvoiceAfterAdvanceApplication(Long salesInvoiceId) {
+        syncLinkedInvoice(salesInvoiceId);
     }
 
     private void syncOpeningInvoice(Long openingInvoiceId) {
@@ -519,7 +538,7 @@ public class ReceiptVoucherService {
         return currentStatus != null ? currentStatus : SalesInvoiceStatus.POSTED;
     }
 
-    private boolean isCompletedStatus(String status) {
+    public boolean isCompletedStatus(String status) {
         return status != null && "Completed".equalsIgnoreCase(status.trim());
     }
 

@@ -50,6 +50,9 @@ class ReceiptVoucherServiceTest {
     @Mock
     private BranchAccessService branchAccessService;
 
+    @Mock
+    private com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
+
     private ReceiptVoucherService service;
 
     @BeforeEach
@@ -62,6 +65,7 @@ class ReceiptVoucherServiceTest {
                 openingInvoiceRepository,
                 customerRepository,
                 branchAccessService,
+                advanceApplicationRepository,
                 "target/test-receipts");
     }
 

@@ -48,6 +48,9 @@ public class PaymentService {
     private ReceiptVoucherService receiptVoucherService;
 
     @Autowired
+    private com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
+
+    @Autowired
     private SalesDocumentNumberingService numberingService;
 
     @Autowired
@@ -343,11 +346,27 @@ public class PaymentService {
         receiptVoucher.setSalesInvoiceId(linkedInvoice != null ? linkedInvoice.getId() : null);
         receiptVoucher.setOpeningInvoiceId(linkedOpeningInvoice != null ? linkedOpeningInvoice.getId() : null);
 
+        boolean isGeneralReceipt = linkedInvoice == null && linkedOpeningInvoice == null;
+
+        ReceiptVoucher saved;
         if (payment.getReceiptVoucherRecordId() != null) {
-            return receiptVoucherService.updateReceipt(payment.getReceiptVoucherRecordId(), receiptVoucher, null);
+            saved = receiptVoucherService.updateReceipt(payment.getReceiptVoucherRecordId(), receiptVoucher, null);
+        } else {
+            saved = receiptVoucherService.createReceipt(receiptVoucher, null);
         }
 
-        return receiptVoucherService.createReceipt(receiptVoucher, null);
+        // A general "Customer Receipt" (no specific invoice picked) is stored as an
+        // ADVANCE_RECEIVED ReceiptVoucher. Left alone it would only get swept up the
+        // next time an invoice happens to be saved — settle it against the customer's
+        // existing outstanding invoices right away so Customer Statement / Dashboard
+        // reflect the payment immediately, same as AdvanceBackfillService does for
+        // historical data. Any amount left over stays as the customer's open advance.
+        if (isGeneralReceipt && saved != null && receiptVoucherService.isCompletedStatus(saved.getStatus())
+                && saved.getCustomerCode() != null && !saved.getCustomerCode().isBlank()) {
+            advanceApplicationService.applyAgainstOutstandingInvoices(saved.getCustomerCode(), saved.getId());
+        }
+
+        return saved;
     }
 
     private Optional<OpeningInvoice> findOpeningInvoice(Payment payment) {
