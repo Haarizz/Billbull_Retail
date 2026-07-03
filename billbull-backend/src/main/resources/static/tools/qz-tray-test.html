@@ -1,83 +1,21 @@
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<title>QZ Tray Test</title>
-<style>
-  body { font-family: sans-serif; padding: 24px; max-width: 640px; margin: 0 auto; }
-  button { padding: 10px 16px; margin-right: 8px; margin-bottom: 16px; cursor: pointer; }
-  #status { font-weight: bold; margin-bottom: 12px; }
-  #status.ok { color: #16a34a; }
-  #status.error { color: #dc2626; }
-  pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
-</style>
-</head>
-<body>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
 
-<h2>QZ Tray Connectivity Test</h2>
-<p>Requires the <a href="https://qz.io/download/" target="_blank" rel="noopener">QZ Tray desktop app</a> to be running locally.</p>
-
-<button onclick="connect()">Connect</button>
-<button onclick="listPrinters()">List Printers</button>
-<button onclick="disconnect()">Disconnect</button>
-
-<div id="status"></div>
-<pre id="output"></pre>
+<button onclick="test()">Connect</button>
 
 <script src="https://cdn.jsdelivr.net/npm/qz-tray/qz-tray.js"></script>
 
 <script>
-function setStatus(text, ok) {
-  const el = document.getElementById("status");
-  el.textContent = text;
-  el.className = ok ? "ok" : "error";
-}
-
-function print(data) {
-  document.getElementById("output").textContent =
-    typeof data === "string" ? data : JSON.stringify(data, null, 2);
-}
-
-async function connect() {
-  try {
-    if (qz.websocket.isActive()) {
-      setStatus("Already connected", true);
-      return;
+async function test() {
+    try {
+        await qz.websocket.connect();
+        alert("Connected");
+        const printers = await qz.printers.find();
+        console.log(printers);
+    } catch(e) {
+        console.error(e);
     }
-    await qz.websocket.connect();
-    setStatus("Connected to QZ Tray", true);
-  } catch (e) {
-    console.error(e);
-    setStatus("Connection failed: " + (e.message || e), false);
-  }
-}
-
-async function listPrinters() {
-  try {
-    if (!qz.websocket.isActive()) {
-      await qz.websocket.connect();
-    }
-    const printers = await qz.printers.find();
-    console.log(printers);
-    setStatus("Connected — printers listed below", true);
-    print(printers);
-  } catch (e) {
-    console.error(e);
-    setStatus("Failed to list printers: " + (e.message || e), false);
-  }
-}
-
-async function disconnect() {
-  try {
-    if (qz.websocket.isActive()) {
-      await qz.websocket.disconnect();
-    }
-    setStatus("Disconnected", true);
-    print("");
-  } catch (e) {
-    console.error(e);
-    setStatus("Disconnect failed: " + (e.message || e), false);
-  }
 }
 </script>
 
