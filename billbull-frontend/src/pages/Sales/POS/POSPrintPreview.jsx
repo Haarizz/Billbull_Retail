@@ -103,6 +103,9 @@ export const ThermalMock = ({
       boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       ...mono,
     }}>
+      {/* Registers the Roboto Mono @font-face for this directly-rendered DOM tree —
+          unlike the iframe-based print previews, there's no <head> to embed it in,
+          so the fontFamily above would silently fall back without this. */}
       <style>{ROBOTO_MONO_FONT_FACE}</style>
 
       {/* ── Logo ── */}

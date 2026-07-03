@@ -8,7 +8,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -84,6 +88,51 @@ public class PosPrinterService {
         printer.setActive(false);
         syncDeviceRecord(printer);
         return repo.save(printer);
+    }
+
+    /**
+     * Relays a raw ESC/POS byte stream straight to a Network/IP printer's socket —
+     * no local workstation agent involved. This is what lets any device on the
+     * network (phone, tablet, another PC) print to a LAN thermal printer through
+     * nothing but the backend API, unlike USB/Windows-queue printers which can only
+     * ever be reached by the specific machine they're physically plugged into.
+     * Only ever dials the IP/port already stored on this printer's own row (set by
+     * an authenticated admin via the printer config screen) — never a
+     * client-supplied address — so this can't be used as an arbitrary network probe.
+     */
+    public void printEscPos(Long id, String dataBase64) {
+        PosPrinter printer = get(id);
+        if (printer.getConnectionType() != PosPrinterConnectionType.NETWORK_IP) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Server-relayed printing is only available for Network/IP printers.");
+        }
+        if (isBlank(printer.getIpAddress()) || printer.getPortNumber() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Printer is missing an IP address or port.");
+        }
+        if (isBlank(dataBase64)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dataBase64 is required.");
+        }
+        byte[] payload;
+        try {
+            payload = Base64.getDecoder().decode(dataBase64);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dataBase64 is not valid base64.");
+        }
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(printer.getIpAddress(), printer.getPortNumber()), 5000);
+            socket.getOutputStream().write(payload);
+            socket.getOutputStream().flush();
+            // Give the printer controller a moment to actually consume the bytes —
+            // in particular the trailing cut command — before the socket tears down;
+            // closing immediately after write() can truncate the tail on slower
+            // controllers (mirrors the same grace period in the local Node agent).
+            Thread.sleep(150);
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Unable to reach printer at " + printer.getIpAddress() + ":" + printer.getPortNumber() + " — " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void apply(PosPrinter printer, UpsertRequest req) {
