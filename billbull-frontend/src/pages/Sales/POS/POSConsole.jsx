@@ -724,8 +724,8 @@ const POSConsole = React.memo((props) => {
               <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-bold text-[#1E293B]">Local Print Agent</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Use the workstation agent to detect installed printers and send test jobs directly.</p>
-                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError}</p>}
+                  <p className="text-xs text-gray-400 mt-0.5">Detects USB / Windows-queue printers installed on this specific PC — it only ever sees printers plugged into this workstation, not other devices. For a printer with a network/LAN port, add it below as "Network / IP" instead — that works from any device (phone, tablet, other PCs) with no agent needed.</p>
+                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError} — start it by running "npm start" in tools/pos-print-agent on this PC.</p>}
                 </div>
                 <button
                   type="button"

@@ -1,5 +1,6 @@
 import { printZplBatch } from "./zebraZpl";
 import { createPrintJob, dispatchPrintJob, reportPrintJobResult } from "../api/posPrintJobApi";
+import { printPosPrinterEscPos } from "../api/posPrinterApi";
 
 const PRINT_AGENT_BASES = [
   "http://127.0.0.1:19777",
@@ -126,6 +127,13 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
     await printZplBatch(labels, printer.deviceIdentifier || printer.systemPrinterName || null);
     return { ok: true, message: "Test label sent to Zebra printer." };
   }
+  // Network/IP printers test straight through the backend relay — no local agent
+  // needed, so this works from any device including phones/tablets. Only USB/
+  // Bluetooth/Windows-queue printers, reachable solely from the machine they're
+  // plugged into, go through the local agent (with its own plain-text fallback).
+  if (escPosBase64 && printer.connectionType === "NETWORK_IP" && printer.id) {
+    return printPosPrinterEscPos(printer.id, escPosBase64);
+  }
   if (escPosBase64) {
     try {
       return await printEscPosThroughAgent({
@@ -221,6 +229,9 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
     if (isBlank(printer.ipAddress) || !printer.portNumber) {
       throw new Error("Configured network printer does not have an IP address and port.");
     }
+    if (!printer.id) {
+      throw new Error("Network printer must be saved before it can be printed to.");
+    }
   } else if (isBlank(printer.systemPrinterName)) {
     throw new Error("Configured printer does not have a system printer name.");
   }
@@ -237,14 +248,21 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
   if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
 
   try {
-    const result = await printEscPosThroughAgent({
-      printerName: printer.systemPrinterName,
-      dataBase64,
-      connectionType: printer.connectionType,
-      ipAddress: printer.ipAddress,
-      portNumber: printer.portNumber,
-      title,
-    });
+    // Network/IP printers are relayed straight through the backend, which opens
+    // the raw socket to the printer's own LAN IP — that works from any device
+    // (phone, tablet, another PC) with no local workstation agent required. USB/
+    // Bluetooth/Windows-queue printers are only reachable from the specific
+    // machine they're physically plugged into, so those still need the agent.
+    const result = printer.connectionType === "NETWORK_IP"
+      ? await printPosPrinterEscPos(printer.id, dataBase64)
+      : await printEscPosThroughAgent({
+          printerName: printer.systemPrinterName,
+          dataBase64,
+          connectionType: printer.connectionType,
+          ipAddress: printer.ipAddress,
+          portNumber: printer.portNumber,
+          title,
+        });
     if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
     return result;
   } catch (err) {

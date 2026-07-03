@@ -30,3 +30,19 @@ export const updatePosPrinterRuntime = async (id, payload) => {
 export const decommissionPosPrinter = async (id) => {
   await api.delete(`${BASE}/${id}`);
 };
+
+// Server-relayed ESC/POS print for Network/IP printers — the backend opens the raw
+// socket to the printer's own LAN IP, so this works from any device (phone, tablet,
+// another PC) without a local workstation agent installed.
+export const printPosPrinterEscPos = async (id, dataBase64) => {
+  try {
+    const res = await api.post(`${BASE}/${id}/print/escpos`, { dataBase64 });
+    return res.data;
+  } catch (err) {
+    // Normalize to a plain Error with a readable .message, same shape the local
+    // print agent's fetch-based calls already throw — callers alert on err.message
+    // without needing to know whether this went through the agent or the backend.
+    const serverMessage = err?.response?.data?.message || (typeof err?.response?.data === 'string' ? err.response.data : null);
+    throw new Error(serverMessage || err?.message || 'Print agent error.');
+  }
+};
