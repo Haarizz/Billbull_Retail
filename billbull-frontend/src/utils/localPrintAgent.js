@@ -67,9 +67,27 @@ export const resolvePrintAgentBase = async () => {
   return null;
 };
 
+// The agent returns Windows/PowerShell PascalCase fields (Name, DriverName,
+// PortName, PrinterStatus, IsDefault, StatusLabel — see tools/pos-print-agent/
+// server.js listPrinters()). Normalize to the camelCase shape the POS device
+// screen consumes (printer.name / driverName / portName), keeping the raw
+// fields too so nothing downstream that reads a PascalCase key breaks.
+const normalizeAgentPrinter = (printer) => {
+  if (!printer || typeof printer !== "object") return printer;
+  return {
+    ...printer,
+    name: printer.name ?? printer.Name ?? "",
+    driverName: printer.driverName ?? printer.DriverName ?? "",
+    portName: printer.portName ?? printer.PortName ?? "",
+    status: printer.status ?? printer.StatusLabel ?? "",
+    isDefault: Boolean(printer.isDefault ?? printer.IsDefault),
+  };
+};
+
 export const listPrintAgentPrinters = async () => {
   const data = await agentFetch("/printers");
-  return Array.isArray(data?.printers) ? data.printers : [];
+  const printers = Array.isArray(data?.printers) ? data.printers : [];
+  return printers.map(normalizeAgentPrinter);
 };
 
 export const testPrintAgentPrinter = async ({

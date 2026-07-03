@@ -1,9 +1,11 @@
-import http from "node:http";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import fs from "node:fs/promises";
-import { spawn } from "node:child_process";
+"use strict";
+
+const http = require("node:http");
+const net = require("node:net");
+const os = require("node:os");
+const path = require("node:path");
+const fs = require("node:fs/promises");
+const { spawn } = require("node:child_process");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.BILLBULL_PRINT_AGENT_PORT || 19777);
@@ -60,15 +62,35 @@ const runPowerShell = (script) =>
 
 const escapeSingleQuotes = (value) => String(value ?? "").replace(/'/g, "''");
 
+// PrinterStatus is a numeric WMI enum (0=Unknown,1=Other,2=OK,3=Degraded,...);
+// mapped to a readable label here so both the HTTP API and the tray UI can
+// show something meaningful without re-implementing the WMI status table.
+const PRINTER_STATUS_LABELS = {
+  0: "Unknown",
+  1: "Other",
+  2: "Normal",
+  3: "Degraded",
+  4: "Unknown",
+  5: "Pending Deletion",
+  6: "Error",
+  7: "Offline",
+};
+
 const listPrinters = async () => {
   const script = `
-    $items = Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus
+    $default = (Get-CimInstance -ClassName Win32_Printer -Filter "Default=TRUE" | Select-Object -First 1 -ExpandProperty Name)
+    $items = Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus, @{Name="IsDefault"; Expression={$_.Name -eq $default}}
     $items | ConvertTo-Json -Depth 3
   `;
   const raw = await runPowerShell(script);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
-  return Array.isArray(parsed) ? parsed : [parsed];
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  return list.map((printer) => ({
+    ...printer,
+    IsDefault: Boolean(printer.IsDefault),
+    StatusLabel: PRINTER_STATUS_LABELS[printer.PrinterStatus] ?? "Unknown",
+  }));
 };
 
 const printTextToPrinter = async ({ printerName, text, title = "BillBull Print Job" }) => {
@@ -348,6 +370,23 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`[billbull-pos-print-agent] listening on http://${HOST}:${PORT}`);
-});
+const startServer = () =>
+  new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(PORT, HOST, () => {
+      console.log(`[billbull-pos-print-agent] listening on http://${HOST}:${PORT}`);
+      resolve({ host: HOST, port: PORT });
+    });
+  });
+
+module.exports = { startServer, listPrinters, PORT, HOST };
+
+// Running directly (`node server.js` / `npm start`) keeps the original
+// headless behavior; the tray entrypoint requires startServer instead so it
+// can also drive the systray UI in the same process.
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error(`[billbull-pos-print-agent] failed to start:`, error?.message || error);
+    process.exit(1);
+  });
+}
