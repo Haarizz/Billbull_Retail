@@ -4,7 +4,9 @@ export async function testConnection() {
   try {
     await qz.websocket.connect();
 
-    const printer = await qz.printers.find("POS-80C");
+    const printer = await qz.printers.getDefault();
+
+    console.log(printer);
 
     const config = qz.configs.create(printer);
 
