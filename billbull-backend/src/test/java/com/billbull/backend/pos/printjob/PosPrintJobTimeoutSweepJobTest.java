@@ -42,6 +42,7 @@ class PosPrintJobTimeoutSweepJobTest {
     void setUp() {
         sweepJob = new PosPrintJobTimeoutSweepJob(jobRepo, printerRepo, eventLogService);
         ReflectionTestUtils.setField(sweepJob, "timeoutMinutes", 5);
+        ReflectionTestUtils.setField(sweepJob, "queuedExpiryMinutes", 60);
     }
 
     @Test
@@ -105,6 +106,70 @@ class PosPrintJobTimeoutSweepJobTest {
 
         verify(printerRepo, never()).findById(any());
         verify(eventLogService, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void expiresStaleQueuedJobAsFailedAndLogsDeviceEvent() {
+        PosPrintJob stale = new PosPrintJob();
+        stale.setId(7L);
+        stale.setPrinterId(5L);
+        stale.setBranchId(10L);
+        stale.setTerminalId("T001");
+        when(jobRepo.findStaleQueued(any())).thenReturn(List.of(stale));
+        when(jobRepo.expireStaleQueued(eq(7L), any(), any(), any())).thenReturn(1);
+        PosPrinter printer = new PosPrinter();
+        printer.setId(5L);
+        printer.setDeviceId(1005L);
+        when(printerRepo.findById(5L)).thenReturn(Optional.of(printer));
+
+        sweepJob.expireStaleQueuedJobs();
+
+        verify(jobRepo, times(1)).expireStaleQueued(eq(7L), any(), any(), any());
+        verify(eventLogService).record(eq(1005L), eq(PosDeviceEventType.QUEUE_TIMEOUT), any(), any(), any(),
+                eq(10L), eq("T001"));
+        // Terminal FAILED only — never claimed/executed, so a stale receipt can't print later.
+        verify(jobRepo, never()).claimForDispatch(any(), any());
+        verify(jobRepo, never()).save(any());
+    }
+
+    @Test
+    void queuedExpiryNoOpWhenNothingIsStale() {
+        when(jobRepo.findStaleQueued(any())).thenReturn(List.of());
+
+        sweepJob.expireStaleQueuedJobs();
+
+        verify(jobRepo, never()).expireStaleQueued(any(), any(), any(), any());
+    }
+
+    @Test
+    void queuedExpirySkipsJobClaimedConcurrently() {
+        // expireStaleQueued returning 0 means a dispatch claim landed first — the claim wins and
+        // the sweep must not log an event for a job it didn't actually change.
+        PosPrintJob stale = new PosPrintJob();
+        stale.setId(8L);
+        stale.setPrinterId(5L);
+        when(jobRepo.findStaleQueued(any())).thenReturn(List.of(stale));
+        when(jobRepo.expireStaleQueued(eq(8L), any(), any(), any())).thenReturn(0);
+
+        sweepJob.expireStaleQueuedJobs();
+
+        verify(printerRepo, never()).findById(any());
+        verify(eventLogService, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void queuedExpiryCutoffUsesConfiguredMinutes() {
+        ReflectionTestUtils.setField(sweepJob, "queuedExpiryMinutes", 120);
+        when(jobRepo.findStaleQueued(any())).thenReturn(List.of());
+
+        LocalDateTime before = LocalDateTime.now().minusMinutes(120);
+        sweepJob.expireStaleQueuedJobs();
+        LocalDateTime after = LocalDateTime.now().minusMinutes(120);
+
+        org.mockito.ArgumentCaptor<LocalDateTime> captor = org.mockito.ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(jobRepo).findStaleQueued(captor.capture());
+        LocalDateTime usedCutoff = captor.getValue();
+        assertEquals(true, !usedCutoff.isBefore(before) && !usedCutoff.isAfter(after));
     }
 
     @Test

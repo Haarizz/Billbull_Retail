@@ -124,10 +124,45 @@ download — it needs nothing else to run.
 
 ## Notes
 
-- `/test-print` and `/print/receipt` remain plain-text paths (no ESC/POS control) —
-  kept for non-thermal/fallback printers and job-card/layaway slips.
+- `/test-print` and `/print/receipt` remain plain-text paths — kept for non-thermal/
+  fallback printers. On Windows-queue printers they render through GDI (no ESC/POS
+  control); on `NETWORK_IP` printers the text is now wrapped in minimal ESC/POS
+  framing (init + WPC1252 code-page select, trailing feed + partial cut) so the
+  roll actually gets cut and non-ASCII is sanitized to single-byte instead of
+  arriving as raw UTF-8.
 - `/print/escpos` is the only path with real print-quality control (density, heat,
   font selection, dithered logo raster, native QR command). The POS sales receipt
-  flow prefers it automatically and falls back to plain text, then to browser/driver
-  printing, if the agent or printer rejects the raw job.
+  flow is **ESC/POS-only** — there is no automatic plain-text or browser/driver
+  fallback; a failed send surfaces as an error to the cashier so a degraded print
+  can't silently replace the real one.
 - Zebra Browser Print still requires Zebra's local Browser Print service to be installed when using Zebra-direct label printing.
+
+## Changelog
+
+### 0.2.0 (2026-07-04)
+
+Ships the fixes from `docs/pos-printing-pipeline-audit-2026-07-04.md`. **All tills
+must be updated to this build** — 0.1.0 never actually printed ESC/POS jobs to
+USB/Bluetooth/Windows-queue printers while still reporting success.
+
+- **Fixed silent no-print on `/print/escpos` to Windows queues (P0):** the winspool
+  `Add-Type` P/Invoke block passed `-UsingNamespace System.Runtime.InteropServices`,
+  which is already a default using for `-MemberDefinition`; the duplicate is a
+  compiler warning that Windows PowerShell 5.1 treats as an error, so the type never
+  compiled and every printer call was silently skipped while the script still
+  emitted `{"ok":true}`. Both print scripts now also run under
+  `$ErrorActionPreference = 'Stop'` and verify `WritePrinter` wrote every byte, so
+  any failure returns a real error instead of false success.
+- **Fixed printer status labels (P0):** labels now map `Get-Printer`'s MSFT_Printer
+  *flags* enum (0 = Normal, 128 = Offline, 2 = Error, …) instead of the old WMI
+  Win32_Printer table, which showed healthy printers as "Unknown" and Error printers
+  as "Normal". `WorkOffline` ("Use Printer Offline") also reports as Offline.
+- **Fixed mojibake on the GDI text path:** the job file is written as UTF-8 but was
+  read back as ANSI (`Get-Content -Raw` default on PS 5.1); it now reads
+  `-Encoding UTF8`.
+- Network plain-text jobs are framed with init/code-page/feed/cut (see Notes above)
+  and get the same 150 ms socket drain as the ESC/POS path.
+- PowerShell CLIXML stderr is decoded to a clean one-line error message
+  (e.g. `Printer not found: X`) instead of raw XML.
+- `GET /health` now reports the agent `version` so a till's installed build can be
+  verified remotely.

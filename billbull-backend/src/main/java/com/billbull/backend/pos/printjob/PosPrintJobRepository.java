@@ -58,4 +58,32 @@ public interface PosPrintJobRepository extends JpaRepository<PosPrintJob, Long> 
             """, nativeQuery = true)
     int failStaleDispatch(@Param("id") Long id, @Param("now") LocalDateTime now,
                            @Param("error") String error, @Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Jobs that have sat QUEUED past the expiry cutoff with nothing ever claiming them (e.g. the
+     * browser created the job but its dispatch call failed). COALESCE(scheduled_for, created_at)
+     * keeps deliberately future-scheduled jobs alive until their own time has also passed the
+     * cutoff. Without this expiry, stale QUEUED rows would print unexpectedly the day a real
+     * polling agent starts consuming the queue.
+     */
+    @Query(value = """
+            SELECT * FROM pos_print_jobs
+            WHERE status = 'QUEUED' AND COALESCE(scheduled_for, created_at) < :cutoff
+            """, nativeQuery = true)
+    List<PosPrintJob> findStaleQueued(@Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Atomic queued-job expiry: guarded exactly like {@link #failStaleDispatch} — only takes
+     * effect (returns 1) if the job is still QUEUED and still past the cutoff at the instant of
+     * the UPDATE, so a dispatch claim landing concurrently always wins. attempt_count is left
+     * untouched because no print attempt was ever made.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE pos_print_jobs
+            SET status = 'FAILED', completed_at = :now, last_error = :error
+            WHERE id = :id AND status = 'QUEUED' AND COALESCE(scheduled_for, created_at) < :cutoff
+            """, nativeQuery = true)
+    int expireStaleQueued(@Param("id") Long id, @Param("now") LocalDateTime now,
+                           @Param("error") String error, @Param("cutoff") LocalDateTime cutoff);
 }

@@ -47,6 +47,15 @@ public class PosPrintJobTimeoutSweepJob {
     @Value("${pos.printjob.dispatch-timeout-minutes:5}")
     private int timeoutMinutes;
 
+    /**
+     * How long a job may sit QUEUED with nothing claiming it before it's expired. In the interim
+     * browser-executed model a job is dispatched within seconds of being created, so a QUEUED row
+     * this old means the dispatch call itself failed — and a receipt from an hour ago must never
+     * suddenly print the day a real polling agent starts consuming the queue.
+     */
+    @Value("${pos.printjob.queued-expiry-minutes:60}")
+    private int queuedExpiryMinutes;
+
     public PosPrintJobTimeoutSweepJob(PosPrintJobRepository jobRepo, PosPrinterRepository printerRepo,
                                        PosDeviceEventLogService eventLogService) {
         this.jobRepo = jobRepo;
@@ -84,6 +93,45 @@ public class PosPrintJobTimeoutSweepJob {
         if (recovered > 0) {
             log.warn("[PosPrintJobTimeoutSweep] Recovered {} stale DISPATCHED job(s) older than {} minute(s).",
                     recovered, timeoutMinutes);
+        }
+    }
+
+    /**
+     * Expires jobs that never left QUEUED (their dispatch call failed) once they are older than
+     * {@code queuedExpiryMinutes}. Lands them in FAILED — same terminal state as the dispatch
+     * sweep, requiring an explicit operator {@link PosPrintJobService#retry(Long)} — never
+     * auto-executes them, so a stale receipt can't print out of nowhere later.
+     */
+    @Scheduled(fixedRate = 60000)
+    @Transactional
+    public void expireStaleQueuedJobs() {
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(queuedExpiryMinutes);
+        List<PosPrintJob> candidates = jobRepo.findStaleQueued(cutoff);
+        if (candidates.isEmpty()) {
+            return;
+        }
+
+        String error = "Expired after sitting QUEUED for over " + queuedExpiryMinutes
+                + " minute(s) without being dispatched.";
+        int expired = 0;
+        for (PosPrintJob job : candidates) {
+            int updated = jobRepo.expireStaleQueued(job.getId(), LocalDateTime.now(), error, cutoff);
+            if (updated == 0) {
+                continue; // claimed by a dispatch concurrently — the claim wins
+            }
+            expired++;
+
+            PosPrinter printer = printerRepo.findById(job.getPrinterId()).orElse(null);
+            if (printer != null && printer.getDeviceId() != null) {
+                eventLogService.record(printer.getDeviceId(), PosDeviceEventType.QUEUE_TIMEOUT,
+                        PosDeviceEventResult.FAILED, "printJob:" + job.getId(), error,
+                        job.getBranchId(), job.getTerminalId());
+            }
+        }
+
+        if (expired > 0) {
+            log.warn("[PosPrintJobTimeoutSweep] Expired {} stale QUEUED job(s) older than {} minute(s).",
+                    expired, queuedExpiryMinutes);
         }
     }
 }
