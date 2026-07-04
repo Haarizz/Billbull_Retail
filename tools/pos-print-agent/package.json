@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "start:tray": "node tray.js",
-    "build": "pkg . --targets node18-win-x64 --output dist/BillBullPrintAgent.exe",
+    "build": "pkg . --targets node18-win-x64 --output dist/BillBullPrintAgent.exe && node make-windowed.js",
     "build:installer": "npm run build && iscc installer\\BillBullPrintAgent.iss"
   },
   "bin": "tray.js",

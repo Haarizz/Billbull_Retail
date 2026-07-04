@@ -146,6 +146,17 @@ public class SalesInvoiceController {
         return service.getCustomerOutstanding(customerCode);
     }
 
+    /**
+     * Open (balance > 0) invoices for a customer, oldest first — lets a payment
+     * be targeted at a specific invoice instead of the default oldest-first sweep.
+     */
+    @GetMapping("/open")
+    @PreAuthorize("isAuthenticated()")
+    public List<SalesInvoice> getOpenInvoices(@RequestParam String customerCode) {
+        modulePermissionService.requireCanView("sales");
+        return service.getOpenInvoicesForCustomer(customerCode);
+    }
+
     @PutMapping("/{id}/status")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> updateStatus(

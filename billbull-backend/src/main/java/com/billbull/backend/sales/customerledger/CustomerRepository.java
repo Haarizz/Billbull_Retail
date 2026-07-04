@@ -46,21 +46,35 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     boolean existsByMobileAndIdNot(String mobile, Long id);
 
     /**
-     * Bulk-load every customer with its {@code savedAddresses} eagerly fetched in a single
-     * query, eliminating the per-customer lazy-init N+1 in {@link CustomerService#getAllCustomers}
-     * (ARCHFIX §4.2). DISTINCT collapses the join's row duplication. Only ONE collection is
-     * fetched here on purpose — fetching savedAddresses and branchAllocations together would
-     * produce a Cartesian product; the branch path uses {@link #findAllWithBranchAllocations()}.
+     * Bulk-load every customer with its {@code savedAddresses} batch-initialised
+     * (see {@code @BatchSize(50)} on {@link Customer#getSavedAddresses()}), eliminating the
+     * per-customer lazy-init N+1 in {@link CustomerService#getAllCustomers} (ARCHFIX §4.2).
+     * Deliberately NOT a {@code DISTINCT ... LEFT JOIN FETCH}: {@link Customer#avatar} is a
+     * {@code @Lob} column, and combining DISTINCT + a collection JOIN FETCH with a LOB column
+     * in the same result set causes Hibernate/Postgres to throw "Unable to access lob stream"
+     * for any customer whose avatar is populated. Plain findAll() + @BatchSize keeps the same
+     * query-count profile without touching the LOB stream mid dedup.
      */
-    @org.springframework.data.jpa.repository.Query(
-            "SELECT DISTINCT c FROM Customer c LEFT JOIN FETCH c.savedAddresses")
-    List<Customer> findAllWithSavedAddresses();
+    default List<Customer> findAllWithSavedAddresses() {
+        List<Customer> customers = findAll();
+        customers.forEach(c -> c.getSavedAddresses().size());
+        return customers;
+    }
 
     /**
      * Bulk-load every customer with its {@code branchAllocations} (and each allocation's branch)
-     * eagerly fetched in a single query — used only when filtering by branch (ARCHFIX §4.2).
+     * batch-initialised — used only when filtering by branch (ARCHFIX §4.2). See
+     * {@link #findAllWithSavedAddresses()} for why this avoids DISTINCT + JOIN FETCH.
      */
-    @org.springframework.data.jpa.repository.Query(
-            "SELECT DISTINCT c FROM Customer c LEFT JOIN FETCH c.branchAllocations a LEFT JOIN FETCH a.branch")
-    List<Customer> findAllWithBranchAllocations();
+    default List<Customer> findAllWithBranchAllocations() {
+        List<Customer> customers = findAll();
+        customers.forEach(c -> {
+            c.getBranchAllocations().forEach(a -> {
+                if (a.getBranch() != null) {
+                    a.getBranch().getName();
+                }
+            });
+        });
+        return customers;
+    }
 }
