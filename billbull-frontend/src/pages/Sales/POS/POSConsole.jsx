@@ -419,7 +419,7 @@ const POSConsole = React.memo((props) => {
       const target = printer.connectionType === 'ZEBRA_BROWSER_PRINT'
         ? 'Browser Print (Zebra ZPL)'
         : (printer.connectionType === 'NETWORK_IP'
-            ? `Backend relay → POST /api/pos-printers/${printer.id}/escpos`
+            ? `Backend relay → POST /api/pos/printers/${printer.id}/print/escpos`
             : 'Local agent → POST http://127.0.0.1:19777/print/escpos');
       const trace = {
         at: new Date().toISOString(),
@@ -438,13 +438,29 @@ const POSConsole = React.memo((props) => {
           testText,
           escPosBase64,
         });
-        const okTrace = { ...trace, ok: true, durationMs: Date.now() - startedAt, response: result };
+        // fallbackUsed means the ESC/POS send was rejected (typically a v4/WSD
+        // driver refusing datatype RAW) and only the text/GDI fallback printed.
+        // Sales receipts fall back the same way now, but surface it here so the
+        // operator knows to install the vendor / Generic-Text-Only driver
+        // instead of reading a green test as "full quality works".
+        const usedFallback = !!result?.fallbackUsed;
+        const okTrace = {
+          ...trace,
+          ok: true,
+          durationMs: Date.now() - startedAt,
+          response: result,
+          payloadKind: usedFallback ? 'Plain text (ESC/POS rejected — text fallback)' : trace.payloadKind,
+          escPosError: result?.escPosError || null,
+        };
         // eslint-disable-next-line no-console
         console.info('response ✓', okTrace);
         // eslint-disable-next-line no-console
         console.groupEnd();
         setPrinterTestDebug((prev) => ({ ...prev, [printer.id]: okTrace }));
-        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(result?.message || 'Printer test sent successfully.'));
+        const runtimeMessage = usedFallback
+          ? `Printed via TEXT fallback — printer rejected ESC/POS (${result?.escPosError || 'driver error'}). Sales receipts will also print in text mode; install the vendor or Generic/Text-Only driver for full quality.`
+          : (result?.message || 'Printer test sent successfully.');
+        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(runtimeMessage));
         setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
       } catch (err) {
         const errTrace = { ...trace, ok: false, durationMs: Date.now() - startedAt, error: err?.message || String(err) };
@@ -1007,6 +1023,11 @@ const POSConsole = React.memo((props) => {
                                   ? (printerTestDebug[printer.id].response?.message || JSON.stringify(printerTestDebug[printer.id].response) || 'ok')
                                   : printerTestDebug[printer.id].error}
                               </div>
+                              {printerTestDebug[printer.id].escPosError && (
+                                <div className="text-amber-600">
+                                  <span className="text-gray-400">escpos rejected:</span> {printerTestDebug[printer.id].escPosError} — printed via text/GDI fallback instead. Install the vendor or Generic/Text-Only driver for full quality.
+                                </div>
+                              )}
                               <div className="text-gray-400">sent at {printerTestDebug[printer.id].at}</div>
                             </div>
                           </details>

@@ -617,8 +617,22 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     const name = item.itemName || item.productName || item.name || 'Item';
     const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
     const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    // Same per-line discount breakdown as the HTML preview / ESC/POS builder
+    // (BBQA-5.3-015) so the text fallback matches the checkout preview too.
+    const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
+    const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
+    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     lines.push(`${qty}x ${name}`.slice(0, width));
-    lines.push(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    if (lineDiscountAmount > 0) {
+      lines.push(buildFixedWidthLine(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount), width));
+      lines.push(buildFixedWidthLine(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`, width));
+      lines.push(buildFixedWidthLine(`Net @ ${fmt(netUnit)}`, fmt(lineTotal), width));
+    } else {
+      lines.push(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    }
+    const sku = item.sku || item.itemCode || '';
+    if (sku) lines.push(`SKU: ${sku}`.slice(0, width));
     const serial = item.serialNumber || '';
     const batch = item.batchNumber || item.pinnedBatchNumber || '';
     if (serial) lines.push(`S/N: ${serial}`.slice(0, width));
