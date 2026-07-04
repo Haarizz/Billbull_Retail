@@ -13,7 +13,8 @@ import { getOpenAdvances, applyAdvance } from '../../../api/advanceApplicationAp
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
-import { resolvePrinterForContext, sendReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
+import { buildEscPosFromPlainTextBase64 } from '../../../utils/escPosReceipt';
 import { exportToPDF } from '../../../utils/exportUtils';
 import { mapStatementEntriesForExport, STATEMENT_EXPORT_COLUMNS } from '../../../utils/statementUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
@@ -193,7 +194,12 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       }
       const text = buildReceiptVoucherThermalText('80mm', lastPayment, opts);
       try {
-        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim() });
+        // ESC/POS bridge (same as layaway slips / X-Z reports) instead of the
+        // plain-text agent path — real density/heat on the print head plus a
+        // cut command, and on NETWORK_IP printers it relays via the backend so
+        // no local agent is needed.
+        const escPosBase64 = buildEscPosFromPlainTextBase64(text);
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim() });
       } catch (err) {
         console.warn('Configured printer failed for receipt voucher, falling back to browser print preview', err);
         toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
@@ -349,7 +355,9 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       }
       const text = buildStatementThermalText('80mm', freshStatement, opts);
       try {
-        await sendReceiptToConfiguredPrinter(printer, { receiptText: text, title: `Statement ${selected.code || selected.name || ''}`.trim() });
+        // ESC/POS bridge — see handlePrintReceipt above for why.
+        const escPosBase64 = buildEscPosFromPlainTextBase64(text);
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: `Statement ${selected.code || selected.name || ''}`.trim() });
       } catch (err) {
         console.warn('Configured printer failed for statement, falling back to browser print preview', err);
         toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);

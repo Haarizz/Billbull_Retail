@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POS Printing Pipeline — End-to-End Technical Audit (2026-07-04)</title>
+<style>
+  :root {
+    --ink: #1e293b;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #ffffff;
+    --panel: #f8fafc;
+    --code-bg: #f1f5f9;
+    --pre-bg: #0f172a;
+    --pre-ink: #e2e8f0;
+    --brand: #b45309;
+    --brand-soft: #fff8e7;
+    --brand-line: #fde6a9;
+    --p0: #dc2626; --p0-bg: #fef2f2;
+    --p1: #ea580c; --p1-bg: #fff7ed;
+    --p2: #b45309; --p2-bg: #fffbeb;
+    --p3: #64748b; --p3-bg: #f1f5f9;
+    --ok: #16a34a; --ok-bg: #f0fdf4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    color: var(--ink); background: var(--bg);
+    line-height: 1.6; font-size: 15px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; padding: 32px 28px 80px; }
+
+  header.report {
+    border-bottom: 3px solid var(--brand-line);
+    background: linear-gradient(180deg, var(--brand-soft), #fff);
+    margin: -32px -28px 32px; padding: 40px 28px 24px;
+  }
+  header.report h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.02em; }
+  header.report .sub { color: var(--muted); font-size: 14px; max-width: 62em; }
+  header.report .meta { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+  header.report .meta span { display: inline-block; margin-right: 18px; }
+
+  h2 { font-size: 20px; margin: 44px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); letter-spacing: -.01em; }
+  h3 { font-size: 16px; margin: 28px 0 10px; }
+  p { margin: 10px 0; max-width: 72em; }
+  ul, ol { max-width: 70em; }
+  li { margin: 4px 0; }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+    font-size: .88em; background: var(--code-bg);
+    padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  pre {
+    background: var(--pre-bg); color: var(--pre-ink);
+    border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+    font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+    font-size: 12.5px; line-height: 1.45; margin: 14px 0;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; white-space: pre; }
+  pre.diagram { font-size: 11.5px; line-height: 1.3; }
+  pre .hl-bad { color: #fca5a5; font-weight: 600; }
+  pre .hl-good { color: #86efac; font-weight: 600; }
+  pre .hl-dim { color: #94a3b8; }
+
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 650; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #fcfcfd; }
+  td code { white-space: normal; word-break: break-word; }
+
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .badge.p0 { color: var(--p0); background: var(--p0-bg); border: 1px solid #fecaca; }
+  .badge.p1 { color: var(--p1); background: var(--p1-bg); border: 1px solid #fed7aa; }
+  .badge.p2 { color: var(--p2); background: var(--p2-bg); border: 1px solid #fde68a; }
+  .badge.p3 { color: var(--p3); background: var(--p3-bg); border: 1px solid var(--line); }
+  .badge.ok { color: var(--ok); background: var(--ok-bg); border: 1px solid #bbf7d0; }
+
+  .callout {
+    border-left: 4px solid var(--p0); background: var(--p0-bg);
+    border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 18px 0; max-width: 74em;
+  }
+  .callout.good { border-left-color: var(--ok); background: var(--ok-bg); }
+  .callout.warn { border-left-color: var(--p2); background: var(--p2-bg); }
+  .callout p { margin: 6px 0; }
+
+  .toc {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 20px; margin: 20px 0 8px; font-size: 13.5px;
+  }
+  .toc b { display: block; margin-bottom: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 40px; }
+  .toc a { color: var(--ink); text-decoration: none; }
+  .toc a:hover { color: var(--brand); text-decoration: underline; }
+
+  .status-broken { color: var(--p0); font-weight: 700; }
+  .status-ok { color: var(--ok); font-weight: 700; }
+  .footnote { color: var(--muted); font-size: 12.5px; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 36px 0; }
+
+  @media print {
+    body { font-size: 11px; }
+    .page { max-width: none; padding: 0 4mm; }
+    header.report { margin: 0 0 8mm; padding: 4mm; }
+    pre { white-space: pre-wrap; word-break: break-all; background: #f1f5f9; color: #0f172a; border: 1px solid var(--line); }
+    pre .hl-bad { color: #b91c1c; } pre .hl-good { color: #15803d; } pre .hl-dim { color: #64748b; }
+    h2 { break-after: avoid; } h3 { break-after: avoid; }
+    table, pre { break-inside: avoid; }
+    .toc ol { columns: 2; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="report">
+  <h1>POS Printing Pipeline — End-to-End Technical Audit</h1>
+  <div class="sub">
+    Complete trace of the printing workflow from the POS UI to the physical printer — printer detection,
+    selection, invocation, data generation, transmission, encoding, and thermal-printer compatibility.
+    <strong>Every finding was verified against the actual codebase and/or live runtime tests on this
+    Windows 11 workstation</strong> (payload captures, spooler checks, a fake network printer, and the agent's
+    own PowerShell scripts extracted and executed verbatim). Nothing here is assumed from reading alone
+    unless explicitly marked <em>(code-read only)</em>.
+  </div>
+  <div class="meta">
+    <span><strong>Date:</strong> 2026-07-04</span>
+    <span><strong>Branch:</strong> feature/bbpos</span>
+    <span><strong>System:</strong> BillBull Retail — POS printing stack</span>
+    <span><strong>Source:</strong> docs/pos-printing-pipeline-audit-2026-07-04.md</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#s1">Architecture — the four print paths</a></li>
+    <li><a href="#s2">Live verification evidence</a></li>
+    <li><a href="#s3">Detection, selection, invocation</a></li>
+    <li><a href="#s4">Encoding summary</a></li>
+    <li><a href="#s5">Thermal compatibility &amp; ESC/POS</a></li>
+    <li><a href="#s6">Windows print API usage</a></li>
+    <li><a href="#s7">Findings register</a></li>
+    <li><a href="#s8">Overall assessment</a></li>
+    <li><a href="#s9">Addendum — fixes applied</a></li>
+  </ol>
+</nav>
+
+<div class="callout">
+  <p><strong>Headline finding (P0):</strong> USB / Bluetooth / Windows-queue thermal printing does not work at all,
+  and every layer reports success anyway — the agent's winspool script never compiles its P/Invoke type
+  (duplicate <code>-UsingNamespace</code> → warning-as-error), silently skips every printer call, and still returns
+  <code>{"ok":true}</code>. Verified live: <strong>zero spool jobs created</strong> while the job is marked SUCCEEDED and
+  the printer marked ONLINE. Only NETWORK_IP printers actually print today.</p>
+</div>
+
+<!-- ══════════════════════════════ 1 ══════════════════════════════ -->
+<h2 id="s1">1. Architecture — the four print paths</h2>
+
+<pre class="diagram">
+                     ┌──────────────────────────────────────────────────────────────┐
+                     │                       POS Frontend (React)                    │
+                     │  POSSales.jsx / POSConsole.jsx / CustomerView.jsx             │
+                     │  builders: escPosReceipt.js · posPrintUtils.js               │
+                     └───────┬───────────────┬───────────────┬───────────────┬──────┘
+                             │ A             │ B             │ C             │ D
+                             ▼               ▼               ▼               ▼
+                 POST 127.0.0.1:19777   POST /api/pos/   POST 127.0.0.1:  hidden &lt;iframe&gt;
+                 /print/escpos          printers/{id}/   19777/print/     + window.print()
+                 (raw ESC/POS b64)      print/escpos     receipt (text)   (HTML)
+                             │               │               │               │
+                             ▼               ▼               ▼               ▼
+                 Local Print Agent      Spring backend   Local Print      Chrome print
+                 (Node, server.js)      PosPrinterService  Agent (GDI)    pipeline + OS
+                             │               │               │             print dialog
+                 powershell.exe          raw TCP socket   powershell.exe        │
+                 Add-Type winspool       to printer IP:   System.Drawing        ▼
+                 OpenPrinter/            port (5s t/o,    PrintDocument    Windows driver
+                 StartDocPrinter(RAW)/   150ms drain)     DrawString       (GDI/XPS)
+                 WritePrinter                │               │               │
+                             │               │               ▼               ▼
+                             ▼               │        Windows spooler   physical printer
+                      Windows spooler ◄──────┘        (driver renders)
+                      (RAW passthrough)                      │
+                             │                               ▼
+                             ▼                        physical printer
+                      physical printer
+</pre>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Path</th><th>Used by</th><th>Payload</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>A</strong> ESC/POS → local agent → winspool RAW</td>
+      <td>POS checkout receipts, reprints, credit notes, layaway slips, X/Z reports on USB / Bluetooth / WINDOWS_QUEUE printers</td>
+      <td>raw ESC/POS bytes (base64)</td>
+      <td class="status-broken">BROKEN — silent false success (P0-1)</td>
+    </tr>
+    <tr>
+      <td><strong>B</strong> ESC/POS → backend relay → TCP</td>
+      <td>Same documents on NETWORK_IP printers (works from phones/tablets too)</td>
+      <td>raw ESC/POS bytes (base64)</td>
+      <td class="status-ok">Verified byte-identical end-to-end</td>
+    </tr>
+    <tr>
+      <td><strong>C</strong> Plain text → local agent → GDI (or bare TCP)</td>
+      <td>Customer receipt voucher &amp; statement (CustomerView.jsx), test-print fallback</td>
+      <td>UTF-8 plain text</td>
+      <td>Works, but <strong>mojibake for non-ASCII (P1-3)</strong>; network variant has <strong>no cut, no ESC/POS (P1-4)</strong></td>
+    </tr>
+    <tr>
+      <td><strong>D</strong> HTML → hidden iframe → <code>window.print()</code></td>
+      <td>A4 invoices (<code>tplInvoicePaper === 'A4'</code>), fallback preview when no printer configured</td>
+      <td>HTML</td>
+      <td class="status-ok">Works (browser dialog; driver-rendered)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p class="footnote">A fifth path proxies Zebra ZPL label jobs through the agent to Zebra Browser Print
+(<code>/print/label/zebra</code> → <code>localhost:9101/9100</code>) <em>(code-read only)</em>.</p>
+
+<h3>1.1 Sequence — POS checkout receipt (thermal, primary flow)</h3>
+
+<pre class="diagram">
+Cashier            POSSales.jsx              Backend                Print Agent           Printer
+  │  Pay             │                          │                       │                    │
+  ├─────────────────►│ processPayment()         │                       │                    │
+  │                  ├─ save invoice ──────────►│ (POST /api/sales-invoices/pos-checkout)    │
+  │                  │◄─ savedInvoice ──────────┤                       │                    │
+  │                  ├─ buildThermalReceiptArtifacts()                  │                    │
+  │                  │   ├─ buildEscPosReceiptBase64()  (ESC/POS bytes, browser-side)        │
+  │                  │   ├─ buildThermalReceiptHtml()   (unused on this path)                │
+  │                  │   └─ buildThermalReceiptText()   (job-audit payload only)             │
+  │                  ├─ resolvePrinterForContext(printerConfigs)        │                    │
+  │                  ├─ createPrintJob ────────►│ POST /api/pos/print-jobs   (best-effort)   │
+  │                  ├─ dispatchPrintJob ──────►│ PUT  .../dispatch          (best-effort)   │
+  │                  ├─ if NETWORK_IP: ────────►│ POST /api/pos/printers/{id}/print/escpos   │
+  │                  │                          ├─ raw TCP ────────────────────────────────► │
+  │                  ├─ else: POST /print/escpos ──────────────────────►│                    │
+  │                  │                          │                       ├─ powershell RAW ──►│
+  │                  ├─ reportPrintJobResult ──►│ PUT .../result         │                    │
+  │                  └─ openCashDrawer('RECEIPT_PRINT')                 │                    │
+</pre>
+
+<p>Exactly <strong>one print request per checkout</strong> is issued; no duplicate invocation was found.
+The print-job rows (<code>pos_print_jobs</code>) are bookkeeping only — the browser is both creator and
+executor (documented interim state, spec v2 §10.3); the agent does not poll the queue yet.</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 2 ══════════════════════════════ -->
+<h2 id="s2">2. Live verification evidence</h2>
+
+<p>All artifacts are reproducible; the capture harness used is the repo's own
+<code>tools/pos-print-agent/fake-printer.mjs</code>.</p>
+
+<h3>2.1 Generated ESC/POS payload (real builder code, representative invoice)</h3>
+
+<p><code>buildEscPosReceipt('80mm', …)</code> produced <strong>1,342 bytes</strong>. First 64 bytes:</p>
+
+<pre><code>1b 40 1b 37 09 ff 02 1b 74 10 1b 4d 00 1b 33 24
+1b 61 01 1b 45 01 1d 21 00 54 41 58 20 49 4e 56
+4f 49 43 45 0a 1d 21 00 1b 45 00 54 68 61 6e 6b
+20 79 6f 75 20 66 6f 72 20 73 68 6f 70 70 69 6e</code></pre>
+
+<p>Byte-by-byte: <code>1B 40</code> = ESC @ (initialize) · <code>1B 37 09 FF 02</code> = ESC 7 (heating: 9 dots,
+time 255, interval 2 — max-darkness preset for Xprinter/Gprinter-class controllers) ·
+<code>1B 74 10</code> = ESC t 16 (code page WPC1252) · <code>1B 4D 00</code> = Font A · <code>1B 33 24</code> = line spacing 36 ·
+<code>1B 61 01</code> = center · <code>1B 45 01</code> = bold on · <code>1D 21 00</code> = normal size ·
+<code>54 41 58 …</code> = "TAX INVOICE" · <code>0A</code> = LF.</p>
+
+<p>Tail: <code>1b 61 00 1b 64 03 1d 56 01</code> = align-left, <strong>feed 3 lines, partial cut</strong> — cut and feed are present.
+The QR block uses native <code>GS ( k</code> model-2 commands (select/size/EC/store/print) — confirmed in the
+fake-printer annotated trace. One <code>ESC @</code> init, one cut, no duplicates.</p>
+
+<h3>2.2 Transmission integrity (path B semantics, agent network path)</h3>
+
+<p>Sent through the agent to the fake printer on <code>127.0.0.1:9109</code>:</p>
+
+<pre><code>sha256(sent payload)      <span class="hl-good">77182c57ac710ebf8bb22fa3d3b5ac7b0fb0f84628a8af785949dafc3b04ab01</span>
+sha256(received capture)  <span class="hl-good">77182c57ac710ebf8bb22fa3d3b5ac7b0fb0f84628a8af785949dafc3b04ab01</span></code></pre>
+
+<p><strong>Byte-for-byte identical</strong> — no re-encoding, truncation, insertion, or corruption anywhere in
+HTTP → agent → TCP. The backend relay (<code>PosPrinterService.printEscPos</code>) is the same pattern in
+Java (<code>Base64.decode</code> → <code>socket.write</code> → <code>flush</code> → 150 ms drain) and performs no transformation
+<em>(code-read; same byte-transparent design)</em>.</p>
+
+<h3>2.3 Plain-text network path capture</h3>
+
+<p>The <code>/test-print</code> job that reached the fake printer contained <strong>zero ESC/POS commands</strong> and ended
+with a bare <code>\n</code> — no init, no density, <strong>no feed, no cut</strong>. Non-ASCII arrives as multi-byte UTF-8,
+which a single-byte-codepage thermal controller renders as garbage glyphs.</p>
+
+<h3>2.4 The GDI text path corrupts every non-ASCII character (reproduced live)</h3>
+
+<p>The agent writes the receipt to a temp file with Node (<code>utf8</code>, no BOM), then the PowerShell script
+reads it with <code>Get-Content -Raw</code> — <strong>which defaults to ANSI on Windows PowerShell 5.1</strong>:</p>
+
+<pre><code>File written (UTF-8):  Item… — AED 1,425.00 / <bdo dir="ltr">مؤسسة</bdo> Test
+PowerShell read back:  <span class="hl-bad">Itemâ€¦ â€” AED 1,425.00 / Ù…Ø¤Ø³Ø³Ø© Test</span></code></pre>
+
+<p>Note that <code>…</code> is a character the app's <strong>own</strong> <code>buildFixedWidthLine</code> inserts when truncating long
+labels, and <code>—</code> is inserted by the statement builder — so this fires even for pure-English data.</p>
+
+<h3>2.5 P0 — the ESC/POS → Windows-queue path never prints and reports success</h3>
+
+<p>The exact script from <code>printEscPosToPrinterQueue</code> (server.js:199-251) was extracted verbatim and
+executed against a <strong>paused</strong> local queue so the spool job would be observable:</p>
+
+<pre><code>stdout:      {"ok":true}                <span class="hl-dim">← the agent treats this as success</span>
+TYPE-EXISTS: <span class="hl-bad">False</span>                      <span class="hl-dim">← [BillBull.RawPrinter] was never compiled</span>
+JOBS:        <span class="hl-bad">(empty)</span>                    <span class="hl-dim">← NO spool job was ever created</span>
+exit code:   0</code></pre>
+
+<p>Full stderr (discarded by the agent because exit code is 0):</p>
+
+<pre><code>Add-Type : …cs(3) : Warning as Error: The using directive for
+'System.Runtime.InteropServices' appeared previously in this namespace
+Add-Type : Cannot add type. Compilation errors occurred.
+Unable to find type [BillBull.RawPrinter].   (OpenPrinter, line 31)
+Unable to find type [BillBull.RawPrinter].   (ClosePrinter, line 52)
+New-Object : Cannot find type [BillBull.RawPrinter+DOCINFOA]…</code></pre>
+
+<p><strong>Root cause chain:</strong></p>
+<ol>
+  <li><code>Add-Type -MemberDefinition</code> <strong>already includes</strong> <code>System.Runtime.InteropServices</code> as a default
+      using; the script passes it again via <code>-UsingNamespace</code> (server.js:222).</li>
+  <li>The duplicate generates compiler warning CS0105; PS 5.1's Add-Type compiles with
+      warnings-as-errors → <strong>the type is never created</strong>.</li>
+  <li>Every subsequent <code>[BillBull.RawPrinter]::…</code> call fails with <code>TypeNotFound</code> — but those are
+      <em>statement-level</em> errors under the default <code>$ErrorActionPreference = 'Continue'</code>, so execution
+      falls through to the final <code>Write-Output '{"ok":true}'</code>.</li>
+  <li>PowerShell exits 0 → <code>runPowerShell</code> resolves → agent returns
+      <code>{"ok":true,"message":"ESC/POS print job sent successfully."}</code> → frontend marks the
+      <code>pos_print_jobs</code> row <strong>SUCCEEDED</strong> → <code>updatePosPrinterRuntime</code> marks the printer <strong>ONLINE</strong>.</li>
+</ol>
+
+<p>Confirmed against both the repo agent (fresh start on :19888) and the already-installed agent
+running on :19777 — identical false-success behavior.</p>
+
+<p><strong>Removing <code>-UsingNamespace System.Runtime.InteropServices</code> was verified to fix compilation</strong>:
+the type loads, <code>OpenPrinter</code> succeeds, and the script then fails <em>loudly</em> (exit 1) at
+<code>StartDocPrinter</code> on this machine's virtual printers — which is correct, because v4/XPS-class
+drivers (Print to PDF, OneNote) legitimately reject the RAW datatype. Real thermal queues
+(vendor v3 or "Generic / Text Only" drivers) accept RAW.</p>
+
+<div class="callout">
+  <p><strong>Impact: every USB / Bluetooth / Windows-queue thermal printer configured in this system prints
+  nothing at checkout, while the cashier, the print-job audit table, and the device dashboard all
+  report success.</strong> Since the POS receipt flow is now ESC/POS-only with no fallback
+  (POSSales.jsx:2939-2949), there is no secondary path that saves the sale receipt. Only
+  NETWORK_IP printers actually print today.</p>
+</div>
+
+<h3>2.6 Printer detection status labels are wrong (reproduced live)</h3>
+
+<p><code>listPrinters()</code> (server.js:79-94) enumerates with <code>Get-Printer</code> (MSFT_Printer), whose
+<code>PrinterStatus</code> enum is <strong>flags-based</strong>: <code>0=Normal, 1=Paused, 2=Error, 4=PendingDeletion,
+128=Offline, 512=Busy, 16=PaperOut, …</code> (dumped live from this machine). But
+<code>PRINTER_STATUS_LABELS</code> (server.js:68-77) is the <strong>WMI Win32_Printer</strong> table
+(<code>0=Unknown, 2=Normal, 6=Error, 7=Offline</code>). Observed live:</p>
+
+<pre><code>"Microsoft Print to PDF"  PrinterStatus: 0 (= Normal)  →  StatusLabel: <span class="hl-bad">"Unknown"</span></code></pre>
+
+<p>Mapping consequences: healthy → "Unknown"; <strong>a printer in Error state → "Normal"</strong> (dangerously
+wrong); Offline (128) → unmapped → "Unknown" — offline printers are <strong>never</strong> labeled offline in
+the tray menu or the POS devices screen.</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 3 ══════════════════════════════ -->
+<h2 id="s3">3. Detection, selection, invocation — assessment</h2>
+
+<p><strong>Detection</strong> (<code>GET /printers</code> → <code>listPrintAgentPrinters()</code> → POSConsole devices tab):</p>
+<ul>
+  <li>Enumeration via <code>Get-Printer</code> returns all installed queues: local USB, network-mapped, shared,
+      and virtual printers. Default detected via <code>Win32_Printer Default=TRUE</code> — correct.</li>
+  <li>Refresh: on devices-tab open + a manual Refresh button (POSConsole.jsx:929). No stale cache in
+      the agent (fresh PowerShell query per call). The frontend caches the <em>agent base URL</em> per
+      session and a 15 s negative-probe cooldown (localPrintAgent.js:14-18) — sensible.</li>
+  <li>Offline filtering: none (see finding P0-2 — labels wrong, so filtering couldn't work anyway).</li>
+  <li>Case sensitivity: Windows printer names are case-insensitive at the API level
+      (<code>PrinterSettings</code>/<code>OpenPrinter</code>); the exact string from <code>Get-Printer</code> is stored via the
+      picker, so mismatch risk is low. Duplicate names cannot exist within one Windows session.</li>
+</ul>
+
+<p><strong>Selection</strong> (<code>resolvePrinterForContext</code>, localPrintAgent.js:323-366): filters
+ACTIVE + deviceType + branch, then ranks terminal-scoped default &gt; terminal-scoped &gt;
+branch default &gt; any default &gt; name. Deterministic and reasonable. If the configured Windows
+queue was deleted: GDI path throws <code>Printer not found: &lt;name&gt;</code> (IsValid check, server.js:114) —
+good; the RAW path <em>currently</em> reports success (P0-1).</p>
+
+<p><strong>Invocation</strong>: single entry per document type; <code>printHtml</code> guards double-fire with <code>hasPrinted</code>;
+checkout issues exactly one print. The only "double" is intentional bookkeeping
+(create/dispatch/report job rows around the actual print, all best-effort non-blocking).</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 4 ══════════════════════════════ -->
+<h2 id="s4">4. Encoding summary</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Path</th><th>Encoding sent</th><th>Printer expectation</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ESC/POS (A/B)</td>
+      <td>Single-byte, <code>ESC t 16</code> (WPC1252); JS chars 0x20–0xFF passed through, NFKD-decomposed accents, everything else → <code>?</code></td>
+      <td>matches (CP1252 table selected on printer)</td>
+      <td>✔ consistent; ✘ non-Latin scripts (Arabic/Malayalam) print as <code>?????</code> — verified in capture</td>
+    </tr>
+    <tr>
+      <td>Agent GDI text (C)</td>
+      <td>UTF-8 file → <strong>read as ANSI</strong> → drawn via GDI</td>
+      <td>n/a (driver rasterizes)</td>
+      <td>✘ mojibake (P1-3)</td>
+    </tr>
+    <tr>
+      <td>Agent network text (C)</td>
+      <td>raw UTF-8 bytes to :9100</td>
+      <td>printer's active code page (usually CP437)</td>
+      <td>✘ garbles non-ASCII; no cut (P1-4)</td>
+    </tr>
+    <tr>
+      <td>Browser HTML (D)</td>
+      <td>full Unicode, Roboto Mono embedded</td>
+      <td>n/a (driver rasterizes)</td>
+      <td>✔ correct for all scripts</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>CP1252 nuance: <code>…</code> (0x85) and <code>—</code> (0x97) <em>do</em> exist in WPC1252 but <code>toPrinterBytes</code> maps any
+char &gt; 0xFF to <code>?</code>, so even representable punctuation is lost on the ESC/POS path (cosmetic).</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 5 ══════════════════════════════ -->
+<h2 id="s5">5. Thermal compatibility &amp; ESC/POS assessment</h2>
+
+<div class="callout good">
+  <p><strong>The format strategy is correct.</strong> Raw ESC/POS is exactly what 58/80 mm thermal receipt printers
+  expect, and the builder (escPosReceipt.js) is genuinely good: init, clone-safe density control
+  (<code>ESC 7</code> instead of Epson-only <code>GS ( E</code>), font A select, line spacing, bold/size/align commands,
+  Floyd–Steinberg-dithered <code>GS v 0</code> logo raster, native <code>GS ( k</code> QR, feed + partial cut. Widths:
+  58 mm → 384 dots / 32 cols; 80 mm → 576 dots / 42 cols — the fixed-width text layout matches
+  (verified: every line in the captured stream is ≤ 42 chars, amounts right-aligned at col 42).</p>
+</div>
+
+<p>Defects found in the generated stream:</p>
+<ul>
+  <li><strong>TOTAL line half-width bug</strong> (escPosReceipt.js:324-326): <code>CHAR_SIZE(1,2)</code> = <code>GS ! 0x01</code> doubles
+      <em>height only</em>, but the line is formatted to <code>width/2</code> = 21 columns. Captured:
+      <code>&lt;1d&gt;!&lt;01&gt;TOTAL:&nbsp;&nbsp;&nbsp;AED 1,496.25</code> — the amount ends mid-paper instead of aligning with the other
+      totals. Either use <code>CHAR_SIZE(2,2)</code> (double width + height, keep 21 cols) or keep <code>(1,2)</code> and
+      format to the full 42 cols.</li>
+  <li>Non-Latin text destroyed (see §4). If Arabic/Malayalam receipts matter, render those lines
+      through the existing dither-raster pipeline or add per-locale code-page tables.</li>
+  <li>Text-path-only: multi-line footers are centered as a single string (second line lands
+      left-aligned); Payment Mode row missing from <code>buildThermalReceiptText</code> (present in ESC/POS &amp;
+      HTML variants); ESC/POS date format (<code>04/07/2026, 11:42:00</code>) differs from HTML
+      (<code>04 Jul 2026 11:42 AM</code>). Cosmetic.</li>
+</ul>
+
+<hr>
+
+<!-- ══════════════════════════════ 6 ══════════════════════════════ -->
+<h2 id="s6">6. Windows print API usage</h2>
+
+<ul>
+  <li><strong>winspool RAW</strong> (<code>OpenPrinter</code>/<code>StartDocPrinter</code> level-1 RAW/<code>WritePrinter</code>) — the right API
+      for ESC/POS to installed queues; bypasses GDI so density/QR/cut survive. Broken by P0-1;
+      approach itself is sound. Caveat worth handling: v4-class drivers reject datatype RAW
+      (verified) — surface that error clearly ("driver does not accept raw jobs — install the
+      vendor v3 or Generic/Text-Only driver").</li>
+  <li><strong>System.Drawing PrintDocument</strong> (GDI) for plain text — adequate as a fallback; paper width is
+      correctly sized from configured mm (<code>PaperSize</code> in 1/100 in, zero margins; server.js:96-127).</li>
+  <li><strong>QZ Tray</strong> — installed as a dependency and reachable only via the dev route <code>/printer-test</code>;
+      not used by any production flow. It duplicates what the agent does. Remove (below).</li>
+</ul>
+
+<p>Per-job overhead measured on this machine: PowerShell spawn + Add-Type ≈ <strong>0.43 s</strong> (RAW script,
+warm; ~1.1 s cold), GDI variant ≈ 0.36 s. Acceptable for POS; if it ever matters, keep one
+long-lived PowerShell child in the agent instead of spawning per job. Network paths add ~0 (+150 ms
+deliberate drain). Agent health probe is tightly bounded (400 ms timeout, 15 s negative cache).</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 7 ══════════════════════════════ -->
+<h2 id="s7">7. Findings register</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>#</th><th>Sev</th><th>Finding</th><th>Root cause</th><th>Fix</th><th>Location</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>1</td><td><span class="badge p0">P0</span></td>
+      <td>ESC/POS → USB/Bluetooth/Windows-queue printers never print; success reported everywhere (job SUCCEEDED, printer ONLINE)</td>
+      <td>Duplicate <code>-UsingNamespace System.Runtime.InteropServices</code> → Add-Type CS0105 warning-as-error → type never compiles → TypeNotFound statement errors skipped → script still prints <code>{"ok":true}</code>, exit 0</td>
+      <td>Remove the <code>-UsingNamespace</code> argument (namespace is default) <strong>and</strong> add <code>$ErrorActionPreference='Stop'</code> at the top of <em>both</em> agent scripts so any failure aborts with non-zero exit; optionally verify <code>written == bytes.Length</code></td>
+      <td><code>tools/pos-print-agent/server.js:222</code> (and :104-147 for the GDI script)</td>
+    </tr>
+    <tr>
+      <td>2</td><td><span class="badge p0">P0</span></td>
+      <td>Printer status labels wrong: healthy→"Unknown", <strong>Error→"Normal"</strong>, Offline never shown</td>
+      <td>Label table is for WMI <code>Win32_Printer.PrinterStatus</code>, but values come from <code>Get-Printer</code> (MSFT_Printer flags enum)</td>
+      <td>Map the MSFT flags enum (test bit 128→Offline, 2→Error, 1→Paused, 16→PaperOut…), or enumerate via <code>Win32_Printer</code> consistently; consider also exposing <code>WorkOffline</code></td>
+      <td><code>tools/pos-print-agent/server.js:68-77</code></td>
+    </tr>
+    <tr>
+      <td>3</td><td><span class="badge p1">P1</span></td>
+      <td>Agent GDI text path mojibakes every non-ASCII char (incl. the <code>…</code> the app itself inserts)</td>
+      <td>Node writes UTF-8 (no BOM); PS 5.1 <code>Get-Content -Raw</code> defaults to ANSI</td>
+      <td><code>Get-Content -Raw -Encoding UTF8</code>, or write the temp file UTF-16LE</td>
+      <td><code>server.js:102</code> + <code>:109</code></td>
+    </tr>
+    <tr>
+      <td>4</td><td><span class="badge p1">P1</span></td>
+      <td>Network plain-text prints: no cut, no feed, no density; UTF-8 bytes garble on CP437 printers</td>
+      <td><code>printTextToNetworkPrinter</code> writes bare text</td>
+      <td>Route thermal text through the existing <code>buildEscPosFromPlainText</code> bridge (frontend), or wrap text with INIT/FEED/CUT in the agent</td>
+      <td><code>server.js:157-166</code>; callers <code>CustomerView.jsx:196,352</code></td>
+    </tr>
+    <tr>
+      <td>5</td><td><span class="badge p1">P1</span></td>
+      <td>Customer receipt-voucher &amp; statement prints still use the plain-text path (faint GDI output, mojibake, no cut) while every other receipt was migrated to ESC/POS</td>
+      <td>Migration gap</td>
+      <td>Use <code>buildEscPosFromPlainTextBase64</code> + <code>sendEscPosReceiptToConfiguredPrinter</code> like layaway/X-Z reports</td>
+      <td><code>CustomerView.jsx:167-207, 330-360</code></td>
+    </tr>
+    <tr>
+      <td>6</td><td><span class="badge p2">P2</span></td>
+      <td>TOTAL line prints half-width, amount misaligned</td>
+      <td><code>CHAR_SIZE(1,2)</code> doubles height only but width halved to 21 cols</td>
+      <td>Full width with <code>(1,2)</code>, or <code>(2,2)</code> with 21 cols</td>
+      <td><code>escPosReceipt.js:324-326</code></td>
+    </tr>
+    <tr>
+      <td>7</td><td><span class="badge p2">P2</span></td>
+      <td>Arabic/Malayalam/CJK → <code>?????</code> on ESC/POS receipts</td>
+      <td>Single-byte CP1252 design</td>
+      <td>Raster-render non-Latin lines (dither pipeline exists) or add code-page tables; at minimum map CP1252-representable punctuation (<code>…</code>→0x85, <code>—</code>→0x97) instead of <code>?</code></td>
+      <td><code>escPosReceipt.js:79-87</code></td>
+    </tr>
+    <tr>
+      <td>8</td><td><span class="badge p2">P2</span></td>
+      <td>Failed dispatch leaves <code>pos_print_jobs</code> rows QUEUED forever; when a real polling agent ships, stale receipts would suddenly print</td>
+      <td>Sweep only recovers DISPATCHED</td>
+      <td>Expire stale QUEUED jobs too (age cutoff)</td>
+      <td><code>PosPrintJobTimeoutSweepJob.java</code></td>
+    </tr>
+    <tr>
+      <td>9</td><td><span class="badge p2">P2</span></td>
+      <td>Runtime status inference is string matching on error text (<code>"not found"</code>, <code>"offline"</code>)</td>
+      <td>heuristic</td>
+      <td>Return structured error codes from the agent (<code>{ok:false, code:'NOT_FOUND'}</code>)</td>
+      <td><code>localPrintAgent.js:22-28</code>, agent responses</td>
+    </tr>
+    <tr>
+      <td>10</td><td><span class="badge p3">P3</span></td>
+      <td>Dead QZ Tray stack shipped to production bundle (<code>qz-tray</code> dep, bundled eagerly via the <code>/printer-test</code> route import chain; note the <code>vendor-print</code> chunk itself is jspdf/html2canvas, not qz-tray)</td>
+      <td>superseded by the agent</td>
+      <td>Delete <code>utils/qzTray.js</code>, <code>utils/qzTrayCheck.js</code>, <code>utils/qzTrayPrintTest.js</code>, <code>api/qzTrayApi.js</code>, <code>services/QzService.js</code>, <code>components/PrinterTestButton.jsx</code>, the <code>/printer-test</code> route (App.jsx:215), backend <code>static/tools/qz-tray-test.html</code>, and the npm dep</td>
+      <td>frontend + backend statics</td>
+    </tr>
+    <tr>
+      <td>11</td><td><span class="badge p3">P3</span></td>
+      <td><code>ListPrinters.java</code> scratch file at repo root (javax.print unused anywhere)</td>
+      <td>leftover</td>
+      <td>Delete</td>
+      <td>repo root</td>
+    </tr>
+    <tr>
+      <td>12</td><td><span class="badge p3">P3</span></td>
+      <td>Agent README still documents "falls back to plain text, then browser print" — the POS flow is ESC/POS-only since the no-fallback change</td>
+      <td>doc drift</td>
+      <td>Update README</td>
+      <td><code>tools/pos-print-agent/README.md:130-132</code></td>
+    </tr>
+    <tr>
+      <td>13</td><td><span class="badge p3">P3</span></td>
+      <td><code>buildFixedWidthLine</code> duplicated verbatim in two files</td>
+      <td>copy</td>
+      <td>Share one util</td>
+      <td><code>escPosReceipt.js:98</code> / <code>posPrintUtils.js:557</code></td>
+    </tr>
+    <tr>
+      <td>14</td><td><span class="badge p3">P3</span></td>
+      <td>Text-receipt cosmetics: multi-line footer centering, missing Payment Mode row, date-format drift vs ESC/POS/HTML</td>
+      <td>divergence between 3 hand-synced builders</td>
+      <td>Align when next touched</td>
+      <td><code>posPrintUtils.js:566-687</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>Error handling in general is solid: agent errors propagate as readable messages
+(offline/busy/driver/missing-name checked before dispatch in <code>sendEscPosReceiptToConfiguredPrinter</code>);
+checkout wraps auto-print in try/catch (sale never rolls back on print failure) and offers manual
+retry; backend relay returns 502 with host:port detail on socket failure; agent-unreachable is a
+clear message with a bounded probe. The one systemic hole is P0-1's false success, which defeats
+all of it on the USB path.</p>
+
+<p>Thread safety: agent handles requests concurrently but each job is an isolated PowerShell
+process + temp dir — safe. Backend relay opens one socket per request — safe. The job-claim
+UPDATE is atomic (<code>claimForDispatch</code>), and result reporting is idempotent — good.</p>
+
+<hr>
+
+<!-- ══════════════════════════════ 8 ══════════════════════════════ -->
+<h2 id="s8">8. Overall assessment</h2>
+
+<ul>
+  <li><strong>Is the app generating correct print data?</strong> Yes. The ESC/POS stream is well-formed,
+      complete (init → density → codepage → content → QR → feed → cut), correctly sized for
+      58/80 mm, and matches what thermal printers expect. Verified by byte capture and annotated
+      command trace.</li>
+  <li><strong>Is the data transmitted unmodified?</strong> Yes on the network paths (SHA-256-identical capture).
+      Yes in <em>design</em> on the winspool RAW path — but that path currently <strong>never executes</strong> (P0-1).</li>
+  <li><strong>Is the right format used for thermal printers?</strong> Yes — raw ESC/POS, not driver/GDI printing,
+      is the correct choice, and the QZ-Tray/driver alternatives were rightly abandoned.</li>
+  <li><strong>Does the system actually print today?</strong> Only on NETWORK_IP printers and the browser/A4 path.
+      <strong>USB / Bluetooth / Windows-queue thermal printing is completely broken and silently
+      "succeeds"</strong> — fix #1 (a two-line change in <code>server.js</code> plus <code>$ErrorActionPreference='Stop'</code>)
+      must ship, and the rebuilt agent must be <strong>re-deployed to every till</strong> (the installed agent on
+      this machine exhibits the same bug, so existing installs are affected).</li>
+</ul>
+
+<h3>Recommended fix order</h3>
+<ol>
+  <li><strong>#1 + #2</strong> — agent <code>server.js</code> (raw-path compile fix + fail-loud + status-label map), rebuild
+      <code>BillBullPrintAgent.exe</code>, redeploy to tills, and re-run a Test Print per till (the Test Print
+      currently green-lights broken printers — after the fix it becomes trustworthy).</li>
+  <li><strong>#3 + #4 + #5</strong> — UTF-8 read fix, network-text cut/wrap, migrate CustomerView to the ESC/POS bridge.</li>
+  <li><strong>#6 + #7</strong> — receipt polish (TOTAL alignment, punctuation mapping / non-Latin strategy).</li>
+  <li><strong>#8 – #14</strong> — hygiene (stale-QUEUED sweep, structured errors, dead-code removal, doc sync).</li>
+</ol>
+
+<hr>
+
+<!-- ══════════════════════════════ 9 ══════════════════════════════ -->
+<h2 id="s9">9. Addendum — fixes applied (2026-07-04, same day)</h2>
+
+<div class="callout good">
+  <p>All P0/P1 findings and most P2/P3 findings were fixed and verified after this audit was
+  written. Agent version bumped to <strong>0.2.0</strong> (<code>GET /health</code> now returns
+  <code>version</code>); the rebuilt <code>BillBullPrintAgent.exe</code> must be redeployed to every till.</p>
+</div>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>#</th><th>Status</th><th>What shipped</th><th>Verified how</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="badge ok">FIXED</span></td>
+      <td>Dropped the duplicate <code>-UsingNamespace</code>; both agent print scripts run under <code>$ErrorActionPreference='Stop'</code>; <code>WritePrinter</code> byte-count check added</td>
+      <td>Live: RAW job to a missing printer now returns <code>Printer not found: X</code>; to a v4-driver queue returns <code>StartDocPrinter failed for …</code> (honest failure instead of <code>ok:true</code>)</td></tr>
+    <tr><td>2</td><td><span class="badge ok">FIXED</span></td>
+      <td>Labels mapped from the MSFT_Printer flags enum, most-severe-first; <code>WorkOffline</code> reports as Offline</td>
+      <td>Live <code>/printers</code>: healthy printers now show <code>Normal</code> (were <code>Unknown</code>)</td></tr>
+    <tr><td>3</td><td><span class="badge ok">FIXED</span></td>
+      <td><code>Get-Content -Raw -Encoding UTF8</code></td>
+      <td>Live: <code>Item… —</code> / Arabic reads back intact (was <code>Itemâ€¦ â€”</code>)</td></tr>
+    <tr><td>4</td><td><span class="badge ok">FIXED</span></td>
+      <td>Network text jobs framed with <code>ESC @</code> + <code>ESC t 16</code> + feed 3 + partial cut, body sanitized to single-byte CP1252, 150 ms socket drain</td>
+      <td>Fake-printer capture shows <code>INIT / codepage 16 / text / feed 3 / cut mode=1</code></td></tr>
+    <tr><td>5</td><td><span class="badge ok">FIXED</span></td>
+      <td>CustomerView receipt-voucher + statement handlers now use <code>buildEscPosFromPlainTextBase64</code> + <code>sendEscPosReceiptToConfiguredPrinter</code> (browser-print fallback kept)</td>
+      <td>Lint + production build green</td></tr>
+    <tr><td>6</td><td><span class="badge ok">FIXED</span></td>
+      <td>TOTAL formatted to the full 42/32 columns under <code>CHAR_SIZE(1,2)</code></td>
+      <td>Capture: <code>TOTAL:</code> amount right-aligns at col 42</td></tr>
+    <tr><td>7</td><td><span class="badge p2">PARTIAL</span></td>
+      <td>CP1252 punctuation map added to <code>toPrinterBytes</code> (… – — ‘ ’ “ ” • € ™)</td>
+      <td>Capture: em dash emits <code>0x97</code> (was <code>?</code>). Non-Latin (Arabic/Malayalam) raster rendering deliberately deferred — still <code>?</code></td></tr>
+    <tr><td>8</td><td><span class="badge ok">FIXED</span></td>
+      <td><code>expireStaleQueuedJobs</code> sweep phase (<code>pos.printjob.queued-expiry-minutes</code>, default 60) with guarded atomic UPDATE; <code>COALESCE(scheduled_for, created_at)</code> keeps future-scheduled jobs alive</td>
+      <td>4 new unit tests; 22/22 print-module tests green</td></tr>
+    <tr><td>9</td><td><span class="badge p2">PARTIAL</span></td>
+      <td>Agent decodes PowerShell CLIXML stderr into one clean message; RAW path uses <code>Printer not found:</code> wording the frontend heuristic already matches</td>
+      <td>Live responses show clean messages. Structured error codes (<code>{code:'NOT_FOUND'}</code>) deferred</td></tr>
+    <tr><td>10</td><td><span class="badge ok">FIXED</span></td>
+      <td>Deleted qzTray.js, qzTrayCheck.js, qzTrayPrintTest.js, qzTrayApi.js, QzService.js, PrinterTestButton.jsx, the <code>/printer-test</code> route, backend qz-tray-test.html; <code>npm uninstall qz-tray</code></td>
+      <td>No references remain in either module; production build green</td></tr>
+    <tr><td>11</td><td><span class="badge ok">FIXED</span></td>
+      <td>Deleted <code>ListPrinters.java</code> + stray <code>ListPrinters.class</code></td>
+      <td>—</td></tr>
+    <tr><td>12</td><td><span class="badge ok">FIXED</span></td>
+      <td>README fallback claims corrected; 0.2.0 changelog added with redeploy warning</td>
+      <td>—</td></tr>
+    <tr><td>13</td><td><span class="badge ok">FIXED</span></td>
+      <td><code>buildFixedWidthLine</code> exported from escPosReceipt.js; posPrintUtils.js imports it (duplicate deleted)</td>
+      <td>Capture harness runs against shared import</td></tr>
+    <tr><td>14</td><td><span class="badge p2">PARTIAL</span></td>
+      <td>Multi-line footers centered per-line; Payment Mode row added to <code>buildThermalReceiptText</code></td>
+      <td>Capture shows both. Date-format drift between the three builders left as-is</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Remaining (deliberately deferred): non-Latin raster rendering (#7), structured agent error
+codes (#9), and the ESC/POS-vs-HTML date-format alignment (#14).</p>
+
+<h3>Test artifacts produced during this audit</h3>
+<ul>
+  <li><code>scratchpad/escpos-receipt-80mm.bin</code> — generated ESC/POS payload (1,342 bytes)</li>
+  <li><code>scratchpad/captures/capture-*.bin/.txt</code> — fake-printer byte captures + annotated traces</li>
+  <li><code>scratchpad/raw-verify*.cjs</code> — standalone reproduction of the agent's winspool script,
+      paused-queue spool verification, and the verified fix</li>
+  <li>No repository code was modified by this audit.</li>
+</ul>
+
+<hr>
+<p class="footnote">Generated from <code>docs/pos-printing-pipeline-audit-2026-07-04.md</code> · BillBull Retail · 2026-07-04</p>
+
+</div>
+</body>
+</html>

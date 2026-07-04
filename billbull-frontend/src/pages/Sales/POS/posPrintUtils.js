@@ -1,5 +1,6 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
+import { buildFixedWidthLine } from '../../../utils/escPosReceipt';
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -554,15 +555,6 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
   return html;
 };
 
-const buildFixedWidthLine = (left, right, width) => {
-  const l = String(left || '');
-  const r = String(right || '');
-  if (!r) return l.slice(0, width);
-  const room = Math.max(1, width - r.length - 1);
-  const leftTrimmed = l.length > room ? `${l.slice(0, Math.max(0, room - 1))}…` : l;
-  return `${leftTrimmed}${' '.repeat(Math.max(1, width - leftTrimmed.length - r.length))}${r}`;
-};
-
 export const buildThermalReceiptText = (paperSize, invoice, {
   companyName, trn, header, footer,
   showTrn = true,
@@ -587,11 +579,15 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     return `${currency} ${v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
   const lines = [];
+  // Center each embedded line separately — multi-line values (e.g. a footer
+  // with \n) used to be padded once for the whole string, leaving every line
+  // after the first left-shifted.
   const pushCentered = (value = '') => {
-    const text = String(value);
-    if (!text) return;
-    const pad = Math.max(0, Math.floor((width - text.length) / 2));
-    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    String(value).split('\n').forEach((text) => {
+      if (!text) return;
+      const pad = Math.max(0, Math.floor((width - text.length) / 2));
+      lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    });
   };
 
   pushCentered(companyName || 'BillBull');
@@ -673,6 +669,9 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     lines.push(buildFixedWidthLine('Deposit Paid', `- ${fmt(depositApplied)}`, width));
     lines.push(buildFixedWidthLine('Balance Due', fmt(Math.max(0, bal)), width));
   }
+  if (invoice.paymentMode) {
+    lines.push(buildFixedWidthLine('Payment Mode', invoice.paymentMode, width));
+  }
   if (cashGiven != null && parseFloat(cashGiven) > 0) {
     lines.push(buildFixedWidthLine('Cash Received', fmt(cashGiven), width));
   }
@@ -698,11 +697,15 @@ export const buildThermalTestReceiptText = ({
   const width = String(paperSize || '').includes('58') ? 32 : 42;
   const hr = '-'.repeat(width);
   const lines = [];
+  // Center each embedded line separately — multi-line values (e.g. a footer
+  // with \n) used to be padded once for the whole string, leaving every line
+  // after the first left-shifted.
   const pushCentered = (value = '') => {
-    const text = String(value);
-    if (!text) return;
-    const pad = Math.max(0, Math.floor((width - text.length) / 2));
-    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    String(value).split('\n').forEach((text) => {
+      if (!text) return;
+      const pad = Math.max(0, Math.floor((width - text.length) / 2));
+      lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    });
   };
   pushCentered(companyName);
   pushCentered('POS PRINTER TEST');
@@ -784,11 +787,15 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
     return v.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   const lines = [];
+  // Center each embedded line separately — multi-line values (e.g. a footer
+  // with \n) used to be padded once for the whole string, leaving every line
+  // after the first left-shifted.
   const pushCentered = (value = '') => {
-    const text = String(value);
-    if (!text) return;
-    const pad = Math.max(0, Math.floor((width - text.length) / 2));
-    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    String(value).split('\n').forEach((text) => {
+      if (!text) return;
+      const pad = Math.max(0, Math.floor((width - text.length) / 2));
+      lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    });
   };
   const layDate = layaway.createdAt
     ? new Date(layaway.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -993,11 +1000,15 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
   const amount = payment?.amount || 0;
 
   const lines = [];
+  // Center each embedded line separately — multi-line values (e.g. a footer
+  // with \n) used to be padded once for the whole string, leaving every line
+  // after the first left-shifted.
   const pushCentered = (value = '') => {
-    const text = String(value);
-    if (!text) return;
-    const pad = Math.max(0, Math.floor((width - text.length) / 2));
-    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    String(value).split('\n').forEach((text) => {
+      if (!text) return;
+      const pad = Math.max(0, Math.floor((width - text.length) / 2));
+      lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    });
   };
 
   pushCentered('PAYMENT RECEIPT');
@@ -1044,11 +1055,15 @@ export const buildStatementThermalText = (paperSize, statement, {
     .filter((e) => e?.type !== 'OPENING_BALANCE');
 
   const lines = [];
+  // Center each embedded line separately — multi-line values (e.g. a footer
+  // with \n) used to be padded once for the whole string, leaving every line
+  // after the first left-shifted.
   const pushCentered = (value = '') => {
-    const text = String(value);
-    if (!text) return;
-    const pad = Math.max(0, Math.floor((width - text.length) / 2));
-    lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    String(value).split('\n').forEach((text) => {
+      if (!text) return;
+      const pad = Math.max(0, Math.floor((width - text.length) / 2));
+      lines.push(`${' '.repeat(pad)}${text}`.slice(0, width));
+    });
   };
 
   pushCentered('CUSTOMER STATEMENT');

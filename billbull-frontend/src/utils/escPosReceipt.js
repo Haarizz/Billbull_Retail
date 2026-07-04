@@ -72,16 +72,27 @@ class ByteWriter {
   }
 }
 
+// CP1252-representable punctuation that NFKD normalization doesn't decompose —
+// mapped to the code-page byte the printer's WPC1252 table renders natively
+// (…, – — ‘ ’ “ ” • € ™) instead of degrading to '?'.
+const CP1252_PUNCTUATION = {
+  0x20ac: 0x80, 0x2026: 0x85, 0x2013: 0x96, 0x2014: 0x97, 0x2018: 0x91,
+  0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2122: 0x99,
+};
+
 // Converts UTF-8 JS text to single-byte printer bytes: decomposes accented
-// Latin characters to their base form, drops combining marks, and falls back
-// to '?' for anything outside printable Latin-1 (e.g. emoji, CJK, Arabic),
-// since the printer's single-byte code table can't represent those anyway.
+// Latin characters to their base form, drops combining marks, maps CP1252
+// punctuation, and falls back to '?' for anything outside printable Latin-1
+// (e.g. emoji, CJK, Arabic), since the printer's single-byte code table can't
+// represent those anyway.
 const toPrinterBytes = (str) => {
   const normalized = String(str ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '');
   const bytes = new Uint8Array(normalized.length);
   for (let i = 0; i < normalized.length; i++) {
     const code = normalized.charCodeAt(i);
-    bytes[i] = code >= 0x20 && code <= 0xff ? code : (code === 0x0a || code === 0x0d ? code : 0x3f);
+    bytes[i] = (code >= 0x20 && code <= 0xff) || code === 0x0a || code === 0x0d
+      ? code
+      : (CP1252_PUNCTUATION[code] ?? 0x3f);
   }
   return bytes;
 };
@@ -95,7 +106,9 @@ const uint8ArrayToBase64 = (bytes) => {
   return btoa(binary);
 };
 
-const buildFixedWidthLine = (left, right, width) => {
+// Exported for reuse by the plain-text receipt builders in posPrintUtils.js —
+// keep the single implementation here so truncation/padding can't drift.
+export const buildFixedWidthLine = (left, right, width) => {
   const l = String(left || '');
   const r = String(right || '');
   if (!r) return l.slice(0, width);
@@ -321,8 +334,12 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.line(buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
   w.line(hr);
 
+  // GS ! 0x01 (CHAR_SIZE(1,2)) doubles HEIGHT only — the character pitch stays
+  // at the full 42/32 columns, so the line must be formatted to the full width
+  // for the amount to right-align with the other totals rows. (Formatting to
+  // width/2 here — as if the width had doubled — left TOTAL ending mid-paper.)
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
-  w.line(buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), Math.floor(width / 2)));
+  w.line(buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
   w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
 
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
