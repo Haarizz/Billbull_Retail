@@ -2263,15 +2263,20 @@ export default function POSSales() {
 
       const savedInvoice = await posCheckout(payload);
 
-      if (tplInvoicePaper !== 'A4') {
-        try {
+      try {
+        if (tplInvoicePaper === 'A4') {
+          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+          printHtml(await generatePrintHtmlAsync(template, data, options));
+        } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
           const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
           const creditAmountPaidAuto = creditPrevBalAuto != null ? 0 : null;
           const creditUpdatedBalanceAuto = creditPrevBalAuto != null
             ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
             : null;
-          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
@@ -2282,14 +2287,14 @@ export default function POSSales() {
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
-            html,
             text,
             escPosBase64,
             title: `Delivery ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
-        } catch (printErr) {
-          console.warn('Out-for-delivery receipt print failed', printErr);
         }
+      } catch (printErr) {
+        console.warn('Out-for-delivery receipt print failed', printErr);
+        alert(`Delivery order saved, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
       }
 
       setShowDeliveryModal(false);
@@ -3140,8 +3145,14 @@ export default function POSSales() {
         creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
-      if (tplInvoicePaper !== 'A4') {
-        try {
+      try {
+        if (tplInvoicePaper === 'A4') {
+          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+          printHtml(await generatePrintHtmlAsync(template, data, options));
+          openCashDrawer('RECEIPT_PRINT');
+        } else {
           let creditPrevBalAuto = null;
           if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
             try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
@@ -3167,10 +3178,10 @@ export default function POSSales() {
             title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
           openCashDrawer('RECEIPT_PRINT');
-        } catch (autoPrintErr) {
-          console.warn('Automatic receipt print failed', autoPrintErr);
-          alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
         }
+      } catch (autoPrintErr) {
+        console.warn('Automatic receipt print failed', autoPrintErr);
+        alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
       }
 
       // If this checkout settled a layaway, stamp it converted (releases its
@@ -11914,14 +11925,19 @@ export default function POSSales() {
               branchId: currentTerminal?.branchId || null,
             });
 
-            if (tplInvoicePaper !== 'A4') {
-              try {
-                // recordPayment() stamps the invoice's own paymentMode per settlement leg
-                // (last write wins for a split Cash+Card settle), so the receipt shows the
-                // mode actually selected here rather than trusting that stamp.
-                const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
-                const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
-                const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+            try {
+              // recordPayment() stamps the invoice's own paymentMode per settlement leg
+              // (last write wins for a split Cash+Card settle), so the receipt shows the
+              // mode actually selected here rather than trusting that stamp.
+              const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
+              const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
+              if (tplInvoicePaper === 'A4') {
+                const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter);
+                const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+                printHtml(await generatePrintHtmlAsync(template, data, options));
+              } else {
+                const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                   full: receiptInvoice,
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
@@ -11929,14 +11945,14 @@ export default function POSSales() {
                 });
                 await printThermalReceiptWithConfiguredPrinter({
                   full: receiptInvoice,
-                  html,
                   text,
                   escPosBase64,
                   title: `Delivery Settled ${settledInvoice?.invoiceNumber || sel.invoice || ''}`.trim(),
                 });
-              } catch (printErr) {
-                console.warn('Delivery settlement receipt print failed', printErr);
               }
+            } catch (printErr) {
+              console.warn('Delivery settlement receipt print failed', printErr);
+              alert(`Delivery settled, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
             }
 
             setDeliverySettleSelected(null);

@@ -7,7 +7,7 @@ import {
   Users, Receipt, Wallet, FileText, Search, AlertCircle, CheckCircle,
   DollarSign, Plus, Phone, Download, Printer, ChevronRight,
 } from 'lucide-react';
-import { saveSalesPayment } from '../../../api/salesPaymentApi';
+import { saveSalesPayment, getOpenInvoicesForCustomer } from '../../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
 import { getOpenAdvances, applyAdvance } from '../../../api/advanceApplicationApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
@@ -65,6 +65,9 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [receiptSuccess, setReceiptSuccess] = React.useState(null);
   const [lastPayment, setLastPayment]       = React.useState(null);
   const [receiptPrintBusy, setReceiptPrintBusy] = React.useState(false);
+  const [receiptInvoice, setReceiptInvoice] = React.useState('');
+  const [receiptOpenInvoices, setReceiptOpenInvoices] = React.useState([]);
+  const [receiptInvoicesLoading, setReceiptInvoicesLoading] = React.useState(false);
 
   // Advance form state
   const [advAmount, setAdvAmount]   = React.useState('');
@@ -104,6 +107,21 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     handleTabChange('statement');
   }, [handleTabChange]);
 
+  // Load the selected customer's open invoices so a receipt can optionally be
+  // targeted at one instead of the default oldest-invoice-first auto-apply.
+  React.useEffect(() => {
+    const selected = customerOptions.find(c => c.id === receiptCust);
+    setReceiptInvoice('');
+    if (!selected) { setReceiptOpenInvoices([]); return; }
+    let cancelled = false;
+    setReceiptInvoicesLoading(true);
+    getOpenInvoicesForCustomer(selected.code)
+      .then(data => { if (!cancelled) setReceiptOpenInvoices(Array.isArray(data) ? data : []); })
+      .catch(() => { if (!cancelled) setReceiptOpenInvoices([]); })
+      .finally(() => { if (!cancelled) setReceiptInvoicesLoading(false); });
+    return () => { cancelled = true; };
+  }, [receiptCust, customerOptions]);
+
   const handleRecordPayment = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === receiptCust);
     if (!selected) return alert('Please select a customer.');
@@ -123,22 +141,28 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         bankName: receiptMethod !== 'Cash' ? receiptBank : null,
         chequeDate: receiptMethod === 'Cheque' && receiptChequeDate ? receiptChequeDate : null,
         referenceNumber: receiptRef || null,
+        linkedInvoice: receiptInvoice || null,
         status: 'COMPLETED',
       });
       setLastPayment(saved);
-      setReceiptSuccess(`Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name}.`);
+      setReceiptSuccess(
+        receiptInvoice
+          ? `Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name} against invoice ${receiptInvoice}.`
+          : `Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name}.`
+      );
       setReceiptAmount('');
       setReceiptMethod('');
       setReceiptBank('');
       setReceiptChequeDate('');
       setReceiptRef('');
+      setReceiptInvoice('');
       if (typeof syncPosData === 'function') syncPosData();
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record payment.');
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, customerOptions, syncPosData]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptInvoice, customerOptions, syncPosData]);
 
   const handlePrintReceipt = React.useCallback(async () => {
     if (!lastPayment) return;
@@ -588,6 +612,24 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   {receiptSuccess && (
                     <div className="rounded-lg px-4 py-3 bg-emerald-50 border border-emerald-100 text-sm text-emerald-700 flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 shrink-0" />{receiptSuccess}
+                    </div>
+                  )}
+                  {receiptCust && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-700">Apply to Invoice <span className="text-gray-400 font-normal">(optional)</span></label>
+                      <Select value={receiptInvoice} onValueChange={setReceiptInvoice} disabled={receiptInvoicesLoading || receiptOpenInvoices.length === 0}>
+                        <SelectTrigger className="h-10 border-gray-200">
+                          <SelectValue placeholder={receiptInvoicesLoading ? 'Loading invoices…' : receiptOpenInvoices.length === 0 ? 'No open invoices — will apply oldest-first' : 'Auto-apply oldest invoice first…'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {receiptOpenInvoices.map(inv => (
+                            <SelectItem key={inv.id} value={inv.invoiceNumber}>
+                              {inv.invoiceNumber} — Balance <DirhamSymbol />{Number(inv.balance ?? 0).toFixed(2)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-gray-400">Leave blank to auto-apply against the oldest outstanding invoice(s); any excess is kept as an advance credit.</p>
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
