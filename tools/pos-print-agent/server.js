@@ -176,20 +176,40 @@ const printTextToPrinter = async ({ printerName, text, title = "BillBull Print J
     # past that page's right edge rather than wrapping it — that's what was
     # cropping the right side of receipts.
     $doc.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize('BillBullReceipt', ${paperWidthHundredths}, 3000)
-    # Zero soft margins so the full roll width is usable — matches the zero-margin
-    # @page CSS on the HTML print path and the full-dot-width ESC/POS path. The
-    # driver still clamps to its own unprintable hard margin, so this can't push
-    # ink past the physical print head; it just stops GDI reserving extra room the
-    # 42/32-column line width (calibrated for the full physical width) doesn't expect.
+    # Zero SOFT margins — but .NET's MarginBounds is (PaperSize minus HardMargin
+    # minus soft Margins), and HardMarginX/Y (the driver's own unprintable-edge
+    # reservation, commonly 2-4mm per side on thermal drivers) is NOT zeroed by
+    # this. That gap between the full paper width and MarginBounds.Width is
+    # exactly what was clipping the last 1-2 characters off every line on the
+    # client's POS-80C — the text was laid out for the FULL configured width,
+    # but only got a narrower box to draw into. Fixed below by measuring the
+    # actual box GDI gives us and shrinking the font to fit it instead of
+    # assuming it always equals the full configured paper width.
     $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
     $lines = $content -split "\\r?\\n"
     $index = 0
     $doc.add_PrintPage({
       param($sender, $e)
+      # Longest line in the whole job (not just this page) sets the fit — using
+      # this page's longest line only would let font size wobble page to page.
+      $longestLine = ($lines | Sort-Object Length -Descending | Select-Object -First 1)
+      $activeFont = $font
+      if ($longestLine) {
+        $measured = $e.Graphics.MeasureString($longestLine, $activeFont)
+        if ($measured.Width -gt $e.MarginBounds.Width) {
+          # Shrink proportionally to the real printable width the driver actually
+          # gave us (HardMarginX-adjusted), rather than clipping at DrawString.
+          # This keeps every character on the paper — a slightly smaller font on
+          # a narrow driver margin beats losing trailing digits off every price.
+          $scale = $e.MarginBounds.Width / $measured.Width
+          $newSize = [Math]::Max(6, [Math]::Floor($activeFont.Size * $scale * 10) / 10)
+          $activeFont = New-Object System.Drawing.Font($activeFont.FontFamily, $newSize, $activeFont.Style)
+        }
+      }
       $y = $e.MarginBounds.Top
-      $lineHeight = $font.GetHeight($e.Graphics) + 2
+      $lineHeight = $activeFont.GetHeight($e.Graphics) + 2
       while ($index -lt $lines.Length) {
-        $e.Graphics.DrawString($lines[$index], $font, $brush, $e.MarginBounds.Left, $y)
+        $e.Graphics.DrawString($lines[$index], $activeFont, $brush, $e.MarginBounds.Left, $y)
         $y += $lineHeight
         $index++
         if ($y + $lineHeight -gt $e.MarginBounds.Bottom) {
@@ -287,12 +307,24 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
   await fs.writeFile(dataFile, Buffer.from(String(dataBase64 ?? ""), "base64"));
   const script = `
     $ErrorActionPreference = 'Stop'
+    # CharSet MUST be Ansi (not Auto) on the two string-carrying P/Invokes and on
+    # DOCINFOA. CharSet.Auto resolves the entry point to the *W (Unicode) export
+    # on Windows NT — so StartDocPrinter binds to StartDocPrinterW, which reads
+    # DOCINFOW with WIDE (UTF-16) string pointers. But the struct fields are
+    # marshalled [MarshalAs(LPStr)] = ANSI, so pDataType="RAW" is passed as the
+    # ANSI bytes 52 41 57 00, which StartDocPrinterW reinterprets as the UTF-16
+    # string "䅒W" — NOT "RAW". Lenient legacy v3 GDI drivers quietly default an
+    # unrecognised-but-non-empty datatype to RAW (so it "worked" on some tills),
+    # but stricter thermal drivers (the client's POS-80C) reject it, and
+    # StartDocPrinter fails with a generic error — the exact symptom reported.
+    # Forcing CharSet.Ansi binds OpenPrinterA/StartDocPrinterA, whose DOCINFOA
+    # genuinely expects the ANSI strings we marshal, so "RAW" arrives as "RAW".
     Add-Type -Name RawPrinter -Namespace BillBull -MemberDefinition @'
-      [DllImport("winspool.drv", CharSet=CharSet.Auto, SetLastError=true)]
+      [DllImport("winspool.drv", CharSet=CharSet.Ansi, SetLastError=true)]
       public static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
       [DllImport("winspool.drv", SetLastError=true)]
       public static extern bool ClosePrinter(IntPtr hPrinter);
-      [DllImport("winspool.drv", CharSet=CharSet.Auto, SetLastError=true)]
+      [DllImport("winspool.drv", CharSet=CharSet.Ansi, SetLastError=true)]
       public static extern bool StartDocPrinter(IntPtr hPrinter, int level, ref DOCINFOA pDocInfo);
       [DllImport("winspool.drv", SetLastError=true)]
       public static extern bool EndDocPrinter(IntPtr hPrinter);
@@ -303,7 +335,7 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
       [DllImport("winspool.drv", SetLastError=true)]
       public static extern bool WritePrinter(IntPtr hPrinter, byte[] pBytes, int dwCount, out int dwWritten);
 
-      [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]
+      [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
       public struct DOCINFOA {
         [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
         [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
@@ -318,24 +350,79 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
     # skipped while the script still reported {"ok":true}. See
     # docs/pos-printing-pipeline-audit-2026-07-04.md §2.5.
 
+    # win32ErrorFor() renders a GetLastError() code already captured by the
+    # caller. GetLastWin32Error() MUST be read on the same statement as the
+    # failing P/Invoke call (see below) — routing it through a function call,
+    # or letting any other statement (even a simple if/pipeline) run first,
+    # gives the CLR/PowerShell host a chance to make its own interop call in
+    # between and clobber the thread's last-error slot. That was silently
+    # happening here: every failure was reporting Win32Error 203
+    # (ERROR_ENVVAR_NOT_FOUND) — a leftover from an unrelated call — instead of
+    # the real StartDocPrinter/WritePrinter failure code, making the specific
+    # ACCESS_DENIED(5) / INVALID_DATATYPE(1804) / queue-state diagnosis below
+    # impossible to trust.
+    function win32ErrorFor([int]$code) {
+      $msg = (New-Object System.ComponentModel.Win32Exception($code)).Message
+      "Win32Error $code\`: $msg"
+    }
+
     $printerName = '${escapeSingleQuotes(printerName)}'
     $bytes = [System.IO.File]::ReadAllBytes('${escapeSingleQuotes(dataFile)}')
+
+    # Surface the queue's live spooler state before attempting RAW — a printer
+    # that is Paused, WorkOffline, or has a jammed/stuck job ahead of this one
+    # in queue will fail StartDocPrinter/WritePrinter with the SAME generic
+    # symptom as a driver that genuinely rejects the RAW datatype, and the two
+    # need completely different fixes (resume the queue vs. change the driver).
+    $queueInfo = Get-Printer -Name $printerName -ErrorAction SilentlyContinue
+    if ($queueInfo) {
+      if ($queueInfo.PrinterStatus -ne 'Normal' -or $queueInfo.WorkOffline) {
+        # $WorkOffline is a bool that renders as blank when $false, which made the
+        # message read "offline: " — spell it out as Yes/No so a support ticket is
+        # unambiguous about whether this is a "Use Printer Offline" toggle or a
+        # genuine device Error state.
+        $offlineText = if ($queueInfo.WorkOffline) { 'Yes' } else { 'No' }
+        throw "Printer queue '$printerName' is not ready (status: $($queueInfo.PrinterStatus), offline: $offlineText) — resume/clear the queue in Windows (right-click the printer -> See what's printing -> Cancel All / uncheck Use Printer Offline), or configure a healthy receipt printer, before retrying"
+      }
+      $stuckJobs = Get-PrintJob -PrinterName $printerName -ErrorAction SilentlyContinue | Where-Object { $_.JobStatus -match 'Error|PaperOut|Paused|Blocked' }
+      if ($stuckJobs) {
+        throw "Printer has $($stuckJobs.Count) stuck job(s) blocking the queue (status: $($stuckJobs[0].JobStatus)) — clear the print queue for $printerName and retry"
+      }
+    }
+
     $hPrinter = [IntPtr]::Zero
-    if (-not [BillBull.RawPrinter]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)) {
-      throw "Printer not found: $printerName"
+    $openOk = [BillBull.RawPrinter]::OpenPrinter($printerName, [ref]$hPrinter, [IntPtr]::Zero)
+    $openErrCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    if (-not $openOk) {
+      throw "Printer not found: $printerName ($(win32ErrorFor $openErrCode))"
     }
     try {
       $docInfo = New-Object BillBull.RawPrinter+DOCINFOA
       $docInfo.pDocName = '${escapeSingleQuotes(title)}'
       $docInfo.pDataType = "RAW"
-      if (-not [BillBull.RawPrinter]::StartDocPrinter($hPrinter, 1, [ref]$docInfo)) {
-        throw "StartDocPrinter failed for $printerName"
+      $startDocOk = [BillBull.RawPrinter]::StartDocPrinter($hPrinter, 1, [ref]$docInfo)
+      $startDocErrCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+      if (-not $startDocOk) {
+        $err = win32ErrorFor $startDocErrCode
+        # ERROR_INVALID_DATATYPE (1804) is the specific signal that the driver's
+        # datatype list genuinely does not include RAW (v4/XPS-class drivers,
+        # or a driver where the RAW datatype was removed) — everything else
+        # (access denied, spooler/queue state) is an environment problem, not
+        # a driver-capability problem, and needs a different fix.
+        if ($startDocErrCode -eq 1804) {
+          throw "Driver for '$printerName' does not support RAW printing ($err) — reinstall this printer with its vendor driver or 'Generic / Text Only' instead of the current driver"
+        }
+        throw "StartDocPrinter failed for $printerName ($err)"
       }
       try {
-        if (-not [BillBull.RawPrinter]::StartPagePrinter($hPrinter)) { throw "StartPagePrinter failed" }
+        $startPageOk = [BillBull.RawPrinter]::StartPagePrinter($hPrinter)
+        $startPageErrCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if (-not $startPageOk) { throw "StartPagePrinter failed for $printerName ($(win32ErrorFor $startPageErrCode))" }
         $written = 0
-        if (-not [BillBull.RawPrinter]::WritePrinter($hPrinter, $bytes, $bytes.Length, [ref]$written)) {
-          throw "WritePrinter failed for $printerName"
+        $writeOk = [BillBull.RawPrinter]::WritePrinter($hPrinter, $bytes, $bytes.Length, [ref]$written)
+        $writeErrCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if (-not $writeOk) {
+          throw "WritePrinter failed for $printerName ($(win32ErrorFor $writeErrCode))"
         }
         if ($written -ne $bytes.Length) {
           throw "WritePrinter wrote $written of $($bytes.Length) bytes for $printerName"

@@ -139,6 +139,30 @@ download — it needs nothing else to run.
 
 ## Changelog
 
+### 0.4.0 (2026-07-04)
+
+Fixes the "text compatibility mode" fallback still firing on genuine ESC/POS
+thermal printers (e.g. EZ-P003 / "POS-80C"). **All tills must be updated.**
+
+- **Fixed RAW ESC/POS rejected on real thermal drivers (`StartDocPrinter failed`):**
+  the winspool P/Invoke block declared `OpenPrinter`/`StartDocPrinter`/`DOCINFOA`
+  with `CharSet=CharSet.Auto`, which resolves to the `*W` (Unicode) exports on
+  Windows NT. `StartDocPrinterW` reads `DOCINFOW` with **wide** string pointers,
+  but the struct fields are `[MarshalAs(LPStr)]` = **ANSI** — so `pDataType="RAW"`
+  reached the spooler as the corrupted UTF-16 string `"䅒W"` instead of `"RAW"`.
+  Lenient legacy v3 GDI drivers quietly defaulted that to RAW (so it "worked" on
+  some tills), but stricter thermal drivers rejected it and `StartDocPrinter`
+  failed, forcing the GDI text fallback — which is what produced the plain-text,
+  right-clipped receipt that didn't match the template. Declarations are now
+  `CharSet=CharSet.Ansi` (binding `OpenPrinterA`/`StartDocPrinterA`/`DOCINFOA`),
+  so the ANSI `"RAW"` we marshal is what the spooler receives. Verified: RAW now
+  opens successfully even on virtual v3 drivers; genuine v4/XPS drivers still
+  fail loudly with the specific 1804 "does not support RAW" message.
+- **GDI text-fallback right-edge clipping:** the fallback now measures the real
+  printable box the driver gives (`MarginBounds`, which subtracts the driver's
+  non-zero `HardMarginX`) and shrinks the font to fit rather than laying text out
+  for the full configured width and letting GDI clip the trailing characters.
+
 ### 0.2.0 (2026-07-04)
 
 Ships the fixes from `docs/pos-printing-pipeline-audit-2026-07-04.md`. **All tills
