@@ -165,6 +165,7 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
   if (escPosBase64 && printer.connectionType === "NETWORK_IP" && printer.id) {
     return printPosPrinterEscPos(printer.id, escPosBase64);
   }
+  let escPosError = null;
   if (escPosBase64) {
     try {
       return await printEscPosThroughAgent({
@@ -175,10 +176,11 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
         portNumber: printer.portNumber,
       });
     } catch (err) {
+      escPosError = err?.message || String(err);
       console.warn('ESC/POS test print failed, falling back to plain-text test print', err);
     }
   }
-  return testPrintAgentPrinter({
+  const result = await testPrintAgentPrinter({
     printerName: printer.systemPrinterName,
     text: testText,
     title: "BillBull POS Printer Test",
@@ -188,6 +190,10 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
     portNumber: printer.portNumber,
     deviceIdentifier: printer.deviceIdentifier,
   });
+  // Annotate when the test only succeeded via the text/GDI fallback — the caller
+  // must be able to tell, because a test that silently "passes" in a mode the
+  // sale flow doesn't use would green-light a printer that fails at checkout.
+  return escPosError ? { ...result, fallbackUsed: 'text', escPosError } : result;
 };
 
 // Phase B (Device Manager print-job spine): every receipt print is also recorded as a backend
@@ -284,9 +290,12 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
     // (phone, tablet, another PC) with no local workstation agent required. USB/
     // Bluetooth/Windows-queue printers are only reachable from the specific
     // machine they're physically plugged into, so those still need the agent.
-    const result = printer.connectionType === "NETWORK_IP"
-      ? await printPosPrinterEscPos(printer.id, dataBase64)
-      : await printEscPosThroughAgent({
+    let result;
+    if (printer.connectionType === "NETWORK_IP") {
+      result = await printPosPrinterEscPos(printer.id, dataBase64);
+    } else {
+      try {
+        result = await printEscPosThroughAgent({
           printerName: printer.systemPrinterName,
           dataBase64,
           connectionType: printer.connectionType,
@@ -294,6 +303,32 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
           portNumber: printer.portNumber,
           title,
         });
+      } catch (escPosErr) {
+        // The queue's driver rejected the raw job (typically a v4/WSD-class
+        // driver — StartDocPrinter refuses datatype RAW). Fall back to the
+        // text/GDI path so the customer still gets a receipt, and annotate the
+        // result so callers surface a visible "compatibility mode" warning —
+        // this must never be a silent downgrade, but a failed receipt at
+        // checkout is strictly worse than a plain-text one.
+        if (!receiptText) throw escPosErr;
+        console.warn("ESC/POS receipt rejected, falling back to text/GDI print", escPosErr);
+        try {
+          const textResult = await printReceiptThroughAgent({
+            printerName: printer.systemPrinterName,
+            text: receiptText,
+            title,
+            paperWidthMm: paperWidthToMm(printer.paperSize),
+            connectionType: printer.connectionType,
+            ipAddress: printer.ipAddress,
+            portNumber: printer.portNumber,
+            deviceIdentifier: printer.deviceIdentifier,
+          });
+          result = { ...textResult, fallbackUsed: "text", escPosError: escPosErr?.message || String(escPosErr) };
+        } catch {
+          throw escPosErr; // both modes failed — the ESC/POS error is the meaningful one
+        }
+      }
+    }
     if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
     return result;
   } catch (err) {

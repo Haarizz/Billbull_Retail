@@ -2936,13 +2936,14 @@ export default function POSSales() {
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
   ]);
 
-  // ESC/POS-only: this is the only path with real density/heat/font/logo
-  // control, so thermal receipts no longer fall back to the plain-text agent
-  // path or a browser/driver print dialog — a missing printer or a failed
-  // ESC/POS send throws instead of silently degrading to a worse printout.
-  // notifyPrintFallback now reports that failure via the dismissible toast
-  // (bottom-of-screen) instead of a blocking alert() — same UI as before, just
-  // no longer paired with an actual browser-print fallback.
+  // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
+  // logo control, so it's always attempted first. If the Windows queue's driver
+  // rejects the raw job (v4/WSD-class drivers refuse datatype RAW), the agent
+  // layer falls back to the text/GDI path so the customer still gets a receipt —
+  // and that downgrade is surfaced as a visible amber "compatibility mode" toast
+  // (never silent), telling the operator to install the vendor or Generic/
+  // Text-Only driver. A missing printer or a send that fails in BOTH modes still
+  // throws. notifyPrintFallback reports hard failures via the dismissible toast.
   const notifyPrintFallback = useCallback((message) => {
     setPrintFeedback({ type: 'error', message });
     setTimeout(() => setPrintFeedback(null), 6000);
@@ -2965,7 +2966,15 @@ export default function POSSales() {
     if (!escPosBase64) {
       throw new Error('Could not build the ESC/POS receipt for this sale.');
     }
-    await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+    const result = await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+    if (result?.fallbackUsed) {
+      setPrintFeedback({
+        type: 'warning',
+        message: `Receipt printed in text compatibility mode — "${printer.deviceName || printer.systemPrinterName}" rejected raw ESC/POS (${result.escPosError || 'driver error'}). Install the printer's vendor driver or "Generic / Text Only" for full print quality.`,
+      });
+      setTimeout(() => setPrintFeedback(null), 10000);
+      return { mode: 'agent-text-fallback', printer };
+    }
     return { mode: 'agent-escpos', printer };
   }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
 
@@ -8841,7 +8850,7 @@ export default function POSSales() {
       {/* Print fallback toast — explains why a browser print-preview just opened
           (no printer configured, or the configured one/agent didn't respond). */}
       {printFeedback && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium bg-red-500 text-white max-w-md">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium max-w-md ${printFeedback.type === 'warning' ? 'bg-amber-500 text-gray-900' : 'bg-red-500 text-white'}`}>
           <Printer className="h-4 w-4 shrink-0" />
           <span>{printFeedback.message}</span>
           <button type="button" onClick={() => setPrintFeedback(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100">

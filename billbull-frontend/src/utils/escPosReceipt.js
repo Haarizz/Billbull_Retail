@@ -306,8 +306,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     const name = item.itemName || item.productName || item.name || 'Item';
     const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
     const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    // Same per-line discount breakdown as the HTML preview (BBQA-5.3-015): base
+    // price, discount %/amount, then the net line — so the ESC/POS printout
+    // matches the checkout preview instead of silently reprinting a discounted
+    // price as if it were the base price.
+    const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
+    const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
+    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     w.push(CMD.BOLD_ON).line(`${qty}x ${name}`.slice(0, width)).push(CMD.BOLD_OFF);
-    w.line(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    if (lineDiscountAmount > 0) {
+      w.line(buildFixedWidthLine(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount), width));
+      w.line(buildFixedWidthLine(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`, width));
+      w.line(buildFixedWidthLine(`Net @ ${fmt(netUnit)}`, fmt(lineTotal), width));
+    } else {
+      w.line(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    }
+    const sku = item.sku || item.itemCode || '';
+    if (sku) w.line(`SKU: ${sku}`.slice(0, width));
     const serial = item.serialNumber || '';
     const batch = item.batchNumber || item.pinnedBatchNumber || '';
     if (serial) w.line(`S/N: ${serial}`.slice(0, width));
@@ -315,18 +331,36 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   });
   w.line(hr);
 
-  // Note: on a persisted invoice, subTotal is already net of per-item discounts
-  // (only the bill/footer-level discount is added back into it), so this only
-  // resolves to the bill-level discount there — see buildThermalReceiptHtml.
-  const resolvedDiscountTotal = parseFloat(
-    invoice.discountTotal != null ? invoice.discountTotal
-      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
-  ) || 0;
+  // Same Subtotal/Discount/Taxable reconstruction as the HTML preview and the
+  // plain-text builder: a persisted invoice's subTotal is already the TAXABLE
+  // base (net of per-item discounts, with no top-level discount aggregate), so
+  // the gross subtotal and total discount are rebuilt from each line's own
+  // grossAmount. Without this, a line-discounted sale printed with no Discount
+  // row and a "Subtotal" that didn't match the on-screen preview.
+  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
+  if (invoice.discountTotal != null) {
+    resolvedSubTotal = parseFloat(invoice.subTotal || 0) || 0;
+    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
+    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
+  } else {
+    resolvedTaxableAmount = parseFloat(invoice.subTotal || 0) || 0;
+    const grossSubtotal = (invoice.items || []).reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const q = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (q * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const lineDiscountTotal = Math.max(0, grossSubtotal - resolvedTaxableAmount);
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    resolvedDiscountTotal = lineDiscountTotal + billDiscountTotal;
+    resolvedSubTotal = grossSubtotal > 0 ? grossSubtotal : resolvedTaxableAmount;
+  }
 
-  w.line(buildFixedWidthLine('Subtotal:', fmt(invoice.subTotal), width));
+  w.line(buildFixedWidthLine('Subtotal:', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     w.line(buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
-    w.line(buildFixedWidthLine('Taxable Amount:', fmt(parseFloat(invoice.subTotal || 0) - resolvedDiscountTotal), width));
+    w.line(buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
   }
   if (showServiceCharge && invoice.serviceChargeAmount) w.line(buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
   if (showVatSummary) w.line(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
