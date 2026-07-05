@@ -19,6 +19,26 @@ const HEALTH_PROBE_TIMEOUT_MS = 400;
 
 const isBlank = (value) => value == null || String(value).trim() === "";
 
+// Integrity log (RCA checklist §8): SHA-256 of the base64 ESC/POS payload as
+// generated in the browser. Compared against the hash the agent reports it
+// decoded+wrote, this proves whether any byte was altered in transit. Logged,
+// never blocking — a hashing failure must never stop a receipt from printing.
+const logEscPosIntegrity = async (dataBase64, agentResult) => {
+  try {
+    const bytes = Uint8Array.from(atob(String(dataBase64 || "")), (c) => c.charCodeAt(0));
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const agentSha = agentResult?.sha256;
+    const match = agentSha ? (agentSha === sha256 ? "MATCH" : "MISMATCH") : "n/a (agent <0.5.0)";
+    console.info(`[escpos-integrity] generatedBytes=${bytes.length} generatedSha256=${sha256} agentSha256=${agentSha || "-"} → ${match}`);
+    if (agentSha && agentSha !== sha256) {
+      console.error("[escpos-integrity] STREAM CORRUPTION: agent received different bytes than the browser generated.");
+    }
+  } catch (err) {
+    console.warn("[escpos-integrity] hash logging skipped:", err?.message || err);
+  }
+};
+
 const normalizeStatusFromMessage = (message = "") => {
   const text = String(message || "").toLowerCase();
   if (text.includes("not found")) return "NOT_FOUND";
@@ -303,6 +323,7 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
           portNumber: printer.portNumber,
           title,
         });
+        await logEscPosIntegrity(dataBase64, result);
       } catch (escPosErr) {
         // The queue's driver rejected the raw job (typically a v4/WSD-class
         // driver — StartDocPrinter refuses datatype RAW). Fall back to the

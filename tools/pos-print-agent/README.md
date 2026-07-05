@@ -121,6 +121,14 @@ download — it needs nothing else to run.
   (`OpenPrinter`/`StartDocPrinter`/`WritePrinter`), which skips GDI rendering so the
   density/heat/font commands actually reach the printer firmware.
 - `POST /print/label/zebra`
+- `POST /probe/echo` — `{ dataBase64 }` → `{ receivedBytes, sha256, firstBytesHex, lastBytesHex }`.
+  Decodes the base64 and reports its byte count + hash **without printing**, so the
+  caller can prove the browser→HTTP→agent hop is byte-perfect (compare against the
+  hash computed in the browser). Diagnostic only.
+- `POST /probe/capabilities` — `{ printerName | (ipAddress, portNumber), qrData? }`.
+  Prints one isolated slip per binary opcode (`GS v 0`, `GS ( L`, `ESC *`, `GS ( k`
+  QR) so you can see on paper which the firmware honours vs. echoes as garbage.
+  Use `probe.html` (open it in the till's browser) as the front-end.
 
 ## Notes
 
@@ -138,6 +146,27 @@ download — it needs nothing else to run.
 - Zebra Browser Print still requires Zebra's local Browser Print service to be installed when using Zebra-direct label printing.
 
 ## Changelog
+
+### 0.5.0 (2026-07-04)
+
+Adds **capability-probe tooling** to diagnose the "garbage before receipt / missing
+logo+QR / Arabic as ?????" reports on the client's POS-80C, without guessing at the
+cause. Agent 0.4.0's RAW fix means genuine ESC/POS binary now reaches this printer
+for the first time (previously it silently fell back to plain-text GDI, which is why
+text-only slips print clean but the full receipt does not) — so we need to know
+empirically which binary opcodes the firmware actually decodes.
+
+- **`/probe/echo`**: decodes the received base64 and returns byte count + SHA-256
+  (no print), to prove the base64→HTTP→agent stream is byte-identical to what the
+  browser generated. If the hashes match, on-paper garbage is a firmware opcode
+  limitation, not stream corruption.
+- **`/probe/capabilities`**: prints one isolated slip per binary opcode
+  (`GS v 0`, `GS ( L`, `ESC *`, `GS ( k` QR), each preceded by a plain-text label.
+  A clean image/QR = supported; garbage glyphs under the label = that opcode is
+  echoed as text (unsupported). All four slips' length framing is spec-verified so
+  a probe "garbage" result is the printer, never a malformed probe command.
+- **`probe.html`**: open on the till (browser can reach `127.0.0.1:19777`) to run
+  the integrity test and print the probe slips from one page.
 
 ### 0.4.0 (2026-07-04)
 
