@@ -200,13 +200,38 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
 // ── Native ESC/POS QR code (GS ( k, model 2) — printer renders the QR itself,
 // so quality depends on the printer's own dot accuracy rather than a rasterized
 // bitmap pushed through a generic driver's halftone filter. ──────────────────
-const qrCommand = (data, { moduleSize = 7, errorCorrection = 'M' } = {}) => {
+
+// QR byte-mode capacity at error-correction level M, indexed by version 1..40.
+// Used to size the symbol BEFORE printing: a QR's width is (17 + 4·version)
+// modules, and the printer renders each module `moduleSize` dots wide — if that
+// exceeds the printable width, this printer class silently prints NOTHING
+// (verified on the client's POS-80C). buildQrContent emits one line per sale
+// item, so a large sale can push the payload past version 13 (331 bytes), which
+// at the old fixed moduleSize=8 is already wider than 80mm paper.
+const QR_CAPACITY_M = [
+  14, 26, 42, 62, 84, 106, 122, 152, 180, 213,
+  251, 287, 331, 362, 412, 450, 504, 560, 624, 666,
+  711, 779, 857, 911, 997, 1059, 1125, 1190, 1264, 1370,
+  1452, 1538, 1628, 1722, 1809, 1911, 1989, 2099, 2213, 2331,
+];
+
+const qrModuleCount = (byteLength) => {
+  const v = QR_CAPACITY_M.findIndex((cap) => byteLength <= cap);
+  return 17 + 4 * ((v === -1 ? 40 : v + 1));
+};
+
+const qrCommand = (data, { moduleSize = 7, errorCorrection = 'M', maxWidthDots = 576 } = {}) => {
   const w = new ByteWriter();
   const ecLevel = { L: 48, M: 49, Q: 50, H: 51 }[errorCorrection] ?? 49;
-  w.push([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]); // select model 2
-  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, moduleSize & 0xff]); // module size
-  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, ecLevel]); // error correction
   const dataBytes = new TextEncoder().encode(String(data || ''));
+  // Shrink the module size until the whole symbol fits the paper; floor of 2
+  // dots/module (below that the head can't resolve modules anyway, and even a
+  // max-size v40 QR at 2 dots = 354 < 384, so it always terminates in range).
+  const modules = qrModuleCount(dataBytes.length);
+  let fittedModuleSize = Math.max(2, Math.min(moduleSize, Math.floor(maxWidthDots / modules)));
+  w.push([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]); // select model 2
+  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, fittedModuleSize & 0xff]); // module size
+  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, ecLevel]); // error correction
   const storeLen = dataBytes.length + 3;
   w.push([GS, 0x28, 0x6b, storeLen & 0xff, (storeLen >> 8) & 0xff, 0x31, 0x50, 0x30]);
   w.push(dataBytes);
@@ -392,7 +417,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showQRCode && qrContent) {
     w.push(CMD.ALIGN_CENTER);
-    w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M' }));
+    w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M', maxWidthDots: dots }));
     w.line('Scan to verify');
     w.push(CMD.ALIGN_LEFT);
     w.line(hr);

@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 
 const HOST = "127.0.0.1";
@@ -294,6 +295,156 @@ const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataB
     socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
   });
 
+// ── Capability probe command builders ──────────────────────────────────────
+// These build ISOLATED, single-feature ESC/POS jobs used by /probe/capabilities
+// to determine — empirically, on the actual printer — which binary opcodes the
+// firmware honours vs. echoes back as text. Each slip prints a plain-text label
+// (which every printer renders) then exactly ONE binary command; if the command
+// is honoured you see the image/QR, if it is NOT you see its payload bytes
+// printed as garbage glyphs directly under the label. That is the definitive
+// discriminator between "our bytes are wrong" and "this firmware lacks this
+// opcode" — no assumptions.
+const PROBE = {
+  ESC: 0x1b,
+  GS: 0x1d,
+};
+
+const probeLabel = (text) => [...Buffer.from(String(text), "latin1"), 0x0a];
+
+// GS v 0 raster of an arbitrary WxH solid-black box. Round 1 used a tiny 48x32
+// box (which this printer prints fine); Round 2 uses the REAL receipt logo's
+// dimensions to find the actual break point — width 346 (bpr 44) and heights
+// both under and over the 255-row single-byte boundary, since some clone
+// firmwares mishandle GS v 0 when yH>0 or when bpr is large.
+const probeRasterGSv0 = (w = 48, h = 32) => {
+  const bpr = Math.ceil(w / 8);
+  // Draw a hollow box (border only) so a correct print is visually obvious and
+  // a partial/misaligned decode is easy to spot, without a huge all-black area.
+  const data = new Array(bpr * h).fill(0x00);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const edge = y < 2 || y >= h - 2 || x < 2 || x >= w - 2;
+      if (edge) data[y * bpr + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return [PROBE.GS, 0x76, 0x30, 0x00, bpr & 0xff, (bpr >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff, ...data];
+};
+
+const probeRasterGSLraster = () => {
+  // GS ( L / GS 8 L raster graphics: store + print. Uses fn 112 (store) then
+  // fn 50 (print). Newer/Epson-compliant firmware supports this when GS v 0 is
+  // absent. Small 48x32 all-black box.
+  const w = 48, h = 32;
+  const bpr = Math.ceil(w / 8);
+  const img = new Array(bpr * h).fill(0xff);
+  // pL pH = (data length + 10) low/high; m=48 fn=112 a=48 bx=1 by=1 c=49
+  const p = img.length + 10;
+  const store = [PROBE.GS, 0x28, 0x4c, p & 0xff, (p >> 8) & 0xff, 48, 112, 48, 1, 1, 49,
+    w & 0xff, (w >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff, ...img];
+  const print = [PROBE.GS, 0x28, 0x4c, 0x02, 0x00, 48, 50]; // fn 50: print buffered
+  return [...store, ...print];
+};
+
+const probeRasterEscStar = () => {
+  // ESC * m=33 (24-dot double density) — the legacy bit-image opcode virtually
+  // every clone supports. 48 columns of a 24-dot-tall black bar.
+  const w = 48;
+  const cols = [];
+  for (let i = 0; i < w; i++) cols.push(0xff, 0xff, 0xff);
+  return [PROBE.ESC, 0x2a, 33, w & 0xff, (w >> 8) & 0xff, ...cols, 0x0a];
+};
+
+const probeQrGSk = (data) => {
+  const parts = [];
+  const push = (a) => { for (const b of a) parts.push(b); };
+  push([PROBE.GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]);
+  push([PROBE.GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x08]);
+  push([PROBE.GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31]);
+  const db = Buffer.from(String(data), "utf8");
+  const storeLen = db.length + 3;
+  push([PROBE.GS, 0x28, 0x6b, storeLen & 0xff, (storeLen >> 8) & 0xff, 0x31, 0x50, 0x30]);
+  push([...db]);
+  push([PROBE.GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]);
+  return parts;
+};
+
+// Wrap one command-under-test as: ESC @ → "TEXT BEFORE" → command → "TEXT AFTER"
+// → feed + cut, each on its own slip. This sandwich is the key discriminator
+// (per the RCA checklist): "TEXT BEFORE" confirms init worked; the command's
+// own output shows whether the opcode is honoured (clean image/QR) or echoed
+// (garbage); and — most important — whether "TEXT AFTER" still prints tells us
+// if a malformed/misparsed image command CORRUPTED THE REMAINING STREAM (the
+// cropped-tail symptom) versus merely failing in isolation. If TEXT AFTER is
+// missing or garbled, the opcode desyncs the parser; if it prints clean, the
+// failure is contained to the image itself.
+const probeSlip = (label, commandBytes) => Buffer.from([
+  PROBE.ESC, 0x40,             // ESC @ init
+  PROBE.ESC, 0x74, 16,         // ESC t 16 (WPC1252)
+  PROBE.ESC, 0x61, 0x00,       // align left
+  ...probeLabel(`== ${label} ==`),
+  ...probeLabel("TEXT BEFORE"),
+  PROBE.ESC, 0x61, 0x01,       // align center for the image/QR
+  ...commandBytes,
+  0x0a,
+  PROBE.ESC, 0x61, 0x00,       // align left
+  ...probeLabel("TEXT AFTER"),
+  ...probeLabel("(BEFORE+AFTER both present = stream intact; AFTER missing = opcode corrupts stream)"),
+  PROBE.ESC, 0x64, 0x04,       // feed 4
+  PROBE.GS, 0x56, 0x01,        // partial cut
+]);
+
+// Round 1 (opcode support) is settled on the POS-80C: GS v 0 ✓, ESC * ✓,
+// GS ( k QR ✓, GS ( L ✗. So the receipt garbage is NOT opcode support — it's a
+// PARAMETER the real receipt hits that the tiny probe box did not. Round 2
+// isolates that parameter by replicating the real logo's width (346 dots,
+// bpr 44) at heights below and above the 255-row single-byte boundary, and the
+// real receipt's LONG multi-line QR payload (vs the short probe URL).
+const LONG_QR = [
+  "Type: TAX INVOICE", "Doc No: INV-2026-0040", "Date: 04/07/2026 04:00",
+  "Company: BillBull Trading LLC", "TRN: 100123456700003",
+  "Customer: Ahmed", "Customer Phone: 0559860525",
+  "Total: AED 2520.00", "VAT: AED 120.00",
+].join("\n");
+
+const PROBE_JOBS = (qrData) => [
+  ["A. TEXT BASELINE", probeLabel("plain text 0123456789 ABCabc — should print clean")],
+  // Real logo width, SHORT (yH=0). If this prints a clean hollow box, width/bpr
+  // is fine and the problem is height.
+  ["B. GS v 0 W346 H120 (yH=0)", probeRasterGSv0(346, 120)],
+  // Real logo width, TALL (>255 rows → yH=1). If THIS is garbage while B is
+  // clean, the firmware mishandles GS v 0 when the height high-byte is nonzero
+  // — the exact fix is to keep logo height <=255 (or band it).
+  ["C. GS v 0 W346 H300 (yH=1)", probeRasterGSv0(346, 300)],
+  // Full paper width (576), short — checks the max-width boundary.
+  ["D. GS v 0 W576 H120", probeRasterGSv0(576, 120)],
+  // The real receipt's long multi-line QR payload (short probe QR already
+  // worked; this checks whether a large QR is the failure instead).
+  ["E. GS ( k QR (long payload)", probeQrGSk(qrData || LONG_QR)],
+];
+
+// Runs every probe slip in sequence to the given printer/queue, returning a
+// per-slip send-status summary. Printing is what produces the evidence; the
+// HTTP response just confirms each job was accepted by the spooler.
+const runCapabilityProbe = async ({ printerName, ipAddress, portNumber, connectionType, qrData }) => {
+  const jobs = PROBE_JOBS(qrData || null); // null → PROBE_JOBS uses the long multi-line QR
+  const results = [];
+  for (const [label, cmd] of jobs) {
+    const dataBase64 = probeSlip(label, cmd).toString("base64");
+    try {
+      if (connectionType === "NETWORK_IP" || ipAddress) {
+        await printEscPosToNetworkPrinter({ ipAddress, portNumber, dataBase64 });
+      } else {
+        await printEscPosToPrinterQueue({ printerName, dataBase64, title: `BillBull Probe ${label}` });
+      }
+      results.push({ probe: label, ok: true, bytes: Buffer.from(dataBase64, "base64").length });
+    } catch (err) {
+      results.push({ probe: label, ok: false, error: err?.message || String(err) });
+    }
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  return results;
+};
+
 // Sends a raw ESC/POS byte buffer to a Windows-installed printer queue using
 // the RAW datatype via the Win32 spooler (OpenPrinter/StartDocPrinter/
 // WritePrinter). This bypasses GDI entirely, so it carries our density/heat/
@@ -304,7 +455,15 @@ const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataB
 const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "BillBull ESC/POS Receipt" }) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "billbull-print-"));
   const dataFile = path.join(tempDir, "job.bin");
-  await fs.writeFile(dataFile, Buffer.from(String(dataBase64 ?? ""), "base64"));
+  const decoded = Buffer.from(String(dataBase64 ?? ""), "base64");
+  // Integrity log (RCA checklist §8): record the byte length + SHA-256 of the
+  // buffer the agent decoded, so it can be compared against the hash the browser
+  // computed at generation time — proving the base64→HTTP→agent hop added/dropped
+  // no bytes. WritePrinter's own $written===Length assert (below, in-script)
+  // covers the final agent→spooler hop.
+  const sha256 = crypto.createHash("sha256").update(decoded).digest("hex");
+  console.log(`[escpos] queue="${printerName}" bytes=${decoded.length} sha256=${sha256}`);
+  await fs.writeFile(dataFile, decoded);
   const script = `
     $ErrorActionPreference = 'Stop'
     # CharSet MUST be Ansi (not Auto) on the two string-carrying P/Invokes and on
@@ -439,7 +598,10 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
 
   try {
     await runPowerShell(script);
-    return { ok: true, message: "ESC/POS print job sent successfully." };
+    // Return the byte length + hash the agent actually wrote so callers can log
+    // it alongside their generation-time hash (RCA checklist §8) without a
+    // separate /probe/echo round-trip.
+    return { ok: true, message: "ESC/POS print job sent successfully.", bytes: decoded.length, sha256 };
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -554,6 +716,47 @@ const server = http.createServer(async (req, res) => {
         });
       }
       sendJson(res, 200, result);
+      return;
+    }
+
+    // Transmission-integrity check: decode the base64 the browser sent and
+    // report the received byte count + SHA-256, WITHOUT printing. The caller
+    // compares these against what escPosReceipt.js generated in the browser; if
+    // they match, the base64→HTTP→agent hop is byte-perfect and any garbage on
+    // paper is the printer firmware, not a corrupted stream. Also echoes the
+    // first/last bytes as hex so a malformed leading command is visible.
+    if (req.method === "POST" && req.url === "/probe/echo") {
+      const body = await readJsonBody(req);
+      if (!body?.dataBase64) {
+        sendJson(res, 400, { ok: false, message: "dataBase64 is required." });
+        return;
+      }
+      const buf = Buffer.from(String(body.dataBase64), "base64");
+      sendJson(res, 200, {
+        ok: true,
+        receivedBytes: buf.length,
+        sha256: crypto.createHash("sha256").update(buf).digest("hex"),
+        firstBytesHex: buf.subarray(0, 32).toString("hex"),
+        lastBytesHex: buf.subarray(Math.max(0, buf.length - 16)).toString("hex"),
+      });
+      return;
+    }
+
+    // Prints the isolated single-opcode capability slips to the target printer.
+    if (req.method === "POST" && req.url === "/probe/capabilities") {
+      const body = await readJsonBody(req);
+      if (!body?.printerName && !body?.ipAddress) {
+        sendJson(res, 400, { ok: false, message: "printerName or ipAddress is required." });
+        return;
+      }
+      const results = await runCapabilityProbe({
+        printerName: body.printerName,
+        ipAddress: body.ipAddress,
+        portNumber: body.portNumber,
+        connectionType: body.connectionType,
+        qrData: body.qrData,
+      });
+      sendJson(res, 200, { ok: results.every((r) => r.ok), results });
       return;
     }
 
