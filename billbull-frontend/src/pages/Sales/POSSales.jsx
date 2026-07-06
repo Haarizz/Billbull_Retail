@@ -159,7 +159,7 @@ import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
-import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64 } from '../../utils/escPosReceipt';
+import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -372,6 +372,13 @@ export default function POSSales() {
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
   const [zReportData, setZReportData] = useState(null);
+  // Auto-print bookkeeping for X/Z reports: printedReportKeysRef dedupes so a
+  // report is auto-printed at most once per session/day close; the pending refs
+  // arm the auto-print to fire from the effect that runs once the fresh report
+  // data lands in state (so we print exactly what the preview shows).
+  const printedReportKeysRef = useRef(new Set());
+  const pendingXAutoPrintRef = useRef(null); // session id awaiting X-Report auto-print
+  const pendingZAutoPrintRef = useRef(null); // date string awaiting Z-Report auto-print
   // When the Z-Report is blocked because terminals still owe an X-Report, this
   // holds the pending-terminal list to display; zReportData is cleared so the
   // report body and its print/export actions stay hidden until eligible.
@@ -1354,6 +1361,42 @@ export default function POSSales() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView]);
 
+  // Auto-print the X-Report once, after Close Session, when the fresh report data
+  // has loaded into state (armed by handleCloseSession). Waiting for xReportData
+  // guarantees the printout matches the on-screen X-Report exactly.
+  useEffect(() => {
+    if (!pendingXAutoPrintRef.current) return;
+    if (xReportLoading || !xReportData) return;
+    const sessId = pendingXAutoPrintRef.current;
+    pendingXAutoPrintRef.current = null;
+    const vm = buildXReportViewModel();
+    const cp = reportCompanyProfile();
+    const sess = xReportData?.session || currentSession;
+    void autoPrintReportThermal(
+      vm, cp,
+      { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] },
+      `x-report:${sessId}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xReportData, xReportLoading]);
+
+  // Auto-print the Z-Report once, after Close Day, when the fresh report data has
+  // loaded into state (armed by handleCloseDay).
+  useEffect(() => {
+    if (!pendingZAutoPrintRef.current) return;
+    if (zReportLoading || !zReportData) return;
+    const dateKey = pendingZAutoPrintRef.current;
+    pendingZAutoPrintRef.current = null;
+    const vm = buildZReportViewModel();
+    const cp = reportCompanyProfile();
+    void autoPrintReportThermal(
+      vm, cp,
+      { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] },
+      `z-report:${dateKey}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zReportData, zReportLoading]);
+
   // Load dashboard stats once the session becomes available on initial page load.
   // The view-change effect above misses this because currentView is already 'dashboard'
   // when currentSession resolves asynchronously after terminal registration.
@@ -1646,11 +1689,19 @@ export default function POSSales() {
             closingRemarks: xReportClosingRemarks,
           });
           setCurrentSession(closed);
+          // Arm the X-Report auto-print: the session is now closed & saved. The
+          // x-report view mounts below and loadXReport() populates xReportData;
+          // an effect fires the 80mm auto-print once that fresh data lands, so we
+          // print exactly what the X-Report preview shows. Dedupe is keyed on the
+          // session id so re-closing can't double-print.
+          pendingXAutoPrintRef.current = currentSession.id;
         } else {
           setCurrentSession({ ...currentSession, status: 'CLOSED' });
         }
       } catch (err) {
         console.warn('Close session API error', err);
+        // Close failed server-side — do NOT arm the auto-print (req: only print on
+        // a successful operation). The local CLOSED flag is UI-only.
         setCurrentSession({ ...currentSession, status: 'CLOSED' });
       }
       setShowCloseSessionDialog(false);
@@ -2085,6 +2136,11 @@ export default function POSSales() {
       setZReportLoading(true);
       const data = await closePosDay(branchId, zReportDate);
       setZReportData(data);
+      // Day closed successfully → arm the Z-Report auto-print. The effect watching
+      // zReportData fires the 80mm print once, keyed on the closed date so a repeat
+      // Close Day can't double-print. Only reached on success (a failure throws to
+      // the catch below and never arms this).
+      pendingZAutoPrintRef.current = zReportDate;
       alert('Business day has been officially closed.');
     } catch (err) {
       const body = err?.response?.data;
@@ -2306,12 +2362,18 @@ export default function POSSales() {
             : null;
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
+            customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
             creditPreviousBalance: creditPrevBalAuto,
             creditInvoiceCredit: creditInvoiceCreditAuto,
             creditAmountPaid: creditAmountPaidAuto,
             creditUpdatedBalance: creditUpdatedBalanceAuto,
+            // Delivery Order receipt (Out for Delivery): the goods are not yet paid
+            // for — settlement happens later via Delivery Settle. Suppress the CREDIT
+            // ACCOUNT block here so the receipt ends after the Customer section; the
+            // block reappears on the Delivery Settlement receipt.
+            showCreditBalanceOverride: false,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
@@ -2604,7 +2666,7 @@ export default function POSSales() {
             } else {
               try {
                 const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
-                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText);
+                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText, tplReceiptPaper);
                 await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
                 console.warn('ESC/POS print failed for layaway receipt', err);
@@ -2829,10 +2891,11 @@ export default function POSSales() {
   ]);
 
   const buildThermalReceiptArtifacts = useCallback(async ({
-    full,
+    full: fullArg,
     isReprint = false,
     cashGiven = null,
     changeAmount = null,
+    customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
     creditPreviousBalance = null,
@@ -2843,7 +2906,25 @@ export default function POSSales() {
     depositApplied = null,
     balanceDue = null,
     shippingCharge = null,
+    // Per-call override of the CREDIT ACCOUNT block visibility. Normally the block
+    // follows the tplInvoiceShowBankDetails template toggle, but specific workflows
+    // pin it: a Delivery Order print (Out for Delivery) hides it (null → suppressed),
+    // while a Delivery Settlement print shows it. null = defer to template toggle.
+    showCreditBalanceOverride = null,
   }) => {
+    const resolvedShowCreditBalance = showCreditBalanceOverride != null
+      ? showCreditBalanceOverride
+      : tplInvoiceShowBankDetails;
+    // Customer name (client item 3): the printed receipt must show the SAME
+    // customer the checkout preview shows. The preview reads the selected customer
+    // object directly (customer.name), while the print path was reading it off the
+    // round-tripped backend invoice — which reads "Walk-in Customer" whenever the
+    // saved customerName came back blank. When the caller passes the live selected
+    // name, override it onto a shallow copy so BOTH the ESC/POS and HTML builders
+    // (which read invoice.customerName) print the real customer, not "Walk-in".
+    const full = (customerNameOverride && customerNameOverride.trim())
+      ? { ...fullArg, customerName: customerNameOverride.trim() }
+      : fullArg;
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
 
     // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
@@ -2888,7 +2969,7 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
-      showCreditBalance: tplInvoiceShowBankDetails,
+      showCreditBalance: resolvedShowCreditBalance,
       creditPreviousBalance,
       creditInvoiceCredit,
       creditAmountPaid,
@@ -2921,7 +3002,7 @@ export default function POSSales() {
       showQRCode: tplInvoiceShowQRCode,
       showCustomerDetails: tplInvoiceShowCustomerDetails,
       showLoyaltyPoints: tplInvoiceShowNotes,
-      showCreditBalance: tplInvoiceShowBankDetails,
+      showCreditBalance: resolvedShowCreditBalance,
       showFooterText: tplInvoiceShowTerms,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
@@ -3267,6 +3348,10 @@ export default function POSSales() {
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
                 changeAmount: changeDue,
+                // Print the actual selected customer's name (client item 3) — the same
+                // `customer` object the checkout preview rendered. Walk-in stays null so
+                // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
+                customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
                 creditPreviousBalance: creditPrevBalAutoPrint,
@@ -5205,6 +5290,27 @@ export default function POSSales() {
     return generateReportA4Html(vm, cp, meta);
   };
 
+  // Build an X/Z report as ESC/POS with the SAME branded header the POS Sales
+  // receipt uses (logo + big company name + branch + TRN), then the report body.
+  // The body is generated with omitHeader so its own plain-text company block is
+  // suppressed and not printed twice. The report title (e.g. "X-REPORT / SESSION
+  // CLOSE REPORT") becomes the branded header's bold document title.
+  const buildReportEscPosWithBrandedHeader = (vm, cp, meta) => {
+    const paper = meta.paper === '58mm' ? '58mm' : '80mm';
+    const body = generateReportThermalText(vm, cp, { ...meta, omitHeader: true });
+    return buildEscPosDocumentBase64(body, {
+      paperSize: paper,
+      documentTitle: (meta.reportTitle || vm.reportTitle || 'POS REPORT').toUpperCase(),
+      companyName: cp.companyName || tplOutletName,
+      header: cp.branchName || '',
+      trn: cp.trn || tplOutletTrn,
+      outletAddress: cp.address || tplOutletAddress,
+      outletPhone: cp.phone || tplOutletPhone,
+      logoDataUrl: cp.logoUrl || tplLogoDataUrl,
+      showLogo: cp.showLogo !== false,
+    });
+  };
+
   // Thermal reports go straight to the configured default printer (no browser
   // print dialog); A4 reports keep using the browser dialog since the local
   // print agent only carries raw text/ESC-POS, not full HTML, today.
@@ -5223,12 +5329,43 @@ export default function POSSales() {
       return;
     }
     try {
-      const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
-      const escPosBase64 = buildEscPosFromPlainTextBase64(text);
-      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+      const escPosBase64 = await buildReportEscPosWithBrandedHeader(vm, cp, { ...meta, paper: reportPrintMode });
+      const fallbackText = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
+      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
     } catch (err) {
       console.warn('ESC/POS print failed for report print', err);
       notifyPrintFallback(`Report failed to print: ${err?.message || 'printer error'}.`);
+    }
+  };
+
+  // Auto-print an X/Z report to the configured 80mm printer after a successful
+  // Close Session / Close Day — ALWAYS forces 80mm (unlike the manual buttons,
+  // which honour the user's chosen reportPrintMode) and is dedupe-guarded so the
+  // same session/day report can't be pushed to the printer twice (e.g. the user
+  // clicks Close again). Runs silently and non-blocking; a missing printer or send
+  // failure only surfaces as the existing dismissible fallback toast, never an
+  // interruption of the close workflow.
+  const autoPrintReportThermal = async (vm, cp, meta, dedupeKey) => {
+    if (dedupeKey && printedReportKeysRef.current.has(dedupeKey)) return;
+    if (dedupeKey) printedReportKeysRef.current.add(dedupeKey);
+    const printer = resolvePrinterForContext(printerConfigs, {
+      deviceType: 'RECEIPT_PRINTER',
+      branchId: currentTerminal?.branchId || null,
+      terminalId: currentTerminal?.terminalId || null,
+    });
+    if (!printer) {
+      if (dedupeKey) printedReportKeysRef.current.delete(dedupeKey);
+      notifyPrintFallback('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
+      return;
+    }
+    try {
+      const escPosBase64 = await buildReportEscPosWithBrandedHeader(vm, cp, { ...meta, paper: '80mm' });
+      const fallbackText = generateReportThermalText(vm, cp, { ...meta, paper: '80mm' });
+      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+    } catch (err) {
+      console.warn('Auto-print failed for report', err);
+      if (dedupeKey) printedReportKeysRef.current.delete(dedupeKey);
+      notifyPrintFallback(`Report failed to auto-print: ${err?.message || 'printer error'}.`);
     }
   };
 
@@ -7507,6 +7644,7 @@ export default function POSSales() {
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
+                            customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null,
                             customerPhone: lastPaidInvoice?.customer?.phone,
                             customerEmail: lastPaidInvoice?.customer?.email,
                             creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
@@ -12021,11 +12159,33 @@ export default function POSSales() {
                 const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {
+                // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this
+                // one MUST carry the CREDIT ACCOUNT block. Snapshot the customer's
+                // outstanding balance (which now already reflects this settlement, so
+                // it is the UPDATED balance) and derive the previous balance by adding
+                // back the amount just paid on this settlement.
+                let creditUpdatedBalanceSettle = null;
+                let creditPreviousBalanceSettle = null;
+                if (settledInvoice?.customerCode && custRec?.id !== 'walk-in') {
+                  try {
+                    const cr = await posCreditBalance(settledInvoice.customerCode);
+                    if (cr?.found && cr.outstanding != null) {
+                      creditUpdatedBalanceSettle = cr.outstanding;
+                      creditPreviousBalanceSettle = cr.outstanding + selBalance;
+                    }
+                  } catch (_) { /* fall back to no credit figures below */ }
+                }
                 const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                   full: receiptInvoice,
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
                   customerEmail: custRec?.email,
+                  // Force the CREDIT ACCOUNT block on for the settlement receipt.
+                  showCreditBalanceOverride: creditPreviousBalanceSettle != null,
+                  creditPreviousBalance: creditPreviousBalanceSettle,
+                  creditInvoiceCredit: parseFloat(settledInvoice?.invoiceTotal || 0),
+                  creditAmountPaid: selBalance,
+                  creditUpdatedBalance: creditUpdatedBalanceSettle,
                 });
                 await printThermalReceiptWithConfiguredPrinter({
                   full: receiptInvoice,
