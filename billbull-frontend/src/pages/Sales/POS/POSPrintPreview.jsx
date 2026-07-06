@@ -34,6 +34,7 @@ export const ThermalMock = ({
   showLoyaltyPoints = true,
   showCreditBalance = true,
   showFooterText = true,
+  qrPlacement = 'before',
   templateType = 'receipt',
   // job card specific toggles
   showSerialNumber = true,
@@ -90,6 +91,26 @@ export const ThermalMock = ({
   const SectionLabel = ({ children }) => (
     <div style={{ fontSize: fsS, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, fontWeight: '600', ...mono }}>{children}</div>
   );
+
+  // QR / Stamp block: stamp uploaded → show stamp ONLY, hide QR. Rendered once and
+  // placed either before or after the footer text based on qrPlacement.
+  const qrStampBlock = stampDataUrl ? (
+    <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
+      <img src={stampDataUrl} alt="Stamp" style={{ height: 90, maxWidth: '70%', objectFit: 'contain', margin: '0 auto', borderRadius: 6 }} />
+    </div>
+  ) : showQRCode ? (
+    <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
+      <div style={{
+        width: 90, height: 90,
+        border: '1px solid #e5e7eb', borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        margin: '0 auto', background: '#f9fafb',
+      }}>
+        <span style={{ fontSize: fsS, color: '#9ca3af' }}>QR Code</span>
+      </div>
+      <div style={{ fontSize: fsS - 1, color: '#9ca3af', marginTop: 2 }}>Scan to verify</div>
+    </div>
+  ) : null;
 
   return (
     <div className="max-w-full" style={{
@@ -235,25 +256,6 @@ export const ThermalMock = ({
             </>
           )}
 
-          {/* ── QR / Stamp (§5): stamp uploaded → show stamp ONLY, hide QR ── */}
-          {stampDataUrl ? (
-            <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
-              <img src={stampDataUrl} alt="Stamp" style={{ height: 90, maxWidth: '70%', objectFit: 'contain', margin: '0 auto', borderRadius: 6 }} />
-            </div>
-          ) : showQRCode && (
-            <div style={{ textAlign: 'center', margin: '12px 0 10px' }}>
-              <div style={{
-                width: 90, height: 90,
-                border: '1px solid #e5e7eb', borderRadius: 8,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto', background: '#f9fafb',
-              }}>
-                <span style={{ fontSize: fsS, color: '#9ca3af' }}>QR Code</span>
-              </div>
-              <div style={{ fontSize: fsS - 1, color: '#9ca3af', marginTop: 2 }}>Scan to verify</div>
-            </div>
-          )}
-
           {/* ── Customer details ── */}
           {showCustomerDetails && (
             <>
@@ -288,6 +290,9 @@ export const ThermalMock = ({
             </>
           )}
 
+          {/* ── QR / Stamp (§5): rendered immediately above the footer text ── */}
+          {qrPlacement !== 'after' && qrStampBlock}
+
           {/* ── Footer text ── */}
           {showFooterText && footerText && (
             <>
@@ -295,6 +300,9 @@ export const ThermalMock = ({
               <div style={{ textAlign: 'center', fontSize: fsS, color: '#0d9488', marginTop: 6, whiteSpace: 'pre-line', lineHeight: 1.7 }}>{footerText}</div>
             </>
           )}
+
+          {/* ── QR / Stamp (§5): rendered immediately below the footer text ── */}
+          {qrPlacement === 'after' && qrStampBlock}
         </>
       )}
     </div>

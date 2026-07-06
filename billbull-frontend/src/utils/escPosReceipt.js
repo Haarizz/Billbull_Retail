@@ -45,16 +45,6 @@ const PAPER_DOTS = { 58: 384, 80: 576 };
 // already calibrated for this fleet's printers in buildThermalReceiptText.
 const PAPER_COLS = { 58: 32, 80: 42 };
 
-// Max rows per GS v 0 raster block. A single very tall block (a real dithered
-// logo can be 300–500+ rows) can overrun the receive/line buffer on clone
-// controllers (the client's POS-80C) mid-raster — the controller then drops out
-// of raster mode and prints the remaining image bytes as text, which is the
-// garbage-block-above-the-receipt symptom the client reported. Splitting the
-// logo into ≤240-row GS v 0 blocks (the probe proved 300 prints clean, so 240
-// leaves headroom) keeps every block within a safe size; sequential blocks butt
-// together seamlessly so the printed logo looks identical.
-const RASTER_BAND_ROWS = 240;
-
 class ByteWriter {
   constructor() {
     this.chunks = [];
@@ -199,19 +189,19 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
     }
   }
 
-  // Emit the raster as a sequence of GS v 0 blocks each ≤ RASTER_BAND_ROWS tall,
-  // rather than one block of the full height — see RASTER_BAND_ROWS for why one
-  // tall block garbles on the POS-80C. Sequential blocks butt together
-  // seamlessly (each advances the paper exactly its own height).
-  const out = [];
-  for (let top = 0; top < h; top += RASTER_BAND_ROWS) {
-    const bandH = Math.min(RASTER_BAND_ROWS, h - top);
-    const header = [GS, 0x76, 0x30, 0x00, bytesPerRow & 0xff, (bytesPerRow >> 8) & 0xff, bandH & 0xff, (bandH >> 8) & 0xff];
-    for (const b of header) out.push(b);
-    const slice = raster.subarray(top * bytesPerRow, (top + bandH) * bytesPerRow);
-    for (const b of slice) out.push(b);
-  }
-  return Uint8Array.from(out);
+  // Emit ONE GS v 0 block of the full image height. The POS-80C probe
+  // (docs/pos-escpos-capability-probe-2026-07-04.md, button-4 "real logo")
+  // proved a single full-height block of THIS exact logo at THIS exact width
+  // (346 dots, ~250–350 rows) prints clean — while splitting it into multiple
+  // sequential GS v 0 blocks garbled the output (the printer does not resume
+  // raster mode cleanly across a mid-stream second GS v 0 header, so the second
+  // block's bytes print as text). So keep it a single block.
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = h & 0xff;
+  const yH = (h >> 8) & 0xff;
+  const header = [GS, 0x76, 0x30, 0x00, xL, xH, yL, yH];
+  return Uint8Array.from([...header, ...raster]);
 };
 
 // ── Native ESC/POS QR code (GS ( k, model 2) — printer renders the QR itself,
@@ -299,6 +289,13 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (showLogo && logoDataUrl) {
     try {
       const raster = await ditherImageToRasterCommand(logoDataUrl, Math.round(dots * 0.6));
+      // Flush/open a text line BEFORE the raster. On the client's POS-80C
+      // clone, every print where a text line preceded the GS v 0 raster came
+      // out clean (all capability-probe slips), while receipts — where the
+      // raster was the very first printable content after the init preamble —
+      // spilled the raster bytes as a text garbage-wall. A single space + LF
+      // reproduces the proven-clean byte pattern at the cost of one blank line.
+      w.line(' ');
       w.push(raster);
       w.push([0x0a]);
     } catch {

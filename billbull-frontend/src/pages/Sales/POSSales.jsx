@@ -911,7 +911,7 @@ export default function POSSales() {
     try {
       const now = new Date();
       const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
-      const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+      const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
       const previewShipping = Number(shippingCharge) || 0;
@@ -1035,7 +1035,7 @@ export default function POSSales() {
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
   // representative code; the real archived QR is regenerated at print time.
   useEffect(() => {
-    const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+    const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
     if (!tplInvoiceShowQRCode || stampAvailable || !showPaymentDialog) {
       setCheckoutPreviewQrDataUrl(null);
       return;
@@ -1225,6 +1225,20 @@ export default function POSSales() {
               if (tpl.receiptShowTrn != null) setTplReceiptShowTrn(tpl.receiptShowTrn);
               if (tpl.receiptShowStamp != null) setTplReceiptShowStamp(tpl.receiptShowStamp);
               if (tpl.receiptShowBarcode != null) setTplReceiptShowBarcode(tpl.receiptShowBarcode);
+              if (tpl.receiptShowCompanyDetails != null) setTplReceiptShowCompanyDetails(tpl.receiptShowCompanyDetails);
+              if (tpl.receiptShowCustomerDetails != null) setTplReceiptShowCustomerDetails(tpl.receiptShowCustomerDetails);
+              if (tpl.receiptColItemCode != null) setTplReceiptColItemCode(tpl.receiptColItemCode);
+              if (tpl.receiptColItemImage != null) setTplReceiptColItemImage(tpl.receiptColItemImage);
+              if (tpl.receiptColBatchNo != null) setTplReceiptColBatchNo(tpl.receiptColBatchNo);
+              if (tpl.receiptColDiscount != null) setTplReceiptColDiscount(tpl.receiptColDiscount);
+              if (tpl.receiptColVatPct != null) setTplReceiptColVatPct(tpl.receiptColVatPct);
+              if (tpl.receiptColVatAmt != null) setTplReceiptColVatAmt(tpl.receiptColVatAmt);
+              if (tpl.receiptShowGrandTotalBanner != null) setTplReceiptShowGrandTotalBanner(tpl.receiptShowGrandTotalBanner);
+              if (tpl.receiptShowTerms != null) setTplReceiptShowTerms(tpl.receiptShowTerms);
+              if (tpl.receiptShowNotes != null) setTplReceiptShowNotes(tpl.receiptShowNotes);
+              if (tpl.receiptShowBankDetails != null) setTplReceiptShowBankDetails(tpl.receiptShowBankDetails);
+              if (tpl.receiptShowQRCode != null) setTplReceiptShowQRCode(tpl.receiptShowQRCode);
+              if (tpl.receiptShowSignature != null) setTplReceiptShowSignature(tpl.receiptShowSignature);
               if (tpl.invoiceHeader != null) setTplInvoiceHeader(tpl.invoiceHeader);
               if (tpl.invoiceFooter != null) setTplInvoiceFooter(tpl.invoiceFooter);
               if (tpl.invoicePaper != null) setTplInvoicePaper(tpl.invoicePaper);
@@ -1271,6 +1285,14 @@ export default function POSSales() {
               if (tpl.jobCardShowLogo != null) setTplJobCardShowLogo(tpl.jobCardShowLogo);
               if (tpl.jobCardShowTrn != null) setTplJobCardShowTrn(tpl.jobCardShowTrn);
               if (tpl.jobCardShowStamp != null) setTplJobCardShowStamp(tpl.jobCardShowStamp);
+              if (tpl.jobCardShowCompanyDetails != null) setTplJobCardShowCompanyDetails(tpl.jobCardShowCompanyDetails);
+              if (tpl.jobCardShowCustomerDetails != null) setTplJobCardShowCustomerDetails(tpl.jobCardShowCustomerDetails);
+              if (tpl.jobCardShowSerialNumber != null) setTplJobCardShowSerialNumber(tpl.jobCardShowSerialNumber);
+              if (tpl.jobCardShowWarranty != null) setTplJobCardShowWarranty(tpl.jobCardShowWarranty);
+              if (tpl.jobCardShowTechnician != null) setTplJobCardShowTechnician(tpl.jobCardShowTechnician);
+              if (tpl.jobCardShowExpectedDate != null) setTplJobCardShowExpectedDate(tpl.jobCardShowExpectedDate);
+              if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
+              if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -2877,7 +2899,7 @@ export default function POSSales() {
       isReprint,
       zatcaQrDataUrl: qrDataUrl,
       logoDataUrl: tplLogoDataUrl,
-      stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null,
+      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
       showLogo: tplInvoiceShowLogo,
       showCompanyDetails: tplInvoiceShowCompanyDetails,
       outletAddress: tplOutletAddress,
@@ -10506,7 +10528,7 @@ export default function POSSales() {
                             companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
                             showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
                             logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
-                            stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                            stampDataUrl: tplReturnShowQRCode ? tplStampDataUrl : null,
                             showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
                             showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
                             showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,

@@ -219,18 +219,22 @@ async function printRealLogo() {
   const TAIL = [0x0a, ESC, 0x64, 0x04, GS, 0x56, 0x01];
   const label = (s) => [...new TextEncoder().encode(s), 0x0a];
 
+  // Round 4: the receipt's ACTUAL byte pattern vs the fix. Every previously
+  // clean slip had a text label before the raster; the garbling receipts have
+  // the raster as the FIRST printable content after the preamble. Variant A
+  // replicates the receipt exactly; variant B inserts the one-space flush line
+  // the fixed receipt builder now emits. A garbles + B prints = cause proven.
   const variants = [
-    ['WITH heating (exact receipt preamble)', concat([
+    ['A: RECEIPT-EXACT — raster first, NO text before', concat([
       u8([...INIT, ...HEATING, ...CODEPAGE, ...FONT_A, ...LINESP, ...CENTER]),
-      u8(label('== REAL LOGO / with heating ==')), u8(label('TEXT BEFORE')),
       raster, u8([0x0a]),
-      u8([...LEFT]), u8(label('TEXT AFTER')), u8([...TAIL]),
+      u8([...LEFT]), u8(label('TEXT AFTER (A) — if garbage above, receipt pattern is the trigger')), u8([...TAIL]),
     ])],
-    ['WITHOUT heating', concat([
-      u8([...INIT, ...CODEPAGE, ...FONT_A, ...LINESP, ...CENTER]),
-      u8(label('== REAL LOGO / no heating ==')), u8(label('TEXT BEFORE')),
+    ['B: FLUSH LINE (space+LF) then raster — the fix', concat([
+      u8([...INIT, ...HEATING, ...CODEPAGE, ...FONT_A, ...LINESP, ...CENTER]),
+      u8([0x20, 0x0a]),
       raster, u8([0x0a]),
-      u8([...LEFT]), u8(label('TEXT AFTER')), u8([...TAIL]),
+      u8([...LEFT]), u8(label('TEXT AFTER (B) — logo above should be clean')), u8([...TAIL]),
     ])],
   ];
 
@@ -246,9 +250,9 @@ async function printRealLogo() {
     await new Promise((r) => setTimeout(r, 900));
   }
   log('\nREAD BOTH SLIPS:');
-  log('  • Logo prints clean on BOTH → the logo image is fine; bug is elsewhere in receipt assembly.');
-  log('  • Garbage WITH heating but clean WITHOUT → the ESC 7 heating cmd before the raster is the trigger.');
-  log('  • Garbage on BOTH → the dithered logo bytes themselves break this printer (send me the logo file).');
+  log('  • A garbage + B clean → PROVEN: raster-as-first-content is the trigger; the flush-line fix is correct.');
+  log('  • Both clean → receipt pattern is fine in isolation; the divergence is routing (check ip_address on the printer row).');
+  log('  • Both garbage → something changed on the printer/agent since round 3; collect the Desktop .bin files.');
 }
 </script>
 </body>
