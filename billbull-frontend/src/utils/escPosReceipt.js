@@ -117,12 +117,6 @@ export const buildFixedWidthLine = (left, right, width) => {
   return `${leftTrimmed}${' '.repeat(Math.max(1, width - leftTrimmed.length - r.length))}${r}`;
 };
 
-const centered = (text, width) => {
-  const t = String(text || '');
-  const pad = Math.max(0, Math.floor((width - t.length) / 2));
-  return `${' '.repeat(pad)}${t}`.slice(0, width);
-};
-
 // ── Image → monochrome raster (Floyd–Steinberg dithering) ─────────────────
 const loadImage = (dataUrl) => new Promise((resolve, reject) => {
   const img = new Image();
@@ -204,6 +198,82 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
   return Uint8Array.from([...header, ...raster]);
 };
 
+// Packs a 1-bit black/white bitmap (row-major, true = black/print) into a single
+// ESC/POS GS v 0 raster block — the same command the logo/stamp use, proven clean
+// on the POS-80C. Shared by the image ditherer above and the text rasteriser below.
+const packBitmapToRasterCommand = (bits, w, h) => {
+  const bytesPerRow = Math.ceil(w / 8);
+  const raster = new Uint8Array(bytesPerRow * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (bits[y * w + x]) raster[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  const xL = bytesPerRow & 0xff;
+  const xH = (bytesPerRow >> 8) & 0xff;
+  const yL = h & 0xff;
+  const yH = (h >> 8) & 0xff;
+  return Uint8Array.from([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH, ...raster]);
+};
+
+// True when a string contains any character the printer's single-byte WPC1252
+// code page cannot render (Arabic, CJK, emoji, …). Latin-1 + the CP1252
+// punctuation we map are fine; anything else must be rendered as a bitmap.
+// NFKD-normalise first so accented Latin (which decomposes to base+mark) isn't
+// misflagged — toPrinterBytes already handles those as text.
+const hasNonPrintableLatin = (str) => {
+  const normalized = String(str ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '');
+  for (let i = 0; i < normalized.length; i++) {
+    const code = normalized.charCodeAt(i);
+    const ok = (code >= 0x20 && code <= 0xff) || code === 0x0a || code === 0x0d
+      || CP1252_PUNCTUATION[code] != null;
+    if (!ok) return true;
+  }
+  return false;
+};
+
+// Arabic Unicode blocks — used to switch the raster canvas to RTL so shaping and
+// direction come out correct for Arabic company names / header lines. Written as
+// \u escapes (not literal glyphs) so no invisible/irregular characters end up in
+// the source: Arabic (0600–06FF), Supplement (0750–077F), Extended-A (08A0–08FF),
+// Presentation Forms-A (FB50–FDFF) and -B (FE70–FEFF).
+const hasArabic = (str) => /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-ﻼ]/.test(String(str ?? ""));
+
+// Renders a single line of text to a monochrome GS v 0 raster so scripts the
+// printer's code page can't represent (Arabic, etc.) print correctly instead of
+// as '?' (client item 6). Canvas fillText handles Arabic shaping/RTL natively.
+// A hard black/white threshold (not dithering) keeps glyph edges crisp. Returns
+// null on any failure so the caller can fall back to plain text bytes.
+const renderTextLineToRasterCommand = (text, { widthDots, fontPx = 28, bold = false, align = 'center', rtl = false } = {}) => {
+  try {
+    const canvas = document.createElement('canvas');
+    const pad = Math.round(fontPx * 0.3);
+    canvas.width = widthDots;
+    canvas.height = fontPx + pad * 2;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000000';
+    ctx.font = `${bold ? 'bold ' : ''}${fontPx}px 'Segoe UI', 'Tahoma', 'Arial', sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.direction = rtl ? 'rtl' : 'ltr';
+    ctx.textAlign = align;
+    const x = align === 'center' ? canvas.width / 2 : (align === 'right' ? canvas.width - pad : pad);
+    ctx.fillText(String(text ?? ''), x, canvas.height / 2);
+
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const bits = new Uint8Array(canvas.width * canvas.height);
+    for (let i = 0; i < bits.length; i++) {
+      const o = i * 4;
+      const lum = 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2];
+      bits[i] = lum < 160 ? 1 : 0; // black where a glyph was drawn
+    }
+    return packBitmapToRasterCommand(bits, canvas.width, canvas.height);
+  } catch {
+    return null;
+  }
+};
+
 // ── Native ESC/POS QR code (GS ( k, model 2) — printer renders the QR itself,
 // so quality depends on the printer's own dot accuracy rather than a rasterized
 // bitmap pushed through a generic driver's halftone filter. ──────────────────
@@ -254,6 +324,12 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   showCompanyDetails = true, outletAddress = '', outletPhone = '',
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
   showQRCode = true, qrContent = null,
+  // Social/stamp image (data URL). When present it is printed INSTEAD of the QR
+  // (client item 8) — mirrors buildThermalReceiptHtml's stamp-vs-QR precedence.
+  stampDataUrl = null,
+  // 'before' | 'after' — QR/stamp placement relative to the footer text (§4),
+  // same semantics as the HTML preview.
+  qrPlacement = 'before',
   showCustomerDetails = true,
   showFooterText = true,
   cashierName = '', terminalId = '', counterName = '',
@@ -268,7 +344,12 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
   const dots = PAPER_DOTS[mm];
-  const width = PAPER_COLS[mm];
+  // Reserve one column of right-hand inset (client item 5): with the full column
+  // count, right-aligned values (and the divider rule) print flush against the
+  // paper's right edge, while the centered header sits inset — so the right side
+  // looked like it "took over spacing". Dropping the usable width by one column
+  // gives the whole body an even right margin that matches the header's inset.
+  const width = PAPER_COLS[mm] - 1;
   const hr = '-'.repeat(width);
   const cur = currency || 'AED';
   const fmt = (n) => {
@@ -278,11 +359,32 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
 
   const w = new ByteWriter();
+
+  // Emits a centered line that may contain Arabic/other non-Latin-1 text (client
+  // item 6). If the text is all printable-Latin it prints as normal ESC/POS text
+  // (crisp, fast); otherwise it's rasterised via canvas so the glyphs actually
+  // render instead of degrading to '?'. Assumes the writer is already centered.
+  // fontPx scales the raster glyph height; bold thickens it. Falls back to plain
+  // text bytes if canvas rasterisation fails, so a line always prints something.
+  const emitCenteredText = (str, { fontPx = 26, bold = false } = {}) => {
+    const text = String(str ?? '');
+    if (!text) return;
+    if (!hasNonPrintableLatin(text)) { w.line(text); return; }
+    const raster = renderTextLineToRasterCommand(text, {
+      widthDots: Math.round(dots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
+    });
+    if (raster) { w.push(raster); w.push([0x0a]); } else { w.line(text); }
+  };
+
   w.push(CMD.INIT);
   w.push(CMD.SET_HEATING());
   w.push(CMD.CODEPAGE_WPC1252);
   w.push(CMD.SELECT_FONT_A);
-  w.push(CMD.LINE_SPACING(36)); // slightly above the typical ~30 default for readability
+  // Uniform line spacing matching the preview's ~1.5 line-height density (client
+  // item 2). 30/203" is close to the printer's own default single spacing; the
+  // previous 36 was airier and, combined with the old double-size company name,
+  // made the vertical rhythm read as inconsistent between sections.
+  w.push(CMD.LINE_SPACING(30));
   w.push(CMD.ALIGN_CENTER);
 
   // ── Logo: dithered raster, full quality (no compression of the bitmap) ──
@@ -303,20 +405,38 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     }
   }
 
-  // ── Heading: document title + company name, double width+height + bold ──
-  w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 1));
+  // ── Heading: document title + company name ──
+  // Sizes mirror the checkout preview (buildThermalReceiptHtml / ThermalMock),
+  // which is the design source of truth: the TAX INVOICE title is small bold
+  // (~10px there), and the company name is only marginally larger than body
+  // (~13px vs 11px) — NOT the double-width+height it used to be, which printed
+  // a giant company name that dwarfed the rest of the receipt (client item 7).
+  // On a thermal head there is no "13px": the smallest step above normal text
+  // is height-only doubling (GS ! 0x01), so the company name uses that (bold,
+  // single width) to read as a modest heading without stretching sideways.
+  w.push(CMD.BOLD_ON);
   w.line(documentTitle || 'TAX INVOICE');
-  if (header) { w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF).line(header); w.push(CMD.BOLD_ON); }
-  w.push(CMD.CHAR_SIZE(2, 2));
-  w.line(companyName || '');
-  w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
+  w.push(CMD.BOLD_OFF);
+  // Header line may be a bilingual/Arabic string (e.g. "TAX INVOICE / فاتورة
+  // ضريبية") — emitCenteredText rasterises it when it isn't plain Latin so it no
+  // longer prints as "?????? ??????" (client item 6).
+  if (header) { emitCenteredText(header, { fontPx: 24 }); }
+  // Company name: height-only emphasis for the common Latin case; an Arabic name
+  // is rasterised (slightly larger font) via emitCenteredText instead.
+  if (hasNonPrintableLatin(companyName || '')) {
+    emitCenteredText(companyName, { fontPx: 34, bold: true });
+  } else {
+    w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2)); // height-only emphasis, normal width
+    w.line(companyName || '');
+    w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
+  }
 
   if (showCompanyDetails) {
     const addrLine = oneLineAddress(outletAddress);
-    if (addrLine) w.line(addrLine);
-    if (outletPhone) w.line(`Tel: ${outletPhone}`);
+    if (addrLine) emitCenteredText(addrLine, { fontPx: 22 });
+    if (outletPhone) emitCenteredText(`Tel: ${outletPhone}`, { fontPx: 22 });
   }
-  if (showTrn && trn) w.line(`TRN: ${trn}`);
+  if (showTrn && trn) emitCenteredText(`TRN: ${trn}`, { fontPx: 22 });
   if (isReprint) { w.push(CMD.BOLD_ON).line('*** COPY / REPRINT ***').push(CMD.BOLD_OFF); }
 
   w.push(CMD.ALIGN_LEFT);
@@ -329,15 +449,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (counterName) w.line(buildFixedWidthLine('Counter:', counterName, width));
   w.line(hr);
 
-  // Gated on the toggle alone (matches the settings preview and the HTML/browser
-  // print path) — a walk-in sale still prints "Walk-in Customer" as the name when
-  // this section is enabled, rather than silently dropping it regardless of the toggle.
-  if (showCustomerDetails) {
-    w.line(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
-    if (customerPhone) w.line(`Mobile: ${customerPhone}`);
-    if (customerEmail) w.line(`Email: ${customerEmail}`);
-    w.line(hr);
-  }
+  // NOTE: the customer block is intentionally NOT here. The checkout preview
+  // (buildThermalReceiptHtml / ThermalMock — the design source of truth) renders
+  // CUSTOMER as a labeled section down near the bottom, AFTER payment details and
+  // BEFORE the credit-account block — not inline above the line items. It is
+  // emitted in that position further down (client item 4: detail ordering).
 
   (invoice.items || []).forEach((item) => {
     if (item.voided || item.isVoided) return;
@@ -429,11 +545,15 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.line(hr);
   }
 
-  if (showQRCode && qrContent) {
-    w.push(CMD.ALIGN_CENTER);
-    w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M', maxWidthDots: dots }));
-    w.line('Scan to verify');
-    w.push(CMD.ALIGN_LEFT);
+  // ── Customer (§6, client item 4): labeled CUSTOMER section — Name/Mobile/Email —
+  // placed here (after payment, before credit account) to match the checkout
+  // preview / A4 template ordering, not inline above the line items. Uses the
+  // same "CUSTOMER" section label + Name: row the HTML preview uses.
+  if (showCustomerDetails) {
+    w.line('CUSTOMER');
+    w.line(buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
+    if (customerPhone) w.line(buildFixedWidthLine('Mobile:', customerPhone, width));
+    if (customerEmail) w.line(buildFixedWidthLine('Email:', customerEmail, width));
     w.line(hr);
   }
 
@@ -455,13 +575,61 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.line(hr);
   }
 
+  // ── QR / social image (§4+§5, client items 3+8) ─────────────────────────────
+  // Mirrors the checkout preview's mutually-exclusive rule EXACTLY: if a social/
+  // stamp image is uploaded, print THAT image (raster) and NOT the QR; otherwise
+  // print the native QR. Placement honours qrPlacement ('before' | 'after' the
+  // footer text), same as buildThermalReceiptHtml. Built as a closure so it can
+  // be emitted before OR after the footer without duplicating the logic.
+  const emitQrOrStamp = async () => {
+    if (stampDataUrl) {
+      // Social/stamp image takes priority over the QR (client item 8). Render it
+      // through the same proven-clean GS v 0 raster path used for the logo.
+      try {
+        w.push(CMD.ALIGN_CENTER);
+        const stampRaster = await ditherImageToRasterCommand(stampDataUrl, Math.round(dots * 0.5));
+        w.line(' '); // flush line before raster (POS-80C raster-first workaround)
+        w.push(stampRaster);
+        w.push([0x0a]);
+        w.push(CMD.ALIGN_LEFT);
+        w.line(hr);
+      } catch {
+        // Stamp failed to decode/dither — skip it rather than abort the print.
+      }
+      return;
+    }
+    if (showQRCode && qrContent) {
+      w.push(CMD.ALIGN_CENTER);
+      // moduleSize sized to match the preview's modest ~90px QR (roughly a third
+      // of paper width), not the full-width block the old fixed 8/6 produced
+      // (client item 3). qrCommand still shrinks further via fittedModuleSize if
+      // a large payload would otherwise overflow the paper.
+      w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 3 : 4, errorCorrection: 'M', maxWidthDots: dots }));
+      w.line('Scan to verify');
+      w.push(CMD.ALIGN_LEFT);
+      w.line(hr);
+    }
+  };
+
+  // 'before' (default): QR/stamp renders immediately above the footer text.
+  if (qrPlacement !== 'after') await emitQrOrStamp();
+
   if (showFooterText && footer) {
     w.push(CMD.ALIGN_CENTER);
-    String(footer).split('\n').forEach((l) => w.line(centered(l, width)));
+    // Per-line so a bilingual/Arabic footer rasterises instead of printing '?'
+    // (client item 6); Latin lines still print as fast plain text.
+    String(footer).split('\n').forEach((l) => emitCenteredText(l, { fontPx: 20 }));
     w.push(CMD.ALIGN_LEFT);
   }
 
-  w.push(CMD.FEED(3));
+  // 'after': QR/stamp renders below the footer text.
+  if (qrPlacement === 'after') await emitQrOrStamp();
+
+  // Trailing feed advances the last printed line clear of the tear bar / cutter
+  // before the partial cut, so the bottom content isn't clipped (client item 1).
+  // The head sits ~2 lines behind the cutter; FEED(4) leaves a clean bottom
+  // margin matching the preview without an excessive blank tail.
+  w.push(CMD.FEED(4));
   w.push(CMD.CUT_PARTIAL);
   return w.toUint8Array();
 };

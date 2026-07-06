@@ -506,6 +506,12 @@ export default function POSSales() {
   // commit that the phase switch unmounts that iframe — that race is what threw
   // "Failed to execute 'removeChild' on 'Node'" on Settle Payment.
   const [checkoutSettling, setCheckoutSettling] = useState(false);
+  // True while post-payment side-effects (receipt printing, cash drawer, layaway
+  // conversion) run AFTER the payment itself has already been confirmed by the
+  // backend and the success screen is showing. Drives the subtle "Printing
+  // receipt…" indicator on the complete screen so the cashier isn't blocked on
+  // the checkout form waiting for the printer round-trip (perceived-latency fix).
+  const [checkoutFinalizing, setCheckoutFinalizing] = useState(false);
   const checkoutPreviewFreezeRef = useRef('');
   // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
   // and no company stamp occupies that slot — "stamp if uploaded, else QR").
@@ -2865,6 +2871,11 @@ export default function POSSales() {
       showPaymentDetails: tplInvoiceColDiscount,
       showQRCode: tplInvoiceShowQRCode,
       qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      // Social/stamp image + placement — same values the HTML preview below gets,
+      // so a merchant-uploaded social image prints (and suppresses the QR) on the
+      // ESC/POS path too, honouring the configured before/after-footer placement.
+      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+      qrPlacement: tplInvoiceQrPlacement,
       showCustomerDetails: tplInvoiceShowCustomerDetails,
       showFooterText: tplInvoiceShowTerms,
       cashierName: cashierNameOverride || cashierDisplayName,
@@ -3127,18 +3138,18 @@ export default function POSSales() {
         items,
       };
 
+      // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
+      // posCheckout resolving is the backend's authoritative confirmation that
+      // the sale posted (GL, stock, receivable all committed). Everything below
+      // — cash drawer, receipt printing, layaway conversion — is a post-success
+      // side-effect that does NOT gate whether the payment succeeded. So we show
+      // the success screen the moment this resolves and run those side-effects in
+      // the background, instead of making the cashier wait on the printer round-
+      // trip (the bulk of the old 3–5 s). No false success: this only runs after
+      // the await above resolves; a rejection skips straight to catch().
       const savedInvoice = await posCheckout(payload);
 
       const changeDue = checkoutPayMode === 'cash' ? Math.max(0, tenderedNum - effectiveDueAmt) : 0;
-
-      // Cash drawer — open on cash settlement / completion, and again if change is due.
-      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
-        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
-      if (cashTaken) {
-        openCashDrawer('CASH_SETTLEMENT');
-        openCashDrawer('CASH_PAYMENT');
-      }
-      if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
 
       // Credit account posting for THIS invoice — same formula for every payment
       // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
@@ -3176,62 +3187,21 @@ export default function POSSales() {
         creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
-      try {
-        if (tplInvoicePaper === 'A4') {
-          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
-          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
-          printHtml(await generatePrintHtmlAsync(template, data, options));
-          openCashDrawer('RECEIPT_PRINT');
-        } else {
-          let creditPrevBalAuto = null;
-          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
-            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
-          }
-          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-            full: savedInvoice,
-            cashGiven: paid.paidAmount,
-            changeAmount: changeDue,
-            customerPhone: customer?.phone,
-            customerEmail: customer?.email,
-            creditPreviousBalance: creditPrevBalAuto,
-            creditInvoiceCredit: creditInvoiceCreditAuto,
-            creditAmountPaid: creditAmountPaidAuto,
-            creditUpdatedBalance: creditUpdatedBalanceAuto,
-            depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
-            balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
-            shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
-          });
-          await printThermalReceiptWithConfiguredPrinter({
-            full: savedInvoice,
-            text,
-            escPosBase64,
-            title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
-          });
-          openCashDrawer('RECEIPT_PRINT');
-        }
-      } catch (autoPrintErr) {
-        console.warn('Automatic receipt print failed', autoPrintErr);
-        alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
-      }
+      // Snapshot everything the background finalize needs into locals BEFORE the
+      // state resets below wipe the React state it was reading from (customer,
+      // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
+      const layawayIdSnapshot = activeLayawayId;
+      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
+        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
+      const printPaper = tplInvoicePaper;
 
-      // If this checkout settled a layaway, stamp it converted (releases its
-      // reservations; the sale above re-reserved its own batches). Best-effort —
-      // the sale already posted, so a failure here just leaves the layaway open.
-      if (activeLayawayId) {
-        try {
-          await convertLayaway(activeLayawayId, {
-            invoiceId: savedInvoice.id,
-            invoiceNumber: savedInvoice.invoiceNumber,
-          });
-        } catch (convErr) {
-          console.warn('Layaway mark-converted failed', convErr);
-        }
-        setActiveLayawayId(null);
-        setActiveLayawayDeposit(0);
-      }
-
+      // ── Show success immediately, then finalize in the background ───────────
+      // The payment is already confirmed (posCheckout resolved). Commit the
+      // success state + clear the cart NOW so the cashier sees "Payment Complete"
+      // without waiting on the printer. checkoutFinalizing drives the subtle
+      // "Printing receipt…" indicator on the complete screen until printing ends.
       setLastPaidInvoice(paid);
+      setCheckoutFinalizing(true);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
       syncPosData();
@@ -3257,6 +3227,7 @@ export default function POSSales() {
       setCheckoutCreditReceivedCardType('');
       setCheckoutCreditReceivedRef('');
       setCheckoutCreditReceivedBankAccountId('');
+      if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
       // resets above (clearInvoice, setCheckoutPayMode, etc.) are committed
@@ -3266,6 +3237,76 @@ export default function POSSales() {
       // indicator divs) while simultaneously unmounting those buttons — which
       // throws "Failed to execute 'removeChild' on 'Node'".
       queueMicrotask(() => setCheckoutPhase('complete'));
+
+      // Post-success side-effects: cash drawer, receipt print, layaway convert.
+      // Fire-and-forget — the success screen is already up; failures here surface
+      // as a non-blocking notice (the sale itself is safely posted). NOT awaited,
+      // so the checkout handler's finally{} releases checkoutLoading right away.
+      void (async () => {
+        try {
+          // Cash drawer — open on cash settlement, and again if change is due.
+          if (cashTaken) {
+            openCashDrawer('CASH_SETTLEMENT');
+            openCashDrawer('CASH_PAYMENT');
+          }
+          if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
+
+          try {
+            if (printPaper === 'A4') {
+              const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+              const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+              printHtml(await generatePrintHtmlAsync(template, data, options));
+              openCashDrawer('RECEIPT_PRINT');
+            } else {
+              let creditPrevBalAutoPrint = null;
+              if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
+                try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAutoPrint = cr.outstanding ?? null; } catch (_) {}
+              }
+              const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                full: savedInvoice,
+                cashGiven: paid.paidAmount,
+                changeAmount: changeDue,
+                customerPhone: customer?.phone,
+                customerEmail: customer?.email,
+                creditPreviousBalance: creditPrevBalAutoPrint,
+                creditInvoiceCredit: creditInvoiceCreditAuto,
+                creditAmountPaid: creditAmountPaidAuto,
+                creditUpdatedBalance: creditUpdatedBalanceAuto,
+                depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
+                balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
+                shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
+              });
+              await printThermalReceiptWithConfiguredPrinter({
+                full: savedInvoice,
+                text,
+                escPosBase64,
+                title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
+              });
+              openCashDrawer('RECEIPT_PRINT');
+            }
+          } catch (autoPrintErr) {
+            console.warn('Automatic receipt print failed', autoPrintErr);
+            alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
+          }
+
+          // If this checkout settled a layaway, stamp it converted (releases its
+          // reservations; the sale re-reserved its own batches). Best-effort — the
+          // sale already posted, so a failure here just leaves the layaway open.
+          if (layawayIdSnapshot) {
+            try {
+              await convertLayaway(layawayIdSnapshot, {
+                invoiceId: savedInvoice.id,
+                invoiceNumber: savedInvoice.invoiceNumber,
+              });
+            } catch (convErr) {
+              console.warn('Layaway mark-converted failed', convErr);
+            }
+          }
+        } finally {
+          setCheckoutFinalizing(false);
+        }
+      })();
     } catch (err) {
       // Settle failed — the cart is untouched (clearInvoice only runs on success).
       // Do NOT unfreeze the preview here: flipping checkoutSettling false in the
@@ -7338,6 +7379,9 @@ export default function POSSales() {
             setShowPaymentDialog(false);
             setCheckoutPhase('payment');
             setCheckoutSettling(false);
+            // Clear the finalize indicator on close — the receipt print is a
+            // fire-and-forget background task and doesn't need to block closing.
+            setCheckoutFinalizing(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
             setSelectedCustomer(WALK_IN_CUSTOMER.id);
@@ -7361,6 +7405,15 @@ export default function POSSales() {
                   </p>
                   <p className="text-[10px] text-gray-500 mt-1 font-semibold">Successfully settled via {lastPaidInvoice.paymentMode || 'Cash'}</p>
                 </div>
+                {/* Background finalize indicator — subtle, non-blocking. The sale is
+                    already confirmed; this only reflects that the receipt is being
+                    sent to the printer. Disappears once printing/finalize completes. */}
+                {checkoutFinalizing && (
+                  <div className="bg-[#327F74]/5 border-b border-[#327F74]/15 px-6 py-2.5 flex items-center justify-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-[#327F74]/40 border-t-[#327F74] rounded-full animate-spin" />
+                    <span className="text-[11px] font-bold text-[#327F74]">Printing receipt…</span>
+                  </div>
+                )}
                 {/* Change Due alert (only if change is > 0) */}
                 {(lastPaidInvoice.changeAmount || 0) > 0 && (
                   <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between">
