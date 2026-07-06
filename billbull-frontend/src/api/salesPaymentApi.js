@@ -56,6 +56,14 @@ export const getSalesPaymentStats = async () => {
 };
 
 // --------------------
+// GET OPEN (UNPAID) INVOICES FOR A CUSTOMER — for payment allocation picker
+// --------------------
+export const getOpenInvoicesForCustomer = async (customerCode) => {
+    const res = await api.get(`/api/sales/invoices/open`, { params: { customerCode } });
+    return res.data;
+};
+
+// --------------------
 // CREATE OR UPDATE
 // --------------------
 export const saveSalesPayment = async (payload) => {

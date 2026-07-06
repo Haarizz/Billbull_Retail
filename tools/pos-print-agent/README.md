@@ -121,13 +121,101 @@ download — it needs nothing else to run.
   (`OpenPrinter`/`StartDocPrinter`/`WritePrinter`), which skips GDI rendering so the
   density/heat/font commands actually reach the printer firmware.
 - `POST /print/label/zebra`
+- `POST /probe/echo` — `{ dataBase64 }` → `{ receivedBytes, sha256, firstBytesHex, lastBytesHex }`.
+  Decodes the base64 and reports its byte count + hash **without printing**, so the
+  caller can prove the browser→HTTP→agent hop is byte-perfect (compare against the
+  hash computed in the browser). Diagnostic only.
+- `POST /probe/capabilities` — `{ printerName | (ipAddress, portNumber), qrData? }`.
+  Prints one isolated slip per binary opcode (`GS v 0`, `GS ( L`, `ESC *`, `GS ( k`
+  QR) so you can see on paper which the firmware honours vs. echoes as garbage.
+  Use `probe.html` (open it in the till's browser) as the front-end.
 
 ## Notes
 
-- `/test-print` and `/print/receipt` remain plain-text paths (no ESC/POS control) —
-  kept for non-thermal/fallback printers and job-card/layaway slips.
+- `/test-print` and `/print/receipt` remain plain-text paths — kept for non-thermal/
+  fallback printers. On Windows-queue printers they render through GDI (no ESC/POS
+  control); on `NETWORK_IP` printers the text is now wrapped in minimal ESC/POS
+  framing (init + WPC1252 code-page select, trailing feed + partial cut) so the
+  roll actually gets cut and non-ASCII is sanitized to single-byte instead of
+  arriving as raw UTF-8.
 - `/print/escpos` is the only path with real print-quality control (density, heat,
   font selection, dithered logo raster, native QR command). The POS sales receipt
-  flow prefers it automatically and falls back to plain text, then to browser/driver
-  printing, if the agent or printer rejects the raw job.
+  flow is **ESC/POS-only** — there is no automatic plain-text or browser/driver
+  fallback; a failed send surfaces as an error to the cashier so a degraded print
+  can't silently replace the real one.
 - Zebra Browser Print still requires Zebra's local Browser Print service to be installed when using Zebra-direct label printing.
+
+## Changelog
+
+### 0.5.0 (2026-07-04)
+
+Adds **capability-probe tooling** to diagnose the "garbage before receipt / missing
+logo+QR / Arabic as ?????" reports on the client's POS-80C, without guessing at the
+cause. Agent 0.4.0's RAW fix means genuine ESC/POS binary now reaches this printer
+for the first time (previously it silently fell back to plain-text GDI, which is why
+text-only slips print clean but the full receipt does not) — so we need to know
+empirically which binary opcodes the firmware actually decodes.
+
+- **`/probe/echo`**: decodes the received base64 and returns byte count + SHA-256
+  (no print), to prove the base64→HTTP→agent stream is byte-identical to what the
+  browser generated. If the hashes match, on-paper garbage is a firmware opcode
+  limitation, not stream corruption.
+- **`/probe/capabilities`**: prints one isolated slip per binary opcode
+  (`GS v 0`, `GS ( L`, `ESC *`, `GS ( k` QR), each preceded by a plain-text label.
+  A clean image/QR = supported; garbage glyphs under the label = that opcode is
+  echoed as text (unsupported). All four slips' length framing is spec-verified so
+  a probe "garbage" result is the printer, never a malformed probe command.
+- **`probe.html`**: open on the till (browser can reach `127.0.0.1:19777`) to run
+  the integrity test and print the probe slips from one page.
+
+### 0.4.0 (2026-07-04)
+
+Fixes the "text compatibility mode" fallback still firing on genuine ESC/POS
+thermal printers (e.g. EZ-P003 / "POS-80C"). **All tills must be updated.**
+
+- **Fixed RAW ESC/POS rejected on real thermal drivers (`StartDocPrinter failed`):**
+  the winspool P/Invoke block declared `OpenPrinter`/`StartDocPrinter`/`DOCINFOA`
+  with `CharSet=CharSet.Auto`, which resolves to the `*W` (Unicode) exports on
+  Windows NT. `StartDocPrinterW` reads `DOCINFOW` with **wide** string pointers,
+  but the struct fields are `[MarshalAs(LPStr)]` = **ANSI** — so `pDataType="RAW"`
+  reached the spooler as the corrupted UTF-16 string `"䅒W"` instead of `"RAW"`.
+  Lenient legacy v3 GDI drivers quietly defaulted that to RAW (so it "worked" on
+  some tills), but stricter thermal drivers rejected it and `StartDocPrinter`
+  failed, forcing the GDI text fallback — which is what produced the plain-text,
+  right-clipped receipt that didn't match the template. Declarations are now
+  `CharSet=CharSet.Ansi` (binding `OpenPrinterA`/`StartDocPrinterA`/`DOCINFOA`),
+  so the ANSI `"RAW"` we marshal is what the spooler receives. Verified: RAW now
+  opens successfully even on virtual v3 drivers; genuine v4/XPS drivers still
+  fail loudly with the specific 1804 "does not support RAW" message.
+- **GDI text-fallback right-edge clipping:** the fallback now measures the real
+  printable box the driver gives (`MarginBounds`, which subtracts the driver's
+  non-zero `HardMarginX`) and shrinks the font to fit rather than laying text out
+  for the full configured width and letting GDI clip the trailing characters.
+
+### 0.2.0 (2026-07-04)
+
+Ships the fixes from `docs/pos-printing-pipeline-audit-2026-07-04.md`. **All tills
+must be updated to this build** — 0.1.0 never actually printed ESC/POS jobs to
+USB/Bluetooth/Windows-queue printers while still reporting success.
+
+- **Fixed silent no-print on `/print/escpos` to Windows queues (P0):** the winspool
+  `Add-Type` P/Invoke block passed `-UsingNamespace System.Runtime.InteropServices`,
+  which is already a default using for `-MemberDefinition`; the duplicate is a
+  compiler warning that Windows PowerShell 5.1 treats as an error, so the type never
+  compiled and every printer call was silently skipped while the script still
+  emitted `{"ok":true}`. Both print scripts now also run under
+  `$ErrorActionPreference = 'Stop'` and verify `WritePrinter` wrote every byte, so
+  any failure returns a real error instead of false success.
+- **Fixed printer status labels (P0):** labels now map `Get-Printer`'s MSFT_Printer
+  *flags* enum (0 = Normal, 128 = Offline, 2 = Error, …) instead of the old WMI
+  Win32_Printer table, which showed healthy printers as "Unknown" and Error printers
+  as "Normal". `WorkOffline` ("Use Printer Offline") also reports as Offline.
+- **Fixed mojibake on the GDI text path:** the job file is written as UTF-8 but was
+  read back as ANSI (`Get-Content -Raw` default on PS 5.1); it now reads
+  `-Encoding UTF8`.
+- Network plain-text jobs are framed with init/code-page/feed/cut (see Notes above)
+  and get the same 150 ms socket drain as the ESC/POS path.
+- PowerShell CLIXML stderr is decoded to a clean one-line error message
+  (e.g. `Printer not found: X`) instead of raw XML.
+- `GET /health` now reports the agent `version` so a till's installed build can be
+  verified remotely.

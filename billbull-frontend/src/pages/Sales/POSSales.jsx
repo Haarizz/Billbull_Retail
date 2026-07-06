@@ -911,7 +911,7 @@ export default function POSSales() {
     try {
       const now = new Date();
       const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
-      const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+      const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
       const previewShipping = Number(shippingCharge) || 0;
@@ -1035,7 +1035,7 @@ export default function POSSales() {
   // taking its slot. Built from the live (unsaved) totals so the preview shows a
   // representative code; the real archived QR is regenerated at print time.
   useEffect(() => {
-    const stampAvailable = tplInvoiceShowStamp && !!tplStampDataUrl;
+    const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
     if (!tplInvoiceShowQRCode || stampAvailable || !showPaymentDialog) {
       setCheckoutPreviewQrDataUrl(null);
       return;
@@ -1225,6 +1225,20 @@ export default function POSSales() {
               if (tpl.receiptShowTrn != null) setTplReceiptShowTrn(tpl.receiptShowTrn);
               if (tpl.receiptShowStamp != null) setTplReceiptShowStamp(tpl.receiptShowStamp);
               if (tpl.receiptShowBarcode != null) setTplReceiptShowBarcode(tpl.receiptShowBarcode);
+              if (tpl.receiptShowCompanyDetails != null) setTplReceiptShowCompanyDetails(tpl.receiptShowCompanyDetails);
+              if (tpl.receiptShowCustomerDetails != null) setTplReceiptShowCustomerDetails(tpl.receiptShowCustomerDetails);
+              if (tpl.receiptColItemCode != null) setTplReceiptColItemCode(tpl.receiptColItemCode);
+              if (tpl.receiptColItemImage != null) setTplReceiptColItemImage(tpl.receiptColItemImage);
+              if (tpl.receiptColBatchNo != null) setTplReceiptColBatchNo(tpl.receiptColBatchNo);
+              if (tpl.receiptColDiscount != null) setTplReceiptColDiscount(tpl.receiptColDiscount);
+              if (tpl.receiptColVatPct != null) setTplReceiptColVatPct(tpl.receiptColVatPct);
+              if (tpl.receiptColVatAmt != null) setTplReceiptColVatAmt(tpl.receiptColVatAmt);
+              if (tpl.receiptShowGrandTotalBanner != null) setTplReceiptShowGrandTotalBanner(tpl.receiptShowGrandTotalBanner);
+              if (tpl.receiptShowTerms != null) setTplReceiptShowTerms(tpl.receiptShowTerms);
+              if (tpl.receiptShowNotes != null) setTplReceiptShowNotes(tpl.receiptShowNotes);
+              if (tpl.receiptShowBankDetails != null) setTplReceiptShowBankDetails(tpl.receiptShowBankDetails);
+              if (tpl.receiptShowQRCode != null) setTplReceiptShowQRCode(tpl.receiptShowQRCode);
+              if (tpl.receiptShowSignature != null) setTplReceiptShowSignature(tpl.receiptShowSignature);
               if (tpl.invoiceHeader != null) setTplInvoiceHeader(tpl.invoiceHeader);
               if (tpl.invoiceFooter != null) setTplInvoiceFooter(tpl.invoiceFooter);
               if (tpl.invoicePaper != null) setTplInvoicePaper(tpl.invoicePaper);
@@ -1271,6 +1285,14 @@ export default function POSSales() {
               if (tpl.jobCardShowLogo != null) setTplJobCardShowLogo(tpl.jobCardShowLogo);
               if (tpl.jobCardShowTrn != null) setTplJobCardShowTrn(tpl.jobCardShowTrn);
               if (tpl.jobCardShowStamp != null) setTplJobCardShowStamp(tpl.jobCardShowStamp);
+              if (tpl.jobCardShowCompanyDetails != null) setTplJobCardShowCompanyDetails(tpl.jobCardShowCompanyDetails);
+              if (tpl.jobCardShowCustomerDetails != null) setTplJobCardShowCustomerDetails(tpl.jobCardShowCustomerDetails);
+              if (tpl.jobCardShowSerialNumber != null) setTplJobCardShowSerialNumber(tpl.jobCardShowSerialNumber);
+              if (tpl.jobCardShowWarranty != null) setTplJobCardShowWarranty(tpl.jobCardShowWarranty);
+              if (tpl.jobCardShowTechnician != null) setTplJobCardShowTechnician(tpl.jobCardShowTechnician);
+              if (tpl.jobCardShowExpectedDate != null) setTplJobCardShowExpectedDate(tpl.jobCardShowExpectedDate);
+              if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
+              if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -2263,15 +2285,20 @@ export default function POSSales() {
 
       const savedInvoice = await posCheckout(payload);
 
-      if (tplInvoicePaper !== 'A4') {
-        try {
+      try {
+        if (tplInvoicePaper === 'A4') {
+          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+          printHtml(await generatePrintHtmlAsync(template, data, options));
+        } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
           const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
           const creditAmountPaidAuto = creditPrevBalAuto != null ? 0 : null;
           const creditUpdatedBalanceAuto = creditPrevBalAuto != null
             ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
             : null;
-          const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
@@ -2282,14 +2309,14 @@ export default function POSSales() {
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
-            html,
             text,
             escPosBase64,
             title: `Delivery ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
-        } catch (printErr) {
-          console.warn('Out-for-delivery receipt print failed', printErr);
         }
+      } catch (printErr) {
+        console.warn('Out-for-delivery receipt print failed', printErr);
+        alert(`Delivery order saved, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
       }
 
       setShowDeliveryModal(false);
@@ -2872,7 +2899,7 @@ export default function POSSales() {
       isReprint,
       zatcaQrDataUrl: qrDataUrl,
       logoDataUrl: tplLogoDataUrl,
-      stampDataUrl: tplInvoiceShowStamp ? tplStampDataUrl : null,
+      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
       showLogo: tplInvoiceShowLogo,
       showCompanyDetails: tplInvoiceShowCompanyDetails,
       outletAddress: tplOutletAddress,
@@ -2931,13 +2958,14 @@ export default function POSSales() {
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
   ]);
 
-  // ESC/POS-only: this is the only path with real density/heat/font/logo
-  // control, so thermal receipts no longer fall back to the plain-text agent
-  // path or a browser/driver print dialog — a missing printer or a failed
-  // ESC/POS send throws instead of silently degrading to a worse printout.
-  // notifyPrintFallback now reports that failure via the dismissible toast
-  // (bottom-of-screen) instead of a blocking alert() — same UI as before, just
-  // no longer paired with an actual browser-print fallback.
+  // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
+  // logo control, so it's always attempted first. If the Windows queue's driver
+  // rejects the raw job (v4/WSD-class drivers refuse datatype RAW), the agent
+  // layer falls back to the text/GDI path so the customer still gets a receipt —
+  // and that downgrade is surfaced as a visible amber "compatibility mode" toast
+  // (never silent), telling the operator to install the vendor or Generic/
+  // Text-Only driver. A missing printer or a send that fails in BOTH modes still
+  // throws. notifyPrintFallback reports hard failures via the dismissible toast.
   const notifyPrintFallback = useCallback((message) => {
     setPrintFeedback({ type: 'error', message });
     setTimeout(() => setPrintFeedback(null), 6000);
@@ -2960,7 +2988,15 @@ export default function POSSales() {
     if (!escPosBase64) {
       throw new Error('Could not build the ESC/POS receipt for this sale.');
     }
-    await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+    const result = await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
+    if (result?.fallbackUsed) {
+      setPrintFeedback({
+        type: 'warning',
+        message: `Receipt printed in text compatibility mode — "${printer.deviceName || printer.systemPrinterName}" rejected raw ESC/POS (${result.escPosError || 'driver error'}). Install the printer's vendor driver or "Generic / Text Only" for full print quality.`,
+      });
+      setTimeout(() => setPrintFeedback(null), 10000);
+      return { mode: 'agent-text-fallback', printer };
+    }
     return { mode: 'agent-escpos', printer };
   }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
 
@@ -3140,8 +3176,14 @@ export default function POSSales() {
         creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
-      if (tplInvoicePaper !== 'A4') {
-        try {
+      try {
+        if (tplInvoicePaper === 'A4') {
+          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+          printHtml(await generatePrintHtmlAsync(template, data, options));
+          openCashDrawer('RECEIPT_PRINT');
+        } else {
           let creditPrevBalAuto = null;
           if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
             try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
@@ -3167,10 +3209,10 @@ export default function POSSales() {
             title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
           });
           openCashDrawer('RECEIPT_PRINT');
-        } catch (autoPrintErr) {
-          console.warn('Automatic receipt print failed', autoPrintErr);
-          alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
         }
+      } catch (autoPrintErr) {
+        console.warn('Automatic receipt print failed', autoPrintErr);
+        alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
       }
 
       // If this checkout settled a layaway, stamp it converted (releases its
@@ -8830,7 +8872,7 @@ export default function POSSales() {
       {/* Print fallback toast — explains why a browser print-preview just opened
           (no printer configured, or the configured one/agent didn't respond). */}
       {printFeedback && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium bg-red-500 text-white max-w-md">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium max-w-md ${printFeedback.type === 'warning' ? 'bg-amber-500 text-gray-900' : 'bg-red-500 text-white'}`}>
           <Printer className="h-4 w-4 shrink-0" />
           <span>{printFeedback.message}</span>
           <button type="button" onClick={() => setPrintFeedback(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100">
@@ -10486,7 +10528,7 @@ export default function POSSales() {
                             companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
                             showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
                             logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
-                            stampDataUrl: tplReturnShowStamp ? tplStampDataUrl : null,
+                            stampDataUrl: tplReturnShowQRCode ? tplStampDataUrl : null,
                             showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
                             showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
                             showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
@@ -11914,14 +11956,19 @@ export default function POSSales() {
               branchId: currentTerminal?.branchId || null,
             });
 
-            if (tplInvoicePaper !== 'A4') {
-              try {
-                // recordPayment() stamps the invoice's own paymentMode per settlement leg
-                // (last write wins for a split Cash+Card settle), so the receipt shows the
-                // mode actually selected here rather than trusting that stamp.
-                const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
-                const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
-                const { html, text, escPosBase64 } = await buildThermalReceiptArtifacts({
+            try {
+              // recordPayment() stamps the invoice's own paymentMode per settlement leg
+              // (last write wins for a split Cash+Card settle), so the receipt shows the
+              // mode actually selected here rather than trusting that stamp.
+              const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
+              const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
+              if (tplInvoicePaper === 'A4') {
+                const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter);
+                const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+                printHtml(await generatePrintHtmlAsync(template, data, options));
+              } else {
+                const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                   full: receiptInvoice,
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
@@ -11929,14 +11976,14 @@ export default function POSSales() {
                 });
                 await printThermalReceiptWithConfiguredPrinter({
                   full: receiptInvoice,
-                  html,
                   text,
                   escPosBase64,
                   title: `Delivery Settled ${settledInvoice?.invoiceNumber || sel.invoice || ''}`.trim(),
                 });
-              } catch (printErr) {
-                console.warn('Delivery settlement receipt print failed', printErr);
               }
+            } catch (printErr) {
+              console.warn('Delivery settlement receipt print failed', printErr);
+              alert(`Delivery settled, but the receipt didn't print: ${printErr?.message || 'printer error'}.`);
             }
 
             setDeliverySettleSelected(null);

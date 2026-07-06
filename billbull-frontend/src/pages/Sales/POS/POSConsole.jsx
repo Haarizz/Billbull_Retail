@@ -102,6 +102,10 @@ const POSConsole = React.memo((props) => {
     const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
     const [printerSaving, setPrinterSaving] = useState(false);
     const [printerBusyId, setPrinterBusyId] = useState(null);
+    // Debug trace of the most recent printer test, keyed by printer id — surfaced in an
+    // on-screen collapsible block so the send payload + agent response can be inspected
+    // without opening DevTools. See handlePrinterTest.
+    const [printerTestDebug, setPrinterTestDebug] = useState({});
     const [agentPrinters, setAgentPrinters] = useState([]);
     const [agentLoading, setAgentLoading] = useState(false);
     const [agentError, setAgentError] = useState('');
@@ -399,22 +403,72 @@ const POSConsole = React.memo((props) => {
 
     const handlePrinterTest = async (printer) => {
       setPrinterBusyId(printer.id);
+      const startedAt = Date.now();
+      const testParams = {
+        companyName: currentTerminal?.branchName || 'BillBull',
+        branchName: currentTerminal?.branchName || '',
+        terminalId: currentTerminal?.terminalId || '',
+        counterName: currentTerminal?.counterName || '',
+        printerName: printer.systemPrinterName || printer.deviceName,
+        paperSize: printer.paperSize || '80mm',
+      };
+      const escPosBase64 = buildEscPosTestReceipt(testParams);
+      const testText = buildThermalTestReceiptText(testParams);
+      // Mirror the routing logic inside testConfiguredPrinter so the debug block can name
+      // the endpoint that will actually be hit (agent vs. backend relay vs. Zebra).
+      const target = printer.connectionType === 'ZEBRA_BROWSER_PRINT'
+        ? 'Browser Print (Zebra ZPL)'
+        : (printer.connectionType === 'NETWORK_IP'
+            ? `Backend relay → POST /api/pos/printers/${printer.id}/print/escpos`
+            : 'Local agent → POST http://127.0.0.1:19777/print/escpos');
+      const trace = {
+        at: new Date().toISOString(),
+        endpoint: target,
+        connectionType: printer.connectionType,
+        systemPrinterName: printer.systemPrinterName || null,
+        payloadKind: 'ESC/POS (base64)',
+        payloadBytes: escPosBase64 ? Math.floor((escPosBase64.length * 3) / 4) : 0,
+      };
+      // eslint-disable-next-line no-console
+      console.groupCollapsed(`[printer-test] ${printer.deviceName} → ${target}`);
+      // eslint-disable-next-line no-console
+      console.info('request', { ...trace, escPosBase64, testText });
       try {
-        const testParams = {
-          companyName: currentTerminal?.branchName || 'BillBull',
-          branchName: currentTerminal?.branchName || '',
-          terminalId: currentTerminal?.terminalId || '',
-          counterName: currentTerminal?.counterName || '',
-          printerName: printer.systemPrinterName || printer.deviceName,
-          paperSize: printer.paperSize || '80mm',
-        };
         const result = await testConfiguredPrinter(printer, {
-          testText: buildThermalTestReceiptText(testParams),
-          escPosBase64: buildEscPosTestReceipt(testParams),
+          testText,
+          escPosBase64,
         });
-        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(result?.message || 'Printer test sent successfully.'));
+        // fallbackUsed means the ESC/POS send was rejected (typically a v4/WSD
+        // driver refusing datatype RAW) and only the text/GDI fallback printed.
+        // Sales receipts fall back the same way now, but surface it here so the
+        // operator knows to install the vendor / Generic-Text-Only driver
+        // instead of reading a green test as "full quality works".
+        const usedFallback = !!result?.fallbackUsed;
+        const okTrace = {
+          ...trace,
+          ok: true,
+          durationMs: Date.now() - startedAt,
+          response: result,
+          payloadKind: usedFallback ? 'Plain text (ESC/POS rejected — text fallback)' : trace.payloadKind,
+          escPosError: result?.escPosError || null,
+        };
+        // eslint-disable-next-line no-console
+        console.info('response ✓', okTrace);
+        // eslint-disable-next-line no-console
+        console.groupEnd();
+        setPrinterTestDebug((prev) => ({ ...prev, [printer.id]: okTrace }));
+        const runtimeMessage = usedFallback
+          ? `Printed via TEXT fallback — printer rejected ESC/POS (${result?.escPosError || 'driver error'}). Sales receipts will also print in text mode; install the vendor or Generic/Text-Only driver for full quality.`
+          : (result?.message || 'Printer test sent successfully.');
+        const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintSuccess(runtimeMessage));
         setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
       } catch (err) {
+        const errTrace = { ...trace, ok: false, durationMs: Date.now() - startedAt, error: err?.message || String(err) };
+        // eslint-disable-next-line no-console
+        console.error('response ✗', errTrace);
+        // eslint-disable-next-line no-console
+        console.groupEnd();
+        setPrinterTestDebug((prev) => ({ ...prev, [printer.id]: errTrace }));
         const updated = await updatePosPrinterRuntime(printer.id, runtimeStatusFromPrintError(err)).catch(() => null);
         if (updated) {
           setPrinterConfigs((prev) => prev.map((item) => item.id === printer.id ? updated : item));
@@ -948,6 +1002,36 @@ const POSConsole = React.memo((props) => {
                         {formatPrinterTimestamp(printer.lastTestedAt) && (
                           <p className="text-xs text-gray-400 mt-1">Last tested: {formatPrinterTimestamp(printer.lastTestedAt)}</p>
                         )}
+                        {printerTestDebug[printer.id] && (
+                          <details className="mt-2">
+                            <summary className="text-[11px] font-semibold text-gray-500 cursor-pointer select-none hover:text-gray-700">
+                              {printerTestDebug[printer.id].ok ? '✓' : '✗'} Test send details
+                            </summary>
+                            <div className="mt-1.5 rounded-lg bg-gray-50 border border-gray-200 p-2.5 space-y-1 font-mono text-[11px] text-gray-600 break-all">
+                              <div><span className="text-gray-400">endpoint:</span> {printerTestDebug[printer.id].endpoint}</div>
+                              <div><span className="text-gray-400">payload:</span> {printerTestDebug[printer.id].payloadKind} · {printerTestDebug[printer.id].payloadBytes} bytes</div>
+                              <div>
+                                <span className="text-gray-400">result:</span>{' '}
+                                <span className={printerTestDebug[printer.id].ok ? 'text-green-600' : 'text-red-600'}>
+                                  {printerTestDebug[printer.id].ok ? 'SUCCESS' : 'FAILED'}
+                                </span>
+                                {' '}({printerTestDebug[printer.id].durationMs} ms)
+                              </div>
+                              <div>
+                                <span className="text-gray-400">{printerTestDebug[printer.id].ok ? 'response:' : 'error:'}</span>{' '}
+                                {printerTestDebug[printer.id].ok
+                                  ? (printerTestDebug[printer.id].response?.message || JSON.stringify(printerTestDebug[printer.id].response) || 'ok')
+                                  : printerTestDebug[printer.id].error}
+                              </div>
+                              {printerTestDebug[printer.id].escPosError && (
+                                <div className="text-amber-600">
+                                  <span className="text-gray-400">escpos rejected:</span> {printerTestDebug[printer.id].escPosError} — printed via text/GDI fallback instead. Install the vendor or Generic/Text-Only driver for full quality.
+                                </div>
+                              )}
+                              <div className="text-gray-400">sent at {printerTestDebug[printer.id].at}</div>
+                            </div>
+                          </details>
+                        )}
                       </div>
                       <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${printer.status==='ACTIVE' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${printer.status==='ACTIVE' ? 'bg-blue-500' : 'bg-gray-400'}`}/>{printer.status}
@@ -1128,16 +1212,16 @@ const POSConsole = React.memo((props) => {
               )}
 
               {printerDialogOpen && (
-                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
-                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
-                    <div className="flex items-center justify-between mb-5">
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                    <div className="flex items-center justify-between p-6 pb-5 shrink-0">
                       <div>
                         <h3 className="text-base font-bold text-[#1E293B]">{editingPrinter ? 'Edit Printer' : 'Add Printer'}</h3>
                         <p className="text-xs text-gray-400 mt-0.5">Store printer configuration in BillBull and test it through the local print agent.</p>
                       </div>
                       <button onClick={()=>setPrinterDialogOpen(false)}><X className="h-5 w-5 text-gray-400" /></button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-6 pb-4 overflow-y-auto">
                       <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Printer Type</label>
                         <select value={printerForm.deviceType} onChange={e=>setPrinterForm(f => ({ ...f, deviceType: e.target.value, connectionType: e.target.value === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : (f.connectionType === 'ZEBRA_BROWSER_PRINT' ? 'WINDOWS_QUEUE' : f.connectionType), printTemplate: e.target.value === 'KITCHEN_PRINTER' ? 'Kitchen' : e.target.value === 'LABEL_PRINTER' ? 'Label' : 'Receipt', paperSize: e.target.value === 'LABEL_PRINTER' ? '100x150mm' : (f.paperSize === '100x150mm' ? '80mm' : f.paperSize) }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
@@ -1219,7 +1303,7 @@ const POSConsole = React.memo((props) => {
                         <textarea value={printerForm.notes} onChange={e=>setPrinterForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes for setup or assignment" className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] min-h-[88px]" />
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-5">
+                    <div className="flex gap-2 p-6 pt-5 shrink-0">
                       <button onClick={()=>setPrinterDialogOpen(false)} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50">Cancel</button>
                       <button onClick={savePrinter} disabled={printerSaving} className="flex-1 py-2.5 rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
                         <Plus className="h-4 w-4" />{printerSaving ? 'Saving…' : editingPrinter ? 'Save Changes' : 'Add Printer'}
@@ -1386,7 +1470,7 @@ const POSConsole = React.memo((props) => {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
               } else {
-                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return'});
+                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
               }
               const w = window.open('','_blank');
               w && w.document.write(html);
@@ -1410,7 +1494,7 @@ const POSConsole = React.memo((props) => {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
               } else {
-                printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return'}));
+                printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
               }
             };
 
@@ -1688,6 +1772,7 @@ const POSConsole = React.memo((props) => {
                               showLoyaltyPoints={cfg.showLoyaltyPoints}
                               showCreditBalance={cfg.showCreditBalance}
                               showFooterText={cfg.showFooterText}
+                              qrPlacement={cfg.qrPlacement}
                               showSerialNumber={cfg.showSerialNumber}
                               showWarranty={cfg.showWarranty}
                               showTechnician={cfg.showTechnician}
@@ -1741,7 +1826,7 @@ const POSConsole = React.memo((props) => {
                         returnShowLogo:tplReturnShowLogo,returnShowTrn:tplReturnShowTrn,returnShowStamp:tplReturnShowStamp,
                         returnShowCompanyDetails:tplReturnShowCompanyDetails,returnShowCustomerDetails:tplReturnShowCustomerDetails,
                         returnColItemCode:tplReturnColItemCode,returnColBatchNo:tplReturnColBatchNo,returnColDiscount:tplReturnColDiscount,returnColVatPct:tplReturnColVatPct,returnColVatAmt:tplReturnColVatAmt,
-                        returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,
+                        returnShowGrandTotalBanner:tplReturnShowGrandTotalBanner,returnShowTerms:tplReturnShowTerms,returnShowNotes:tplReturnShowNotes,returnShowQRCode:tplReturnShowQRCode,returnShowSignature:tplReturnShowSignature,returnShowCreditBalance:tplReturnShowCreditBalance,
                         jobCardFooter:tplJobCardFooter,jobCardPaper:tplJobCardPaper,
                         jobCardShowLogo:tplJobCardShowLogo,jobCardShowTrn:tplJobCardShowTrn,jobCardShowStamp:tplJobCardShowStamp,
                         jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,

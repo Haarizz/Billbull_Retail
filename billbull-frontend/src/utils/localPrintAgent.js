@@ -19,6 +19,26 @@ const HEALTH_PROBE_TIMEOUT_MS = 400;
 
 const isBlank = (value) => value == null || String(value).trim() === "";
 
+// Integrity log (RCA checklist §8): SHA-256 of the base64 ESC/POS payload as
+// generated in the browser. Compared against the hash the agent reports it
+// decoded+wrote, this proves whether any byte was altered in transit. Logged,
+// never blocking — a hashing failure must never stop a receipt from printing.
+const logEscPosIntegrity = async (dataBase64, agentResult) => {
+  try {
+    const bytes = Uint8Array.from(atob(String(dataBase64 || "")), (c) => c.charCodeAt(0));
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const agentSha = agentResult?.sha256;
+    const match = agentSha ? (agentSha === sha256 ? "MATCH" : "MISMATCH") : "n/a (agent <0.5.0)";
+    console.info(`[escpos-integrity] generatedBytes=${bytes.length} generatedSha256=${sha256} agentSha256=${agentSha || "-"} → ${match}`);
+    if (agentSha && agentSha !== sha256) {
+      console.error("[escpos-integrity] STREAM CORRUPTION: agent received different bytes than the browser generated.");
+    }
+  } catch (err) {
+    console.warn("[escpos-integrity] hash logging skipped:", err?.message || err);
+  }
+};
+
 const normalizeStatusFromMessage = (message = "") => {
   const text = String(message || "").toLowerCase();
   if (text.includes("not found")) return "NOT_FOUND";
@@ -135,9 +155,23 @@ export const printEscPosThroughAgent = async ({
   portNumber,
   title,
 }) => {
+  // Only forward the network fields when the printer genuinely IS a network
+  // printer. The agent routes by `ipAddress` presence as a legacy fallback, so
+  // a USB/Windows-queue printer whose config row happens to carry a leftover
+  // ipAddress value would silently print over TCP to the printer's LAN
+  // interface instead of the USB queue — a hidden path divergence that made
+  // receipts take a different route than diagnostic probes on the same till.
+  const isNetwork = connectionType === "NETWORK_IP";
   return agentFetch("/print/escpos", {
     method: "POST",
-    body: JSON.stringify({ printerName, dataBase64, connectionType, ipAddress, portNumber, title }),
+    body: JSON.stringify({
+      printerName,
+      dataBase64,
+      connectionType,
+      ipAddress: isNetwork ? ipAddress : undefined,
+      portNumber: isNetwork ? portNumber : undefined,
+      title,
+    }),
   });
 };
 
@@ -165,6 +199,7 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
   if (escPosBase64 && printer.connectionType === "NETWORK_IP" && printer.id) {
     return printPosPrinterEscPos(printer.id, escPosBase64);
   }
+  let escPosError = null;
   if (escPosBase64) {
     try {
       return await printEscPosThroughAgent({
@@ -175,10 +210,11 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
         portNumber: printer.portNumber,
       });
     } catch (err) {
+      escPosError = err?.message || String(err);
       console.warn('ESC/POS test print failed, falling back to plain-text test print', err);
     }
   }
-  return testPrintAgentPrinter({
+  const result = await testPrintAgentPrinter({
     printerName: printer.systemPrinterName,
     text: testText,
     title: "BillBull POS Printer Test",
@@ -188,6 +224,10 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
     portNumber: printer.portNumber,
     deviceIdentifier: printer.deviceIdentifier,
   });
+  // Annotate when the test only succeeded via the text/GDI fallback — the caller
+  // must be able to tell, because a test that silently "passes" in a mode the
+  // sale flow doesn't use would green-light a printer that fails at checkout.
+  return escPosError ? { ...result, fallbackUsed: 'text', escPosError } : result;
 };
 
 // Phase B (Device Manager print-job spine): every receipt print is also recorded as a backend
@@ -284,9 +324,12 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
     // (phone, tablet, another PC) with no local workstation agent required. USB/
     // Bluetooth/Windows-queue printers are only reachable from the specific
     // machine they're physically plugged into, so those still need the agent.
-    const result = printer.connectionType === "NETWORK_IP"
-      ? await printPosPrinterEscPos(printer.id, dataBase64)
-      : await printEscPosThroughAgent({
+    let result;
+    if (printer.connectionType === "NETWORK_IP") {
+      result = await printPosPrinterEscPos(printer.id, dataBase64);
+    } else {
+      try {
+        result = await printEscPosThroughAgent({
           printerName: printer.systemPrinterName,
           dataBase64,
           connectionType: printer.connectionType,
@@ -294,6 +337,33 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
           portNumber: printer.portNumber,
           title,
         });
+        await logEscPosIntegrity(dataBase64, result);
+      } catch (escPosErr) {
+        // The queue's driver rejected the raw job (typically a v4/WSD-class
+        // driver — StartDocPrinter refuses datatype RAW). Fall back to the
+        // text/GDI path so the customer still gets a receipt, and annotate the
+        // result so callers surface a visible "compatibility mode" warning —
+        // this must never be a silent downgrade, but a failed receipt at
+        // checkout is strictly worse than a plain-text one.
+        if (!receiptText) throw escPosErr;
+        console.warn("ESC/POS receipt rejected, falling back to text/GDI print", escPosErr);
+        try {
+          const textResult = await printReceiptThroughAgent({
+            printerName: printer.systemPrinterName,
+            text: receiptText,
+            title,
+            paperWidthMm: paperWidthToMm(printer.paperSize),
+            connectionType: printer.connectionType,
+            ipAddress: printer.ipAddress,
+            portNumber: printer.portNumber,
+            deviceIdentifier: printer.deviceIdentifier,
+          });
+          result = { ...textResult, fallbackUsed: "text", escPosError: escPosErr?.message || String(escPosErr) };
+        } catch {
+          throw escPosErr; // both modes failed — the ESC/POS error is the meaningful one
+        }
+      }
+    }
     if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
     return result;
   } catch (err) {

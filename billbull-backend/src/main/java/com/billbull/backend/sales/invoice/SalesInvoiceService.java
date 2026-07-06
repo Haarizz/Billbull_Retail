@@ -216,6 +216,11 @@ public class SalesInvoiceService {
                 "openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
     }
 
+    /** Open (balance > 0, non-cancelled) invoices for a customer, oldest first — for payment allocation pickers. */
+    public List<SalesInvoice> getOpenInvoicesForCustomer(String customerCode) {
+        return invoiceRepo.findOutstandingByCustomerCodeOrderByInvoiceDateAsc(customerCode);
+    }
+
     private double resolveOpeningInvoiceOutstanding(OpeningInvoice invoice) {
         BigDecimal outstanding = invoice.getOutstanding();
         if (outstanding == null) {

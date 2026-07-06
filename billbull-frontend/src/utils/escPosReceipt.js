@@ -72,16 +72,27 @@ class ByteWriter {
   }
 }
 
+// CP1252-representable punctuation that NFKD normalization doesn't decompose —
+// mapped to the code-page byte the printer's WPC1252 table renders natively
+// (…, – — ‘ ’ “ ” • € ™) instead of degrading to '?'.
+const CP1252_PUNCTUATION = {
+  0x20ac: 0x80, 0x2026: 0x85, 0x2013: 0x96, 0x2014: 0x97, 0x2018: 0x91,
+  0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2122: 0x99,
+};
+
 // Converts UTF-8 JS text to single-byte printer bytes: decomposes accented
-// Latin characters to their base form, drops combining marks, and falls back
-// to '?' for anything outside printable Latin-1 (e.g. emoji, CJK, Arabic),
-// since the printer's single-byte code table can't represent those anyway.
+// Latin characters to their base form, drops combining marks, maps CP1252
+// punctuation, and falls back to '?' for anything outside printable Latin-1
+// (e.g. emoji, CJK, Arabic), since the printer's single-byte code table can't
+// represent those anyway.
 const toPrinterBytes = (str) => {
   const normalized = String(str ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '');
   const bytes = new Uint8Array(normalized.length);
   for (let i = 0; i < normalized.length; i++) {
     const code = normalized.charCodeAt(i);
-    bytes[i] = code >= 0x20 && code <= 0xff ? code : (code === 0x0a || code === 0x0d ? code : 0x3f);
+    bytes[i] = (code >= 0x20 && code <= 0xff) || code === 0x0a || code === 0x0d
+      ? code
+      : (CP1252_PUNCTUATION[code] ?? 0x3f);
   }
   return bytes;
 };
@@ -95,7 +106,9 @@ const uint8ArrayToBase64 = (bytes) => {
   return btoa(binary);
 };
 
-const buildFixedWidthLine = (left, right, width) => {
+// Exported for reuse by the plain-text receipt builders in posPrintUtils.js —
+// keep the single implementation here so truncation/padding can't drift.
+export const buildFixedWidthLine = (left, right, width) => {
   const l = String(left || '');
   const r = String(right || '');
   if (!r) return l.slice(0, width);
@@ -176,6 +189,13 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
     }
   }
 
+  // Emit ONE GS v 0 block of the full image height. The POS-80C probe
+  // (docs/pos-escpos-capability-probe-2026-07-04.md, button-4 "real logo")
+  // proved a single full-height block of THIS exact logo at THIS exact width
+  // (346 dots, ~250–350 rows) prints clean — while splitting it into multiple
+  // sequential GS v 0 blocks garbled the output (the printer does not resume
+  // raster mode cleanly across a mid-stream second GS v 0 header, so the second
+  // block's bytes print as text). So keep it a single block.
   const xL = bytesPerRow & 0xff;
   const xH = (bytesPerRow >> 8) & 0xff;
   const yL = h & 0xff;
@@ -187,13 +207,38 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
 // ── Native ESC/POS QR code (GS ( k, model 2) — printer renders the QR itself,
 // so quality depends on the printer's own dot accuracy rather than a rasterized
 // bitmap pushed through a generic driver's halftone filter. ──────────────────
-const qrCommand = (data, { moduleSize = 7, errorCorrection = 'M' } = {}) => {
+
+// QR byte-mode capacity at error-correction level M, indexed by version 1..40.
+// Used to size the symbol BEFORE printing: a QR's width is (17 + 4·version)
+// modules, and the printer renders each module `moduleSize` dots wide — if that
+// exceeds the printable width, this printer class silently prints NOTHING
+// (verified on the client's POS-80C). buildQrContent emits one line per sale
+// item, so a large sale can push the payload past version 13 (331 bytes), which
+// at the old fixed moduleSize=8 is already wider than 80mm paper.
+const QR_CAPACITY_M = [
+  14, 26, 42, 62, 84, 106, 122, 152, 180, 213,
+  251, 287, 331, 362, 412, 450, 504, 560, 624, 666,
+  711, 779, 857, 911, 997, 1059, 1125, 1190, 1264, 1370,
+  1452, 1538, 1628, 1722, 1809, 1911, 1989, 2099, 2213, 2331,
+];
+
+const qrModuleCount = (byteLength) => {
+  const v = QR_CAPACITY_M.findIndex((cap) => byteLength <= cap);
+  return 17 + 4 * ((v === -1 ? 40 : v + 1));
+};
+
+const qrCommand = (data, { moduleSize = 7, errorCorrection = 'M', maxWidthDots = 576 } = {}) => {
   const w = new ByteWriter();
   const ecLevel = { L: 48, M: 49, Q: 50, H: 51 }[errorCorrection] ?? 49;
-  w.push([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]); // select model 2
-  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, moduleSize & 0xff]); // module size
-  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, ecLevel]); // error correction
   const dataBytes = new TextEncoder().encode(String(data || ''));
+  // Shrink the module size until the whole symbol fits the paper; floor of 2
+  // dots/module (below that the head can't resolve modules anyway, and even a
+  // max-size v40 QR at 2 dots = 354 < 384, so it always terminates in range).
+  const modules = qrModuleCount(dataBytes.length);
+  let fittedModuleSize = Math.max(2, Math.min(moduleSize, Math.floor(maxWidthDots / modules)));
+  w.push([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]); // select model 2
+  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, fittedModuleSize & 0xff]); // module size
+  w.push([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, ecLevel]); // error correction
   const storeLen = dataBytes.length + 3;
   w.push([GS, 0x28, 0x6b, storeLen & 0xff, (storeLen >> 8) & 0xff, 0x31, 0x50, 0x30]);
   w.push(dataBytes);
@@ -244,6 +289,13 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (showLogo && logoDataUrl) {
     try {
       const raster = await ditherImageToRasterCommand(logoDataUrl, Math.round(dots * 0.6));
+      // Flush/open a text line BEFORE the raster. On the client's POS-80C
+      // clone, every print where a text line preceded the GS v 0 raster came
+      // out clean (all capability-probe slips), while receipts — where the
+      // raster was the very first printable content after the init preamble —
+      // spilled the raster bytes as a text garbage-wall. A single space + LF
+      // reproduces the proven-clean byte pattern at the cost of one blank line.
+      w.line(' ');
       w.push(raster);
       w.push([0x0a]);
     } catch {
@@ -293,8 +345,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     const name = item.itemName || item.productName || item.name || 'Item';
     const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
     const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    // Same per-line discount breakdown as the HTML preview (BBQA-5.3-015): base
+    // price, discount %/amount, then the net line — so the ESC/POS printout
+    // matches the checkout preview instead of silently reprinting a discounted
+    // price as if it were the base price.
+    const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
+    const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
+    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     w.push(CMD.BOLD_ON).line(`${qty}x ${name}`.slice(0, width)).push(CMD.BOLD_OFF);
-    w.line(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    if (lineDiscountAmount > 0) {
+      w.line(buildFixedWidthLine(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount), width));
+      w.line(buildFixedWidthLine(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`, width));
+      w.line(buildFixedWidthLine(`Net @ ${fmt(netUnit)}`, fmt(lineTotal), width));
+    } else {
+      w.line(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+    }
+    const sku = item.sku || item.itemCode || '';
+    if (sku) w.line(`SKU: ${sku}`.slice(0, width));
     const serial = item.serialNumber || '';
     const batch = item.batchNumber || item.pinnedBatchNumber || '';
     if (serial) w.line(`S/N: ${serial}`.slice(0, width));
@@ -302,18 +370,36 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   });
   w.line(hr);
 
-  // Note: on a persisted invoice, subTotal is already net of per-item discounts
-  // (only the bill/footer-level discount is added back into it), so this only
-  // resolves to the bill-level discount there — see buildThermalReceiptHtml.
-  const resolvedDiscountTotal = parseFloat(
-    invoice.discountTotal != null ? invoice.discountTotal
-      : (parseFloat(invoice.lineDiscountTotal || 0) + parseFloat(invoice.billDiscountAmount || 0))
-  ) || 0;
+  // Same Subtotal/Discount/Taxable reconstruction as the HTML preview and the
+  // plain-text builder: a persisted invoice's subTotal is already the TAXABLE
+  // base (net of per-item discounts, with no top-level discount aggregate), so
+  // the gross subtotal and total discount are rebuilt from each line's own
+  // grossAmount. Without this, a line-discounted sale printed with no Discount
+  // row and a "Subtotal" that didn't match the on-screen preview.
+  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
+  if (invoice.discountTotal != null) {
+    resolvedSubTotal = parseFloat(invoice.subTotal || 0) || 0;
+    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
+    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
+  } else {
+    resolvedTaxableAmount = parseFloat(invoice.subTotal || 0) || 0;
+    const grossSubtotal = (invoice.items || []).reduce((sum, it) => {
+      if (it.voided || it.isVoided) return sum;
+      const q = it.quantity || 0;
+      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+      const gross = parseFloat(it.grossAmount ?? (q * unit));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const lineDiscountTotal = Math.max(0, grossSubtotal - resolvedTaxableAmount);
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    resolvedDiscountTotal = lineDiscountTotal + billDiscountTotal;
+    resolvedSubTotal = grossSubtotal > 0 ? grossSubtotal : resolvedTaxableAmount;
+  }
 
-  w.line(buildFixedWidthLine('Subtotal:', fmt(invoice.subTotal), width));
+  w.line(buildFixedWidthLine('Subtotal:', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     w.line(buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
-    w.line(buildFixedWidthLine('Taxable Amount:', fmt(parseFloat(invoice.subTotal || 0) - resolvedDiscountTotal), width));
+    w.line(buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
   }
   if (showServiceCharge && invoice.serviceChargeAmount) w.line(buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
   if (showVatSummary) w.line(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
@@ -321,8 +407,12 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.line(buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
   w.line(hr);
 
+  // GS ! 0x01 (CHAR_SIZE(1,2)) doubles HEIGHT only — the character pitch stays
+  // at the full 42/32 columns, so the line must be formatted to the full width
+  // for the amount to right-align with the other totals rows. (Formatting to
+  // width/2 here — as if the width had doubled — left TOTAL ending mid-paper.)
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
-  w.line(buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), Math.floor(width / 2)));
+  w.line(buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
   w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
 
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
@@ -341,7 +431,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showQRCode && qrContent) {
     w.push(CMD.ALIGN_CENTER);
-    w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M' }));
+    w.push(qrCommand(qrContent, { moduleSize: mm === 58 ? 6 : 8, errorCorrection: 'M', maxWidthDots: dots }));
     w.line('Scan to verify');
     w.push(CMD.ALIGN_LEFT);
     w.line(hr);
