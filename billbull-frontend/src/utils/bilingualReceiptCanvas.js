@@ -285,8 +285,12 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
     const lineTotal = parseFloat(it.netAmount ?? it.lineTotal ?? (qty * unit));
     const gross = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
-    const disc = parseFloat(it.discountAmount ?? Math.max(0, gross - lineTotal)) || 0;
     const discPct = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
+    // gross × discount% (backend basis) — NOT gross − net, which understates the
+    // discount by the VAT-on-discount portion in VAT-exclusive mode.
+    const disc = it.discountAmount != null
+      ? (parseFloat(it.discountAmount) || 0)
+      : (discPct > 0 ? gross * (discPct / 100) : Math.max(0, gross - lineTotal));
 
     const rowY = y;
     for (const ln of wrap(name, 16, true, nameMax)) { drawEn(ln, M, 16, { bold: true }); y += lineH(16); }

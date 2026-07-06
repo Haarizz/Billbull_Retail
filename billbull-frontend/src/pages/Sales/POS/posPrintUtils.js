@@ -1,6 +1,6 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
-import { buildFixedWidthLine } from '../../../utils/escPosReceipt';
+import { buildFixedWidthLine, resolveLineDiscount } from '../../../utils/escPosReceipt';
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -292,7 +292,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
     const discountPercent = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
     const grossAmount = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
-    const lineDiscountAmount = parseFloat(it.discountAmount ?? Math.max(0, grossAmount - total)) || 0;
+    // gross × discount% (backend basis), NOT gross − net which understates the
+    // discount by the VAT-on-discount portion in exclusive mode. See resolveLineDiscount.
+    const lineDiscountAmount = resolveLineDiscount(it, grossAmount, discountPercent, total);
     const netUnit = qty > 0 ? total / qty : unit;
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
@@ -621,7 +623,9 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     // (BBQA-5.3-015) so the text fallback matches the checkout preview too.
     const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
     const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
-    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    // gross × discount% (backend basis) — NOT gross − net, which understates the
+    // discount by the VAT-on-discount portion in exclusive mode. See resolveLineDiscount.
+    const lineDiscountAmount = resolveLineDiscount(item, grossAmount, discountPercent, lineTotal);
     const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     lines.push(`${qty}x ${name}`.slice(0, width));
     if (lineDiscountAmount > 0) {

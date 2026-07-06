@@ -106,6 +106,22 @@ const uint8ArrayToBase64 = (bytes) => {
   return btoa(binary);
 };
 
+// Per-line discount amount for receipts, using the SAME basis as the backend
+// (SalesInvoiceService.normalizeInvoiceItemFinancials: discountAmount = gross ×
+// discountPercent / 100). Exported so every receipt renderer shares one formula.
+//
+// The historical `gross − netAmount` shortcut was wrong in VAT-EXCLUSIVE mode:
+// there netAmount = taxable + added VAT, so gross − net subtracted the VAT-on-
+// discount too, understating the discount (a 10% discount on a 1,000 line showed
+// as 55.00 instead of 100.00, and the per-line rows no longer summed to the
+// invoice "Discount" total). Prefer an explicit discountAmount if the caller
+// provides one; else compute from the percentage; else fall back to gross − net.
+export const resolveLineDiscount = (item, grossAmount, discountPercent, lineTotal) => {
+  if (item && item.discountAmount != null) return parseFloat(item.discountAmount) || 0;
+  if (discountPercent > 0) return grossAmount * (discountPercent / 100);
+  return Math.max(0, grossAmount - lineTotal);
+};
+
 // Exported for reuse by the plain-text receipt builders in posPrintUtils.js —
 // keep the single implementation here so truncation/padding can't drift.
 export const buildFixedWidthLine = (left, right, width) => {
@@ -467,7 +483,8 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     // price as if it were the base price.
     const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
     const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
-    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    // gross × discount% (backend basis), NOT gross − net — see resolveLineDiscount.
+    const lineDiscountAmount = resolveLineDiscount(item, grossAmount, discountPercent, lineTotal);
     const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     w.push(CMD.BOLD_ON).line(`${qty}x ${name}`.slice(0, width)).push(CMD.BOLD_OFF);
     if (lineDiscountAmount > 0) {
