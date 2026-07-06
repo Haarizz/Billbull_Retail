@@ -365,9 +365,6 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     qrStampHtml += `<div class="c" style="margin:4px 0"><img src="${footerLogoDataUrl}" style="height:48px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
     qrStampHtml += D;
   }
-  // 'before' (default): QR/stamp renders here, ahead of customer/credit/footer.
-  if (qrPlacement !== 'after') html += qrStampHtml;
-
   // ── Customer (§6): label fixed-width, name/email wrap gracefully within width ──
   // Gated on the toggle alone (matches the settings preview) — a walk-in sale still
   // prints "Walk-in Customer" as the name when the merchant has this section enabled,
@@ -409,6 +406,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += `<div class="row"><span class="lbl">Updated Balance:</span><span class="num">${cur} ${fmt(updatedBal)}</span></div>`;
     html += D;
   }
+
+  // 'before' (default): QR/stamp renders immediately above the footer text.
+  if (qrPlacement !== 'after') html += qrStampHtml;
 
   if (showFooterText && footer) {
     html += `<div class="c" style="font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
@@ -520,12 +520,6 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
     html += D;
   }
 
-  // QR code — before footer
-  if (showQRCode && zatcaQrDataUrl && qrPlacement === 'before') {
-    html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="height:100px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-    html += D;
-  }
-
   if (showStamp && stampDataUrl) {
     html += `<div class="c" style="margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain;display:block;margin:0 auto" alt="Stamp" /></div>`;
     html += D;
@@ -542,11 +536,17 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
     html += D;
   }
 
+  // QR code — immediately above the footer text
+  if (showQRCode && zatcaQrDataUrl && qrPlacement !== 'after') {
+    html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="height:100px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
+    html += D;
+  }
+
   if (showFooterText && footer) {
     html += `<div class="c" style="font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
   }
 
-  // QR code — after footer
+  // QR code — immediately below the footer text
   if (showQRCode && zatcaQrDataUrl && qrPlacement === 'after') {
     html += `<div class="c" style="margin:6px 0"><img src="${zatcaQrDataUrl}" style="height:100px;max-width:70%;object-fit:contain;display:block;margin:0 auto" /></div>`;
   }
@@ -1211,7 +1211,7 @@ export const buildThermalSampleHtml = (paperSize, {
   showQRCode = true, showCustomerDetails = true, showLoyaltyPoints = true,
   showCreditBalance = true, showFooterText = true,
   logoDataUrl = null, stampDataUrl = null,
-  isReturn = false,
+  isReturn = false, qrPlacement = 'before',
 }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
@@ -1287,12 +1287,14 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += D;
   }
   // §5 stamp-replaces-QR: a stamp image hides the QR; otherwise the QR is shown.
+  // Placement (before/after footer text) is applied later via qrPlacement.
+  let qrStampHtml = '';
   if (stampDataUrl) {
-    html += `<div style="text-align:center;margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain" alt="Stamp" /></div>`;
-    html += D;
+    qrStampHtml += `<div style="text-align:center;margin:6px 0"><img src="${stampDataUrl}" style="height:80px;max-width:70%;object-fit:contain" alt="Stamp" /></div>`;
+    qrStampHtml += D;
   } else if (showQRCode) {
-    html += `<div style="text-align:center;margin:6px 0"><div style="width:80px;height:80px;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">QR Code</div><div style="font-size:8px;color:#000;margin-top:2px">Scan to verify</div></div>`;
-    html += D;
+    qrStampHtml += `<div style="text-align:center;margin:6px 0"><div style="width:80px;height:80px;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">QR Code</div><div style="font-size:8px;color:#000;margin-top:2px">Scan to verify</div></div>`;
+    qrStampHtml += D;
   }
   if (showCustomerDetails) {
     html += sec('CUSTOMER');
@@ -1316,9 +1318,16 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += srow('Updated Balance:', 'AED 348.30');
     html += D;
   }
+  // 'before' (default): QR/stamp renders immediately above the footer text.
+  if (qrPlacement !== 'after') html += qrStampHtml;
+
   if (showFooterText && footer) {
     html += `<div style="text-align:center;font-size:9px;margin-top:4px;white-space:pre-line">${esc(footer)}</div>`;
   }
+
+  // 'after': QR/stamp renders below the footer text.
+  if (qrPlacement === 'after') { html += D; html += qrStampHtml; }
+
   html += '</body></html>';
   return html;
 };

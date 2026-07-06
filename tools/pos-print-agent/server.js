@@ -275,6 +275,23 @@ const printTextToNetworkPrinter = async ({ ipAddress, portNumber = 9100, text })
     socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
   });
 
+// Diagnostic capture: dump the EXACT bytes a print job carries to the user's
+// Desktop so a failing receipt can be analysed byte-for-byte offline. The
+// filename records which physical route the job took (queue vs network) —
+// itself a key diagnostic, since a stray config value used to silently reroute
+// USB jobs over TCP. Safe to leave on (small files); remove once the POS-80C
+// raster issue is closed.
+const captureEscPosBytes = async (decoded, route) => {
+  try {
+    const capDir = path.join(os.homedir(), "Desktop", "billbull-print-capture");
+    await fs.mkdir(capDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await fs.writeFile(path.join(capDir, `escpos-${route}-${stamp}.bin`), decoded);
+  } catch (capErr) {
+    console.warn("[escpos] capture failed (non-blocking):", capErr?.message || capErr);
+  }
+};
+
 // Sends a raw ESC/POS byte buffer straight to a network-attached printer's
 // socket (no text re-encoding, no driver involved). Many thermal controllers
 // (and Bluetooth-to-serial bridges) need the cut command's bytes to actually
@@ -282,9 +299,11 @@ const printTextToNetworkPrinter = async ({ ipAddress, portNumber = 9100, text })
 // send buffer to drain and give the controller a short grace period before
 // tearing the connection down — closing immediately after write() can truncate
 // the tail of the job (the cut command itself) on slower controllers.
-const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataBase64 }) =>
-  new Promise((resolve, reject) => {
-    const buffer = Buffer.from(String(dataBase64 ?? ""), "base64");
+const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataBase64 }) => {
+  const buffer = Buffer.from(String(dataBase64 ?? ""), "base64");
+  console.log(`[escpos] network=${ipAddress}:${portNumber} bytes=${buffer.length} sha256=${crypto.createHash("sha256").update(buffer).digest("hex")}`);
+  await captureEscPosBytes(buffer, "network");
+  return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: ipAddress, port: Number(portNumber) }, () => {
       socket.write(buffer, () => {
         setTimeout(() => socket.end(), 150);
@@ -294,6 +313,7 @@ const printEscPosToNetworkPrinter = async ({ ipAddress, portNumber = 9100, dataB
     socket.on("close", () => resolve({ ok: true, message: "ESC/POS print job sent successfully." }));
     socket.on("error", (error) => reject(new Error(error?.message || "Unable to reach network printer.")));
   });
+};
 
 // ── Capability probe command builders ──────────────────────────────────────
 // These build ISOLATED, single-feature ESC/POS jobs used by /probe/capabilities
@@ -463,6 +483,7 @@ const printEscPosToPrinterQueue = async ({ printerName, dataBase64, title = "Bil
   // covers the final agent→spooler hop.
   const sha256 = crypto.createHash("sha256").update(decoded).digest("hex");
   console.log(`[escpos] queue="${printerName}" bytes=${decoded.length} sha256=${sha256}`);
+  await captureEscPosBytes(decoded, "queue");
   await fs.writeFile(dataFile, decoded);
   const script = `
     $ErrorActionPreference = 'Stop'
@@ -661,7 +682,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       let result;
-      if (body.connectionType === "NETWORK_IP" || body.ipAddress) {
+      // Route by the EXPLICIT connectionType; only fall back to ipAddress
+      // presence when the caller sent no connectionType at all (legacy callers).
+      // Previously a stray ipAddress on a USB/queue printer's config silently
+      // rerouted its jobs over TCP — a different physical path than intended.
+      if (body.connectionType === "NETWORK_IP" || (!body.connectionType && body.ipAddress)) {
         if (!body.ipAddress || !body.portNumber) {
           sendJson(res, 400, { ok: false, message: "ipAddress and portNumber are required for network printers." });
           return;
@@ -694,7 +719,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       let result;
-      if (body.connectionType === "NETWORK_IP" || body.ipAddress) {
+      // Same explicit-connectionType routing as /test-print above — a stray
+      // ipAddress on a USB printer must not silently reroute ESC/POS jobs to TCP.
+      if (body.connectionType === "NETWORK_IP" || (!body.connectionType && body.ipAddress)) {
         if (!body.ipAddress || !body.portNumber) {
           sendJson(res, 400, { ok: false, message: "ipAddress and portNumber are required for network printers." });
           return;

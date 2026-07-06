@@ -155,9 +155,23 @@ export const printEscPosThroughAgent = async ({
   portNumber,
   title,
 }) => {
+  // Only forward the network fields when the printer genuinely IS a network
+  // printer. The agent routes by `ipAddress` presence as a legacy fallback, so
+  // a USB/Windows-queue printer whose config row happens to carry a leftover
+  // ipAddress value would silently print over TCP to the printer's LAN
+  // interface instead of the USB queue — a hidden path divergence that made
+  // receipts take a different route than diagnostic probes on the same till.
+  const isNetwork = connectionType === "NETWORK_IP";
   return agentFetch("/print/escpos", {
     method: "POST",
-    body: JSON.stringify({ printerName, dataBase64, connectionType, ipAddress, portNumber, title }),
+    body: JSON.stringify({
+      printerName,
+      dataBase64,
+      connectionType,
+      ipAddress: isNetwork ? ipAddress : undefined,
+      portNumber: isNetwork ? portNumber : undefined,
+      title,
+    }),
   });
 };
 
