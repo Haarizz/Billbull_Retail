@@ -331,55 +331,73 @@ const getSampleBarcodeForFormat = (format) => {
     }
 };
 
-const getBarcodeRenderOptions = (template) => {
-    const height = Number(template?.height) || 25;
-    const width = Number(template?.width) || 40;
-    const isSmallHeight = height <= 25;
-    const format = template?.barcodeFormat || "CODE128";
-    const contentScale = getTemplateContentScale(template);
-    // Tuned for 203 DPI thermal printers (Zebra ZD220t): bigger module width
-    // so the rendered SVG keeps crisp bar edges when scaled to the physical label.
-    const baseWidth = width < 50 ? 2 : (width < 80 ? 2.4 : 3);
-    const baseHeight = isSmallHeight ? 32 : (height < 30 ? 40 : (height < 60 ? 55 : 90));
+// Native render size handed to JsBarcode, BEFORE the uniform fit-to-label scaling done
+// by fitBarcodeSvgToBox() below. This is intentionally fixed and generous (not derived
+// from the label's mm size) so bar/space module ratios stay accurate; the physical
+// on-label footprint is enforced afterwards, once, in one place.
+const getBarcodeRenderOptions = (template) => ({
+    format: template?.barcodeFormat || "CODE128",
+    width: 2,
+    height: 100,
+    displayValue: false,
+    margin: 4
+});
 
-    return {
-        format,
-        width: Math.max(2, Number((baseWidth * contentScale).toFixed(2))),
-        height: Math.max(24, Math.round(baseHeight * contentScale)),
-        displayValue: false,
-        fontSize: Math.max(8, Math.round((isSmallHeight ? 10 : 12) * contentScale)),
-        margin: 0
-    };
-};
-
-// 1mm = 3.7795 CSS pixels (96 DPI). Snapping the SVG width to an integer-pixel-per-module
-// value stops the browser from anti-aliasing adjacent bars into a single black smear.
+// 1mm = 3.7795 CSS pixels (96 DPI).
 const CSS_PX_PER_MM = 3.7795275591;
 
-const snapSvgToIntegerModules = (svg, labelWidthMm, paddingMm = 6) => {
+// Barcode occupies ~75-80% of the label width (with a minimum side margin) and a
+// height sized off the label height, never dominating it. This is the single source
+// of truth for the barcode's physical footprint on a label.
+const BARCODE_WIDTH_RATIO = 0.78;
+const BARCODE_SIDE_MARGIN_MIN_MM = 1.5;
+
+const getBarcodeTargetBoxMm = (template) => {
+    const labelWidthMm = Math.max(1, Number(template?.width) || 40);
+    const labelHeightMm = Math.max(1, Number(template?.height) || 25);
+    const contentScale = getTemplateContentScale(template);
+    const isSmallHeight = labelHeightMm <= 25;
+    const rawHeightMm = isSmallHeight ? 11 : (labelHeightMm < 30 ? 13 : (labelHeightMm < 60 ? 18 : 26));
+
+    const maxWidthMm = Math.max(5, labelWidthMm - (BARCODE_SIDE_MARGIN_MIN_MM * 2));
+    const widthMm = Math.max(5, Math.min(maxWidthMm, labelWidthMm * BARCODE_WIDTH_RATIO * contentScale));
+    const heightMm = Math.max(5, Math.min(labelHeightMm * 0.6, rawHeightMm * contentScale));
+
+    return { widthMm, heightMm };
+};
+
+// Uniformly scales the whole rendered SVG (both axes by the SAME factor) down to the
+// target physical box, so bar proportions from JsBarcode are preserved exactly. Scaling
+// width and height independently (or letting one axis stretch via flexbox/CSS while the
+// other is clamped) is what previously turned short, wide bars into tall vertical smears.
+const fitBarcodeSvgToBox = (svg, targetWidthMm, targetHeightMm) => {
     if (!svg?.viewBox?.baseVal) return;
-    const totalModules = svg.viewBox.baseVal.width;
-    if (!totalModules || totalModules <= 0) return;
+    const nativeWidthPx = svg.viewBox.baseVal.width;
+    const nativeHeightPx = svg.viewBox.baseVal.height;
+    if (!nativeWidthPx || !nativeHeightPx) return;
 
-    const availableMm = Math.max(1, labelWidthMm - paddingMm);
-    const availablePx = availableMm * CSS_PX_PER_MM;
-    const integerPxPerModule = Math.max(1, Math.floor(availablePx / totalModules));
-    const targetMm = (integerPxPerModule * totalModules) / CSS_PX_PER_MM;
+    const targetWidthPx = targetWidthMm * CSS_PX_PER_MM;
+    const targetHeightPx = targetHeightMm * CSS_PX_PER_MM;
+    const scale = Math.min(targetWidthPx / nativeWidthPx, targetHeightPx / nativeHeightPx);
 
-    svg.setAttribute('width', `${targetMm}mm`);
-    svg.removeAttribute('height');
-    svg.style.width = `${targetMm}mm`;
-    svg.style.height = 'auto';
+    const finalWidthMm = (nativeWidthPx * scale) / CSS_PX_PER_MM;
+    const finalHeightMm = (nativeHeightPx * scale) / CSS_PX_PER_MM;
+
+    svg.setAttribute('width', `${finalWidthMm}mm`);
+    svg.setAttribute('height', `${finalHeightMm}mm`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.style.width = `${finalWidthMm}mm`;
+    svg.style.height = `${finalHeightMm}mm`;
     svg.style.maxWidth = '100%';
+    svg.style.maxHeight = '100%';
     svg.style.display = 'block';
-    svg.style.marginLeft = 'auto';
-    svg.style.marginRight = 'auto';
-    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.margin = '0 auto';
     svg.style.shapeRendering = 'crispEdges';
 };
 
-const renderBarcodesInRoot = (root, options, labelWidthMm) => {
+const renderBarcodesInRoot = (root, options, template) => {
     if (!root?.querySelectorAll) return;
+    const { widthMm, heightMm } = getBarcodeTargetBoxMm(template);
 
     root.querySelectorAll('svg[data-barcode]').forEach((svg) => {
         const barcodeValue = svg.getAttribute('data-barcode');
@@ -387,7 +405,7 @@ const renderBarcodesInRoot = (root, options, labelWidthMm) => {
 
         try {
             JsBarcode(svg, barcodeValue, options);
-            if (labelWidthMm) snapSvgToIntegerModules(svg, labelWidthMm);
+            fitBarcodeSvgToBox(svg, widthMm, heightMm);
         } catch (error) {
             console.error("Barcode generation failed:", barcodeValue, error);
         }
@@ -671,7 +689,7 @@ const BarcodePrinter = () => {
         if (t.name.toLowerCase().includes('qr')) return;
 
         const timeoutId = setTimeout(() => {
-            renderBarcodesInRoot(document, getBarcodeRenderOptions(t), Number(t.width) || 40);
+            renderBarcodesInRoot(document, getBarcodeRenderOptions(t), t);
         }, 0);
 
         return () => clearTimeout(timeoutId);
@@ -1202,20 +1220,19 @@ const BarcodePrinter = () => {
                     overflow: hidden;
                     background: white;
                 }
-                /* Barcodes share the leftover height after text rows take their natural height,
-                   so layouts with 1 or 2 barcodes both fill the label cleanly without overflow. */
+                /* Barcode SVGs are sized explicitly (in mm) by fitBarcodeSvgToBox() before
+                   printing, preserving their native aspect ratio. flex-grow must stay off
+                   here — growing to fill leftover column height is what previously stretched
+                   short, wide bars into tall vertical smears independent of their width. */
                 svg {
-                    flex: 1 1 0;
-                    min-height: 0;
+                    flex: 0 0 auto;
                     max-width: 100%;
-                    width: auto;
-                    height: auto;
+                    max-height: 100%;
                     display: block;
                     margin: 0 auto;
                     align-self: center;
                     image-rendering: pixelated;
                     shape-rendering: crispEdges;
-                    object-fit: contain;
                 }
                 .label-name, .label-code, .label-price, .label-unit { flex: 0 0 auto; }
                 .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; margin-bottom: 0px; line-height: 1.1; text-align: center; }
@@ -1240,7 +1257,7 @@ const BarcodePrinter = () => {
         doc.close();
 
         setTimeout(() => {
-            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t), Number(t.width) || 40);
+            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t), t);
         }, 50);
 
         iframe.contentWindow.focus();
@@ -1301,8 +1318,6 @@ const BarcodePrinter = () => {
         const isSmallHeight = t.height <= 25;
         const contentScale = getTemplateContentScale(t);
         const scaledPx = (value, min = 5) => `${Math.max(min, Math.round(value * contentScale * 100) / 100)}px`;
-        const barcodeBaseHeight = isSmallHeight ? 32 : (t.height < 30 ? 40 : 55);
-        const barcodeMaxHeight = `${Math.max(18, Math.round(barcodeBaseHeight * contentScale))}px`;
         const nameFontSize = scaledPx(isSmallHeight ? 8 : 10, 6);
         const codeFontSize = scaledPx(isSmallHeight ? 7 : 8, 5.5);
         const barcodeFontSize = scaledPx(isSmallHeight ? 10 : 12, 7);
@@ -1370,9 +1385,8 @@ const BarcodePrinter = () => {
                     </div>
                 ) : showLinearBarcode && productBarcodeValue && (
                     <svg
-                        className="w-full"
                         data-barcode={productBarcodeValue}
-                        style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}
+                        style={{ maxWidth: '100%', maxHeight: '100%' }}
                     ></svg>
                 )}
 
@@ -1382,15 +1396,8 @@ const BarcodePrinter = () => {
 
                 {showBatchBarcode && (
                     <svg
-                        className="w-full"
                         data-barcode={batchBarcodeValue}
-                        style={{
-                            maxHeight: barcodeMaxHeight,
-                            width: 'calc(100% - 4mm)',
-                            maxWidth: 'calc(100% - 4mm)',
-                            marginLeft: '2mm',
-                            marginRight: '2mm'
-                        }}
+                        style={{ maxWidth: '100%', maxHeight: '100%' }}
                     ></svg>
                 )}
 
