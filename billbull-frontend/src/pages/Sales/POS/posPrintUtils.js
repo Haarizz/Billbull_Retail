@@ -798,7 +798,8 @@ ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</
 };
 
 export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = n => {
     const v = parseFloat(n) || 0;
@@ -867,6 +868,10 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
 export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   logoDataUrl = null, currency = 'AED', customer = null,
+  // Heading shown at the top of the voucher. Defaults to the customer-payment
+  // wording; the Receive-Advance flow passes 'ADVANCE RECEIPT' so the same layout
+  // serves both receipt types without a second template.
+  documentTitle = 'PAYMENT RECEIPT',
 }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
@@ -898,7 +903,7 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">PAYMENT RECEIPT</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle)}</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
   html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
@@ -1001,8 +1006,17 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 export const buildReceiptVoucherThermalText = (paperSize, payment, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   currency = 'AED', customer = null,
+  documentTitle = 'PAYMENT RECEIPT',
+  // When true, skip the plain-text company header block — the caller prepends the
+  // shared branded ESC/POS header (logo + company block) via buildEscPosDocument
+  // instead, so the header isn't printed twice.
+  omitHeader = false,
 } = {}) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable column count after the shared symmetric page inset (MARGIN_COLS=1 each
+  // side, applied by buildEscPosDocument via GS L / GS W): 46 @ 80mm, 30 @ 58mm.
+  // Building to this width lines the body up inside the same left/right gutters as
+  // every other 80mm print instead of floating short of the right gutter.
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = (n) => `${currency} ${(parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
@@ -1029,14 +1043,16 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
     });
   };
 
-  pushCentered('PAYMENT RECEIPT');
-  if (header) pushCentered(header);
-  pushCentered(companyName || '');
-  const addrLine = oneLineAddress(address);
-  if (addrLine) pushCentered(addrLine);
-  if (phone) pushCentered(`Tel: ${phone}`);
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  lines.push(hr);
+  if (!omitHeader) {
+    pushCentered(documentTitle);
+    if (header) pushCentered(header);
+    pushCentered(companyName || '');
+    const addrLine = oneLineAddress(address);
+    if (addrLine) pushCentered(addrLine);
+    if (phone) pushCentered(`Tel: ${phone}`);
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    lines.push(hr);
+  }
   lines.push(buildFixedWidthLine('Receipt No:', receiptNo, width));
   lines.push(buildFixedWidthLine('Date:', dateStr, width));
   lines.push(buildFixedWidthLine('Customer:', custName, width));
@@ -1060,8 +1076,12 @@ export const buildStatementThermalText = (paperSize, statement, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   currency = 'AED', customer = null,
   startDate = '', endDate = '',
+  // See buildReceiptVoucherThermalText: when true, skip the plain-text company
+  // header so the caller's shared branded ESC/POS header isn't duplicated.
+  omitHeader = false,
 } = {}) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = (n) => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
@@ -1084,14 +1104,16 @@ export const buildStatementThermalText = (paperSize, statement, {
     });
   };
 
-  pushCentered('CUSTOMER STATEMENT');
-  if (header) pushCentered(header);
-  pushCentered(companyName || '');
-  const addrLine = oneLineAddress(address);
-  if (addrLine) pushCentered(addrLine);
-  if (phone) pushCentered(`Tel: ${phone}`);
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  lines.push(hr);
+  if (!omitHeader) {
+    pushCentered('CUSTOMER STATEMENT');
+    if (header) pushCentered(header);
+    pushCentered(companyName || '');
+    const addrLine = oneLineAddress(address);
+    if (addrLine) pushCentered(addrLine);
+    if (phone) pushCentered(`Tel: ${phone}`);
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    lines.push(hr);
+  }
   lines.push(buildFixedWidthLine('Customer:', custName, width));
   if (custCode) lines.push(buildFixedWidthLine('Code:', custCode, width));
   if (startDate || endDate) lines.push(buildFixedWidthLine('Period:', `${startDate} to ${endDate}`, width));
