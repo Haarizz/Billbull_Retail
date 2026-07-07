@@ -42,8 +42,9 @@ const POSConsole = React.memo((props) => {
     tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, tplReturnShowCreditBalance, 
     tplJobCardFooter, tplJobCardPaper, 
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails, 
-    tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms, 
-    posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton, 
+    tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
+    receiptTemplateId, setReceiptTemplateId,
+    posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
@@ -126,11 +127,6 @@ const POSConsole = React.memo((props) => {
     const [addDeviceForm, setAddDeviceForm] = useState({ deviceType: 'RECEIPT_PRINTER', deviceName: '', connectionType: 'USB', attachedPrinterId: '' });
     const [addDeviceSaving, setAddDeviceSaving] = useState(false);
     const [addDeviceError, setAddDeviceError] = useState('');
-
-    // Which receipt template the Print Templates designer is previewing / test
-    // printing. Purely designer-local; does NOT affect the checkout print flow.
-    // 'native' = Template 1 (current production receipt). See ./receiptTemplates.
-    const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
 
     // Add New Device modal option set (mockup). Printer sub-types map to the
     // existing PosPrinter flow; scanner/cash-drawer hit their own endpoints.
@@ -629,6 +625,7 @@ const POSConsole = React.memo((props) => {
                       jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
                       jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
                       jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
+                      receiptTemplateId,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                     setPosSettings(saved);

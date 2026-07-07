@@ -54,6 +54,11 @@ const CMD = {
   // receipt (client item 4). n is the head→cutter clearance in dots.
   CUT_PARTIAL_FEED: (n) => [GS, 0x56, 66, n & 0xff],
   FEED: (n = 1) => [ESC, 0x64, n & 0xff],
+  // ESC J n — print and feed the paper n × vertical motion units, WITHOUT
+  // touching the ESC 3 line-spacing register. Used for small one-off breathing
+  // room (around section dividers, before/after TOTAL) that shouldn't change
+  // the uniform per-line pitch every other line on the receipt uses.
+  FEED_DOTS: (n) => [ESC, 0x4a, n & 0xff],
 };
 
 const PAPER_DOTS = { 58: 384, 80: 576 };
@@ -100,6 +105,19 @@ const usableDotsFor = (mm) => PAPER_DOTS[mm] - 2 * marginDotsFor(mm);
 // for both paper sizes; a `mm` arg is accepted for call-site symmetry but unused.
 const leftGutterFor = (_mm) => ' '.repeat(MARGIN_COLS);
 
+// ── Vertical rhythm (readability spacing, no layout/width changes) ─────────
+// The receipt body's per-line pitch comes from the ESC 3 LINE_SPACING register
+// (set once, applies to every LF uniformly); these are small ESC J dot-feeds
+// layered on top at specific structural points so sections read as distinct
+// blocks instead of a cramped wall of text — same content, same columns, same
+// alignment, just more breathing room.
+const BODY_LINE_SPACING = 34; // was 30 — a few extra dots between every line
+const SECTION_GAP_DOTS = 10; // extra gap before/after every horizontal rule
+const ITEM_GAP_DOTS = 8; // extra gap between one product block and the next
+const NAME_GAP_DOTS = 6; // small gap under the bold product name, above its price rows
+const TOTAL_GAP_BEFORE_DOTS = 16; // extra gap before TOTAL so it stands out
+const TOTAL_GAP_AFTER_DOTS = 12; // extra gap after TOTAL, before Payment Mode
+
 class ByteWriter {
   constructor() {
     this.chunks = [];
@@ -132,6 +150,18 @@ class ByteWriter {
     return out;
   }
 }
+
+// Emits a horizontal rule with a small ESC J dot-feed before and after it, so
+// every section boundary (header/invoice-info/items/totals/payment/customer/
+// credit-account) reads as a deliberate break rather than a cramped line —
+// used at every `hr` emission instead of a bare gline. before/after are
+// overridable per call-site for the spots that need extra emphasis (the rule
+// immediately above/below TOTAL).
+const emitDivider = (w, gutter, hr, { before = SECTION_GAP_DOTS, after = SECTION_GAP_DOTS } = {}) => {
+  w.push(CMD.FEED_DOTS(before));
+  w.gline(gutter, hr);
+  w.push(CMD.FEED_DOTS(after));
+};
 
 // CP1252-representable punctuation that NFKD normalization doesn't decompose —
 // mapped to the code-page byte the printer's WPC1252 table renders natively
@@ -505,7 +535,7 @@ export const emitEscPosBrandedHeader = async (w, {
   if (isReprint) { w.push(CMD.BOLD_ON).line('*** COPY / REPRINT ***').push(CMD.BOLD_OFF); }
 
   w.push(CMD.ALIGN_LEFT);
-  w.gline(gutter, hr);
+  emitDivider(w, gutter, hr);
 };
 
 // Bridge for reports/vouchers already rendered as fixed-width plain text
@@ -617,9 +647,10 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // on the client's POS-80C. Left margin comes from w.gline(gutter, …) prefixes;
   // centred header/QR content is centred natively by ESC a 1.
   // Uniform line spacing for even vertical rhythm between sections (req 4/12).
-  // 30/203" is close to the printer's own default single spacing and reads denser
-  // and more consistent than the old airier 36.
-  w.push(CMD.LINE_SPACING(30));
+  // BODY_LINE_SPACING (34/203") adds a few dots over the printer's own default
+  // single spacing on every line — enough to de-cramp the receipt without
+  // reading as airy as the 36 used for reports/statements.
+  w.push(CMD.LINE_SPACING(BODY_LINE_SPACING));
 
   // ── Branded header (logo + title + company name + address/phone/TRN + divider)
   // Shared with the Customer Receipt / Receive Advance / Customer Statement /
@@ -638,7 +669,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (cashierName) w.gline(gutter, buildFixedWidthLine('Cashier:', cashierName, width));
   if (terminalId) w.gline(gutter, buildFixedWidthLine('Terminal ID:', terminalId, width));
   if (counterName) w.gline(gutter, buildFixedWidthLine('Counter:', counterName, width));
-  w.gline(gutter, hr);
+  emitDivider(w, gutter, hr);
 
   // NOTE: the customer block is intentionally NOT here. The checkout preview
   // (buildThermalReceiptHtml / ThermalMock — the design source of truth) renders
@@ -678,6 +709,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.push(CMD.BOLD_ON);
     for (const ln of wrapToWidth(`${qty}x ${name}`, width, '   ')) w.gline(gutter, ln);
     w.push(CMD.BOLD_OFF);
+    w.push(CMD.FEED_DOTS(NAME_GAP_DOTS));
     if (lineDiscountAmount > 0) {
       detailRow(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount));
       detailRow(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`);
@@ -691,8 +723,9 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     const batch = item.batchNumber || item.pinnedBatchNumber || '';
     if (serial) detailLine(`S/N: ${serial}`);
     else if (batch) detailLine(`Batch: ${batch}`);
+    w.push(CMD.FEED_DOTS(ITEM_GAP_DOTS));
   });
-  w.gline(gutter, hr);
+  emitDivider(w, gutter, hr);
 
   // Same Subtotal/Discount/Taxable reconstruction as the HTML preview and the
   // plain-text builder: a persisted invoice's subTotal is already the TAXABLE
@@ -729,14 +762,15 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (showVatSummary) w.gline(gutter, buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) w.gline(gutter, buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.gline(gutter, buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
-  w.gline(gutter, hr);
+  emitDivider(w, gutter, hr, { after: 0 });
 
   // TOTAL emphasis (req 10): CHAR_SIZE(1,2) doubles HEIGHT only — the character
   // pitch stays at the full column count, so the row is still formatted to `width`
   // and the amount right-aligns cleanly with the totals rows above. (Formatting to
   // width/2 — as if the width had doubled — would leave TOTAL ending mid-paper.)
-  // A blank line above sets the block apart from the totals list.
+  // Extra dot-feed above sets the block clearly apart from the totals list.
   w.push(CMD.FEED(1));
+  w.push(CMD.FEED_DOTS(TOTAL_GAP_BEFORE_DOTS));
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
   w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
   w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
@@ -746,13 +780,14 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.gline(gutter, buildFixedWidthLine('Deposit Paid:', `- ${fmt(depositApplied)}`, width));
     w.push(CMD.BOLD_ON).gline(gutter, buildFixedWidthLine('Balance Due:', fmt(Math.max(0, bal)), width)).push(CMD.BOLD_OFF);
   }
-  w.gline(gutter, hr);
+  // Extra gap after the TOTAL amount, before the Payment Mode section below.
+  emitDivider(w, gutter, hr, { before: TOTAL_GAP_AFTER_DOTS });
 
   if (showPaymentDetails) {
     if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
     if (cashGiven != null && parseFloat(cashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
     if (changeAmount != null && parseFloat(changeAmount) > 0) w.gline(gutter, buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
-    w.gline(gutter, hr);
+    emitDivider(w, gutter, hr);
   }
 
   // ── Customer (§6, client item 4): labeled CUSTOMER section — Name/Mobile/Email —
@@ -764,7 +799,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.gline(gutter, buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
     if (customerPhone) w.gline(gutter, buildFixedWidthLine('Mobile:', customerPhone, width));
     if (customerEmail) w.gline(gutter, buildFixedWidthLine('Email:', customerEmail, width));
-    w.gline(gutter, hr);
+    emitDivider(w, gutter, hr);
   }
 
   // ── Credit account (§7): same 4-field formula as the HTML/browser path —
@@ -782,7 +817,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.gline(gutter, buildFixedWidthLine('Invoice Credit:', fmt(invCredit), width));
     w.gline(gutter, buildFixedWidthLine('Amount Paid:', fmt(amtPaid), width));
     w.push(CMD.BOLD_ON).gline(gutter, buildFixedWidthLine('Updated Balance:', fmt(updatedBal), width)).push(CMD.BOLD_OFF);
-    w.gline(gutter, hr);
+    emitDivider(w, gutter, hr);
   }
 
   // ── QR / social image (§4+§5, client items 3+8) ─────────────────────────────
@@ -802,7 +837,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
         w.push(stampRaster);
         w.push([0x0a]);
         w.push(CMD.ALIGN_LEFT);
-        w.gline(gutter, hr);
+        emitDivider(w, gutter, hr);
       } catch {
         // Stamp failed to decode/dither — skip it rather than abort the print.
       }
@@ -822,7 +857,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       w.line('Scan to verify');
       w.push(CMD.FEED(1));
       w.push(CMD.ALIGN_LEFT);
-      w.gline(gutter, hr);
+      emitDivider(w, gutter, hr);
     }
   };
 
@@ -940,16 +975,46 @@ export const buildEscPosFromPlainText = (text, paperSize = '80mm') => {
 
 export const buildEscPosFromPlainTextBase64 = (text, paperSize = '80mm') => uint8ArrayToBase64(buildEscPosFromPlainText(text, paperSize));
 
+// Maximum GS v 0 raster height (dots) per block, used only by the whole-receipt
+// canvas path below. The POS-80C probe (ditherImageToRasterCommand's note)
+// only ever proved a SINGLE block clean up to ~350 rows (the logo/stamp, ~13KB
+// of raster data) — but a whole rendered bilingual receipt
+// (bilingualReceiptCanvas.js) can run several THOUSAND dots tall, ~20x bigger
+// than anything tested. That size gap is what produced a wall of mojibake on
+// Template 2's silent print (client report 2026-07-07): the printer's raster
+// receive buffer overflows partway through the one oversized block, the
+// parser loses track of how many image bytes remain, and starts reading the
+// image's own tail bytes as WPC1252 text/commands. Banding well under the
+// proven-safe ceiling — and re-issuing ESC @ (reset) + heating before each
+// subsequent band — forces the printer's parser back to a known state before
+// every new GS v 0 header, so a receipt of any length prints as a sequence of
+// small, individually-safe blocks. ESC @ only resets controller registers; it
+// does not feed paper, so bands still print flush against each other with no
+// visible seam.
+const RASTER_BAND_ROWS = 200;
+
+const pushBandedRaster = (writer, bits, w, h) => {
+  for (let y0 = 0; y0 < h; y0 += RASTER_BAND_ROWS) {
+    const bandH = Math.min(RASTER_BAND_ROWS, h - y0);
+    if (y0 > 0) {
+      writer.push(CMD.INIT);
+      writer.push(CMD.SET_HEATING());
+      writer.push(CMD.ALIGN_CENTER);
+    }
+    writer.push(packBitmapToRasterCommand(bits.subarray(y0 * w, (y0 + bandH) * w), w, bandH));
+  }
+};
+
 // ── Whole-receipt canvas → ESC/POS document ─────────────────────────────────
 // Wraps an ALREADY-RENDERED full-receipt canvas (e.g. bilingualReceiptCanvas.js's
 // renderBilingualReceiptCanvas, which lays out the entire bilingual EN/AR receipt
 // at printer-native resolution via the browser's own text shaping/RTL) into a
 // complete ESC/POS document: the same init/heating/codepage preamble every other
-// receipt uses, ONE full-height GS v 0 raster block (proven clean at this size on
-// the POS-80C — see ditherImageToRasterCommand's note on why splitting a raster
-// across multiple GS v 0 headers is NOT done), then the same feed+cut sequence.
-// A hard 1-bit threshold (not dithering) — this is text/UI, not a photo — mirrors
-// canvasToMonoRows in bilingualReceiptCanvas.js.
+// receipt uses, the canvas as a sequence of banded GS v 0 raster blocks (see
+// pushBandedRaster/RASTER_BAND_ROWS above — a whole receipt is far taller than
+// the single-block size ever verified safe on this printer class), then the
+// same feed+cut sequence. A hard 1-bit threshold (not dithering) — this is
+// text/UI, not a photo — mirrors canvasToMonoRows in bilingualReceiptCanvas.js.
 export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', threshold = 160 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
   const w = canvas.width, h = canvas.height;
@@ -961,15 +1026,13 @@ export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', thre
     const lum = (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]) * a + 255 * (1 - a);
     bits[i] = lum < threshold ? 1 : 0;
   }
-  const raster = packBitmapToRasterCommand(bits, w, h);
-
   const writer = new ByteWriter();
   writer.push(CMD.INIT);
   writer.push(CMD.SET_HEATING());
   writer.push(CMD.CODEPAGE_WPC1252);
   writer.push(CMD.SELECT_FONT_A);
   writer.push(CMD.ALIGN_CENTER);
-  writer.push(raster);
+  pushBandedRaster(writer, bits, w, h);
   writer.push([0x0a]);
   writer.push(CMD.ALIGN_LEFT);
   // Same head→cutter clearance model as buildEscPosReceipt's cut.
