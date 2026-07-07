@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TaxInvoiceReceiptBody, TEMPLATE2_CSS, TEMPLATE2_FONT_LINK } from "./BillBullTaxInvoiceReceipt";
+import { ROBOTO_MONO_FONT_FACE } from "../../../../utils/receiptFont";
 
 /**
  * Renders Template 2 (Arabic / Bilingual tax invoice) to a standalone HTML
@@ -17,6 +18,12 @@ export function buildTemplate2Html(data) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <link href="${TEMPLATE2_FONT_LINK}" rel="stylesheet">
 <style>
+  /* Embed Roboto Mono (base64 @font-face) so the Latin type renders correctly on
+     offline tills / kiosks where the Google Fonts CDN <link> above can't load —
+     same reliability guarantee Template 1's builders have. Arabic (Noto Kufi)
+     still comes from the CDN link as a progressive enhancement; it falls back to
+     the OS Arabic font (Segoe UI / Tahoma) when offline. */
+  ${ROBOTO_MONO_FONT_FACE}
   html,body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;background:#fff}
   /* Fill the host width (the printed 80mm page, or the checkout preview panel
      which is wider than 80mm) rather than a hard 80mm, so the receipt spans the

@@ -269,6 +269,10 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     kv2(L.NAME, invoice.customerName || L.WALK_IN.en);
     if (customerPhone) kv2(L.MOBILE, customerPhone);
     if (customerEmail) kv2(L.EMAIL, customerEmail);
+    // Customer code + TRN (parity with the HTML template's Customer Details).
+    const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
+    if (custCode) kv2(L.CUSTOMER_CODE, custCode);
+    if (invoice.customerTrn) kv2(L.CUSTOMER_TRN, invoice.customerTrn);
   }
 
   // ── Delivery address ──────────────────────────────────────────────────────
@@ -374,6 +378,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (showVatSummary) kv2(invoice.taxInclusive ? L.VAT_INCL : L.VAT, fmt(invoice.taxTotal));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) kv2(L.DELIVERY_CHARGE, fmt(invoice.deliveryCharge));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) kv2(L.SHIPPING, fmt(shippingCharge));
+  const roundOff = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
+  if (Math.abs(roundOff) >= 0.005) kv2(L.ROUND_OFF, fmt(roundOff));
 
   // ── TOTAL TO PAY block: double rule, stacked bilingual label, big amount ──
   y += Math.round(4 * S);
@@ -488,6 +494,16 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     y += qrCanvas.height + Math.round(6 * S);
     centerEn(L.SCAN_VERIFY.en, 16);
     centerAr(L.SCAN_VERIFY.ar, 16);
+  }
+
+  // ── Brand tail line ───────────────────────────────────────────────────────
+  // Present in the HTML preview twin ("BillBull Retail OS · geebu.io / Served
+  // by <cashier>") but was previously absent from this raster — so the printed
+  // thermal receipt dropped it (Fix 10). Draw it so preview == print.
+  if (showFooterText) {
+    dashed();
+    centerEn('BillBull Retail OS · geebu.io', 15);
+    centerEn(cashierName ? `Served by ${cashierName}` : 'Have a great day!', 15);
   }
 
   y += Math.round(8 * S);

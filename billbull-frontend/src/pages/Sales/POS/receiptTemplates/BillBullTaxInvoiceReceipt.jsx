@@ -1,4 +1,5 @@
 import React from "react";
+import { code128Svg } from "../../../../utils/bilingualReceiptCanvas";
 
 /**
  * BillBull Retail OS — 80mm Thermal Tax Invoice Receipt (EN / AR)  [TEMPLATE 2]
@@ -153,7 +154,7 @@ export const TEMPLATE2_CSS = `
     box-shadow: 0 0 0 1px #ccc, 0 6px 18px rgba(0,0,0,.25);
   }
   .bb-receipt .ar {
-    font-family: 'Noto Kufi Arabic', sans-serif;
+    font-family: 'Noto Kufi Arabic', 'Segoe UI', Tahoma, sans-serif;
     direction: rtl;
     unicode-bidi: isolate;
   }
@@ -279,19 +280,25 @@ export const TEMPLATE2_FONT_LINK =
 // Rendered without the outer gray wrapper so it can be embedded either way.
 // ---------------------------------------------------------------------------
 
-export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA }) => {
+export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }) => {
   const { business, meta, customer, balance, delivery, items, totals, payment, loyalty, vatSummary, currency } = data;
 
   const showCustomer = customer && (customer.name || customer.mobile || customer.customerCode);
-  const showBalance = balance && (balance.previousBalance || balance.newBalanceDue);
+  const showBalance = balance && (balance.previousBalance != null || balance.newBalanceDue != null);
   const showDelivery = delivery && ((delivery.lineEn && delivery.lineEn.length) || (delivery.lineAr && delivery.lineAr.length));
   const showLoyalty = loyalty && (loyalty.tier || loyalty.pointsEarned || loyalty.pointsBalance);
 
   const totalItems = items.length;
   const totalQty = items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
 
+  // On-screen preview width: 58mm vs 80mm. The print builder overrides
+  // --paper-width to 100% (the page is physically sized by @page), so this only
+  // affects the designer Live Preview / Full Preview, letting the merchant see
+  // the true 58mm proportions before printing.
+  const paperVar = String(paperSize).includes("58") ? "58mm" : "80mm";
+
   return (
-    <div className="bb-receipt">
+    <div className="bb-receipt" style={{ "--paper-width": paperVar }}>
       {/* ================= HEADER / BRAND ================= */}
       <div className="center">
         <div className="logo-mark">
@@ -357,12 +364,21 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA }) => {
       )}
 
       {/* ================= CUSTOMER BALANCE ================= */}
+      {/* 4-field credit-account model: Previous / This Invoice / Amount Paid /
+          New Balance Due. `thisInvoice` accepts `invoiceCredit` (the field name
+          the real-data mapper emits) and `amountPaid` accepts either name so
+          both the designer sample and live checkout render identically. */}
       {showBalance && (
         <>
           <SectionTitle en="ACCOUNT BALANCE" ar="رصيد الحساب" />
           <KV en="Previous Balance" ar="الرصيد السابق" value={`${currency} ${fmt(balance.previousBalance)}`} />
-          <KV en="This Invoice" ar="هذه الفاتورة" value={`${currency} ${fmt(balance.thisInvoice)}`} />
-          <KV en="Credit Limit" ar="حد الائتمان" value={`${currency} ${fmt(balance.creditLimit)}`} />
+          <KV en="This Invoice" ar="هذه الفاتورة" value={`${currency} ${fmt(balance.thisInvoice ?? balance.invoiceCredit)}`} />
+          {(balance.amountPaid != null || balance.creditLimit != null) &&
+            (balance.creditLimit != null ? (
+              <KV en="Credit Limit" ar="حد الائتمان" value={`${currency} ${fmt(balance.creditLimit)}`} />
+            ) : (
+              <KV en="Amount Paid" ar="المبلغ المدفوع" value={`${currency} ${fmt(balance.amountPaid)}`} />
+            ))}
           <KV className="bold" en="New Balance Due" ar="الرصيد المستحق الجديد" value={`${currency} ${fmt(balance.newBalanceDue)}`} />
           <div className="dashed" />
         </>
@@ -538,18 +554,40 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA }) => {
         )}
       </div>
 
-      <div className="barcode" />
+      {/* Real, scannable Code 128B symbol of the invoice number (Fix 9) — same
+          symbol the ESC/POS raster prints, so on-screen preview == thermal print.
+          Falls back to nothing rather than the old decorative CSS placeholder. */}
+      {meta.invoiceNo && (
+        <div
+          className="barcode-svg"
+          style={{ margin: "2mm auto 1mm" }}
+          dangerouslySetInnerHTML={{ __html: code128Svg(meta.invoiceNo, { height: 44 }) }}
+        />
+      )}
       <div className="center small">{meta.invoiceNo}</div>
 
-      {business.qrDataUrl ? (
-        <img src={business.qrDataUrl} alt="qr" className="qr-img" style={{ marginTop: "3mm" }} />
-      ) : (
-        <div style={{ marginTop: "3mm" }} className="qr" />
-      )}
-      <div className="center footer-fine" style={{ marginTop: "1mm" }}>
-        Scan to verify e-invoice / view digital receipt
-      </div>
-      <div className="center footer-fine-ar ar">امسح للتحقق من الفاتورة الإلكترونية</div>
+      {/* Stamp (uploaded) replaces the QR — same rule as Template 1. Otherwise a
+          real ZATCA QR image. The checkerboard `.qr` placeholder is used only for
+          the standalone designer sample (SAMPLE_DATA has neither). */}
+      {business.stampDataUrl ? (
+        <img src={business.stampDataUrl} alt="stamp" className="qr-img" style={{ marginTop: "3mm", width: "84px", height: "84px" }} />
+      ) : business.qrDataUrl ? (
+        <>
+          <img src={business.qrDataUrl} alt="qr" className="qr-img" style={{ marginTop: "3mm" }} />
+          <div className="center footer-fine" style={{ marginTop: "1mm" }}>
+            Scan to verify e-invoice / view digital receipt
+          </div>
+          <div className="center footer-fine-ar ar">امسح للتحقق من الفاتورة الإلكترونية</div>
+        </>
+      ) : business.qrPlaceholder || data === SAMPLE_DATA ? (
+        <>
+          <div style={{ marginTop: "3mm" }} className="qr" />
+          <div className="center footer-fine" style={{ marginTop: "1mm" }}>
+            Scan to verify e-invoice / view digital receipt
+          </div>
+          <div className="center footer-fine-ar ar">امسح للتحقق من الفاتورة الإلكترونية</div>
+        </>
+      ) : null}
 
       <div className="dashed" />
 
@@ -568,11 +606,11 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA }) => {
 // Full component with gray page wrapper + fonts — used by the Live Preview.
 // ---------------------------------------------------------------------------
 
-const BillBullTaxInvoiceReceipt = ({ data = SAMPLE_DATA }) => (
+const BillBullTaxInvoiceReceipt = ({ data = SAMPLE_DATA, paperSize = "80mm" }) => (
   <div className="bb-receipt-wrapper">
     <style>{TEMPLATE2_CSS}</style>
     <link href={TEMPLATE2_FONT_LINK} rel="stylesheet" />
-    <TaxInvoiceReceiptBody data={data} />
+    <TaxInvoiceReceiptBody data={data} paperSize={paperSize} />
   </div>
 );
 
