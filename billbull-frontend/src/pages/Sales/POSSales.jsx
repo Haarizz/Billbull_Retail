@@ -7091,7 +7091,21 @@ export default function POSSales() {
       {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal} />}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
+        printTemplate={{
+          // Same branding the Tax Invoice header uses, so the Customer Receipt /
+          // Receive Advance / Statement prints render an identical logo + company
+          // block (req 12). tplLogoDataUrl is a data URL — safe for the ESC/POS
+          // raster ditherer — unlike the company profile's logoUrl (a server path).
+          logoDataUrl: tplLogoDataUrl,
+          companyName: tplOutletName,
+          trn: tplOutletTrn,
+          address: tplOutletAddress,
+          phone: tplOutletPhone,
+          showLogo: tplInvoiceShowLogo,
+          showTrn: tplInvoiceShowTrn,
+          currency: activeCurrency,
+        }} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
 
       {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}

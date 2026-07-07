@@ -68,32 +68,37 @@ const PAPER_DOTS = { 58: 384, 80: 576 };
 // and no hardware margin fixes the clipping and the under-utilisation together.
 const PAPER_COLS = { 58: 32, 80: 48 };
 
-// ── Shared symmetric page margin ────────────────────────────────────────────
+// ── Shared symmetric page margin (SOFTWARE gutter, no GS L / GS W) ───────────
 // Every 80mm/58mm ESC/POS print (sales receipt, delivery, reprint, customer
 // receipt, receive advance, statement, X/Z report, layaway) centres its content
-// with an EQUAL left+right gutter, matching the balanced X-Report look — instead
-// of printing flush to the left edge at full width.
+// with an EQUAL left+right gutter — instead of printing flush to the left edge.
 //
-// The inset is applied two ways at once so it survives clone printers with
-// partial ESC/POS support:
-//   • GS L (left margin)      → shifts all content right by MARGIN_DOTS.
-//   • GS W (print-area width) → narrows the area by 2·MARGIN_DOTS (right gutter).
-//   • usable column count      = PAPER_COLS − 2·MARGIN_COLS.
-// On a printer that honours GS L but IGNORES GS W (the case that clipped values
-// in the past), GS L still adds the left gutter AND the −2·MARGIN_COLS keeps the
-// right-hand value column short of the paper edge — so right-aligned values
-// (TOTAL/VAT/Credit Account/Updated Balance) can never fall off. buildFixedWidthLine
-// still trims only the LEFT label (never the right value), so nothing important is
-// lost even at the reduced width (46 cols @ 80mm easily fits the longest real row).
+// IMPORTANT: the margin is NOT done with the ESC/POS `GS L` (left margin) / `GS W`
+// (print-area width) commands. Those clone printers mis-handle `GS W`: the client's
+// POS-80C swallowed `GS`+one byte and PRINTED the width payload as text — e.g.
+// `GS W 552` = 1D 57 [28 02] surfaced a stray "(" (0x28) above the logo. So the
+// gutter is applied purely in SOFTWARE:
+//   • left-aligned rows are prefixed with MARGIN_COLS spaces (LEFT_GUTTER),
+//   • content is built to usableColsFor() = PAPER_COLS − 2·MARGIN_COLS, so
+//     gutter + content leaves an equal MARGIN_COLS gap on the right → symmetric,
+//   • centred content (logo/title/company/Arabic/QR rasters) is centred natively
+//     by the printer's ESC a 1 (ALIGN_CENTER), sized to usableDotsFor() so it sits
+//     inside the gutters.
+// This works identically on every printer (no capability dependency) and can never
+// leak command bytes as text. buildFixedWidthLine still trims only the LEFT label
+// (never the right value), so right-aligned values can't clip at the reduced width.
 const MARGIN_COLS = 1;
 // One column of dots (Font-A cell = 12 dots) per margin column, per paper size.
 const marginDotsFor = (mm) => MARGIN_COLS * Math.round(PAPER_DOTS[mm] / PAPER_COLS[mm]);
-// Usable column count after the symmetric inset — the value every fixed-width line
+// Usable column count after the symmetric gutter — the value every fixed-width line
 // and horizontal rule is built to.
 const usableColsFor = (mm) => PAPER_COLS[mm] - 2 * MARGIN_COLS;
-// Usable dot span after the symmetric inset — what rasters (logo/Arabic/QR/stamp)
+// Usable dot span after the symmetric gutter — what rasters (logo/Arabic/QR/stamp)
 // are sized to so they centre inside the gutters and don't clip on the right.
 const usableDotsFor = (mm) => PAPER_DOTS[mm] - 2 * marginDotsFor(mm);
+// The left-gutter space prefix for left-aligned rows (MARGIN_COLS spaces). Same
+// for both paper sizes; a `mm` arg is accepted for call-site symmetry but unused.
+const leftGutterFor = (_mm) => ' '.repeat(MARGIN_COLS);
 
 class ByteWriter {
   constructor() {
@@ -109,6 +114,12 @@ class ByteWriter {
   }
   line(str = '') {
     return this.text(str).push([0x0a]);
+  }
+  // Left-gutter line: prefixes `gutter` spaces so left-aligned content sits inside
+  // the symmetric software margin (see leftGutterFor). Used for every label/value
+  // row and horizontal rule; centred content uses the native ALIGN_CENTER instead.
+  gline(gutter, str = '') {
+    return this.text(`${gutter}${str}`).push([0x0a]);
   }
   toUint8Array() {
     const total = this.chunks.reduce((sum, c) => sum + c.length, 0);
@@ -437,9 +448,11 @@ export const emitEscPosBrandedHeader = async (w, {
   isReprint = false,
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
-  // Usable (post-inset) width/dots so the header centres inside the same symmetric
-  // gutters as the body — the caller sets GS L / GS W once for the whole print.
+  // Usable width/dots so the header centres inside the same symmetric software
+  // gutters as the body. Centred lines use the printer's ALIGN_CENTER; the only
+  // left-aligned line here (the divider) is prefixed with the left gutter.
   const width = usableColsFor(mm);
+  const gutter = leftGutterFor(mm);
   const hr = '-'.repeat(width);
   const printableDots = usableDotsFor(mm);
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
@@ -492,7 +505,7 @@ export const emitEscPosBrandedHeader = async (w, {
   if (isReprint) { w.push(CMD.BOLD_ON).line('*** COPY / REPRINT ***').push(CMD.BOLD_OFF); }
 
   w.push(CMD.ALIGN_LEFT);
-  w.line(hr);
+  w.gline(gutter, hr);
 };
 
 // Bridge for reports/vouchers already rendered as fixed-width plain text
@@ -504,21 +517,25 @@ export const emitEscPosBrandedHeader = async (w, {
 // buildEscPosFromPlainText, so it gets proper density on the print head.
 export const buildEscPosDocument = async (bodyText, headerOpts = {}) => {
   const mm = String(headerOpts.paperSize || '80mm').includes('58') ? 58 : 80;
+  const gutter = leftGutterFor(mm);
   const w = new ByteWriter();
   w.push(CMD.INIT);
   w.push(CMD.SET_HEATING());
   w.push(CMD.CODEPAGE_WPC1252);
   w.push(CMD.SELECT_FONT_A);
-  // Symmetric page inset (see MARGIN_COLS): equal left/right gutter, matching the
-  // X-Report look. GS L adds the left gutter; GS W narrows the area for the right.
-  w.push(CMD.SET_LEFT_MARGIN(marginDotsFor(mm)));
-  w.push(CMD.SET_PRINT_AREA_WIDTH(usableDotsFor(mm)));
-  w.push(CMD.LINE_SPACING(30));
+  // Reports/statements read best with the airier 36/203" spacing (matches the
+  // X/Z report the client approved); the denser receipt body uses 30 elsewhere.
+  w.push(CMD.LINE_SPACING(36));
   await emitEscPosBrandedHeader(w, headerOpts);
   w.push(CMD.ALIGN_LEFT);
-  String(bodyText || '').split('\n').forEach((line) => w.line(line));
-  w.push(CMD.FEED(3));
-  w.push(CMD.CUT_PARTIAL);
+  // Body is built to usableColsFor(); prefix the left gutter so it sits inside the
+  // symmetric software margin (no GS L / GS W — see the MARGIN_COLS note).
+  String(bodyText || '').split('\n').forEach((line) => w.gline(gutter, line));
+  // X/Z reports and statements can be long; feed enough that the LAST section
+  // (footer / generated timestamp / cashier attribution) fully clears the blade
+  // before cutting, then feed-then-cut (GS V 66 n) so nothing is chopped off.
+  w.push(CMD.FEED(2));
+  w.push(CMD.CUT_PARTIAL_FEED(mm === 58 ? 100 : 120));
   return w.toUint8Array();
 };
 
@@ -552,14 +569,17 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   currency = 'AED',
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
-  // Symmetric page inset (see MARGIN_COLS): the receipt is centred with an equal
-  // left/right gutter (matching the X-Report look) rather than printed flush-left
-  // at full width. Every fixed-width line + rule is built to the USABLE column
-  // count (PAPER_COLS − 2·MARGIN_COLS), so the right-hand value column lands one
-  // gutter short of the paper edge. buildFixedWidthLine trims only the LEFT label
-  // (never the right value), so long values (TOTAL/VAT/credit account) still can't
-  // clip even on clones that honour GS L but ignore GS W (req 1/2/9/13/15/18/19).
+  // Symmetric SOFTWARE gutter (see MARGIN_COLS): the receipt is centred with an
+  // equal left/right gutter rather than printed flush-left. Every fixed-width line
+  // + rule is built to the USABLE column count (PAPER_COLS − 2·MARGIN_COLS) and
+  // emitted through w.gline(gutter, …) which prefixes MARGIN_COLS spaces — so the
+  // content occupies [gutter | usable | gutter] and the right-hand value column
+  // lands one gutter short of the paper edge. buildFixedWidthLine trims only the
+  // LEFT label (never the right value), so long values (TOTAL/VAT/credit account)
+  // never clip. No GS L / GS W is used (they leaked a stray "(" on the client's
+  // POS-80C — see the MARGIN_COLS note), so this is printer-independent.
   const width = usableColsFor(mm);
+  const gutter = leftGutterFor(mm);
   const hr = '-'.repeat(width);
   // Rasters (logo, Arabic text lines, QR, stamp) are sized to the usable dot span
   // so they centre inside the gutters; the per-block scale factors keep breathing room.
@@ -592,15 +612,10 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   w.push(CMD.SET_HEATING());
   w.push(CMD.CODEPAGE_WPC1252);
   w.push(CMD.SELECT_FONT_A);
-  // Symmetric page inset (see MARGIN_COLS): equal left/right gutter so the receipt
-  // is centred on the paper (matching the X-Report look) instead of flush-left at
-  // full width. GS L adds the left gutter; GS W narrows the print area for the
-  // right gutter. The −2·MARGIN_COLS usable width (above) keeps right-aligned
-  // values short of the edge even on clones that ignore GS W, so nothing clips.
-  // INIT usually clears these, but some clones persist a stored margin — set them
-  // explicitly every receipt for consistent behaviour on Epson/GPrinter/POS-80C.
-  w.push(CMD.SET_LEFT_MARGIN(marginDotsFor(mm)));
-  w.push(CMD.SET_PRINT_AREA_WIDTH(usableDotsFor(mm)));
+  // NO GS L / GS W here — the symmetric margin is a software gutter (see the
+  // MARGIN_COLS note): those commands leaked their width payload as a stray "("
+  // on the client's POS-80C. Left margin comes from w.gline(gutter, …) prefixes;
+  // centred header/QR content is centred natively by ESC a 1.
   // Uniform line spacing for even vertical rhythm between sections (req 4/12).
   // 30/203" is close to the printer's own default single spacing and reads denser
   // and more consistent than the old airier 36.
@@ -617,13 +632,13 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     outletAddress, outletPhone,
     logoDataUrl, showLogo, showCompanyDetails, showTrn, isReprint,
   });
-  w.line(buildFixedWidthLine('Invoice No:', invoice.invoiceNumber || invoice.id || '', width));
+  w.gline(gutter, buildFixedWidthLine('Invoice No:', invoice.invoiceNumber || invoice.id || '', width));
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate) : null;
-  if (invDate) w.line(buildFixedWidthLine('Date:', invDate.toLocaleString('en-GB'), width));
-  if (cashierName) w.line(buildFixedWidthLine('Cashier:', cashierName, width));
-  if (terminalId) w.line(buildFixedWidthLine('Terminal ID:', terminalId, width));
-  if (counterName) w.line(buildFixedWidthLine('Counter:', counterName, width));
-  w.line(hr);
+  if (invDate) w.gline(gutter, buildFixedWidthLine('Date:', invDate.toLocaleString('en-GB'), width));
+  if (cashierName) w.gline(gutter, buildFixedWidthLine('Cashier:', cashierName, width));
+  if (terminalId) w.gline(gutter, buildFixedWidthLine('Terminal ID:', terminalId, width));
+  if (counterName) w.gline(gutter, buildFixedWidthLine('Counter:', counterName, width));
+  w.gline(gutter, hr);
 
   // NOTE: the customer block is intentionally NOT here. The checkout preview
   // (buildThermalReceiptHtml / ThermalMock — the design source of truth) renders
@@ -654,14 +669,14 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     // only; the right-hand value column still aligns to `width`, exactly like the
     // preview keeps the amount column fixed while indenting the label.
     const IND = ' ';
-    const detailRow = (left, right) => w.line(buildFixedWidthLine(`${IND}${left}`, right, width));
-    const detailLine = (text) => w.line(`${IND}${text}`.slice(0, width));
+    const detailRow = (left, right) => w.gline(gutter, buildFixedWidthLine(`${IND}${left}`, right, width));
+    const detailLine = (text) => w.gline(gutter, `${IND}${text}`.slice(0, width));
     // Product name: wrap across as many lines as needed (req 8) instead of
     // truncating. Continuation lines indent under the name so the block stays
     // readable; the right-aligned price rows below are emitted separately, so
     // wrapping the name never shifts a price out of its column.
     w.push(CMD.BOLD_ON);
-    for (const ln of wrapToWidth(`${qty}x ${name}`, width, '   ')) w.line(ln);
+    for (const ln of wrapToWidth(`${qty}x ${name}`, width, '   ')) w.gline(gutter, ln);
     w.push(CMD.BOLD_OFF);
     if (lineDiscountAmount > 0) {
       detailRow(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount));
@@ -677,7 +692,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     if (serial) detailLine(`S/N: ${serial}`);
     else if (batch) detailLine(`Batch: ${batch}`);
   });
-  w.line(hr);
+  w.gline(gutter, hr);
 
   // Same Subtotal/Discount/Taxable reconstruction as the HTML preview and the
   // plain-text builder: a persisted invoice's subTotal is already the TAXABLE
@@ -705,16 +720,16 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     resolvedSubTotal = grossSubtotal > 0 ? grossSubtotal : resolvedTaxableAmount;
   }
 
-  w.line(buildFixedWidthLine('Subtotal:', fmt(resolvedSubTotal), width));
+  w.gline(gutter, buildFixedWidthLine('Subtotal:', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
-    w.line(buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
-    w.line(buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
+    w.gline(gutter, buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
+    w.gline(gutter, buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
   }
-  if (showServiceCharge && invoice.serviceChargeAmount) w.line(buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
-  if (showVatSummary) w.line(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
-  if (parseFloat(invoice.deliveryCharge || 0) > 0) w.line(buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));
-  if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.line(buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
-  w.line(hr);
+  if (showServiceCharge && invoice.serviceChargeAmount) w.gline(gutter, buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
+  if (showVatSummary) w.gline(gutter, buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
+  if (parseFloat(invoice.deliveryCharge || 0) > 0) w.gline(gutter, buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));
+  if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.gline(gutter, buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
+  w.gline(gutter, hr);
 
   // TOTAL emphasis (req 10): CHAR_SIZE(1,2) doubles HEIGHT only — the character
   // pitch stays at the full column count, so the row is still formatted to `width`
@@ -723,21 +738,21 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // A blank line above sets the block apart from the totals list.
   w.push(CMD.FEED(1));
   w.push(CMD.BOLD_ON).push(CMD.CHAR_SIZE(1, 2));
-  w.line(buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
+  w.gline(gutter, buildFixedWidthLine('TOTAL:', fmt(invoice.invoiceTotal), width));
   w.push(CMD.CHAR_SIZE_NORMAL).push(CMD.BOLD_OFF);
 
   if (depositApplied != null && parseFloat(depositApplied) > 0) {
     const bal = balanceDue != null ? parseFloat(balanceDue) : (parseFloat(invoice.invoiceTotal || 0) - parseFloat(depositApplied));
-    w.line(buildFixedWidthLine('Deposit Paid:', `- ${fmt(depositApplied)}`, width));
-    w.push(CMD.BOLD_ON).line(buildFixedWidthLine('Balance Due:', fmt(Math.max(0, bal)), width)).push(CMD.BOLD_OFF);
+    w.gline(gutter, buildFixedWidthLine('Deposit Paid:', `- ${fmt(depositApplied)}`, width));
+    w.push(CMD.BOLD_ON).gline(gutter, buildFixedWidthLine('Balance Due:', fmt(Math.max(0, bal)), width)).push(CMD.BOLD_OFF);
   }
-  w.line(hr);
+  w.gline(gutter, hr);
 
   if (showPaymentDetails) {
-    if (invoice.paymentMode) w.line(buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
-    if (cashGiven != null && parseFloat(cashGiven) > 0) w.line(buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
-    if (changeAmount != null && parseFloat(changeAmount) > 0) w.line(buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
-    w.line(hr);
+    if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
+    if (cashGiven != null && parseFloat(cashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
+    if (changeAmount != null && parseFloat(changeAmount) > 0) w.gline(gutter, buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
+    w.gline(gutter, hr);
   }
 
   // ── Customer (§6, client item 4): labeled CUSTOMER section — Name/Mobile/Email —
@@ -745,11 +760,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // preview / A4 template ordering, not inline above the line items. Uses the
   // same "CUSTOMER" section label + Name: row the HTML preview uses.
   if (showCustomerDetails) {
-    w.push(CMD.BOLD_ON).line('CUSTOMER').push(CMD.BOLD_OFF);
-    w.line(buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
-    if (customerPhone) w.line(buildFixedWidthLine('Mobile:', customerPhone, width));
-    if (customerEmail) w.line(buildFixedWidthLine('Email:', customerEmail, width));
-    w.line(hr);
+    w.push(CMD.BOLD_ON).gline(gutter, 'CUSTOMER').push(CMD.BOLD_OFF);
+    w.gline(gutter, buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
+    if (customerPhone) w.gline(gutter, buildFixedWidthLine('Mobile:', customerPhone, width));
+    if (customerEmail) w.gline(gutter, buildFixedWidthLine('Email:', customerEmail, width));
+    w.gline(gutter, hr);
   }
 
   // ── Credit account (§7): same 4-field formula as the HTML/browser path —
@@ -762,12 +777,12 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     const updatedBal = creditUpdatedBalance != null
       ? creditUpdatedBalance
       : (parseFloat(creditPreviousBalance) + parseFloat(invCredit) - parseFloat(amtPaid));
-    w.push(CMD.BOLD_ON).line('CREDIT ACCOUNT').push(CMD.BOLD_OFF);
-    w.line(buildFixedWidthLine('Previous Balance:', fmt(creditPreviousBalance), width));
-    w.line(buildFixedWidthLine('Invoice Credit:', fmt(invCredit), width));
-    w.line(buildFixedWidthLine('Amount Paid:', fmt(amtPaid), width));
-    w.push(CMD.BOLD_ON).line(buildFixedWidthLine('Updated Balance:', fmt(updatedBal), width)).push(CMD.BOLD_OFF);
-    w.line(hr);
+    w.push(CMD.BOLD_ON).gline(gutter, 'CREDIT ACCOUNT').push(CMD.BOLD_OFF);
+    w.gline(gutter, buildFixedWidthLine('Previous Balance:', fmt(creditPreviousBalance), width));
+    w.gline(gutter, buildFixedWidthLine('Invoice Credit:', fmt(invCredit), width));
+    w.gline(gutter, buildFixedWidthLine('Amount Paid:', fmt(amtPaid), width));
+    w.push(CMD.BOLD_ON).gline(gutter, buildFixedWidthLine('Updated Balance:', fmt(updatedBal), width)).push(CMD.BOLD_OFF);
+    w.gline(gutter, hr);
   }
 
   // ── QR / social image (§4+§5, client items 3+8) ─────────────────────────────
@@ -787,7 +802,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
         w.push(stampRaster);
         w.push([0x0a]);
         w.push(CMD.ALIGN_LEFT);
-        w.line(hr);
+        w.gline(gutter, hr);
       } catch {
         // Stamp failed to decode/dither — skip it rather than abort the print.
       }
@@ -807,7 +822,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       w.line('Scan to verify');
       w.push(CMD.FEED(1));
       w.push(CMD.ALIGN_LEFT);
-      w.line(hr);
+      w.gline(gutter, hr);
     }
   };
 
@@ -890,33 +905,36 @@ export const buildEscPosTestReceipt = ({
 
 export const escPosPaperWidthDots = (paperSize) => PAPER_DOTS[String(paperSize || '').includes('58') ? 58 : 80];
 
-// Usable (post-symmetric-inset) column count for a paper size — the width every
+// Usable (post-symmetric-gutter) column count for a paper size — the width every
 // plain-text thermal body (voucher/statement/report/layaway) should build its
-// fixed-width lines to, so they align inside the same left/right gutters the
-// ESC/POS preamble sets via GS L / GS W. 46 @ 80mm, 30 @ 58mm.
+// fixed-width lines to, so they fit inside the same left/right software gutters
+// every other 80mm print uses. 46 @ 80mm, 30 @ 58mm.
 export const escPosUsableCols = (paperSize) => usableColsFor(String(paperSize || '').includes('58') ? 58 : 80);
 
 // Generic bridge for any receipt that's already rendered as fixed-width plain
 // text (layaway slips, etc.) — wraps it with the same init/heating/codepage
 // preamble as the full receipt builder above so it gets proper density/darkness
 // on the print head instead of falling back to the text/GDI agent path (which has
-// no heat control and reads faint). Applies the SAME symmetric page inset as every
-// other 80mm print so the body is centred with equal left/right gutters. Bodies
-// passed in should be built to escPosUsableCols so they fit the inset area.
+// no heat control and reads faint). Applies the SAME symmetric SOFTWARE gutter as
+// every other 80mm print (left-space prefix, no GS L / GS W) so the body is centred
+// with equal left/right margins. Bodies should be built to escPosUsableCols.
 export const buildEscPosFromPlainText = (text, paperSize = '80mm') => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
+  const gutter = leftGutterFor(mm);
   const w = new ByteWriter();
   w.push(CMD.INIT);
   w.push(CMD.SET_HEATING());
   w.push(CMD.CODEPAGE_WPC1252);
   w.push(CMD.SELECT_FONT_A);
-  w.push(CMD.SET_LEFT_MARGIN(marginDotsFor(mm)));
-  w.push(CMD.SET_PRINT_AREA_WIDTH(usableDotsFor(mm)));
   w.push(CMD.LINE_SPACING(36));
   w.push(CMD.ALIGN_LEFT);
-  String(text || '').split('\n').forEach((line) => w.line(line));
-  w.push(CMD.FEED(3));
-  w.push(CMD.CUT_PARTIAL);
+  // Prefix the left gutter so the body sits inside the symmetric software margin.
+  // Empty lines stay empty (no trailing-space padding).
+  String(text || '').split('\n').forEach((line) => (line ? w.gline(gutter, line) : w.line('')));
+  // Feed enough that the last line clears the blade, then feed-then-cut so nothing
+  // is chopped off the tail (same clearance model as buildEscPosReceipt).
+  w.push(CMD.FEED(2));
+  w.push(CMD.CUT_PARTIAL_FEED(mm === 58 ? 100 : 120));
   return w.toUint8Array();
 };
 
