@@ -107,6 +107,77 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
 }
 
 /**
+ * Adapts a real checkout/production invoice (the same shape buildSampleInvoice
+ * mirrors — invoiceNumber, items[].{itemName,quantity,unitPrice,netAmount},
+ * subTotal, taxTotal, invoiceTotal, customerName, paymentMode, …) plus the
+ * escPosOpts-style option bag into the `txn` shape mapToTemplate2Data expects.
+ * This is what lets Template 2's HTML preview (checkout iframe) and browser
+ * print-fallback show the REAL sale, not just the designer's sample data.
+ *
+ * @param {object} invoice  production invoice (see buildSampleInvoice)
+ * @param {object} opts     same opts bag passed to buildEscPosReceipt/buildTemplate2EscPosBase64
+ * @returns {object} txn for mapToTemplate2Data(outlet, txn)
+ */
+export function mapInvoiceToTxn(invoice = {}, opts = {}) {
+  const currency = opts.currency || "AED";
+  const invoiceDate = invoice.invoiceDate || invoice.createdAt || null;
+  const dt = invoiceDate ? new Date(invoiceDate) : new Date();
+  const date = dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const time = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+  const isWalkIn = !invoice.customerName || invoice.customerName === "Walk-in Customer";
+
+  return {
+    currency,
+    invoiceNo: invoice.invoiceNumber || "",
+    date,
+    time,
+    terminalId: opts.terminalId || "",
+    cashierName: opts.cashierName || "",
+    saleType: invoice.saleType || "",
+    customer: isWalkIn
+      ? null
+      : {
+          name: invoice.customerName || "",
+          mobile: opts.customerPhone || invoice.customerPhone || "",
+          code: invoice.customerCode || "",
+          trn: invoice.customerTrn || "",
+        },
+    items: (invoice.items || [])
+      .filter((it) => !it.voided && !it.isVoided)
+      .map((it) => ({
+        nameEn: it.itemName || it.nameEn || it.name || "",
+        nameAr: it.nameAr || "",
+        sku: it.sku || it.itemCode || it.code || "",
+        vatLabel: it.taxPercent != null ? `VAT ${it.taxPercent}%` : "",
+        qty: Number(it.quantity || 0),
+        rate: Number(it.unitPrice || 0),
+        amount: Number(it.netAmount ?? it.grossAmount ?? 0),
+      })),
+    totals: {
+      subtotal: Number(invoice.subTotal || 0),
+      discount: Number(invoice.discountTotal || 0),
+      vat5: Number(invoice.taxTotal || 0),
+      vat0: 0,
+      deliveryCharge: Number(invoice.deliveryCharge || opts.shippingCharge || 0),
+      roundOff: 0,
+      totalToPay: Number(invoice.invoiceTotal || 0),
+    },
+    payment: {
+      mode: invoice.paymentMode || "",
+      paidAmount: Number(opts.cashGiven ?? invoice.invoiceTotal ?? 0),
+      changeReturned: Number(opts.changeAmount || 0),
+      cardRef: "",
+    },
+    vatSummary: {
+      standardRateAmount: Number(invoice.taxTotal || 0),
+      zeroRateAmount: 0,
+      totalVat: Number(invoice.taxTotal || 0),
+    },
+  };
+}
+
+/**
  * Sample transaction used ONLY by the Print Templates designer (preview + test
  * print) when there is no live checkout. Mirrors the sample used by Template 1's
  * `buildThermalSampleHtml` so both templates preview the same numbers.

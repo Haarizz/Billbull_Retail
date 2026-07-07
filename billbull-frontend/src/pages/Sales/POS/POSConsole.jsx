@@ -1447,11 +1447,12 @@ const POSConsole = React.memo((props) => {
             const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
 
             // ── Receipt template selection (Template 1 / Template 2 Arabic …) ──
-            // The alternate (component) templates are 80mm thermal POS receipts,
-            // so the selector is only offered on the POS Receipt sub-tab with a
-            // thermal paper size. Anywhere else we pin to the native template so
-            // the invoice / return / job-card / A4 paths are untouched.
-            const templateSelectorAvailable = templateSubTab === 'receipt' && cfg.paper !== 'A4';
+            // The alternate (component) templates are 80mm thermal receipts, so the
+            // selector is offered on both the POS Receipt and Tax Invoice sub-tabs
+            // whenever a thermal paper size is selected (not A4). receiptTemplateId
+            // is a single global setting — the same choice drives both documents at
+            // checkout — so Return / Job Card stay pinned to the native template.
+            const templateSelectorAvailable = (templateSubTab === 'receipt' || templateSubTab === 'invoice') && cfg.paper !== 'A4';
             const activeTemplate = getReceiptTemplate(templateSelectorAvailable ? receiptTemplateId : DEFAULT_RECEIPT_TEMPLATE_ID);
             const useComponentTemplate = templateSelectorAvailable && activeTemplate.kind === 'component';
             // Build the shared data model once for component templates (preview + print).

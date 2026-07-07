@@ -161,6 +161,8 @@ import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDia
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
+import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
+import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -982,6 +984,26 @@ export default function POSSales() {
 
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
+
+      // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
+      // preview must show whichever template is saved in Print Templates, same
+      // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
+      if (receiptTemplateId === 'billbull-ar') {
+        const txn = mapInvoiceToTxn(mockInvoice, {
+          currency: activeCurrency,
+          terminalId: currentTerminal?.terminalId,
+          cashierName: cashierDisplayName,
+          customerPhone: customer?.phone,
+        });
+        const outlet = {
+          name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+          logoDataUrl: tplLogoDataUrl, qrDataUrl: stampAvailable ? tplStampDataUrl : null, footerText: tplInvoiceFooter,
+        };
+        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn));
+        checkoutPreviewFreezeRef.current = html;
+        return html;
+      }
+
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
@@ -1011,7 +1033,7 @@ export default function POSSales() {
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
+    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
@@ -3018,7 +3040,22 @@ export default function POSSales() {
 
     const [qrDataUrl, escPosBase64] = await Promise.all([qrDataUrlPromise, escPosPromise]);
 
-    const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
+    // Template 2 (Arabic/bilingual) uses its own HTML renderer for the browser
+    // print-preview / fallback path — same swap the ESC/POS build above already
+    // makes, so a fallback print (or reprint) still matches the saved template.
+    const html = receiptTemplateId === 'billbull-ar'
+      ? buildTemplate2Html(mapToTemplate2Data(
+          {
+            name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+            logoDataUrl: tplLogoDataUrl, qrDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null, footerText: tplInvoiceFooter,
+          },
+          mapInvoiceToTxn(full, {
+            ...escPosOpts,
+            cashierName: cashierNameOverride || cashierDisplayName,
+            terminalId: full.posTerminalId || currentTerminal?.terminalId,
+          }),
+        ))
+      : buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
       header: tplInvoiceHeader,
