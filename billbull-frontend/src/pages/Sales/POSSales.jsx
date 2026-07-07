@@ -160,6 +160,7 @@ import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
 import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
+import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -868,6 +869,11 @@ export default function POSSales() {
   const [tplJobCardShowExpectedDate, setTplJobCardShowExpectedDate] = useState(true);
   const [tplJobCardShowCustomerSignature, setTplJobCardShowCustomerSignature] = useState(true);
   const [tplJobCardShowTerms, setTplJobCardShowTerms] = useState(true);
+  // Which receipt template (Template 1 "native" vs Template 2 "billbull-ar")
+  // drives the actual checkout print — persisted alongside the rest of
+  // printTemplateConfig so the Print Templates designer's saved selection is
+  // what the till prints at checkout, not just the designer's own test print.
+  const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
 
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
@@ -1328,6 +1334,7 @@ export default function POSSales() {
               if (tpl.jobCardShowExpectedDate != null) setTplJobCardShowExpectedDate(tpl.jobCardShowExpectedDate);
               if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
               if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
+              if (tpl.receiptTemplateId != null) setReceiptTemplateId(tpl.receiptTemplateId);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -2957,7 +2964,7 @@ export default function POSSales() {
     const qrDataUrlPromise = tplInvoiceShowQRCode
       ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : Promise.resolve(null);
-    const escPosPromise = buildEscPosReceiptBase64(tplInvoicePaper, full, {
+    const escPosOpts = {
       companyName: tplOutletName,
       trn: tplOutletTrn,
       header: tplInvoiceHeader,
@@ -2997,7 +3004,14 @@ export default function POSSales() {
       creditAmountPaid,
       creditUpdatedBalance,
       currency: activeCurrency,
-    }).catch((err) => {
+    };
+    // Whichever template is SAVED in Print Templates (Template 1 "native" vs
+    // Template 2 "billbull-ar") drives the actual checkout print — not just the
+    // designer's own Test Print. Both builders share the same
+    // (paperSize, invoice, opts) signature, so this is a straight swap.
+    const activeReceiptTemplate = getReceiptTemplate(receiptTemplateId);
+    const buildReceiptEscPosBase64 = activeReceiptTemplate.buildEscPosBase64 || buildEscPosReceiptBase64;
+    const escPosPromise = buildReceiptEscPosBase64(tplInvoicePaper, full, escPosOpts).catch((err) => {
       console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
       return null;
     });
@@ -3069,7 +3083,7 @@ export default function POSSales() {
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
-    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
+    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
@@ -6700,6 +6714,7 @@ export default function POSSales() {
     tplJobCardFooter, setTplJobCardFooter, tplJobCardPaper, setTplJobCardPaper,
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails,
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
+    receiptTemplateId, setReceiptTemplateId,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
@@ -10439,7 +10454,8 @@ export default function POSSales() {
                   try {
                     const qrContent = tplReturnShowQRCode ? buildQrContent(returnA4Data, tplOutletName) : null;
                     const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
-                    const returnEscPosBase64 = await buildEscPosReceiptBase64(tplReturnPaper, returnInvoiceData, {
+                    const returnBuildEscPosBase64 = (getReceiptTemplate(receiptTemplateId).buildEscPosBase64) || buildEscPosReceiptBase64;
+                    const returnEscPosBase64 = await returnBuildEscPosBase64(tplReturnPaper, returnInvoiceData, {
                       companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
                       showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE',
                       logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
