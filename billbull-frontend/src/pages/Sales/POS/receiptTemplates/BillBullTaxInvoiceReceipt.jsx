@@ -428,10 +428,6 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               RATE
               <span className="ar">السعر</span>
             </th>
-            <th className="num">
-              AMT
-              <span className="ar">المبلغ</span>
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -448,7 +444,6 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               </td>
               <td className="num">{item.qty}</td>
               <td className="num">{fmt(item.rate)}</td>
-              <td className="num">{fmt(item.amount)}</td>
             </tr>
           ))}
         </tbody>

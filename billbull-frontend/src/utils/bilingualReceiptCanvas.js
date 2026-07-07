@@ -296,21 +296,19 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // ── Items table ───────────────────────────────────────────────────────────
   sectionTitle(L.ITEM_DETAILS);
-  // Column x-positions (right edges for numeric cols).
-  const colAmtX = W - M;
-  const colRateX = W - M - Math.round(108 * S);
-  const colQtyX = W - M - Math.round(210 * S);
+  // Column x-positions (right edges for numeric cols). AMT column removed —
+  // RATE takes the rightmost slot, QTY sits to its left, freeing name width.
+  const colRateX = W - M;
+  const colQtyX = W - M - Math.round(120 * S);
   const nameMax = colQtyX - M - Math.round(40 * S);
   // Bilingual table head.
   drawEn(L.ITEM.en, M, 16, { bold: true });
   drawEn(L.QTY.en, colQtyX, 16, { bold: true, align: 'right' });
   drawEn(L.RATE.en, colRateX, 16, { bold: true, align: 'right' });
-  drawEn(L.AMT.en, colAmtX, 16, { bold: true, align: 'right' });
   y += lineH(16);
   drawAr(L.ITEM.ar, M, 16, { align: 'left' });
   drawAr(L.QTY.ar, colQtyX, 16);
   drawAr(L.RATE.ar, colRateX, 16);
-  drawAr(L.AMT.ar, colAmtX, 16);
   y += lineH(16);
   solid(2);
   y += Math.round(4 * S);
@@ -343,8 +341,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     const numY = y;
     y = rowY;
     drawEn(String(qty), colQtyX, 18, { align: 'right' });
-    drawEn(fmtBare(unit), colRateX, 18, { align: 'right' });
-    drawEn(fmtBare(lineTotal), colAmtX, 18, { bold: true, align: 'right' });
+    drawEn(fmtBare(unit), colRateX, 18, { bold: true, align: 'right' });
     y = numY + Math.round(6 * S);
   }
 
@@ -354,7 +351,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   for (let x = M; x < W - M; x += dotW * 3) ctx.fillRect(x, y, dotW, dotW);
   y += dotW + Math.round(6 * S);
   drawEn(`${L.TOTAL_ITEMS.en}: ${items.length}`, M, 16);
-  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colAmtX, 16, { align: 'right' });
+  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colRateX, 16, { align: 'right' });
   y += lineH(16);
 
   dashed();
@@ -444,12 +441,28 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (showVatSummary && parseFloat(invoice.taxTotal || 0) >= 0) {
     dashed();
     sectionTitle(L.VAT_SUMMARY);
-    const hasLineTax = items.some((it) => it.taxAmount != null || it.taxPercent != null || it.vatPercent != null);
-    if (hasLineTax) {
+    // A line carries a rate under any of taxRate / taxPercent / vatPercent —
+    // posted backend invoice items use `taxRate`, the checkout mock uses
+    // `taxPercent`. Missing every name (never a rate field at all) means we
+    // can't split, so fall back to showing only the Total VAT row.
+    const rateOf = (it) => parseFloat(it.taxRate ?? it.taxPercent ?? it.vatPercent ?? 0) || 0;
+    const hasLineRate = items.some((it) => it.taxRate != null || it.taxPercent != null || it.vatPercent != null);
+    if (hasLineRate) {
       let std = 0, zero = 0;
       for (const it of items) {
-        const rate = parseFloat(it.taxPercent ?? it.vatPercent ?? 0) || 0;
-        const amt = parseFloat(it.taxAmount ?? 0) || 0;
+        const rate = rateOf(it);
+        // Prefer the stored per-line VAT; derive it from rate × net line value
+        // when absent (the checkout preview mock has a rate but no taxAmount),
+        // so Standard + Zero always reconcile with Total VAT.
+        let amt = parseFloat(it.taxAmount ?? NaN);
+        if (!Number.isFinite(amt)) {
+          const q = it.quantity || 0;
+          const gross = parseFloat(it.grossAmount ?? (q * parseFloat(it.unitPrice ?? it.price ?? 0))) || 0;
+          const discPct = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
+          const disc = it.discountAmount != null ? (parseFloat(it.discountAmount) || 0) : gross * (discPct / 100);
+          const net = Math.max(0, gross - disc);
+          amt = invoice.taxInclusive ? net - net / (1 + rate / 100) : net * (rate / 100);
+        }
         if (rate > 0) std += amt; else zero += amt;
       }
       kv2(L.VAT_STANDARD, fmtBare(std), { size: 17 });

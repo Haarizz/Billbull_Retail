@@ -165,13 +165,26 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
   }
 
   // ── Per-rate VAT split (Standard 5% vs Zero-rated) from the line tax data ──
+  // Posted backend invoice items carry the rate under `taxRate`; the checkout
+  // mock uses `taxPercent`. Read all three so standard-rated lines aren't
+  // misclassified as zero-rated (which left Standard=0 / Zero-rated=full VAT).
   let vatStandard = 0;
   let vatZero = 0;
-  const hasLineTax = items.some((it) => it.taxAmount != null || it.taxPercent != null || it.vatPercent != null);
-  if (hasLineTax) {
+  const hasLineRate = items.some((it) => it.taxRate != null || it.taxPercent != null || it.vatPercent != null);
+  if (hasLineRate) {
     for (const it of items) {
-      const rate = Number(it.taxPercent ?? it.vatPercent ?? 0) || 0;
-      const amt = Number(it.taxAmount ?? 0) || 0;
+      const rate = Number(it.taxRate ?? it.taxPercent ?? it.vatPercent ?? 0) || 0;
+      // Prefer stored per-line VAT; derive from rate × net when absent so the
+      // buckets reconcile with taxTotal.
+      let amt = Number(it.taxAmount);
+      if (!Number.isFinite(amt)) {
+        const q = Number(it.quantity || 0);
+        const gross = Number(it.grossAmount ?? q * Number(it.unitPrice ?? it.price ?? 0)) || 0;
+        const discPct = Number(it.discountPercent ?? it.discount ?? 0) || 0;
+        const disc = it.discountAmount != null ? Number(it.discountAmount) || 0 : gross * (discPct / 100);
+        const net = Math.max(0, gross - disc);
+        amt = invoice.taxInclusive ? net - net / (1 + rate / 100) : net * (rate / 100);
+      }
       if (rate > 0) vatStandard += amt;
       else vatZero += amt;
     }

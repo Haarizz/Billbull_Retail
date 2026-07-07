@@ -16,7 +16,7 @@ import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProd
 import { getDepartments } from '../../api/departmentsApi';
 import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
-import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage } from '../../api/salesInvoiceApi';
+import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
@@ -589,6 +589,12 @@ export default function POSSales() {
   const [barcodeScanFeedback, setBarcodeScanFeedback] = useState(null);
   const barcodeInputRef = useRef(null);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
+  // Real next invoice number previewed from the backend numbering sequence
+  // (GET /api/sales-invoices/next-number). POS checkout posts through the same
+  // SalesInvoice save path, so this is the number the sale will actually get —
+  // used for the checkout header + receipt preview instead of a fabricated
+  // client-side counter. Null until fetched; callers fall back gracefully.
+  const [previewInvoiceNo, setPreviewInvoiceNo] = useState(null);
   const [lastScannedItem, setLastScannedItem] = useState(null);
   const [posActionMode, setPosActionMode] = useState('none');
   // Classic layout inline numpad
@@ -947,7 +953,9 @@ export default function POSSales() {
     if (!currentInvoice) return '';
     try {
       const now = new Date();
-      const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
+      // Real next number from the backend sequence; blank until fetched so the
+      // preview never shows a fabricated SI-POS-000001.
+      const invoiceNo = previewInvoiceNo || '';
       const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
       // Use the same authoritative resolution the printed receipt + backend payload
@@ -1058,7 +1066,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, selectedCustomerData, invoiceCounter, activeLayawayDeposit, shippingCharge,
+  }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
     checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -1137,7 +1145,7 @@ export default function POSSales() {
     let cancelled = false;
     try {
       const mockInv = {
-        invoiceNumber: `INV-2026-${String(invoiceCounter).padStart(4, '0')}`,
+        invoiceNumber: previewInvoiceNo || '',
         invoiceDate: new Date().toISOString(),
         customerName: selectedCustomer?.name || 'Walk-in Customer',
         subTotal: currentInvoice?.subtotal || 0,
@@ -1159,7 +1167,7 @@ export default function POSSales() {
     } catch { setCheckoutPreviewQrDataUrl(null); }
     return () => { cancelled = true; };
   }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
-    currentInvoice, invoiceCounter, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
+    currentInvoice, previewInvoiceNo, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
 
   // Safety net: whenever the checkout overlay is fully dismissed, drop the
   // settle-freeze so the next sale's preview tracks the live cart again. Covers
@@ -1168,6 +1176,21 @@ export default function POSSales() {
   useEffect(() => {
     if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);
   }, [showPaymentDialog, checkoutSettling]);
+
+  // Fetch the REAL next invoice number from the backend numbering sequence when
+  // the checkout dialog opens, so the header + receipt preview show the number
+  // the sale will actually be assigned (not a fabricated SI-POS-000001). It's a
+  // preview (numberingService.preview) — no sequence is consumed until the sale
+  // posts — so it's re-fetched each time the dialog opens and after each sale
+  // (invoiceCounter bump) to stay current under concurrent tills.
+  useEffect(() => {
+    if (!showPaymentDialog) return;
+    let cancelled = false;
+    getNextInvoiceNumber()
+      .then(no => { if (!cancelled && no) setPreviewInvoiceNo(no); })
+      .catch(() => { /* keep last value; UI falls back to blank if never fetched */ });
+    return () => { cancelled = true; };
+  }, [showPaymentDialog, invoiceCounter]);
 
   useEffect(() => {
     const code = selectedCustomerData?.code;
@@ -3462,10 +3485,15 @@ export default function POSSales() {
               printHtml(await generatePrintHtmlAsync(template, data, options));
               openCashDrawer('RECEIPT_PRINT');
             } else {
-              let creditPrevBalAutoPrint = null;
-              if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
-                try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAutoPrint = cr.outstanding ?? null; } catch (_) {}
-              }
+              // Credit account fields ALL come from the single pre-checkout snapshot
+              // (creditPrevBalAuto, read at line ~3280 BEFORE posCheckout posted this
+              // invoice) so Previous Balance + Invoice Credit − Amount Paid = Updated
+              // Balance holds internally. Do NOT re-query posCreditBalance here: after
+              // checkout the ledger already includes this invoice, so the re-queried
+              // value is the NEW balance — passing it as "Previous Balance" while the
+              // other three fields stay on the pre-sale snapshot made the printed math
+              // contradict itself (Previous showed the post-sale balance, Updated the
+              // pre-sale one).
               const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
@@ -3476,7 +3504,7 @@ export default function POSSales() {
                 customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
-                creditPreviousBalance: creditPrevBalAutoPrint,
+                creditPreviousBalance: creditPrevBalAuto,
                 creditInvoiceCredit: creditInvoiceCreditAuto,
                 creditAmountPaid: creditAmountPaidAuto,
                 creditUpdatedBalance: creditUpdatedBalanceAuto,
@@ -3616,17 +3644,20 @@ export default function POSSales() {
           }
         } else {
           const custRec = customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode);
-          const isWalkIn = !full.customerName || full.customerName === 'Walk-in Customer';
-          let creditPrevBal = null;
-          if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
-            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) { }
-          }
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
             customerPhone: custRec?.phone,
             customerEmail: custRec?.email,
-            creditPreviousBalance: creditPrevBal,
+            // Suppress the CREDIT ACCOUNT block on a reprint of a historical invoice.
+            // The block is a point-in-time snapshot of the ledger AS OF the original
+            // sale, and those figures are not persisted on the invoice. Re-querying
+            // posCreditBalance returns the customer's CURRENT outstanding (which may
+            // reflect many later transactions), so using it as "Previous Balance" —
+            // then letting the renderer fabricate Updated = prev + invoiceTotal —
+            // prints numbers that never existed. A "COPY / REPRINT" with an invented
+            // balance is worse than a reprint that simply omits it.
+            showCreditBalanceOverride: false,
             cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
           });
           openCashDrawer('RECEIPT_PRINT');
@@ -7824,7 +7855,9 @@ export default function POSSales() {
         const totalVat = currentInvoice.tax;
         const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
         const effectiveDue = Math.max(0, grandTotal - depositAmt);
-        const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
+        // Real next number from the backend sequence (fetched when the dialog
+        // opened); blank until it lands so no fabricated number is shown.
+        const invoiceNo = previewInvoiceNo || '';
         const now = new Date();
         const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
         const timeStr = now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -7931,7 +7964,7 @@ export default function POSSales() {
                   </div>
                   <div>
                     <p className="text-white font-bold text-base leading-none">Checkout</p>
-                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''} · {invoiceNo}</p>
+                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -10534,6 +10567,28 @@ export default function POSSales() {
                   branchId: inv.branchId || currentTerminal?.branchId || null,
                   terminalId: currentTerminal?.terminalId || null,
                 });
+                // Credit-account block for a return. The backend does NOT return the
+                // customer's post-return balance on the save response, so the old code
+                // fell back to Previous=0 / Updated=returnNet — i.e. it printed the
+                // return amount as a NEW positive balance the customer owes, the exact
+                // opposite of what a credit note does. Fix: a Credit Voucher reduces the
+                // customer's outstanding, so query the real post-approval balance (the
+                // return is APPROVED above) and render it as a reduction — Invoice Credit
+                // is 0 (no new charge) and "Amount Paid" carries the credited amount, so
+                // Previous − returnNet = Updated holds. A cash/card Refund does not touch
+                // the credit ledger, so the block is suppressed for it (nothing to show).
+                let retCreditPrev = null, retCreditUpdated = null, retShowCredit = false;
+                if (tplReturnShowCreditBalance && returnRefundMethod === 'Credit Voucher'
+                    && inv.customerCode && inv.customerName && inv.customerName !== 'Walk-in Customer') {
+                  try {
+                    const cr = await posCreditBalance(inv.customerCode);
+                    if (cr?.found && cr.outstanding != null) {
+                      retCreditUpdated = parseFloat(cr.outstanding) || 0;
+                      retCreditPrev = retCreditUpdated + returnNet;
+                      retShowCredit = true;
+                    }
+                  } catch (_) { /* leave the block suppressed if the lookup fails */ }
+                }
                 if (!returnPrinter) {
                   notifyPrintFallback('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
                 } else {
@@ -10553,11 +10608,11 @@ export default function POSSales() {
                       cashierName: cashierDisplayName,
                       terminalId: currentTerminal?.terminalId,
                       counterName: currentTerminal?.counterName,
-                      showCreditBalance: tplReturnShowCreditBalance,
-                      creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
-                      creditInvoiceCredit: returnNet,
-                      creditAmountPaid: 0,
-                      creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null),
+                      showCreditBalance: retShowCredit,
+                      creditPreviousBalance: retShowCredit ? retCreditPrev : null,
+                      creditInvoiceCredit: 0,
+                      creditAmountPaid: retShowCredit ? returnNet : 0,
+                      creditUpdatedBalance: retShowCredit ? retCreditUpdated : null,
                     });
                     await sendEscPosReceiptToConfiguredPrinter(returnPrinter, { dataBase64: returnEscPosBase64, receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
                   } catch (err) {
@@ -10861,16 +10916,18 @@ export default function POSSales() {
                             showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
                             showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
                             showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
-                            showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                            showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
                             cashierName: cashierDisplayName,
                             terminalId: currentTerminal?.terminalId,
                             counterName: currentTerminal?.counterName,
                             customerPhone: returnInvoiceFound?.customerPhone,
                             customerEmail: returnInvoiceFound?.customerEmail,
-                            creditPreviousBalance: tplReturnShowCreditBalance ? 0 : null,
-                            creditInvoiceCredit: tplReturnShowCreditBalance ? returnNet : null,
-                            creditAmountPaid: 0,
-                            creditUpdatedBalance: tplReturnShowCreditBalance ? returnNet : null
+                            // Suppress the credit-account block in the return PREVIEW: the
+                            // real post-return balance isn't known until the credit note is
+                            // approved (see the print path, which queries it then). Showing
+                            // Previous=0 / Updated=returnNet here printed the return amount
+                            // as a positive balance owed — the opposite of a credit note.
+                            showCreditBalance: false,
                           })}
                           style={{
                             width: tplReturnPaper === '58mm' ? '240px' : '320px',
@@ -12321,7 +12378,13 @@ export default function POSSales() {
                   // Force the CREDIT ACCOUNT block on for the settlement receipt.
                   showCreditBalanceOverride: creditPreviousBalanceSettle != null,
                   creditPreviousBalance: creditPreviousBalanceSettle,
-                  creditInvoiceCredit: parseFloat(settledInvoice?.invoiceTotal || 0),
+                  // A settlement is a PAYMENT against a balance that already carries
+                  // this invoice (it was added to the ledger at Out-for-Delivery). So
+                  // Invoice Credit here is 0 — nothing new is being charged — and the
+                  // block reads Previous − Amount Paid = Updated. Passing invoiceTotal
+                  // as Invoice Credit would double-count the invoice and make the
+                  // printed arithmetic (Previous + Credit − Paid) fail to equal Updated.
+                  creditInvoiceCredit: 0,
                   creditAmountPaid: selBalance,
                   creditUpdatedBalance: creditUpdatedBalanceSettle,
                 });
