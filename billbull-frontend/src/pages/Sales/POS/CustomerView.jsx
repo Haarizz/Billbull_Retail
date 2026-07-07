@@ -35,9 +35,22 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal, printTemplate }) => {
   const { company } = useCompany();
   const { activeBranch } = useBranch();
+  // Branding for the branded ESC/POS header — prefer the print-template config
+  // passed down from POSSales (same source the Tax Invoice uses, so the logo +
+  // company block are identical, req 12), falling back to the company profile.
+  const brand = React.useMemo(() => ({
+    companyName: printTemplate?.companyName || company?.companyName,
+    trn: printTemplate?.trn || company?.trn,
+    address: printTemplate?.address || company?.address,
+    phone: printTemplate?.phone || company?.phone,
+    logoDataUrl: printTemplate?.logoDataUrl || company?.logoUrl,
+    showLogo: printTemplate?.showLogo !== false,
+    showTrn: printTemplate?.showTrn !== false,
+    currency: printTemplate?.currency || company?.currency || 'AED',
+  }), [printTemplate, company]);
   const [custTab, setCustTab]             = React.useState('list');
   const [custSearch, setCustSearch]       = React.useState('');
   const [custBalanceFilter, setCustBalanceFilter] = React.useState('all');
@@ -148,13 +161,14 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     setReceiptPrintBusy(true);
     try {
       const opts = {
-        companyName: company?.companyName,
-        trn: company?.trn,
-        address: company?.address,
-        phone: company?.phone,
+        companyName: brand.companyName,
+        trn: brand.trn,
+        address: brand.address,
+        phone: brand.phone,
         header: activeBranch?.name,
-        logoDataUrl: company?.logoUrl,
-        currency: company?.currency || 'AED',
+        logoDataUrl: brand.logoDataUrl,
+        showTrn: brand.showTrn,
+        currency: brand.currency,
         customer,
         documentTitle,
       };
@@ -188,6 +202,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
           outletAddress: opts.address,
           outletPhone: opts.phone,
           logoDataUrl: opts.logoDataUrl,
+          showLogo: brand.showLogo,
+          showTrn: brand.showTrn,
         });
         await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: headerText, title });
       } catch (err) {
@@ -204,7 +220,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setReceiptPrintBusy(false);
     }
-  }, [company, activeBranch, printerConfigs, currentTerminal]);
+  }, [brand, activeBranch, printerConfigs, currentTerminal]);
 
   const handleRecordPayment = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === receiptCust);
@@ -408,13 +424,14 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setStmtData(freshStatement);
       setStmtEntries(freshStatement?.entries || freshStatement?.lines || []);
       const opts = {
-        companyName: company?.companyName,
-        trn: company?.trn,
-        address: company?.address,
-        phone: company?.phone,
+        companyName: brand.companyName,
+        trn: brand.trn,
+        address: brand.address,
+        phone: brand.phone,
         header: activeBranch?.name,
-        logoDataUrl: company?.logoUrl,
-        currency: company?.currency || 'AED',
+        logoDataUrl: brand.logoDataUrl,
+        showTrn: brand.showTrn,
+        currency: brand.currency,
         customer: selected,
         startDate: from,
         endDate: to,
@@ -445,6 +462,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
           outletAddress: opts.address,
           outletPhone: opts.phone,
           logoDataUrl: opts.logoDataUrl,
+          showLogo: brand.showLogo,
+          showTrn: brand.showTrn,
         });
         await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: headerText, title: `Statement ${selected.code || selected.name || ''}`.trim() });
       } catch (err) {
@@ -457,7 +476,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setStmtPrintBusy(false);
     }
-  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
+  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, brand, activeBranch, printerConfigs, currentTerminal]);
 
   const handleExportStatementPdf = React.useCallback(() => {
     const selected = customerOptions.find(c => c.id === statementCust);
