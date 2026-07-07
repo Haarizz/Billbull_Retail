@@ -959,6 +959,11 @@ export default function POSSales() {
         customerName: customer?.name || 'Walk-in Customer',
         customerPhone: customer?.phone || '',
         customerEmail: customer?.email || '',
+        // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
+        customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
+        customerTrn: customer?.trn || '',
+        saleType: currentInvoice.saleType || '',
+        shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
@@ -970,11 +975,16 @@ export default function POSSales() {
         items: (currentInvoice.items || []).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
           itemName: it.name || '',
+          // Arabic item name (Fix 5) — carried from the cart line's nameAr, which
+          // the cart builder now sources from the product's localName.
+          localName: it.nameAr || it.localName || '',
           description: it.description || '',
           quantity: it.quantity || 0,
           unitPrice: it.price || 0,
           netAmount: it.total || 0,
           discountPercent: it.discount || 0,
+          taxPercent: it.taxRate != null ? it.taxRate : undefined,
+          taxAmount: it.taxAmount != null ? it.taxAmount : undefined,
           grossAmount: (it.quantity || 0) * (it.price || 0),
           batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
           serialNumber: it.serialNumber || '',
@@ -989,15 +999,32 @@ export default function POSSales() {
       // preview must show whichever template is saved in Print Templates, same
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
       if (receiptTemplateId === 'billbull-ar') {
+        const isWalkInPreview = !customer || customer.id === 'walk-in';
         const txn = mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
           cashierName: cashierDisplayName,
           customerPhone: customer?.phone,
+          branchName: currentTerminal?.branchName || currentSession?.branchName || '',
+          shippingCharge: previewShipping > 0 ? previewShipping : null,
+          // Account Balance section (Fix 3): mirror Template 1's checkout preview
+          // — show it when the credit block is enabled and we have a balance for a
+          // non-walk-in customer. Invoice Credit = grand total, Amount Paid = 0
+          // (nothing collected yet in the preview), New Balance = prev + this.
+          showCreditBalance: tplInvoiceShowBankDetails && !isWalkInPreview && checkoutPreviewCreditBalance != null,
+          creditPreviousBalance: checkoutPreviewCreditBalance,
+          creditInvoiceCredit: previewGrand,
+          creditAmountPaid: 0,
+          creditUpdatedBalance: checkoutPreviewCreditBalance != null ? Number(checkoutPreviewCreditBalance) + previewGrand : null,
         });
         const outlet = {
           name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
-          logoDataUrl: tplLogoDataUrl, qrDataUrl: stampAvailable ? tplStampDataUrl : null, footerText: tplInvoiceFooter,
+          logoDataUrl: tplLogoDataUrl,
+          // Real QR in preview when QR is enabled and no stamp overrides it; stamp
+          // image shown separately when uploaded (parity with Template 1 preview).
+          qrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
+          stampDataUrl: stampAvailable ? tplStampDataUrl : null,
+          footerText: tplInvoiceFooter,
         };
         const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn));
         checkoutPreviewFreezeRef.current = html;
@@ -1033,7 +1060,7 @@ export default function POSSales() {
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId]);
+    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
@@ -1839,7 +1866,9 @@ export default function POSSales() {
           id: isPinned ? `${product.id}::${pinKey}` : product.id,
           productId: product.id,
           name: product.name,
-          nameAr: product.nameAr || '',
+          // Arabic name: the Product master persists it as `localName` (Jackson
+          // serializes it under that key); `nameAr` kept as a fallback alias.
+          nameAr: product.localName || product.nameAr || '',
           barcode: product.barcode || product.code || product.id,
           code: product.code || '',
           image: product.image || null,
@@ -3013,6 +3042,13 @@ export default function POSSales() {
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
+      // Template 2 (bilingual canvas) reads these extras; Template 1's ESC/POS
+      // builder ignores them, so it's safe to always pass them on the shared bag.
+      branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
+      saleType: full.salesType || full.saleType || '',
+      showBarcode: tplReceiptShowBarcode !== false,
+      showLoyaltyPoints: tplInvoiceShowNotes,
+      deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
       depositApplied,
@@ -3047,7 +3083,14 @@ export default function POSSales() {
       ? buildTemplate2Html(mapToTemplate2Data(
           {
             name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
-            logoDataUrl: tplLogoDataUrl, qrDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null, footerText: tplInvoiceFooter,
+            logoDataUrl: tplLogoDataUrl,
+            // Real ZATCA QR (image) when QR is enabled AND no stamp is uploaded;
+            // an uploaded stamp replaces the QR (same rule as Template 1). Kept
+            // separate so the component prints a genuine verifiable QR, not the
+            // stamp image mislabelled as a QR.
+            qrDataUrl: tplInvoiceShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
+            stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+            footerText: tplInvoiceFooter,
           },
           mapInvoiceToTxn(full, {
             ...escPosOpts,
@@ -3087,6 +3130,7 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
+      deliveryAddress: full.shippingAddress || null,
       creditPreviousBalance,
       creditInvoiceCredit,
       creditAmountPaid,
@@ -3121,6 +3165,7 @@ export default function POSSales() {
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
+    tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/

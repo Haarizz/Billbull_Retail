@@ -40,6 +40,10 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
       trn: outlet.trn || "",
       logoDataUrl: outlet.logoDataUrl || null,
       qrDataUrl: outlet.qrDataUrl || null,
+      stampDataUrl: outlet.stampDataUrl || null,
+      // Designer-only hint: render the placeholder QR box when QR is enabled but
+      // there's no live ZATCA QR/stamp image to show (no real invoice to encode).
+      qrPlaceholder: !!outlet.qrPlaceholder,
       footerMsgEn: footerLines[0] || "",
       footerFine: footerLines.slice(1).join(" "),
     },
@@ -127,52 +131,125 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
 
   const isWalkIn = !invoice.customerName || invoice.customerName === "Walk-in Customer";
 
+  const items = (invoice.items || []).filter((it) => !it.voided && !it.isVoided);
+
+  // ── Subtotal / Discount / Taxable reconstruction ───────────────────────────
+  // Mirror buildThermalReceiptHtml's two invoice shapes: the checkout mock (has
+  // an explicit discountTotal, subTotal is gross pre-discount) vs a persisted
+  // backend invoice (subTotal is already the taxable base; reconstruct discount
+  // from each line's grossAmount). Without this the printed Subtotal was wrong
+  // for real backend invoices.
+  let subtotal, discount, taxable;
+  if (invoice.discountTotal != null) {
+    subtotal = Number(invoice.subTotal || 0);
+    discount = Number(invoice.discountTotal) || 0;
+    taxable = subtotal - discount;
+  } else {
+    taxable = Number(invoice.subTotal || 0);
+    const grossSubtotal = items.reduce((sum, it) => {
+      const q = Number(it.quantity || 0);
+      const gross = Number(it.grossAmount ?? q * Number(it.unitPrice ?? it.price ?? 0));
+      return sum + (Number.isFinite(gross) ? gross : 0);
+    }, 0);
+    const lineDiscount = Math.max(0, grossSubtotal - taxable);
+    discount = lineDiscount + (Number(invoice.billDiscountAmount || 0) || 0);
+    subtotal = grossSubtotal > 0 ? grossSubtotal : taxable;
+  }
+
+  // ── Per-rate VAT split (Standard 5% vs Zero-rated) from the line tax data ──
+  let vatStandard = 0;
+  let vatZero = 0;
+  const hasLineTax = items.some((it) => it.taxAmount != null || it.taxPercent != null || it.vatPercent != null);
+  if (hasLineTax) {
+    for (const it of items) {
+      const rate = Number(it.taxPercent ?? it.vatPercent ?? 0) || 0;
+      const amt = Number(it.taxAmount ?? 0) || 0;
+      if (rate > 0) vatStandard += amt;
+      else vatZero += amt;
+    }
+  } else {
+    vatStandard = Number(invoice.taxTotal || 0);
+  }
+  const totalVat = Number(invoice.taxTotal ?? vatStandard + vatZero);
+
+  const deliveryCharge = Number(invoice.deliveryCharge || opts.shippingCharge || 0);
+
+  // ── Account balance (credit account) — same 4-field model the ESC/POS canvas
+  // renderer uses (Previous / Invoice Credit / Amount Paid / New Balance). Only
+  // emitted when the caller enabled the credit block AND a previous balance was
+  // supplied, so cash/card walk-in sales don't sprout an empty section.
+  let balance = null;
+  if (opts.showCreditBalance && opts.creditPreviousBalance != null) {
+    const prev = Number(opts.creditPreviousBalance) || 0;
+    const invCredit = opts.creditInvoiceCredit != null ? Number(opts.creditInvoiceCredit) : Number(invoice.invoiceTotal || 0);
+    const amtPaid = opts.creditAmountPaid != null ? Number(opts.creditAmountPaid) : 0;
+    const updated = opts.creditUpdatedBalance != null ? Number(opts.creditUpdatedBalance) : prev + invCredit - amtPaid;
+    balance = {
+      previousBalance: prev,
+      invoiceCredit: invCredit,
+      amountPaid: amtPaid,
+      newBalanceDue: updated,
+    };
+  }
+
+  // ── Delivery address (EN only for now — Arabic address deferred) ───────────
+  const deliveryAddrEn = opts.deliveryAddress || invoice.shippingAddress || "";
+  const delivery = deliveryAddrEn
+    ? { addressEn: deliveryAddrEn, addressAr: "", contactNote: opts.customerPhone ? `Contact on arrival: ${opts.customerPhone}` : "" }
+    : null;
+
   return {
     currency,
     invoiceNo: invoice.invoiceNumber || "",
     date,
     time,
+    branch: opts.branchName || invoice.branchName || "",
     terminalId: opts.terminalId || "",
     cashierName: opts.cashierName || "",
-    saleType: invoice.saleType || "",
+    saleType: invoice.salesType || invoice.saleType || opts.saleType || "",
     customer: isWalkIn
       ? null
       : {
           name: invoice.customerName || "",
           mobile: opts.customerPhone || invoice.customerPhone || "",
-          code: invoice.customerCode || "",
+          code: invoice.customerCode || invoice.customerId || "",
           trn: invoice.customerTrn || "",
         },
-    items: (invoice.items || [])
-      .filter((it) => !it.voided && !it.isVoided)
-      .map((it) => ({
+    balance,
+    delivery,
+    items: items.map((it) => {
+      const rate = Number(it.taxPercent ?? it.vatPercent ?? null);
+      return {
         nameEn: it.itemName || it.nameEn || it.name || "",
-        nameAr: it.nameAr || "",
+        // Arabic name lives on the persisted invoice item as `localName`; the
+        // checkout mock also carries it through. `nameAr` kept as a fallback.
+        nameAr: it.localName || it.nameAr || it.arabicName || "",
         sku: it.sku || it.itemCode || it.code || "",
-        vatLabel: it.taxPercent != null ? `VAT ${it.taxPercent}%` : "",
+        vatLabel: Number.isFinite(rate) ? `VAT ${rate}%` : "",
         qty: Number(it.quantity || 0),
         rate: Number(it.unitPrice || 0),
         amount: Number(it.netAmount ?? it.grossAmount ?? 0),
-      })),
+      };
+    }),
     totals: {
-      subtotal: Number(invoice.subTotal || 0),
-      discount: Number(invoice.discountTotal || 0),
-      vat5: Number(invoice.taxTotal || 0),
-      vat0: 0,
-      deliveryCharge: Number(invoice.deliveryCharge || opts.shippingCharge || 0),
-      roundOff: 0,
+      subtotal,
+      discount,
+      vat5: vatStandard,
+      vat0: vatZero,
+      deliveryCharge,
+      roundOff: Number(invoice.roundOff || invoice.roundOffAmount || 0),
       totalToPay: Number(invoice.invoiceTotal || 0),
     },
     payment: {
       mode: invoice.paymentMode || "",
       paidAmount: Number(opts.cashGiven ?? invoice.invoiceTotal ?? 0),
       changeReturned: Number(opts.changeAmount || 0),
-      cardRef: "",
+      cardRef: opts.cardRef || invoice.cardRef || "",
     },
     vatSummary: {
-      standardRateAmount: Number(invoice.taxTotal || 0),
-      zeroRateAmount: 0,
-      totalVat: Number(invoice.taxTotal || 0),
+      standardRateAmount: vatStandard,
+      zeroRateAmount: vatZero,
+      totalVat,
     },
   };
 }
@@ -188,14 +265,29 @@ export function buildSampleTxn() {
     invoiceNo: "DI-28-042",
     date: "24-Jun-2026",
     time: "03:15 PM",
+    branch: "Fujairah - Main",
     terminalId: "POS-01",
     cashierName: "Hari K",
-    saleType: "Retail",
+    saleType: "Retail / Delivery",
     customer: {
       name: "Sarah Johnson",
       mobile: "+971 50 123 4567",
       code: "CUST-00847",
       trn: "",
+    },
+    // Account balance + delivery blocks so the designer Live Preview exercises
+    // EVERY section the live checkout receipt can render (kept in lock-step with
+    // the enriched mapInvoiceToTxn output — see the checkout preview).
+    balance: {
+      previousBalance: 340.0,
+      invoiceCredit: 102.8,
+      amountPaid: 0.0,
+      newBalanceDue: 442.8,
+    },
+    delivery: {
+      addressEn: "Villa 22, Street 7, Al Faseel, Fujairah, UAE",
+      addressAr: "",
+      contactNote: "Contact on arrival: +971 50 123 4567",
     },
     items: [
       { nameEn: "Margherita Pizza", nameAr: "بيتزا مارغريتا", sku: "SKU 10023", vatLabel: "VAT 5%", qty: 1, rate: 45.0, amount: 45.0 },
@@ -207,7 +299,7 @@ export function buildSampleTxn() {
       discount: 0.0,
       vat5: 4.9,
       vat0: 0.0,
-      deliveryCharge: 0.0,
+      deliveryCharge: 8.9,
       roundOff: 0.0,
       totalToPay: 102.8,
     },

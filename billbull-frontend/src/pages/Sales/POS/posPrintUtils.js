@@ -187,6 +187,9 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
+  // Delivery address (ported from Template 2) — printed as its own section when a
+  // shipping address is present on the sale.
+  deliveryAddress = null,
   currency = 'AED',
   // QR/stamp/footer-image placement relative to the footer text: 'before' | 'after' (§4).
   qrPlacement = 'before',
@@ -278,6 +281,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   if (cashier) html += `<div class="row"><span class="lbl">Cashier:</span><span class="val">${esc(cashier)}</span></div>`;
   if (terminal) html += `<div class="row"><span class="lbl">Terminal ID:</span><span class="num">${esc(terminal)}</span></div>`;
   if (counter) html += `<div class="row"><span class="lbl">Counter:</span><span class="num">${esc(counter)}</span></div>`;
+  // Sale Type (ported from Template 2) — retail / delivery / etc. when present.
+  const saleType = invoice.salesType || invoice.saleType || '';
+  if (saleType) html += `<div class="row"><span class="lbl">Sale Type:</span><span class="val">${esc(saleType)}</span></div>`;
   html += D;
 
   // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
@@ -333,6 +339,8 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // as their own lines so the total always ties out on the printed invoice.
   if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmtAmt(invoice.deliveryCharge)}</span></div>`;
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmtAmt(shippingCharge)}</span></div>`;
+  const roundOffAmt = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
+  if (Math.abs(roundOffAmt) >= 0.005) html += `<div class="row"><span class="lbl">Round Off:</span><span class="num">${cur} ${fmtAmt(roundOffAmt)}</span></div>`;
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmtAmt(grandTotal)}</span></div>`;
   // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
@@ -378,6 +386,20 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += `<div class="row"><span class="lbl">Name:</span><span class="val">${esc(customerName)}</span></div>`;
     if (custPhone) html += `<div class="row"><span class="lbl">Mobile:</span><span class="num">${esc(custPhone)}</span></div>`;
     if (custEmail) html += `<div class="row"><span class="lbl">Email:</span><span class="val">${esc(custEmail)}</span></div>`;
+    // Customer Code (ported from Template 2) — skip the walk-in sentinel.
+    // Use .val (wraps) not .num (white-space:nowrap) so a long code/name wraps
+    // within the paper width instead of overflowing off the right edge.
+    const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
+    if (custCode) html += `<div class="row"><span class="lbl">Customer Code:</span><span class="val">${esc(custCode)}</span></div>`;
+    html += D;
+  }
+
+  // ── Delivery address (ported from Template 2) — collapsed to one line, wrapped
+  // within the paper width. Only shown when a shipping address exists on the sale.
+  const deliveryAddr = oneLineAddress(deliveryAddress || invoice.shippingAddress || '');
+  if (deliveryAddr) {
+    html += `<div class="s">DELIVERY ADDRESS</div>`;
+    html += `<div style="word-break:break-word;overflow-wrap:anywhere">${esc(deliveryAddr)}</div>`;
     html += D;
   }
 

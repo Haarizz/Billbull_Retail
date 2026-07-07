@@ -1460,7 +1460,12 @@ const POSConsole = React.memo((props) => {
               ? activeTemplate.mapData(
                   {
                     name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
-                    logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl, footerText: cfg.footer,
+                    // Stamp is passed as stampDataUrl (not qrDataUrl) so it isn't
+                    // mislabelled as a scannable QR. The designer has no live ZATCA
+                    // QR to render, so the component shows its placeholder when QR
+                    // is enabled with no stamp — an honest "QR appears here" hint.
+                    logoDataUrl: tplLogoDataUrl, stampDataUrl: cfg.showQRCode ? tplStampDataUrl : null,
+                    qrPlaceholder: cfg.showQRCode, footerText: cfg.footer,
                   },
                   buildSampleTxn(),
                 )
@@ -1839,10 +1844,14 @@ const POSConsole = React.memo((props) => {
                         {useComponentTemplate
                           ? (() => {
                               const Preview = activeTemplate.Preview;
-                              // 80mm receipt (~302px) scaled to fit the narrow panel.
+                              // Render at natural paper width (80mm ≈ 302px / 58mm ≈
+                              // 219px) — no down-scale — so this preview reads at the
+                              // same visual width as Template 1's ThermalMock (~330px)
+                              // instead of appearing noticeably narrower. The preview
+                              // sizes to the chosen paper (58mm vs 80mm) via paperSize.
                               return (
-                                <div style={{ transform: 'scale(0.86)', transformOrigin: 'top center' }}>
-                                  <Preview data={componentTemplateData} />
+                                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                  <Preview data={componentTemplateData} paperSize={cfg.paper} />
                                 </div>
                               );
                             })()
