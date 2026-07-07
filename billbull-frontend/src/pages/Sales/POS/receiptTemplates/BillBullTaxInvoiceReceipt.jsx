@@ -148,8 +148,8 @@ export const TEMPLATE2_CSS = `
     color: var(--ink);
     padding: 4mm 4mm 6mm 4mm;
     font-family: 'Roboto Mono', monospace;
-    font-size: 9px;
-    line-height: 1.4;
+    font-size: 10.5px;
+    line-height: 1.42;
     box-shadow: 0 0 0 1px #ccc, 0 6px 18px rgba(0,0,0,.25);
   }
   .bb-receipt .ar {
@@ -161,8 +161,8 @@ export const TEMPLATE2_CSS = `
   .bb-receipt .bold { font-weight: 700; }
   .bb-receipt .upper { text-transform: uppercase; }
   .bb-receipt .muted { color: var(--gray); }
-  .bb-receipt .small { font-size: 7.6px; }
-  .bb-receipt .big { font-size: 13px; }
+  .bb-receipt .small { font-size: 9px; }
+  .bb-receipt .big { font-size: 15px; }
   .bb-receipt .dashed { border-top: 2px dashed var(--ink); margin: 3mm 0; }
   .bb-receipt .dotted-row { border-bottom: 2px dotted var(--ink); margin: 2mm 0 3mm 0; }
   .bb-receipt .logo-mark {
@@ -175,11 +175,11 @@ export const TEMPLATE2_CSS = `
     overflow: hidden;
   }
   .bb-receipt .logo-mark img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  .bb-receipt .brand-name { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
-  .bb-receipt .brand-name-ar { font-size: 13px; font-weight: 700; margin-top: 0.5mm; }
-  .bb-receipt .brand-tagline { font-size: 7.5px; letter-spacing: 2px; margin-top: 1.5mm; }
-  .bb-receipt .addr-block { margin-top: 2mm; font-size: 8px; }
-  .bb-receipt .addr-block-ar { margin-top: 1mm; font-size: 8px; }
+  .bb-receipt .brand-name { font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+  .bb-receipt .brand-name-ar { font-size: 15px; font-weight: 700; margin-top: 0.5mm; }
+  .bb-receipt .brand-tagline { font-size: 9px; letter-spacing: 2px; margin-top: 1.5mm; }
+  .bb-receipt .addr-block { margin-top: 2mm; font-size: 9.5px; }
+  .bb-receipt .addr-block-ar { margin-top: 1mm; font-size: 9.5px; }
   .bb-receipt .kv2 {
     display: flex;
     justify-content: space-between;
@@ -187,39 +187,39 @@ export const TEMPLATE2_CSS = `
     gap: 6px;
     padding: 0.7mm 0;
   }
-  .bb-receipt .kv2 .lbl .en { color: var(--gray); font-size: 8.5px; }
-  .bb-receipt .kv2 .lbl .ar { color: var(--gray); font-size: 8.5px; display: block; margin-top: 0.2mm; }
+  .bb-receipt .kv2 .lbl .en { color: var(--gray); font-size: 10px; }
+  .bb-receipt .kv2 .lbl .ar { color: var(--gray); font-size: 10px; display: block; margin-top: 0.2mm; }
   .bb-receipt .kv2 .val { text-align: right; font-weight: 600; white-space: nowrap; padding-top: 0.3mm; }
   .bb-receipt .kv2.bold .lbl .en,
   .bb-receipt .kv2.bold .lbl .ar,
   .bb-receipt .kv2.bold .val { font-weight: 700; }
   .bb-receipt .kv2.small .lbl .en,
   .bb-receipt .kv2.small .lbl .ar,
-  .bb-receipt .kv2.small .val { font-size: 7.6px; }
+  .bb-receipt .kv2.small .val { font-size: 9px; }
   .bb-receipt .section-title {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     font-weight: 700;
-    font-size: 9px;
+    font-size: 10.5px;
     letter-spacing: 1px;
     margin-bottom: 2mm;
     border-bottom: 1px solid var(--ink);
     padding-bottom: 1mm;
   }
-  .bb-receipt .section-title .ar { font-size: 9.5px; font-weight: 700; }
-  .bb-receipt table.items { width: 100%; border-collapse: collapse; font-size: 8.5px; }
+  .bb-receipt .section-title .ar { font-size: 11px; font-weight: 700; }
+  .bb-receipt table.items { width: 100%; border-collapse: collapse; font-size: 10px; }
   .bb-receipt table.items thead th {
     border-bottom: 1.5px solid var(--ink);
     padding-bottom: 1.5mm;
-    font-weight: 700; text-align: left; font-size: 7.5px; letter-spacing: .3px;
+    font-weight: 700; text-align: left; font-size: 9px; letter-spacing: .3px;
   }
-  .bb-receipt table.items thead th .ar { display: block; font-size: 7.5px; font-weight: 700; }
+  .bb-receipt table.items thead th .ar { display: block; font-size: 9px; font-weight: 700; }
   .bb-receipt table.items th.num, .bb-receipt table.items td.num { text-align: right; }
   .bb-receipt .item-row td { padding-top: 2mm; vertical-align: top; }
   .bb-receipt .item-name { font-weight: 600; }
-  .bb-receipt .item-name-ar { font-weight: 600; font-size: 8.5px; margin-top: 0.3mm; }
-  .bb-receipt .item-meta { font-size: 7.3px; color: var(--gray); }
+  .bb-receipt .item-name-ar { font-weight: 600; font-size: 10px; margin-top: 0.3mm; }
+  .bb-receipt .item-meta { font-size: 8.8px; color: var(--gray); }
   .bb-receipt .total-to-pay {
     border-top: 2px solid var(--ink);
     border-bottom: 2px solid var(--ink);
@@ -227,15 +227,15 @@ export const TEMPLATE2_CSS = `
     padding: 3mm 0;
     text-align: center;
   }
-  .bb-receipt .total-to-pay .label-en { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
-  .bb-receipt .total-to-pay .label-ar { font-size: 12px; font-weight: 700; margin-top: 0.5mm; }
-  .bb-receipt .total-to-pay .amount { font-size: 24px; font-weight: 700; letter-spacing: 1px; margin-top: 2mm; }
+  .bb-receipt .total-to-pay .label-en { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; }
+  .bb-receipt .total-to-pay .label-ar { font-size: 14px; font-weight: 700; margin-top: 0.5mm; }
+  .bb-receipt .total-to-pay .amount { font-size: 27px; font-weight: 700; letter-spacing: 1px; margin-top: 2mm; }
   .bb-receipt .pay-mode {
     display: inline-block;
     border: 1px solid var(--ink);
     padding: 0.5mm 2mm;
     border-radius: 3px;
-    font-size: 7.5px; font-weight: 700; letter-spacing: .5px;
+    font-size: 9px; font-weight: 700; letter-spacing: .5px;
   }
   .bb-receipt .box { border: 1px dashed var(--ink); padding: 2mm; border-radius: 2px; }
   .bb-receipt .barcode {
@@ -253,10 +253,10 @@ export const TEMPLATE2_CSS = `
       var(--paper);
     border: 3px solid var(--ink);
   }
-  .bb-receipt .footer-msg { font-size: 9px; }
-  .bb-receipt .footer-msg-ar { font-size: 9.5px; margin-top: 1mm; }
-  .bb-receipt .footer-fine { font-size: 7px; color: var(--gray); }
-  .bb-receipt .footer-fine-ar { font-size: 7.5px; color: var(--gray); margin-top: 0.8mm; }
+  .bb-receipt .footer-msg { font-size: 10.5px; }
+  .bb-receipt .footer-msg-ar { font-size: 11px; margin-top: 1mm; }
+  .bb-receipt .footer-fine { font-size: 8.5px; color: var(--gray); }
+  .bb-receipt .footer-fine-ar { font-size: 9px; color: var(--gray); margin-top: 0.8mm; }
   .bb-receipt .tear {
     height: 8px; margin-top: 2mm;
     background:
