@@ -664,8 +664,15 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     logoDataUrl, showLogo, showCompanyDetails, showTrn, isReprint,
   });
   w.gline(gutter, buildFixedWidthLine('Invoice No:', invoice.invoiceNumber || invoice.id || '', width));
-  const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate) : null;
-  if (invDate) w.gline(gutter, buildFixedWidthLine('Date:', invDate.toLocaleString('en-GB'), width));
+  // invoiceDate is date-only (no time component). Parsing it and calling
+  // toLocaleString would show a fabricated UTC-midnight time shifted by the
+  // viewer's UTC offset (e.g. 00:00 UTC prints as 04:00 in Dubai). Only show
+  // a time when createdAt (the real sale timestamp) is available.
+  if (invoice.createdAt) {
+    w.gline(gutter, buildFixedWidthLine('Date:', new Date(invoice.createdAt).toLocaleString('en-GB'), width));
+  } else if (invoice.invoiceDate) {
+    w.gline(gutter, buildFixedWidthLine('Date:', new Date(invoice.invoiceDate).toLocaleDateString('en-GB'), width));
+  }
   if (cashierName) w.gline(gutter, buildFixedWidthLine('Cashier:', cashierName, width));
   if (terminalId) w.gline(gutter, buildFixedWidthLine('Terminal ID:', terminalId, width));
   if (counterName) w.gline(gutter, buildFixedWidthLine('Counter:', counterName, width));
