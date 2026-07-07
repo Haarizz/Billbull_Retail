@@ -981,28 +981,42 @@ export const buildEscPosFromPlainTextBase64 = (text, paperSize = '80mm') => uint
 // of raster data) — but a whole rendered bilingual receipt
 // (bilingualReceiptCanvas.js) can run several THOUSAND dots tall, ~20x bigger
 // than anything tested. That size gap is what produced a wall of mojibake on
-// Template 2's silent print (client report 2026-07-07): the printer's raster
-// receive buffer overflows partway through the one oversized block, the
-// parser loses track of how many image bytes remain, and starts reading the
-// image's own tail bytes as WPC1252 text/commands. Banding well under the
-// proven-safe ceiling — and re-issuing ESC @ (reset) + heating before each
-// subsequent band — forces the printer's parser back to a known state before
-// every new GS v 0 header, so a receipt of any length prints as a sequence of
-// small, individually-safe blocks. ESC @ only resets controller registers; it
-// does not feed paper, so bands still print flush against each other with no
-// visible seam.
-const RASTER_BAND_ROWS = 200;
+// Template 2's silent print (client report 2026-07-07): a single oversized
+// GS v 0 block overflows the printer's raster receive buffer, the parser loses
+// track of how many image bytes remain, and starts reading the image's own tail
+// bytes as WPC1252 text/commands.
+//
+// So the receipt is split into short bands (each a single, individually-safe
+// GS v 0 block). The bug in the FIRST banding attempt was HOW the bands were
+// joined: it issued ESC @ (INIT) between bands. ESC @ does NOT flush the
+// current print buffer/line — it only resets controller registers — so the
+// printer was still mid-line when the next GS v 0 header arrived; that header
+// landed at a bad byte offset and every band after the first printed as literal
+// text (the `?L ?L` mojibake: `1D 76 30` = "GS v 0" read as characters).
+//
+// The join that actually works on this printer class is the SAME one Template 1
+// uses for its single logo/stamp raster (see emitQrOrStamp): a real line-feed
+// (0x0a) BEFORE and AFTER each raster block flushes the line buffer, keeping the
+// printer's parser in a known raster-ready state between blocks. To keep the
+// bands abutting with no visible white seam, line spacing is set to ZERO
+// (ESC 3 0) for the duration and restored to the body pitch afterwards — a
+// zero-height line feed flushes the buffer without advancing paper. No ESC @
+// mid-stream: that both fails to flush AND would reset the code page/font/
+// heating the preamble established.
+const RASTER_BAND_ROWS = 128;
 
 const pushBandedRaster = (writer, bits, w, h) => {
+  // A raster as the VERY FIRST printable content garbles on some clones, so
+  // flush one normal-spaced blank line first (same guard as the logo/stamp path).
+  writer.push([0x20, 0x0a]);
+  writer.push(CMD.LINE_SPACING(0)); // 0-dot feed → the inter-band flushes below add no paper gap
   for (let y0 = 0; y0 < h; y0 += RASTER_BAND_ROWS) {
     const bandH = Math.min(RASTER_BAND_ROWS, h - y0);
-    if (y0 > 0) {
-      writer.push(CMD.INIT);
-      writer.push(CMD.SET_HEATING());
-      writer.push(CMD.ALIGN_CENTER);
-    }
     writer.push(packBitmapToRasterCommand(bits.subarray(y0 * w, (y0 + bandH) * w), w, bandH));
+    writer.push([0x0a]); // flush the line buffer so the parser returns to a known
+                         // state before the next GS v 0 header (0-height at ESC 3 0)
   }
+  writer.push(CMD.DEFAULT_LINE_SPACING); // restore normal pitch for the trailing feed/cut
 };
 
 // ── Whole-receipt canvas → ESC/POS document ─────────────────────────────────
