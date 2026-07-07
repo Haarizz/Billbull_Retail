@@ -129,11 +129,13 @@ const SectionTitle = ({ en, ar }) => (
 // ---------------------------------------------------------------------------
 
 export const TEMPLATE2_CSS = `
-  .bb-receipt-wrapper {
+  .bb-receipt, .bb-receipt-wrapper {
     --paper-width: 80mm;
     --ink: #000000;
     --paper: #ffffff;
     --gray: #555555;
+  }
+  .bb-receipt-wrapper {
     background: #e8e8e8;
     padding: 40px 0;
     display: flex;
@@ -161,8 +163,8 @@ export const TEMPLATE2_CSS = `
   .bb-receipt .muted { color: var(--gray); }
   .bb-receipt .small { font-size: 7.6px; }
   .bb-receipt .big { font-size: 13px; }
-  .bb-receipt .dashed { border-top: 1px dashed var(--ink); margin: 3mm 0; }
-  .bb-receipt .dotted-row { border-bottom: 1px dotted var(--ink); margin: 2mm 0 3mm 0; }
+  .bb-receipt .dashed { border-top: 2px dashed var(--ink); margin: 3mm 0; }
+  .bb-receipt .dotted-row { border-bottom: 2px dotted var(--ink); margin: 2mm 0 3mm 0; }
   .bb-receipt .logo-mark {
     width: 34px; height: 34px;
     margin: 0 auto 2mm auto;
