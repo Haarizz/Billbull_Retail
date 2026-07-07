@@ -349,9 +349,13 @@ export default function POSSales() {
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
   const [isIdleLocked, setIsIdleLocked] = useState(false);
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
-  // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
-  // Sidebar's display-name derivation: strip the @domain then title-case.
+  // Logged-in POS user shown as "Cashier" on the receipt (§2A). Prefers the
+  // employee's real first/last name (stored at login as "fullName", resolved
+  // server-side from the linked HR employee record) over the login username —
+  // a shared/system account like "admin" should never appear on a receipt.
   const cashierDisplayName = useMemo(() => {
+    const storedFullName = sessionStorage.getItem('fullName');
+    if (storedFullName) return formatUserDisplayName(storedFullName);
     const raw = sessionStorage.getItem('user') || '';
     return formatUserDisplayName(raw.includes('@') ? raw.split('@')[0] : raw);
   }, []);

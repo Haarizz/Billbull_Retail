@@ -620,9 +620,16 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   lines.push(hr);
   pushCentered(documentTitle || 'TAX INVOICE');
   lines.push(buildFixedWidthLine('Invoice', invoice.invoiceNumber || invoice.id || '', width));
-  if (invoice.invoiceDate) {
-    const dt = new Date(invoice.invoiceDate);
-    lines.push(buildFixedWidthLine('Date', dt.toLocaleString('en-GB'), width));
+  if (invoice.createdAt || invoice.invoiceDate) {
+    // invoiceDate is date-only (no time component) — parsing it as a Date and
+    // calling toLocaleString would show a fabricated UTC-midnight time shifted
+    // by the viewer's UTC offset. Only show a time when createdAt (the real
+    // sale timestamp) is available.
+    if (invoice.createdAt) {
+      lines.push(buildFixedWidthLine('Date', new Date(invoice.createdAt).toLocaleString('en-GB'), width));
+    } else {
+      lines.push(buildFixedWidthLine('Date', new Date(invoice.invoiceDate).toLocaleDateString('en-GB'), width));
+    }
   }
   if (cashierName) lines.push(buildFixedWidthLine('Cashier', cashierName, width));
   if (terminalId) lines.push(buildFixedWidthLine('Terminal', terminalId, width));

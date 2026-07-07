@@ -124,10 +124,18 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
  */
 export function mapInvoiceToTxn(invoice = {}, opts = {}) {
   const currency = opts.currency || "AED";
-  const invoiceDate = invoice.invoiceDate || invoice.createdAt || null;
-  const dt = invoiceDate ? new Date(invoiceDate) : new Date();
+  const createdAt = invoice.createdAt || null;
+  const invoiceDate = invoice.invoiceDate || null;
+  // createdAt carries the real sale timestamp; invoiceDate is often date-only
+  // (no time component). Deriving "time" from a date-only value parses it as
+  // UTC midnight, which then prints shifted by the viewer's UTC offset (e.g.
+  // 00:00 UTC shows as 04:00 in Dubai) — so time must only ever come from a
+  // real timestamp, never from invoiceDate.
+  const dt = createdAt ? new Date(createdAt) : invoiceDate ? new Date(invoiceDate) : new Date();
   const date = dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-  const time = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  const time = createdAt
+    ? dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+    : "";
 
   const isWalkIn = !invoice.customerName || invoice.customerName === "Walk-in Customer";
 

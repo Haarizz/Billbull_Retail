@@ -23,7 +23,7 @@ public class UserProfileDto {
 
     public UserProfileDto(User user) {
         this.username = user.getUsername();
-        this.fullName = user.getFullName();
+        this.fullName = user.getResolvedDisplayName();
         this.email = user.getEmail();
         this.phone = user.getPhone();
         this.address = user.getAddress();

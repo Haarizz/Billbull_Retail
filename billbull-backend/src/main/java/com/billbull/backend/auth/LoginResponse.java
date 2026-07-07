@@ -4,6 +4,7 @@ public class LoginResponse {
 
     private String token;
     private String username;
+    private String fullName;
     private String role;
     private String primaryRole;
     private Long branchId;
@@ -15,6 +16,7 @@ public class LoginResponse {
     public LoginResponse(
             String token,
             String username,
+            String fullName,
             String role,
             String primaryRole,
             Long branchId,
@@ -24,6 +26,7 @@ public class LoginResponse {
             String defaultWarehouseName) {
         this.token = token;
         this.username = username;
+        this.fullName = fullName;
         this.role = role;
         this.primaryRole = primaryRole;
         this.branchId = branchId;
@@ -39,6 +42,10 @@ public class LoginResponse {
 
     public String getUsername() {
         return username;
+    }
+
+    public String getFullName() {
+        return fullName;
     }
 
     public String getRole() {

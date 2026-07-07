@@ -250,11 +250,21 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   dashed();
 
   // ── Invoice meta ──────────────────────────────────────────────────────────
-  const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate) : null;
+  // invoiceDate is date-only (no time component). Parsing it and reading back
+  // a time-of-day would show a fabricated UTC-midnight time shifted by the
+  // viewer's UTC offset (e.g. 00:00 UTC prints as 04:00 in Dubai), so the
+  // printed Time must come from createdAt (the real sale timestamp) instead.
+  const invDate = invoice.createdAt
+    ? new Date(invoice.createdAt)
+    : invoice.invoiceDate
+      ? new Date(invoice.invoiceDate)
+      : null;
   kv2(L.INVOICE_NO, invoice.invoiceNumber || invoice.id || '');
   if (invDate) {
     kv2(L.DATE, invDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }));
-    kv2(L.TIME, invDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    if (invoice.createdAt) {
+      kv2(L.TIME, invDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }
   }
   if (branchName) kv2(L.BRANCH, branchName);
   if (terminalId) kv2(L.TERMINAL, terminalId);
