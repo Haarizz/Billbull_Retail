@@ -76,6 +76,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   companyName, trn, header, footer,
   showTrn = true, isReprint = false, isReturn = false, documentTitle = null,
   showCompanyDetails = true,
+  showLogo = true, logoDataUrl = null,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
   showQRCode = true, qrContent = null,
   showCustomerDetails = true,
@@ -172,7 +173,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // Bilingual key/value row: EN label + AR label stacked left, value right
   // (on the EN label's line, like the approved template's .kv2 layout).
-  const kv2 = (lbl, value, { bold = false, size = 17 } = {}) => {
+  const kv2 = (lbl, value, { bold = false, size = 21 } = {}) => {
     const startY = y;
     drawEn(lbl.en, M, size, { bold });
     ctx.font = fontEn(size, bold); // measure with the same font just drawn
@@ -198,12 +199,36 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   const sectionTitle = (lbl) => {
     y += Math.round(4 * S);
-    drawEn(lbl.en, M, 16, { bold: true });
-    drawAr(lbl.ar, W - M, 16, { bold: true, align: 'right' });
-    y += lineH(16);
+    drawEn(lbl.en, M, 20, { bold: true });
+    drawAr(lbl.ar, W - M, 20, { bold: true, align: 'right' });
+    y += lineH(20);
     solid(2);
     y += Math.round(4 * S);
   };
+
+  // ── Logo (centred raster, same as Template 1) ─────────────────────────────
+  // The POS-80C prints raster images cleanly; draw the logo straight onto the
+  // canvas above the title so the whole receipt is one raster document. The
+  // image is loaded and drawn on white so transparent PNGs stay crisp under the
+  // 1-bit threshold (canvasToMonoRows), matching Template 1's logo handling.
+  if (showLogo && logoDataUrl) {
+    try {
+      const logoImg = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = logoDataUrl;
+      });
+      const maxLogoW = Math.round(CW * 0.6);
+      const maxLogoH = Math.round(180 * S);
+      const ratio = logoImg.width && logoImg.height ? logoImg.width / logoImg.height : 1;
+      let lw = maxLogoW;
+      let lh = Math.round(lw / ratio);
+      if (lh > maxLogoH) { lh = maxLogoH; lw = Math.round(lh * ratio); }
+      ctx.drawImage(logoImg, Math.round((W - lw) / 2), y, lw, lh);
+      y += lh + Math.round(8 * S);
+    } catch { /* logo failed to decode — render without it */ }
+  }
 
   // ── Header: title, company, address, TRN ──────────────────────────────────
   const title = documentTitle
@@ -216,10 +241,10 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   centerEn(companyName || '', 26, true);
   if (showCompanyDetails) {
     const addr = oneLine(outletAddress);
-    if (addr) centerEn(addr, 14);
-    if (outletPhone) centerEn(`${L.TEL.en}: ${outletPhone}`, 14);
+    if (addr) centerEn(addr, 17);
+    if (outletPhone) centerEn(`${L.TEL.en}: ${outletPhone}`, 17);
   }
-  if (showTrn && trn) centerEn(`${L.TRN.en}: ${trn}`, 14);
+  if (showTrn && trn) centerEn(`${L.TRN.en}: ${trn}`, 17);
   if (isReprint) { y += Math.round(2 * S); centerEn(L.REPRINT.en, 15, true); centerAr(L.REPRINT.ar, 14, true); }
 
   dashed();
@@ -250,7 +275,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (deliveryAddress) {
     dashed();
     sectionTitle(L.DELIVERY_ADDRESS);
-    for (const ln of wrap(oneLine(deliveryAddress), 15, false, CW)) { drawEn(ln, M, 15); y += lineH(15); }
+    for (const ln of wrap(oneLine(deliveryAddress), 16, false, CW)) { drawEn(ln, M, 16); y += lineH(16); }
   }
 
   dashed();
@@ -259,20 +284,20 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   sectionTitle(L.ITEM_DETAILS);
   // Column x-positions (right edges for numeric cols).
   const colAmtX = W - M;
-  const colRateX = W - M - Math.round(95 * S);
-  const colQtyX = W - M - Math.round(190 * S);
-  const nameMax = colQtyX - M - Math.round(46 * S);
+  const colRateX = W - M - Math.round(108 * S);
+  const colQtyX = W - M - Math.round(210 * S);
+  const nameMax = colQtyX - M - Math.round(40 * S);
   // Bilingual table head.
-  drawEn(L.ITEM.en, M, 13, { bold: true });
-  drawEn(L.QTY.en, colQtyX, 13, { bold: true, align: 'right' });
-  drawEn(L.RATE.en, colRateX, 13, { bold: true, align: 'right' });
-  drawEn(L.AMT.en, colAmtX, 13, { bold: true, align: 'right' });
-  y += lineH(13);
-  drawAr(L.ITEM.ar, M, 13, { align: 'left' });
-  drawAr(L.QTY.ar, colQtyX, 13);
-  drawAr(L.RATE.ar, colRateX, 13);
-  drawAr(L.AMT.ar, colAmtX, 13);
-  y += lineH(13);
+  drawEn(L.ITEM.en, M, 16, { bold: true });
+  drawEn(L.QTY.en, colQtyX, 16, { bold: true, align: 'right' });
+  drawEn(L.RATE.en, colRateX, 16, { bold: true, align: 'right' });
+  drawEn(L.AMT.en, colAmtX, 16, { bold: true, align: 'right' });
+  y += lineH(16);
+  drawAr(L.ITEM.ar, M, 16, { align: 'left' });
+  drawAr(L.QTY.ar, colQtyX, 16);
+  drawAr(L.RATE.ar, colRateX, 16);
+  drawAr(L.AMT.ar, colAmtX, 16);
+  y += lineH(16);
   solid(2);
   y += Math.round(4 * S);
 
@@ -293,19 +318,19 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
       : (discPct > 0 ? gross * (discPct / 100) : Math.max(0, gross - lineTotal));
 
     const rowY = y;
-    for (const ln of wrap(name, 16, true, nameMax)) { drawEn(ln, M, 16, { bold: true }); y += lineH(16); }
-    if (nameAr) for (const ln of wrap(nameAr, 15, false, nameMax, true)) { drawAr(ln, M, 15, { align: 'left' }); y += lineH(15); }
+    for (const ln of wrap(name, 19, true, nameMax)) { drawEn(ln, M, 19, { bold: true }); y += lineH(19); }
+    if (nameAr) for (const ln of wrap(nameAr, 18, false, nameMax, true)) { drawAr(ln, M, 18, { align: 'left' }); y += lineH(18); }
     const metaBits = [it.sku || it.itemCode ? `SKU ${it.sku || it.itemCode}` : '', disc > 0 && discPct > 0 ? `Disc ${discPct.toFixed(discPct % 1 ? 2 : 0)}%` : ''].filter(Boolean);
     const serial = it.serialNumber ? `S/N ${it.serialNumber}` : (it.batchNumber || it.pinnedBatchNumber ? `Batch ${it.batchNumber || it.pinnedBatchNumber}` : '');
     if (serial) metaBits.push(serial);
-    if (metaBits.length) { drawEn(metaBits.join(' · '), M, 12); y += lineH(12); }
-    if (disc > 0) { drawEn(`${L.DISCOUNT_LINE.en}: -${fmtBare(disc)}`, M, 12); y += lineH(12); }
+    if (metaBits.length) { drawEn(metaBits.join(' · '), M, 15); y += lineH(15); }
+    if (disc > 0) { drawEn(`${L.DISCOUNT_LINE.en}: -${fmtBare(disc)}`, M, 15); y += lineH(15); }
     // Numeric columns on the first row line.
     const numY = y;
     y = rowY;
-    drawEn(String(qty), colQtyX, 15, { align: 'right' });
-    drawEn(fmtBare(unit), colRateX, 15, { align: 'right' });
-    drawEn(fmtBare(lineTotal), colAmtX, 15, { bold: true, align: 'right' });
+    drawEn(String(qty), colQtyX, 18, { align: 'right' });
+    drawEn(fmtBare(unit), colRateX, 18, { align: 'right' });
+    drawEn(fmtBare(lineTotal), colAmtX, 18, { bold: true, align: 'right' });
     y = numY + Math.round(6 * S);
   }
 
@@ -314,9 +339,9 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   const dotW = Math.max(2, Math.round(2 * S));
   for (let x = M; x < W - M; x += dotW * 3) ctx.fillRect(x, y, dotW, dotW);
   y += dotW + Math.round(6 * S);
-  drawEn(`${L.TOTAL_ITEMS.en}: ${items.length}`, M, 13);
-  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colAmtX, 13, { align: 'right' });
-  y += lineH(13);
+  drawEn(`${L.TOTAL_ITEMS.en}: ${items.length}`, M, 16);
+  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colAmtX, 16, { align: 'right' });
+  y += lineH(16);
 
   dashed();
 
@@ -411,21 +436,21 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
         const amt = parseFloat(it.taxAmount ?? 0) || 0;
         if (rate > 0) std += amt; else zero += amt;
       }
-      kv2(L.VAT_STANDARD, fmtBare(std), { size: 14 });
-      kv2(L.VAT_ZERO, fmtBare(zero), { size: 14 });
+      kv2(L.VAT_STANDARD, fmtBare(std), { size: 17 });
+      kv2(L.VAT_ZERO, fmtBare(zero), { size: 17 });
     }
-    kv2(L.TOTAL_VAT, fmtBare(invoice.taxTotal), { bold: true, size: 15 });
+    kv2(L.TOTAL_VAT, fmtBare(invoice.taxTotal), { bold: true, size: 18 });
   }
 
   dashed();
 
   // ── Footer messages ───────────────────────────────────────────────────────
   if (showFooterText) {
-    centerEn(L.THANK_YOU.en, 16, true);
-    centerAr(L.THANK_YOU.ar, 16, true);
+    centerEn(L.THANK_YOU.en, 19, true);
+    centerAr(L.THANK_YOU.ar, 19, true);
     if (footer) {
       y += Math.round(3 * S);
-      String(footer).split('\n').forEach((ln) => { if (ln.trim()) centerEn(ln.trim(), 12); });
+      String(footer).split('\n').forEach((ln) => { if (ln.trim()) centerEn(ln.trim(), 15); });
     }
   }
 
@@ -447,7 +472,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
       }
     }
     y += bcH + Math.round(4 * S);
-    centerEn(bcText, 13);
+    centerEn(bcText, 16);
   }
 
   // ── QR (drawn at exact integer dots/module so threshold keeps it crisp) ───
@@ -461,8 +486,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     await QRCode.toCanvas(qrCanvas, String(qrContent), { errorCorrectionLevel: 'M', scale, margin: 0 });
     ctx.drawImage(qrCanvas, Math.round((W - qrCanvas.width) / 2), y);
     y += qrCanvas.height + Math.round(6 * S);
-    centerEn(L.SCAN_VERIFY.en, 13);
-    centerAr(L.SCAN_VERIFY.ar, 13);
+    centerEn(L.SCAN_VERIFY.en, 16);
+    centerAr(L.SCAN_VERIFY.ar, 16);
   }
 
   y += Math.round(8 * S);
