@@ -8,6 +8,11 @@ import { Input } from '../../../components/ui/input';
 import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
 import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
+import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
+import { buildSampleTxn } from './receiptTemplates/billBullTaxInvoiceData';
+import { buildSampleInvoice, buildSampleOpts } from './receiptTemplates/sampleInvoice';
+import { buildEscPosReceiptBase64 } from '../../../utils/escPosReceipt';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { getPosScanners, createPosScanner, decommissionPosScanner } from '../../../api/posScannerApi';
 import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } from '../../../api/posCashDrawerApi';
@@ -121,6 +126,11 @@ const POSConsole = React.memo((props) => {
     const [addDeviceForm, setAddDeviceForm] = useState({ deviceType: 'RECEIPT_PRINTER', deviceName: '', connectionType: 'USB', attachedPrinterId: '' });
     const [addDeviceSaving, setAddDeviceSaving] = useState(false);
     const [addDeviceError, setAddDeviceError] = useState('');
+
+    // Which receipt template the Print Templates designer is previewing / test
+    // printing. Purely designer-local; does NOT affect the checkout print flow.
+    // 'native' = Template 1 (current production receipt). See ./receiptTemplates.
+    const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
 
     // Add New Device modal option set (mockup). Printer sub-types map to the
     // existing PosPrinter flow; scanner/cash-drawer hit their own endpoints.
@@ -1439,6 +1449,25 @@ const POSConsole = React.memo((props) => {
 
             const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
 
+            // ── Receipt template selection (Template 1 / Template 2 Arabic …) ──
+            // The alternate (component) templates are 80mm thermal POS receipts,
+            // so the selector is only offered on the POS Receipt sub-tab with a
+            // thermal paper size. Anywhere else we pin to the native template so
+            // the invoice / return / job-card / A4 paths are untouched.
+            const templateSelectorAvailable = templateSubTab === 'receipt' && cfg.paper !== 'A4';
+            const activeTemplate = getReceiptTemplate(templateSelectorAvailable ? receiptTemplateId : DEFAULT_RECEIPT_TEMPLATE_ID);
+            const useComponentTemplate = templateSelectorAvailable && activeTemplate.kind === 'component';
+            // Build the shared data model once for component templates (preview + print).
+            const componentTemplateData = useComponentTemplate
+              ? activeTemplate.mapData(
+                  {
+                    name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+                    logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl, footerText: cfg.footer,
+                  },
+                  buildSampleTxn(),
+                )
+              : null;
+
             const fieldToggleSection = (label, items) => (
               <div key={label}>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
@@ -1454,6 +1483,12 @@ const POSConsole = React.memo((props) => {
             );
 
             const handleFullPreview = () => {
+              // Component-based templates (e.g. Template 2 Arabic) render via the registry.
+              if (useComponentTemplate) {
+                const w = window.open('', '_blank');
+                w && w.document.write(activeTemplate.buildHtml(componentTemplateData));
+                return;
+              }
               let html;
               if (cfg.paper === 'A4') {
                 html = templateSubTab === 'jobcard'
@@ -1476,25 +1511,84 @@ const POSConsole = React.memo((props) => {
               w && w.document.write(html);
             };
 
-            const handleTestPrint = () => {
-              const toggles = {
-                showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
-                showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
-                showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
-                colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
-                colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
-                logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-              };
+            // Fallback HTML (browser print-preview) for the thermal receipt Test Print —
+            // used only when no printer is configured for this terminal, or the silent
+            // ESC/POS send fails. Kept as a plain function (not inline) so both the
+            // native and component branches below can call the same fallback.
+            const printReceiptViaBrowserFallback = () => {
+              if (useComponentTemplate) {
+                printHtml(activeTemplate.buildHtml(componentTemplateData));
+                return;
+              }
+              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+            };
+
+            const handleTestPrint = async () => {
+              // A4 and the Service Job Card always use the browser print pipeline —
+              // there is no thermal/ESC-POS equivalent for those, and this task only
+              // changes the 58mm/80mm receipt path.
               if (cfg.paper === 'A4') {
+                const toggles = {
+                  showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
+                  showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
+                  showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
+                  colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
+                  colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
+                  logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+                };
                 const html = templateSubTab === 'jobcard'
                   ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
                   : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},toggles);
                 printHtml(html);
-              } else if (templateSubTab === 'jobcard') {
+                return;
+              }
+              if (templateSubTab === 'jobcard') {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
-              } else {
-                printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+                return;
+              }
+
+              // 58mm/80mm receipt (Template 1 or Template 2): print straight to the
+              // configured printer through the SAME silent ESC/POS agent pipeline the
+              // real sales checkout uses (see localPrintAgent.js / CustomerView.jsx's
+              // printVoucherToConfiguredPrinter) — no browser print-preview dialog.
+              // Only fall back to the browser preview when there's genuinely no
+              // reachable printer, exactly like the checkout flow already does.
+              const printer = resolvePrinterForContext(printerConfigs, {
+                deviceType: 'RECEIPT_PRINTER',
+                branchId: currentTerminal?.branchId || null,
+                terminalId: currentTerminal?.terminalId || null,
+              });
+              if (!printer) {
+                printReceiptViaBrowserFallback();
+                return;
+              }
+
+              const isReturn = templateSubTab === 'return';
+              const sampleInvoice = buildSampleInvoice({ isReturn });
+              const outlet = { name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
+              const escPosOpts = {
+                ...buildSampleOpts({ outlet, cfg }),
+                isReturn,
+                documentTitle: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+                showCreditBalance: cfg.showCreditBalance,
+                creditPreviousBalance: cfg.showCreditBalance ? 245.5 : null,
+                creditInvoiceCredit: cfg.showCreditBalance ? sampleInvoice.invoiceTotal : null,
+                creditAmountPaid: cfg.showCreditBalance ? 0 : null,
+              };
+
+              try {
+                const dataBase64 = useComponentTemplate
+                  ? await activeTemplate.buildEscPosBase64(cfg.paper, sampleInvoice, escPosOpts)
+                  : await buildEscPosReceiptBase64(cfg.paper, sampleInvoice, escPosOpts);
+                await sendEscPosReceiptToConfiguredPrinter(printer, {
+                  dataBase64,
+                  receiptText: `${activeTemplate.label} test print — ${sampleInvoice.invoiceNumber}`,
+                  title: `BillBull Test Print (${activeTemplate.label})`,
+                });
+              } catch (err) {
+                console.warn('Silent test print failed, falling back to browser print preview', err);
+                printReceiptViaBrowserFallback();
               }
             };
 
@@ -1729,9 +1823,32 @@ const POSConsole = React.memo((props) => {
                         </span>
                       </div>
 
+                      {/* ── Receipt template selector (Template 1 / Template 2 …) ── */}
+                      {templateSelectorAvailable && (
+                        <div className="px-4 pt-3 flex flex-wrap gap-1.5">
+                          {RECEIPT_TEMPLATES.map(t => (
+                            <button key={t.id} type="button" onClick={() => setReceiptTemplateId(t.id)}
+                              className={`flex-1 min-w-[110px] flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${receiptTemplateId===t.id ? 'bg-[#F5C742]/15 border-[#F5C742]/50 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                              <span>{t.label}</span>
+                              {t.sublabel && <span className={`text-[10px] font-medium ${receiptTemplateId===t.id ? 'text-[#b8920e]' : 'text-gray-400'}`}>{t.sublabel}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Preview body */}
                       <div className="p-4 bg-[#F7F7FA] overflow-y-auto flex flex-col gap-4" style={{ maxHeight: 900 }}>
-                        {cfg.paper === 'A4'
+                        {useComponentTemplate
+                          ? (() => {
+                              const Preview = activeTemplate.Preview;
+                              // 80mm receipt (~302px) scaled to fit the narrow panel.
+                              return (
+                                <div style={{ transform: 'scale(0.86)', transformOrigin: 'top center' }}>
+                                  <Preview data={componentTemplateData} />
+                                </div>
+                              );
+                            })()
+                          : cfg.paper === 'A4'
                           ? <A4LivePreview
                               category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
                               companyName={tplOutletName} trn={tplOutletTrn}

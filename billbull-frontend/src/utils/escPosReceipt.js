@@ -939,3 +939,44 @@ export const buildEscPosFromPlainText = (text, paperSize = '80mm') => {
 };
 
 export const buildEscPosFromPlainTextBase64 = (text, paperSize = '80mm') => uint8ArrayToBase64(buildEscPosFromPlainText(text, paperSize));
+
+// ── Whole-receipt canvas → ESC/POS document ─────────────────────────────────
+// Wraps an ALREADY-RENDERED full-receipt canvas (e.g. bilingualReceiptCanvas.js's
+// renderBilingualReceiptCanvas, which lays out the entire bilingual EN/AR receipt
+// at printer-native resolution via the browser's own text shaping/RTL) into a
+// complete ESC/POS document: the same init/heating/codepage preamble every other
+// receipt uses, ONE full-height GS v 0 raster block (proven clean at this size on
+// the POS-80C — see ditherImageToRasterCommand's note on why splitting a raster
+// across multiple GS v 0 headers is NOT done), then the same feed+cut sequence.
+// A hard 1-bit threshold (not dithering) — this is text/UI, not a photo — mirrors
+// canvasToMonoRows in bilingualReceiptCanvas.js.
+export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', threshold = 160 } = {}) => {
+  const mm = String(paperSize || '').includes('58') ? 58 : 80;
+  const w = canvas.width, h = canvas.height;
+  const { data } = canvas.getContext('2d').getImageData(0, 0, w, h);
+  const bits = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4;
+    const a = data[o + 3] / 255;
+    const lum = (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]) * a + 255 * (1 - a);
+    bits[i] = lum < threshold ? 1 : 0;
+  }
+  const raster = packBitmapToRasterCommand(bits, w, h);
+
+  const writer = new ByteWriter();
+  writer.push(CMD.INIT);
+  writer.push(CMD.SET_HEATING());
+  writer.push(CMD.CODEPAGE_WPC1252);
+  writer.push(CMD.SELECT_FONT_A);
+  writer.push(CMD.ALIGN_CENTER);
+  writer.push(raster);
+  writer.push([0x0a]);
+  writer.push(CMD.ALIGN_LEFT);
+  // Same head→cutter clearance model as buildEscPosReceipt's cut.
+  writer.push(CMD.FEED(2));
+  writer.push(CMD.CUT_PARTIAL_FEED(mm === 58 ? 100 : 120));
+  return writer.toUint8Array();
+};
+
+export const buildEscPosDocumentFromCanvasBase64 = (canvas, opts) =>
+  uint8ArrayToBase64(buildEscPosDocumentFromCanvas(canvas, opts));

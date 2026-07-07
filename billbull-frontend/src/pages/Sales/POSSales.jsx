@@ -913,9 +913,21 @@ export default function POSSales() {
 
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
 
+  // Single source of truth for "who is this sale's customer". In Credit mode the
+  // cashier picks in the dedicated credit search box (checkoutCreditCustomer),
+  // which lives in its own state; if that pick never mirrored back onto
+  // selectedCustomer, the preview, printed receipt AND the posted invoice all fell
+  // back to Walk-in even though a real customer was chosen. Resolve the effective
+  // customer here so every consumer (preview, print, backend payload) agrees:
+  // prefer the Credit-box selection when in Credit mode, else the main selection.
+  const effectiveCustomerId = useMemo(
+    () => (checkoutPayMode === 'credit' && checkoutCreditCustomer) ? checkoutCreditCustomer : selectedCustomer,
+    [checkoutPayMode, checkoutCreditCustomer, selectedCustomer]
+  );
+
   const selectedCustomerData = useMemo(
-    () => customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER,
-    [customerOptions, selectedCustomer]
+    () => customerOptions.find(c => c.id === effectiveCustomerId) || WALK_IN_CUSTOMER,
+    [customerOptions, effectiveCustomerId]
   );
 
   const checkoutThermalHtml = useMemo(() => {
@@ -926,7 +938,10 @@ export default function POSSales() {
       const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
       const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
-      const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
+      // Use the same authoritative resolution the printed receipt + backend payload
+      // use (selectedCustomerData) so the preview never disagrees with the actual
+      // print — in Credit mode this honours the credit-box selection.
+      const customer = selectedCustomerData;
       const previewShipping = Number(shippingCharge) || 0;
 
       const mockInvoice = {
@@ -984,7 +999,7 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
+  }, [checkoutSettling, currentInvoice, selectedCustomerData, invoiceCounter, activeLayawayDeposit, shippingCharge,
     checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
@@ -1022,9 +1037,16 @@ export default function POSSales() {
       return;
     }
     let cancelled = false;
+    // Seed 0 (not null) so the Credit Account section renders in the preview the
+    // instant the toggle is on and a real customer is picked — the builder gate is
+    // `creditPreviousBalance != null`, so a null here would hide the whole section.
+    // A customer with no prior ledger record (lookup found:false) legitimately has
+    // a 0 previous balance; the print path uses the same 0-fallback, so the preview
+    // and the printed receipt now agree instead of the preview silently dropping it.
+    setCheckoutPreviewCreditBalance(0);
     posCreditBalance(code)
-      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : null); })
-      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
+      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : 0); })
+      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(0); });
     return () => { cancelled = true; };
   }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
 
@@ -8007,7 +8029,7 @@ export default function POSSales() {
                         {checkoutCreditCustomerSearch && (
                           <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-md max-h-36 overflow-y-auto">
                             {checkoutCreditCustomerOptions.map(c => (
-                              <button key={c.id} type="button" onClick={() => { setCheckoutCreditCustomer(c.id); setCheckoutCreditCustomerSearch(''); }}
+                              <button key={c.id} type="button" onClick={() => { setCheckoutCreditCustomer(c.id); setSelectedCustomer(c.id); setCheckoutCreditCustomerSearch(''); }}
                                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5C742]/10 text-left border-b border-gray-50 last:border-0 transition-colors">
                                 <div className="w-7 h-7 rounded-full bg-[#F5C742] flex items-center justify-center text-xs font-bold text-[#1E293B]">{c.name.charAt(0)}</div>
                                 <div><p className="text-sm font-medium text-[#1E293B]">{c.name}</p><p className="text-[10px] text-gray-400">{c.membershipId}</p></div>
