@@ -209,6 +209,25 @@ export const closePosDay = async (branchId, date) => {
   return res.data;
 };
 
+/**
+ * ERP rule: X-Report print/PDF/Excel export is only allowed once the session is
+ * closed (on-screen preview via getPosXReport stays available while open). Throws
+ * (409) if the session isn't closed yet — callers should catch and surface the message.
+ */
+export const checkPosXReportPrintable = async (sessionId) => {
+  await api.post(`${BASE}/sessions/${sessionId}/x-report/print-check`);
+};
+
+/**
+ * ERP rule: Z-Report print/PDF/Excel export is only allowed once the business day
+ * has been closed. Throws (409) if the day isn't closed yet.
+ */
+export const checkPosZReportPrintable = async (branchId, date) => {
+  await api.get(`${BASE}/sessions/z-report/print-check`, {
+    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+  });
+};
+
 
 // ── Unified search / scan resolver ─────────────────────────────────────────
 

@@ -595,6 +595,29 @@ public class PosSessionService {
         return result;
     }
 
+    /** Hard gate for the X-Report "print"/"export" actions — as opposed to the on-screen
+     *  preview via {@link #getXReport}, which stays available while the session is open
+     *  so the cashier can review before closing. ERP rule: the shift report can only be
+     *  committed to paper/PDF/Excel once the session is closed. */
+    @Transactional(readOnly = true)
+    public void assertXReportPrintable(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.CLOSED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "X-Report can only be printed or exported after the session is closed.");
+        }
+    }
+
+    /** Hard gate for the Z-Report "print"/"export" actions. ERP rule: the day-end report
+     *  can only be committed to paper/PDF/Excel once the business day has been closed. */
+    @Transactional(readOnly = true)
+    public void assertZReportPrintable(Long branchId, LocalDate date) {
+        if (!dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Z-Report can only be printed or exported after the business day is closed.");
+        }
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> getZReport(Long branchId, LocalDate date) {
         // 1. Check if day is already closed
