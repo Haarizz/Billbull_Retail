@@ -225,6 +225,7 @@ export const TEMPLATE2_CSS = `
   .bb-receipt .item-name { font-weight: 600; }
   .bb-receipt .item-name-ar { font-weight: 600; font-size: 10px; margin-top: 0.3mm; }
   .bb-receipt .item-meta { font-size: 8.8px; color: var(--gray); }
+  .bb-receipt .item-discount-line { font-size: 8.8px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bb-receipt .total-to-pay {
     border-top: 2px solid var(--ink);
     border-bottom: 2px solid var(--ink);
@@ -356,8 +357,8 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
 
       {/* ================= INVOICE TITLE ================= */}
       <div className="center">
-        <div className="big bold upper">Tax Invoice</div>
-        <div className="big bold ar">فاتورة ضريبية</div>
+        <div className="big bold upper">{business.titleEn || "Tax Invoice"}</div>
+        <div className="big bold ar">{business.titleAr || "فاتورة ضريبية"}</div>
       </div>
 
       <div className="dashed" />
@@ -451,6 +452,10 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               RATE
               <span className="ar">السعر</span>
             </th>
+            <th className="num">
+              AMT
+              <span className="ar">المبلغ</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -472,13 +477,14 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
                   </div>
                 )}
                 {item.discountAmount > 0 && (
-                  <div className="item-meta">
+                  <div className="item-discount-line">
                     Discount: - {currency} {fmt(item.discountAmount)}
                   </div>
                 )}
               </td>
               <td className="num">{item.qty}</td>
               <td className="num">{fmt(item.rate)}</td>
+              <td className="num">{fmt(Number(item.qty || 0) * Number(item.rate || 0))}</td>
             </tr>
           ))}
         </tbody>

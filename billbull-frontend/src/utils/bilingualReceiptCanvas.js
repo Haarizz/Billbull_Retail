@@ -74,7 +74,7 @@ export const code128Svg = (text, { height = 46 } = {}) => {
 // ── Renderer ────────────────────────────────────────────────────────────────
 export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   companyName, trn, header, footer,
-  showTrn = true, isReprint = false, isReturn = false, documentTitle = null,
+  showTrn = true, isReprint = false, isReturn = false, documentTitle = null, documentTitleAr = null,
   showCompanyDetails = true,
   showLogo = true, logoDataUrl = null,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
@@ -238,7 +238,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // ── Header: title, company, address, TRN ──────────────────────────────────
   const title = documentTitle
-    ? { en: documentTitle, ar: isReturn ? L.CREDIT_NOTE.ar : L.TAX_INVOICE.ar }
+    ? { en: documentTitle, ar: documentTitleAr || (isReturn ? L.CREDIT_NOTE.ar : L.TAX_INVOICE.ar) }
     : (isReturn ? L.CREDIT_NOTE : L.TAX_INVOICE);
   centerEn(title.en, 24, true);
   centerAr(title.ar, 22, true);
@@ -302,20 +302,22 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // ── Items table ───────────────────────────────────────────────────────────
   sectionTitle(L.ITEM_DETAILS);
-  // Column x-positions (right edges for numeric cols). AMT column removed —
-  // RATE takes the rightmost slot, QTY sits to its left, freeing name width.
-  const colRateX = W - M;
-  const colQtyX = W - M - Math.round(120 * S);
+  // Column x-positions (right edges for numeric cols).
+  const colAmtX = W - M;
+  const colRateX = W - M - Math.round(120 * S);
+  const colQtyX = colRateX - Math.round(90 * S);
   const nameMax = colQtyX - M - Math.round(40 * S);
   // Bilingual table head.
   drawEn(L.ITEM.en, M, 16, { bold: true });
   drawEn(L.QTY.en, colQtyX, 16, { bold: true, align: 'right' });
   drawEn(L.RATE.en, colRateX, 16, { bold: true, align: 'right' });
+  drawEn(L.AMT.en, colAmtX, 16, { bold: true, align: 'right' });
   y += lineH(16);
   if (showArabic) {
     drawAr(L.ITEM.ar, M, 16, { align: 'left' });
     drawAr(L.QTY.ar, colQtyX, 16);
     drawAr(L.RATE.ar, colRateX, 16);
+    drawAr(L.AMT.ar, colAmtX, 16);
     y += lineH(16);
   }
   solid(2);
@@ -349,7 +351,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     const numY = y;
     y = rowY;
     drawEn(String(qty), colQtyX, 18, { align: 'right' });
-    drawEn(fmtBare(unit), colRateX, 18, { bold: true, align: 'right' });
+    drawEn(fmtBare(unit), colRateX, 18, { align: 'right' });
+    drawEn(fmtBare(qty * unit), colAmtX, 18, { bold: true, align: 'right' });
     y = numY + Math.round(6 * S);
   }
 
@@ -359,7 +362,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   for (let x = M; x < W - M; x += dotW * 3) ctx.fillRect(x, y, dotW, dotW);
   y += dotW + Math.round(6 * S);
   drawEn(`${L.TOTAL_ITEMS.en}: ${items.length}`, M, 16);
-  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colRateX, 16, { align: 'right' });
+  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colAmtX, 16, { align: 'right' });
   y += lineH(16);
 
   dashed();

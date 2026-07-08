@@ -1,6 +1,6 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
-import { buildFixedWidthLine, resolveLineDiscount } from '../../../utils/escPosReceipt';
+import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -837,7 +837,7 @@ ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</
 </body></html>`;
 };
 
-export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
+export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn, omitHeader = false }) => {
   // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
   const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
@@ -864,10 +864,16 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
     : '';
   const items = layaway.items || [];
 
-  pushCentered(companyName || 'BillBull');
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  if (header) pushCentered(header);
-  lines.push(hr);
+  // omitHeader: the branded ESC/POS header (logo + company name/address/TRN,
+  // Arabic-safe via canvas raster) already prints this block — see
+  // buildEscPosDocument / emitEscPosBrandedHeader. Printing it again here in
+  // plain ASCII would duplicate it and mangle any non-Latin-1 text into '?'.
+  if (!omitHeader) {
+    pushCentered(companyName || 'BillBull');
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    if (header) pushCentered(header);
+    lines.push(hr);
+  }
   pushCentered('NOT A TAX INVOICE');
   pushCentered('LAYAWAY RECEIPT');
   lines.push(hr);
@@ -880,7 +886,12 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
     const qty = it.quantity || 0;
     const price = it.price || it.unitPrice || 0;
     const total = it.lineTotal || it.netAmount || (qty * price);
-    lines.push(buildFixedWidthLine(`${it.itemName || ''} x${qty}`, `AED ${fmt(total)}`, width));
+    // Wrap long item names across lines instead of truncating with "…" (matches
+    // the standard invoice's item block — see buildEscPosReceipt).
+    const nameLines = wrapToWidth(`${it.itemName || ''} x${qty}`, width, '  ');
+    nameLines.slice(0, -1).forEach((ln) => lines.push(ln));
+    const lastLine = nameLines[nameLines.length - 1] || '';
+    lines.push(buildFixedWidthLine(lastLine, `AED ${fmt(total)}`, width));
   });
   lines.push(hr);
   lines.push(buildFixedWidthLine('Sale Total', `AED ${fmt(layaway.saleTotal)}`, width));
@@ -928,6 +939,10 @@ export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   const bankName = payment?.bankName || '';
   const ref = payment?.referenceNumber || '';
   const amount = payment?.amount || 0;
+  const appliedInvoice = payment?.appliedInvoice || payment?.linkedInvoice || '';
+  // Multiple invoices settled in one transaction (POS multi-invoice payment) —
+  // takes priority over the single appliedInvoice line below.
+  const settledInvoices = Array.isArray(payment?.settledInvoices) ? payment.settledInvoices : [];
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
@@ -943,9 +958,9 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle)}</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:6px">${esc(documentTitle)}</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
-  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  html += `<div class="c b" style="font-size:13px;margin-top:4px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
   if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
   if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
@@ -959,6 +974,15 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
   html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="num">${esc(mode)}</span></div>`;
   if (bankName) html += `<div class="row"><span class="lbl">Bank Account:</span><span class="val">${esc(bankName)}</span></div>`;
   if (ref) html += `<div class="row"><span class="lbl">Reference:</span><span class="val">${esc(ref)}</span></div>`;
+  if (settledInvoices.length > 0) {
+    html += D;
+    html += `<div class="c b" style="font-size:9px">INVOICES SETTLED</div>`;
+    settledInvoices.forEach(si => {
+      html += `<div class="row"><span class="lbl">${esc(si.invoiceNumber)}</span><span class="num">${esc(currency)} ${fmt(si.amount)}</span></div>`;
+    });
+  } else if (appliedInvoice) {
+    html += `<div class="row"><span class="lbl">Applied to Invoice:</span><span class="val">${esc(appliedInvoice)}</span></div>`;
+  }
   html += D;
   html += `<div class="row b" style="font-size:14px"><span class="lbl">AMOUNT RECEIVED</span><span class="num">${esc(currency)} ${fmt(amount)}</span></div>`;
   html += D;
@@ -1003,9 +1027,9 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">CUSTOMER STATEMENT</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:6px">CUSTOMER STATEMENT</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
-  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  html += `<div class="c b" style="font-size:13px;margin-top:4px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
   if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
   if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
@@ -1026,7 +1050,8 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
     const credit = parseFloat(e.credit || 0);
     const balance = parseFloat(e.runningBalance || 0);
     html += `<div class="row"><span class="lbl">${esc(e.transactionDate || '')}</span><span class="num">${esc(typeLabel(e.type))}</span></div>`;
-    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    const descLine = [e.description, (e.documentNo && !String(e.description || '').includes(e.documentNo)) ? e.documentNo : null]
+      .filter(Boolean).join(' — ');
     if (descLine) html += `<div class="desc">${esc(descLine)}</div>`;
     html += `<div class="row"><span class="lbl">${debit > 0 ? 'Dr ' + fmt(debit) : credit > 0 ? 'Cr ' + fmt(credit) : '—'}</span><span class="num">Bal ${fmt(balance)}</span></div>`;
     html += D;
@@ -1070,6 +1095,8 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
   const bankName = payment?.bankName || '';
   const ref = payment?.referenceNumber || '';
   const amount = payment?.amount || 0;
+  const appliedInvoice = payment?.appliedInvoice || payment?.linkedInvoice || '';
+  const settledInvoices = Array.isArray(payment?.settledInvoices) ? payment.settledInvoices : [];
 
   const lines = [];
   // Center each embedded line separately — multi-line values (e.g. a footer
@@ -1085,6 +1112,7 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
 
   if (!omitHeader) {
     pushCentered(documentTitle);
+    lines.push('');
     if (header) pushCentered(header);
     pushCentered(companyName || '');
     const addrLine = oneLineAddress(address);
@@ -1101,6 +1129,15 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
   lines.push(buildFixedWidthLine('Payment Mode:', mode, width));
   if (bankName) lines.push(buildFixedWidthLine('Bank Account:', bankName, width));
   if (ref) lines.push(buildFixedWidthLine('Reference:', ref, width));
+  if (settledInvoices.length > 0) {
+    lines.push(hr);
+    pushCentered('INVOICES SETTLED');
+    settledInvoices.forEach((si) => {
+      lines.push(buildFixedWidthLine(si.invoiceNumber, fmt(si.amount), width));
+    });
+  } else if (appliedInvoice) {
+    lines.push(buildFixedWidthLine('Applied to Invoice:', appliedInvoice, width));
+  }
   lines.push(hr);
   lines.push(buildFixedWidthLine('AMOUNT RECEIVED', fmt(amount), width));
   lines.push(hr);
@@ -1146,6 +1183,7 @@ export const buildStatementThermalText = (paperSize, statement, {
 
   if (!omitHeader) {
     pushCentered('CUSTOMER STATEMENT');
+    lines.push('');
     if (header) pushCentered(header);
     pushCentered(companyName || '');
     const addrLine = oneLineAddress(address);
@@ -1170,7 +1208,8 @@ export const buildStatementThermalText = (paperSize, statement, {
     const credit = parseFloat(e.credit || 0);
     const balance = parseFloat(e.runningBalance || 0);
     lines.push(buildFixedWidthLine(e.transactionDate || '', typeLabel(e.type), width));
-    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    const descLine = [e.description, (e.documentNo && !String(e.description || '').includes(e.documentNo)) ? e.documentNo : null]
+      .filter(Boolean).join(' — ');
     if (descLine) lines.push(descLine.slice(0, width));
     lines.push(buildFixedWidthLine(debit > 0 ? `Dr ${fmt(debit)}` : credit > 0 ? `Cr ${fmt(credit)}` : '—', `Bal ${fmt(balance)}`, width));
     lines.push(hr);
@@ -1304,8 +1343,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
       ? `<div style="text-align:center;margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`
       : `<div style="text-align:center;margin:4px 0 6px"><div style="width:52px;height:52px;border-radius:50%;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">Logo</div></div>`;
   }
-  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">TAX INVOICE</div>`;
-  if (header) html += `<div style="text-align:center;font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">${esc(header || (isReturn ? 'CREDIT NOTE' : 'TAX INVOICE'))}</div>`;
   html += `<div style="text-align:center;font-size:13px;font-weight:bold">${esc(companyName || 'Branch Name')}</div>`;
   if (showCompanyDetails) {
     html += `<div style="text-align:center;font-size:9px">Shop 12, Dubai Mall, Downtown Dubai, UAE</div>`;

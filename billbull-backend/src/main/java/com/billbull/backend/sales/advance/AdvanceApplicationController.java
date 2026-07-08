@@ -33,6 +33,12 @@ public class AdvanceApplicationController {
         return ResponseEntity.ok(service.findOpenAdvances(customerCode));
     }
 
+    @GetMapping("/customer/{customerCode}/has-history")
+    public ResponseEntity<Map<String, Boolean>> hasAdvanceHistory(@PathVariable String customerCode) {
+        modulePermissionService.requireCanView(MODULE);
+        return ResponseEntity.ok(Map.of("hasHistory", service.hasAdvanceHistory(customerCode)));
+    }
+
     @PostMapping("/apply")
     public ResponseEntity<AdvanceApplication> apply(@RequestBody Map<String, Object> body) {
         modulePermissionService.requireCanCreate(MODULE);
@@ -43,6 +49,15 @@ public class AdvanceApplicationController {
                 ? LocalDate.parse(body.get("appliedDate").toString())
                 : LocalDate.now();
         return ResponseEntity.ok(service.apply(advanceReceiptId, invoiceNumber, amount, appliedDate));
+    }
+
+    @PostMapping("/apply-against-outstanding")
+    public ResponseEntity<Map<String, BigDecimal>> applyAgainstOutstanding(@RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanCreate(MODULE);
+        String customerCode  = body.get("customerCode").toString();
+        Long advanceReceiptId = Long.valueOf(body.get("advanceReceiptId").toString());
+        BigDecimal applied = service.applyAgainstOutstandingInvoices(customerCode, advanceReceiptId);
+        return ResponseEntity.ok(Map.of("applied", applied));
     }
 
     @PostMapping("/refund")

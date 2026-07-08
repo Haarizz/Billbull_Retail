@@ -262,7 +262,9 @@ public class StatementService {
             } else if ("INVOICE".equals(type)) {
                 entry.setSortPriority(PRI_INVOICE);
                 SalesInvoice inv = invoiceMap.get(entry.getDocumentNo());
+                String invNo = entry.getDocumentNo();
                 entry.setDescription("Sales Invoice"
+                        + (invNo != null && !invNo.isBlank() ? " " + invNo : "")
                         + (inv != null && inv.getCustomerName() != null ? " — " + inv.getCustomerName() : ""));
                 if (inv != null) {
                     String ref = firstNonBlank(inv.getLinkedSalesOrder(), inv.getLinkedDeliveryNote(),

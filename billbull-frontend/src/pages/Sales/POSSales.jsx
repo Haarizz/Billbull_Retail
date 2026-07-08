@@ -160,7 +160,7 @@ import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
-import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
+import { buildEscPosReceiptBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
 import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
 import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
@@ -798,12 +798,18 @@ export default function POSSales() {
     notes: '',
   }), [currentTerminal?.terminalId, currentTerminal?.terminalName]);
   const [tplReceiptHeader, setTplReceiptHeader] = useState('Thank you for shopping with us!');
+  // Template 2's Arabic title override for the POS Receipt tab (no-tax checkout
+  // path). Template 1's header field above already covers English for both.
+  const [tplReceiptHeaderAr, setTplReceiptHeaderAr] = useState('فاتورة مبيعات');
   const [tplReceiptFooter, setTplReceiptFooter] = useState('Returns accepted within 7 days with receipt.');
   const [tplReceiptPaper, setTplReceiptPaper] = useState('80mm');
   const [tplReceiptShowLogo, setTplReceiptShowLogo] = useState(true);
   const [tplReceiptShowTrn, setTplReceiptShowTrn] = useState(true);
   const [tplReceiptShowBarcode, setTplReceiptShowBarcode] = useState(true);
   const [tplInvoiceHeader, setTplInvoiceHeader] = useState('TAX INVOICE');
+  // Template 2's Arabic title override for the Tax Invoice tab — default matches
+  // Template 2's current hardcoded Arabic title so hasTax=true output is unchanged.
+  const [tplInvoiceHeaderAr, setTplInvoiceHeaderAr] = useState('فاتورة ضريبية');
   const [tplInvoiceFooter, setTplInvoiceFooter] = useState('All prices inclusive of VAT at 5%.');
   const [tplInvoicePaper, setTplInvoicePaper] = useState('A4');
   const [tplReturnHeader, setTplReturnHeader] = useState('SALES RETURN / CREDIT NOTE');
@@ -909,6 +915,41 @@ export default function POSSales() {
   const [t2ShowFooterText, setT2ShowFooterText] = useState(true);
   const [t2ShowBarcode, setT2ShowBarcode] = useState(true);
 
+  // ── Template 2 toggles, split per sub-tab ────────────────────────────────
+  // The single t2Show* set above still drives the Print Templates designer
+  // (both sub-tabs' Live Preview/Test Print, wired through POSConsole's tplCfg)
+  // and stays untouched so that plumbing doesn't need to change. At real
+  // checkout, Template 2 needs an INDEPENDENT toggle set per sub-tab (POS
+  // Receipt vs Tax Invoice) so a no-tax sale doesn't inherit the tax-invoice
+  // tab's Show/Hide choices. Same fields, same defaults as t2Show* above.
+  const [t2ReceiptShowLogo, setT2ReceiptShowLogo] = useState(true);
+  const [t2ReceiptShowCompanyDetails, setT2ReceiptShowCompanyDetails] = useState(true);
+  const [t2ReceiptShowTrn, setT2ReceiptShowTrn] = useState(true);
+  const [t2ReceiptShowArabic, setT2ReceiptShowArabic] = useState(true);
+  const [t2ReceiptShowCustomerDetails, setT2ReceiptShowCustomerDetails] = useState(true);
+  const [t2ReceiptShowAccountBalance, setT2ReceiptShowAccountBalance] = useState(true);
+  const [t2ReceiptShowDelivery, setT2ReceiptShowDelivery] = useState(true);
+  const [t2ReceiptShowVatSummary, setT2ReceiptShowVatSummary] = useState(true);
+  const [t2ReceiptShowPaymentDetails, setT2ReceiptShowPaymentDetails] = useState(true);
+  const [t2ReceiptShowLoyalty, setT2ReceiptShowLoyalty] = useState(true);
+  const [t2ReceiptShowQRCode, setT2ReceiptShowQRCode] = useState(false);
+  const [t2ReceiptShowFooterText, setT2ReceiptShowFooterText] = useState(true);
+  const [t2ReceiptShowBarcode, setT2ReceiptShowBarcode] = useState(true);
+
+  const [t2InvoiceShowLogo, setT2InvoiceShowLogo] = useState(true);
+  const [t2InvoiceShowCompanyDetails, setT2InvoiceShowCompanyDetails] = useState(true);
+  const [t2InvoiceShowTrn, setT2InvoiceShowTrn] = useState(true);
+  const [t2InvoiceShowArabic, setT2InvoiceShowArabic] = useState(true);
+  const [t2InvoiceShowCustomerDetails, setT2InvoiceShowCustomerDetails] = useState(true);
+  const [t2InvoiceShowAccountBalance, setT2InvoiceShowAccountBalance] = useState(true);
+  const [t2InvoiceShowDelivery, setT2InvoiceShowDelivery] = useState(true);
+  const [t2InvoiceShowVatSummary, setT2InvoiceShowVatSummary] = useState(true);
+  const [t2InvoiceShowPaymentDetails, setT2InvoiceShowPaymentDetails] = useState(true);
+  const [t2InvoiceShowLoyalty, setT2InvoiceShowLoyalty] = useState(true);
+  const [t2InvoiceShowQRCode, setT2InvoiceShowQRCode] = useState(false);
+  const [t2InvoiceShowFooterText, setT2InvoiceShowFooterText] = useState(true);
+  const [t2InvoiceShowBarcode, setT2InvoiceShowBarcode] = useState(true);
+
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
     const next = new Set(prev);
@@ -978,8 +1019,14 @@ export default function POSSales() {
       // Real next number from the backend sequence; blank until fetched so the
       // preview never shows a fabricated SI-POS-000001.
       const invoiceNo = previewInvoiceNo || '';
-      const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
-      const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
+      // Pre-payment preview must resolve the same Tax Invoice vs POS Receipt
+      // template the real checkout print will use (see buildThermalReceiptArtifacts'
+      // hasTax routing) — otherwise a no-tax cart would preview "TAX INVOICE" and
+      // then print "SALES INVOICE", confusing the cashier before they even tender.
+      const previewHasTax = Number(currentInvoice.tax) > 0;
+      const previewShowQRCodeToggle = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+      const stampAvailable = previewShowQRCodeToggle && !!tplStampDataUrl;
+      const showQrInPreview = previewShowQRCodeToggle && !stampAvailable;
       // Use the same authoritative resolution the printed receipt + backend payload
       // use (selectedCustomerData) so the preview never disagrees with the actual
       // print — in Credit mode this honours the credit-box selection.
@@ -1029,6 +1076,38 @@ export default function POSSales() {
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
 
+      const previewHeader = previewHasTax ? tplInvoiceHeader : tplReceiptHeader;
+      const previewHeaderAr = previewHasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
+      const previewFooter = previewHasTax ? tplInvoiceFooter : tplReceiptFooter;
+      // Forced off on the no-tax path — see activeShowTrn's note in
+      // buildThermalReceiptArtifacts for why this isn't just defaulted off.
+      const previewShowTrn = previewHasTax ? tplInvoiceShowTrn : false;
+      const previewShowVatSummary = previewHasTax ? tplInvoiceColVatAmt : false;
+      const previewShowFooterText = previewHasTax ? tplInvoiceShowTerms : tplReceiptShowTerms;
+      const previewShowLogo = previewHasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
+      const previewShowCompanyDetails = previewHasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
+      const previewShowCustomerDetails = previewHasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
+      const previewShowQRCode = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+      const previewShowPaymentDetails = previewHasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
+      const previewShowLoyaltyPoints = previewHasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
+      const previewT2 = previewHasTax
+        ? {
+            showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
+            showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
+            showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
+            showVatSummary: t2InvoiceShowVatSummary, showPaymentDetails: t2InvoiceShowPaymentDetails,
+            showLoyalty: t2InvoiceShowLoyalty, showQRCode: t2InvoiceShowQRCode,
+            showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
+          }
+        : {
+            showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
+            showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
+            showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
+            showVatSummary: false, showPaymentDetails: t2ReceiptShowPaymentDetails,
+            showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
+            showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
+          };
+
       // Mixed (cash + card) split for the receipt preview — only when the mode is
       // Mixed and both portions were entered, so cash/card/credit sales don't show
       // an empty split. Passed to BOTH template renderers below.
@@ -1041,19 +1120,12 @@ export default function POSSales() {
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
       if (receiptTemplateId === 'billbull-ar') {
         const isWalkInPreview = !customer || customer.id === 'walk-in';
-        // Template 2 has its OWN Show/Hide toggles (independent of Template 1's
-        // invoice toggles). The preview honours them so what the merchant sees
-        // here matches what the till prints at checkout.
-        const t2Toggles = {
-          showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-          showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-          showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-          showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-          showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-          showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
-        };
-        const t2StampAvailable = t2ShowQRCode && !!tplStampDataUrl;
-        const t2ShowQr = t2ShowQRCode && !t2StampAvailable;
+        // Template 2's Show/Hide toggles are split per sub-tab (previewT2 already
+        // resolved above by previewHasTax) so the preview honours whichever tab's
+        // settings the till will actually print.
+        const t2Toggles = previewT2;
+        const t2StampAvailable = previewT2.showQRCode && !!tplStampDataUrl;
+        const t2ShowQr = previewT2.showQRCode && !t2StampAvailable;
         const txn = mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
@@ -1066,7 +1138,7 @@ export default function POSSales() {
           // non-walk-in customer. Invoice Credit = grand total, Amount Paid = 0
           // (nothing collected yet in the preview), New Balance = prev + this.
           // Additionally gated by Template 2's own Account Balance toggle.
-          showCreditBalance: t2ShowAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
+          showCreditBalance: previewT2.showAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
           creditPreviousBalance: checkoutPreviewCreditBalance,
           creditInvoiceCredit: previewGrand,
           creditAmountPaid: 0,
@@ -1082,7 +1154,9 @@ export default function POSSales() {
           // image shown separately when uploaded (parity with Template 1 preview).
           qrDataUrl: t2ShowQr ? checkoutPreviewQrDataUrl : null,
           stampDataUrl: t2StampAvailable ? tplStampDataUrl : null,
-          footerText: tplInvoiceFooter,
+          footerText: previewFooter,
+          titleEn: previewHeader,
+          titleAr: previewHeaderAr,
         };
         const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
         checkoutPreviewFreezeRef.current = html;
@@ -1093,14 +1167,14 @@ export default function POSSales() {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
         balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
-        companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
-        showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
+        companyName: tplOutletName, trn: tplOutletTrn, documentTitle: previewHeader, footer: previewFooter,
+        showTrn: previewShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
-        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
+        showLogo: previewShowLogo, showCompanyDetails: previewShowCompanyDetails,
         outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner,
-        showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: showQrInPreview,
-        showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes,
-        showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
+        showVatSummary: previewShowVatSummary, showPaymentDetails: previewShowPaymentDetails, showQRCode: showQrInPreview,
+        showCustomerDetails: previewShowCustomerDetails, showLoyaltyPoints: previewShowLoyaltyPoints,
+        showCreditBalance: tplInvoiceShowBankDetails, showFooterText: previewShowFooterText,
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
@@ -1117,13 +1191,20 @@ export default function POSSales() {
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
     checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
-    tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
+    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
     tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession,
-    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
-    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode]);
+    tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
+    tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
+    tplReceiptColDiscount, tplReceiptShowNotes,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
+    t2ReceiptShowAccountBalance, t2ReceiptShowDelivery, t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails,
+    t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
+    t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
+    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
@@ -1387,6 +1468,7 @@ export default function POSSales() {
               if (tpl.logoDataUrl != null) setTplLogoDataUrl(tpl.logoDataUrl);
               if (tpl.stampDataUrl != null) setTplStampDataUrl(tpl.stampDataUrl);
               if (tpl.receiptHeader != null) setTplReceiptHeader(tpl.receiptHeader);
+              if (tpl.receiptHeaderAr != null) setTplReceiptHeaderAr(tpl.receiptHeaderAr);
               if (tpl.receiptFooter != null) setTplReceiptFooter(tpl.receiptFooter);
               if (tpl.receiptPaper != null) setTplReceiptPaper(tpl.receiptPaper);
               if (tpl.receiptShowLogo != null) setTplReceiptShowLogo(tpl.receiptShowLogo);
@@ -1408,6 +1490,7 @@ export default function POSSales() {
               if (tpl.receiptShowQRCode != null) setTplReceiptShowQRCode(tpl.receiptShowQRCode);
               if (tpl.receiptShowSignature != null) setTplReceiptShowSignature(tpl.receiptShowSignature);
               if (tpl.invoiceHeader != null) setTplInvoiceHeader(tpl.invoiceHeader);
+              if (tpl.invoiceHeaderAr != null) setTplInvoiceHeaderAr(tpl.invoiceHeaderAr);
               if (tpl.invoiceFooter != null) setTplInvoiceFooter(tpl.invoiceFooter);
               if (tpl.invoicePaper != null) setTplInvoicePaper(tpl.invoicePaper);
               if (tpl.invoiceShowLogo != null) setTplInvoiceShowLogo(tpl.invoiceShowLogo);
@@ -1476,6 +1559,33 @@ export default function POSSales() {
               if (tpl.t2ShowQRCode != null) setT2ShowQRCode(tpl.t2ShowQRCode);
               if (tpl.t2ShowFooterText != null) setT2ShowFooterText(tpl.t2ShowFooterText);
               if (tpl.t2ShowBarcode != null) setT2ShowBarcode(tpl.t2ShowBarcode);
+              // Template 2 toggles, split per sub-tab (POS Receipt vs Tax Invoice)
+              if (tpl.t2ReceiptShowLogo != null) setT2ReceiptShowLogo(tpl.t2ReceiptShowLogo);
+              if (tpl.t2ReceiptShowCompanyDetails != null) setT2ReceiptShowCompanyDetails(tpl.t2ReceiptShowCompanyDetails);
+              if (tpl.t2ReceiptShowTrn != null) setT2ReceiptShowTrn(tpl.t2ReceiptShowTrn);
+              if (tpl.t2ReceiptShowArabic != null) setT2ReceiptShowArabic(tpl.t2ReceiptShowArabic);
+              if (tpl.t2ReceiptShowCustomerDetails != null) setT2ReceiptShowCustomerDetails(tpl.t2ReceiptShowCustomerDetails);
+              if (tpl.t2ReceiptShowAccountBalance != null) setT2ReceiptShowAccountBalance(tpl.t2ReceiptShowAccountBalance);
+              if (tpl.t2ReceiptShowDelivery != null) setT2ReceiptShowDelivery(tpl.t2ReceiptShowDelivery);
+              if (tpl.t2ReceiptShowVatSummary != null) setT2ReceiptShowVatSummary(tpl.t2ReceiptShowVatSummary);
+              if (tpl.t2ReceiptShowPaymentDetails != null) setT2ReceiptShowPaymentDetails(tpl.t2ReceiptShowPaymentDetails);
+              if (tpl.t2ReceiptShowLoyalty != null) setT2ReceiptShowLoyalty(tpl.t2ReceiptShowLoyalty);
+              if (tpl.t2ReceiptShowQRCode != null) setT2ReceiptShowQRCode(tpl.t2ReceiptShowQRCode);
+              if (tpl.t2ReceiptShowFooterText != null) setT2ReceiptShowFooterText(tpl.t2ReceiptShowFooterText);
+              if (tpl.t2ReceiptShowBarcode != null) setT2ReceiptShowBarcode(tpl.t2ReceiptShowBarcode);
+              if (tpl.t2InvoiceShowLogo != null) setT2InvoiceShowLogo(tpl.t2InvoiceShowLogo);
+              if (tpl.t2InvoiceShowCompanyDetails != null) setT2InvoiceShowCompanyDetails(tpl.t2InvoiceShowCompanyDetails);
+              if (tpl.t2InvoiceShowTrn != null) setT2InvoiceShowTrn(tpl.t2InvoiceShowTrn);
+              if (tpl.t2InvoiceShowArabic != null) setT2InvoiceShowArabic(tpl.t2InvoiceShowArabic);
+              if (tpl.t2InvoiceShowCustomerDetails != null) setT2InvoiceShowCustomerDetails(tpl.t2InvoiceShowCustomerDetails);
+              if (tpl.t2InvoiceShowAccountBalance != null) setT2InvoiceShowAccountBalance(tpl.t2InvoiceShowAccountBalance);
+              if (tpl.t2InvoiceShowDelivery != null) setT2InvoiceShowDelivery(tpl.t2InvoiceShowDelivery);
+              if (tpl.t2InvoiceShowVatSummary != null) setT2InvoiceShowVatSummary(tpl.t2InvoiceShowVatSummary);
+              if (tpl.t2InvoiceShowPaymentDetails != null) setT2InvoiceShowPaymentDetails(tpl.t2InvoiceShowPaymentDetails);
+              if (tpl.t2InvoiceShowLoyalty != null) setT2InvoiceShowLoyalty(tpl.t2InvoiceShowLoyalty);
+              if (tpl.t2InvoiceShowQRCode != null) setT2InvoiceShowQRCode(tpl.t2InvoiceShowQRCode);
+              if (tpl.t2InvoiceShowFooterText != null) setT2InvoiceShowFooterText(tpl.t2InvoiceShowFooterText);
+              if (tpl.t2InvoiceShowBarcode != null) setT2InvoiceShowBarcode(tpl.t2InvoiceShowBarcode);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -2837,9 +2947,24 @@ export default function POSSales() {
               notifyPrintFallback('No receipt printer is configured for this terminal — the layaway was saved, but the slip did not print. Set one up in Settings → Devices.');
             } else {
               try {
-                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
-                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText, tplReceiptPaper);
-                await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
+                // Same branded-header bridge as the X/Z reports (see
+                // buildReportEscPosWithBrandedHeader): the body is generated with
+                // omitHeader so the standard logo/company/TRN block (Arabic-safe
+                // canvas raster) isn't duplicated by this plain-text builder.
+                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, { ...layawayHtmlOpts, omitHeader: true });
+                const escPosBase64 = await buildEscPosDocumentBase64(layawayText, {
+                  paperSize: tplReceiptPaper,
+                  documentTitle: 'LAYAWAY RECEIPT',
+                  companyName: tplOutletName,
+                  header: tplReceiptHeader,
+                  trn: tplOutletTrn,
+                  outletAddress: tplOutletAddress,
+                  outletPhone: tplOutletPhone,
+                  logoDataUrl: tplLogoDataUrl,
+                  showTrn: tplReceiptShowTrn,
+                });
+                const fallbackText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
+                await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
                 console.warn('ESC/POS print failed for layaway receipt', err);
                 notifyPrintFallback(`The layaway was saved, but the slip didn't print: ${err?.message || 'printer error'}.`);
@@ -3100,7 +3225,48 @@ export default function POSSales() {
     const full = (customerNameOverride && customerNameOverride.trim())
       ? { ...fullArg, customerName: customerNameOverride.trim() }
       : fullArg;
-    const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
+    // Tax-registered sales keep today's Tax Invoice template untouched; a
+    // no-tax sale (e.g. a zero-rated/exempt walk-in) prints the POS Receipt
+    // tab's own header/footer/TRN/VAT-summary config instead. Computed here
+    // (not hoisted to the caller) because `full` — and therefore its tax
+    // total — is only known once the customerName override above is applied.
+    const hasTax = Number(full.tax) > 0;
+    const activeHeader = hasTax ? tplInvoiceHeader : tplReceiptHeader;
+    const activeHeaderAr = hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
+    const activeFooter = hasTax ? tplInvoiceFooter : tplReceiptFooter;
+    // A no-tax sale never shows TRN/VAT summary, regardless of the (disabled)
+    // POS Receipt tab toggle state — these aren't just defaulted off, they're
+    // structurally irrelevant once hasTax is false, so force them here rather
+    // than trusting whatever tplReceiptShowTrn/tplReceiptColVatAmt happen to hold.
+    const activeShowTrn = hasTax ? tplInvoiceShowTrn : false;
+    const activeShowVatSummary = hasTax ? tplInvoiceColVatAmt : false;
+    const activeShowFooterText = hasTax ? tplInvoiceShowTerms : tplReceiptShowTerms;
+    const activeShowLogo = hasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
+    const activeShowCompanyDetails = hasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
+    const activeShowCustomerDetails = hasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
+    const activeShowQRCode = hasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+    const activeShowPaymentDetails = hasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
+    const activeShowLoyaltyPoints = hasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
+    const activeT2 = hasTax
+      ? {
+          showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
+          showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
+          showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
+          showVatSummary: t2InvoiceShowVatSummary, showPaymentDetails: t2InvoiceShowPaymentDetails,
+          showLoyalty: t2InvoiceShowLoyalty, showQRCode: t2InvoiceShowQRCode,
+          showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
+        }
+      : {
+          // showTrn/showVatSummary forced off — see activeShowTrn note above,
+          // same rule applies to Template 2's no-tax path.
+          showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
+          showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
+          showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
+          showVatSummary: false, showPaymentDetails: t2ReceiptShowPaymentDetails,
+          showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
+          showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
+        };
+    const qrContent = buildQrContent(buildPosPrintData(full, activeFooter), tplOutletName);
 
     // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
     // needs the raw qrContent *string* — the printer renders its own QR natively, and
@@ -3108,35 +3274,35 @@ export default function POSSales() {
     // concurrently instead of one-after-the-other roughly halves the wait before the
     // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
     // QR image is needed when the ACTIVE template's QR toggle is on — Template 2
-    // has its own (t2ShowQRCode); Template 1 uses the invoice toggle.
-    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? t2ShowQRCode : tplInvoiceShowQRCode;
+    // has its own (per sub-tab); Template 1 uses the invoice/receipt toggle.
+    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? activeT2.showQRCode : activeShowQRCode;
     const qrDataUrlPromise = qrToggleOn
       ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : Promise.resolve(null);
     const escPosOpts = {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      header: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       isReprint,
       logoDataUrl: tplLogoDataUrl,
-      showLogo: tplInvoiceShowLogo,
-      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      showLogo: activeShowLogo,
+      showCompanyDetails: activeShowCompanyDetails,
       outletAddress: tplOutletAddress,
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: tplInvoiceColVatAmt,
-      showPaymentDetails: tplInvoiceColDiscount,
-      showQRCode: tplInvoiceShowQRCode,
-      qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      showVatSummary: activeShowVatSummary,
+      showPaymentDetails: activeShowPaymentDetails,
+      showQRCode: activeShowQRCode,
+      qrContent: activeShowQRCode ? qrContent : null,
       // Social/stamp image + placement — same values the HTML preview below gets,
       // so a merchant-uploaded social image prints (and suppresses the QR) on the
       // ESC/POS path too, honouring the configured before/after-footer placement.
-      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
       qrPlacement: tplInvoiceQrPlacement,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
-      showFooterText: tplInvoiceShowTerms,
+      showCustomerDetails: activeShowCustomerDetails,
+      showFooterText: activeShowFooterText,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3145,7 +3311,7 @@ export default function POSSales() {
       branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
       saleType: full.salesType || full.saleType || '',
       showBarcode: tplReceiptShowBarcode !== false,
-      showLoyaltyPoints: tplInvoiceShowNotes,
+      showLoyaltyPoints: activeShowLoyaltyPoints,
       deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
@@ -3166,38 +3332,38 @@ export default function POSSales() {
     };
 
     // Template 2 (Arabic/bilingual) carries its OWN independent Show/Hide
-    // toggles. When it's the active template, override the shared opts bag's
-    // toggle flags with the t2* values so the real checkout print honours the
-    // Template 2 designer settings — not Template 1's invoice toggles. These
-    // keys are consumed by the bilingual canvas renderer (ESC/POS) and, below,
-    // by mapToTemplate2Data (HTML fallback).
-    const t2Toggles = {
-      showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-      showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-      showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-      showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-      showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-      showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
-    };
+    // toggles, now split per sub-tab (activeT2 already resolved above by
+    // hasTax). When it's the active template, override the shared opts bag's
+    // toggle flags with the activeT2 values so the real checkout print honours
+    // the Template 2 designer settings for the sub-tab that applies to THIS
+    // invoice — not always the Tax Invoice tab's. These keys are consumed by
+    // the bilingual canvas renderer (ESC/POS) and, below, by mapToTemplate2Data
+    // (HTML fallback).
+    const t2Toggles = activeT2;
     if (receiptTemplateId === 'billbull-ar') {
-      escPosOpts.showLogo = t2ShowLogo;
-      escPosOpts.showCompanyDetails = t2ShowCompanyDetails;
-      escPosOpts.showTrn = t2ShowTrn;
-      escPosOpts.showArabic = t2ShowArabic;
-      escPosOpts.showCustomerDetails = t2ShowCustomerDetails;
-      escPosOpts.showVatSummary = t2ShowVatSummary;
-      escPosOpts.showPaymentDetails = t2ShowPaymentDetails;
-      escPosOpts.showLoyaltyPoints = t2ShowLoyalty;
-      escPosOpts.showDelivery = t2ShowDelivery;
-      escPosOpts.showFooterText = t2ShowFooterText;
-      escPosOpts.showBarcode = t2ShowBarcode;
-      escPosOpts.showQRCode = t2ShowQRCode;
-      escPosOpts.qrContent = t2ShowQRCode ? qrContent : null;
-      escPosOpts.stampDataUrl = t2ShowQRCode ? tplStampDataUrl : null;
+      escPosOpts.showLogo = activeT2.showLogo;
+      escPosOpts.showCompanyDetails = activeT2.showCompanyDetails;
+      escPosOpts.showTrn = activeT2.showTrn;
+      escPosOpts.showArabic = activeT2.showArabic;
+      escPosOpts.showCustomerDetails = activeT2.showCustomerDetails;
+      escPosOpts.showVatSummary = activeT2.showVatSummary;
+      escPosOpts.showPaymentDetails = activeT2.showPaymentDetails;
+      escPosOpts.showLoyaltyPoints = activeT2.showLoyalty;
+      escPosOpts.showDelivery = activeT2.showDelivery;
+      escPosOpts.showFooterText = activeT2.showFooterText;
+      escPosOpts.showBarcode = activeT2.showBarcode;
+      escPosOpts.showQRCode = activeT2.showQRCode;
+      escPosOpts.qrContent = activeT2.showQRCode ? qrContent : null;
+      escPosOpts.stampDataUrl = activeT2.showQRCode ? tplStampDataUrl : null;
       // Account Balance section is data-gated (showCreditBalance) — respect the
       // T2 toggle on top of the existing credit-block resolution.
-      escPosOpts.showCreditBalance = resolvedShowCreditBalance && t2ShowAccountBalance;
+      escPosOpts.showCreditBalance = resolvedShowCreditBalance && activeT2.showAccountBalance;
     }
+    // documentTitle/documentTitleAr drive Template 2's canvas (ESC/POS) title;
+    // Template 1 ignores these keys (it reads `header` instead), so it's safe
+    // to always set them on the shared opts bag.
+    escPosOpts.documentTitle = activeHeader;
+    escPosOpts.documentTitleAr = activeHeaderAr;
     // Whichever template is SAVED in Print Templates (Template 1 "native" vs
     // Template 2 "billbull-ar") drives the actual checkout print — not just the
     // designer's own Test Print. Both builders share the same
@@ -3223,9 +3389,11 @@ export default function POSSales() {
             // an uploaded stamp replaces the QR (same rule as Template 1). Kept
             // separate so the component prints a genuine verifiable QR, not the
             // stamp image mislabelled as a QR. Gated by Template 2's own QR toggle.
-            qrDataUrl: t2ShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
-            stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
-            footerText: tplInvoiceFooter,
+            qrDataUrl: activeT2.showQRCode && !tplStampDataUrl ? qrDataUrl : null,
+            stampDataUrl: activeT2.showQRCode ? tplStampDataUrl : null,
+            footerText: activeFooter,
+            titleEn: activeHeader,
+            titleAr: activeHeaderAr,
           },
           mapInvoiceToTxn(full, {
             ...escPosOpts,
@@ -3239,25 +3407,28 @@ export default function POSSales() {
       : buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      // documentTitle is the bold receipt title (defaults to 'TAX INVOICE'
+      // otherwise); pass activeHeader there instead of `header` so a no-tax
+      // sale's "SALES INVOICE" replaces it instead of printing underneath it.
+      documentTitle: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       isReprint,
       zatcaQrDataUrl: qrDataUrl,
       logoDataUrl: tplLogoDataUrl,
-      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
-      showLogo: tplInvoiceShowLogo,
-      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
+      showLogo: activeShowLogo,
+      showCompanyDetails: activeShowCompanyDetails,
       outletAddress: tplOutletAddress,
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: tplInvoiceColVatAmt,
-      showPaymentDetails: tplInvoiceColDiscount,
-      showQRCode: tplInvoiceShowQRCode,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
-      showLoyaltyPoints: tplInvoiceShowNotes,
+      showVatSummary: activeShowVatSummary,
+      showPaymentDetails: activeShowPaymentDetails,
+      showQRCode: activeShowQRCode,
+      showCustomerDetails: activeShowCustomerDetails,
+      showLoyaltyPoints: activeShowLoyaltyPoints,
       showCreditBalance: resolvedShowCreditBalance,
-      showFooterText: tplInvoiceShowTerms,
+      showFooterText: activeShowFooterText,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3282,9 +3453,9 @@ export default function POSSales() {
     const text = buildThermalReceiptText(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      documentTitle: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3295,20 +3466,29 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
+      showCustomerDetails: activeShowCustomerDetails,
       currency: activeCurrency,
     });
     return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
-    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoicePaper,
+    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper,
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
+    tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
+    tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
+    tplReceiptColDiscount, tplReceiptShowNotes,
     t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
+    t2ReceiptShowAccountBalance, t2ReceiptShowDelivery, t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails,
+    t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
+    t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
+    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
@@ -6968,11 +7148,11 @@ export default function POSSales() {
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash,
     tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone,
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl,
-    tplReceiptHeader, setTplReceiptHeader, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
+    tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails,
     tplReceiptColItemCode, tplReceiptColItemImage, tplReceiptColBatchNo, tplReceiptColDiscount, tplReceiptColVatPct, tplReceiptColVatAmt,
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature,
-    tplInvoiceHeader, setTplInvoiceHeader, tplInvoiceFooter, setTplInvoiceFooter, tplInvoicePaper, setTplInvoicePaper,
+    tplInvoiceHeader, setTplInvoiceHeader, tplInvoiceHeaderAr, setTplInvoiceHeaderAr, tplInvoiceFooter, setTplInvoiceFooter, tplInvoicePaper, setTplInvoicePaper,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
     tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
@@ -7000,6 +7180,17 @@ export default function POSSales() {
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
     setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
+    // Template 2 toggles split per sub-tab (POS Receipt / Tax Invoice) — drive the
+    // real checkout print (see buildThermalReceiptArtifacts' hasTax routing); the
+    // designer UI binds these when Template 2 is active on each respective tab.
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails, t2ReceiptShowAccountBalance, t2ReceiptShowDelivery,
+    t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails, t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    setT2ReceiptShowLogo, setT2ReceiptShowCompanyDetails, setT2ReceiptShowTrn, setT2ReceiptShowArabic, setT2ReceiptShowCustomerDetails, setT2ReceiptShowAccountBalance, setT2ReceiptShowDelivery,
+    setT2ReceiptShowVatSummary, setT2ReceiptShowPaymentDetails, setT2ReceiptShowLoyalty, setT2ReceiptShowQRCode, setT2ReceiptShowFooterText, setT2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails, t2InvoiceShowAccountBalance, t2InvoiceShowDelivery,
+    t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails, t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
+    setT2InvoiceShowLogo, setT2InvoiceShowCompanyDetails, setT2InvoiceShowTrn, setT2InvoiceShowArabic, setT2InvoiceShowCustomerDetails, setT2InvoiceShowAccountBalance, setT2InvoiceShowDelivery,
+    setT2InvoiceShowVatSummary, setT2InvoiceShowPaymentDetails, setT2InvoiceShowLoyalty, setT2InvoiceShowQRCode, setT2InvoiceShowFooterText, setT2InvoiceShowBarcode,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
 
