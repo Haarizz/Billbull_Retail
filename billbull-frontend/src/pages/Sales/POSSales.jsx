@@ -1090,6 +1090,7 @@ export default function POSSales() {
       const previewShowQRCode = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
       const previewShowPaymentDetails = previewHasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
       const previewShowLoyaltyPoints = previewHasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
+      const previewShowCreditBalance = previewHasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails;
       const previewT2 = previewHasTax
         ? {
             showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
@@ -1174,7 +1175,7 @@ export default function POSSales() {
         outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner,
         showVatSummary: previewShowVatSummary, showPaymentDetails: previewShowPaymentDetails, showQRCode: showQrInPreview,
         showCustomerDetails: previewShowCustomerDetails, showLoyaltyPoints: previewShowLoyaltyPoints,
-        showCreditBalance: tplInvoiceShowBankDetails, showFooterText: previewShowFooterText,
+        showCreditBalance: previewShowCreditBalance, showFooterText: previewShowFooterText,
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
@@ -1224,9 +1225,17 @@ export default function POSSales() {
   });
 
   // Fetch the selected customer's outstanding balance for the checkout preview's
-  // Credit Account section — same lookup used at actual print time.
+  // Credit Account / Account Balance section — same lookup used at actual print
+  // time. Gated on ANY of the four toggles that could end up driving the actual
+  // print (Template 1 receipt/invoice tab, Template 2 receipt/invoice tab) since
+  // which one applies depends on hasTax/receiptTemplateId, resolved later in the
+  // preview builder — checking only tplInvoiceShowBankDetails here meant the
+  // balance never got fetched (and the section never rendered) whenever the
+  // active toggle was the POS Receipt tab's or Template 2's own toggle.
+  const needsCreditBalancePreview = tplInvoiceShowBankDetails || tplReceiptShowBankDetails
+    || t2InvoiceShowAccountBalance || t2ReceiptShowAccountBalance;
   useEffect(() => {
-    if (!tplInvoiceShowBankDetails || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
+    if (!needsCreditBalancePreview || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
       setCheckoutPreviewCreditBalance(null);
       return;
     }
@@ -1247,7 +1256,7 @@ export default function POSSales() {
       .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : 0); })
       .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(0); });
     return () => { cancelled = true; };
-  }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
+  }, [needsCreditBalancePreview, showPaymentDialog, selectedCustomerData]);
 
   // Credit Balance function-button modal: auto-load the currently selected POS
   // customer's due/credit balance on open, and refresh if the selection changes
@@ -3212,9 +3221,6 @@ export default function POSSales() {
     // while a Delivery Settlement print shows it. null = defer to template toggle.
     showCreditBalanceOverride = null,
   }) => {
-    const resolvedShowCreditBalance = showCreditBalanceOverride != null
-      ? showCreditBalanceOverride
-      : tplInvoiceShowBankDetails;
     // Customer name (client item 3): the printed receipt must show the SAME
     // customer the checkout preview shows. The preview reads the selected customer
     // object directly (customer.name), while the print path was reading it off the
@@ -3231,6 +3237,14 @@ export default function POSSales() {
     // (not hoisted to the caller) because `full` — and therefore its tax
     // total — is only known once the customerName override above is applied.
     const hasTax = Number(full.tax) > 0;
+    // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
+    // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
+    // same rule as activeShowLogo etc. below. Previously this always read the
+    // Tax Invoice tab's toggle even for a no-tax POS Receipt print, so enabling
+    // "Credit Balance" on the POS Receipt tab never showed up at checkout/print.
+    const resolvedShowCreditBalance = showCreditBalanceOverride != null
+      ? showCreditBalanceOverride
+      : (hasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails);
     const activeHeader = hasTax ? tplInvoiceHeader : tplReceiptHeader;
     const activeHeaderAr = hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
     const activeFooter = hasTax ? tplInvoiceFooter : tplReceiptFooter;
@@ -3355,9 +3369,11 @@ export default function POSSales() {
       escPosOpts.showQRCode = activeT2.showQRCode;
       escPosOpts.qrContent = activeT2.showQRCode ? qrContent : null;
       escPosOpts.stampDataUrl = activeT2.showQRCode ? tplStampDataUrl : null;
-      // Account Balance section is data-gated (showCreditBalance) — respect the
-      // T2 toggle on top of the existing credit-block resolution.
-      escPosOpts.showCreditBalance = resolvedShowCreditBalance && activeT2.showAccountBalance;
+      // Template 2 has its own independent Account Balance toggle — don't AND it
+      // with Template 1's (unrelated) resolvedShowCreditBalance, or enabling ONLY
+      // the Template 2 toggle (leaving Template 1's off, its default) silently
+      // suppresses the section again.
+      escPosOpts.showCreditBalance = activeT2.showAccountBalance;
     }
     // documentTitle/documentTitleAr drive Template 2's canvas (ESC/POS) title;
     // Template 1 ignores these keys (it reads `header` instead), so it's safe
@@ -8393,26 +8409,21 @@ export default function POSSales() {
                       {/* Smart dynamic tender buttons based on invoice amount */}
                       <div className="flex flex-wrap gap-1.5">
                         {(() => {
-                          // Generate smart denominations based on the amount actually due now
+                          // Generate smart denominations based on the amount actually due now.
+                          // Every suggestion must be >= total (equal only for "Exact"); round-ups
+                          // snap to practical AED note denominations (50/100/200/500/1000), plus
+                          // one extra round-1000 note further out so a couple of real choices show up.
                           const total = effectiveDue;
-                          const rounds = [];
-                          // Exact total
-                          rounds.push(total);
-                          // Next 5 AED round-up
-                          const r5 = Math.ceil(total / 5) * 5;
-                          if (r5 !== total) rounds.push(r5);
-                          // Next 10 AED round-up
-                          const r10 = Math.ceil(total / 10) * 10;
-                          if (!rounds.includes(r10)) rounds.push(r10);
-                          // Next 50 AED round-up
-                          const r50 = Math.ceil(total / 50) * 50;
-                          if (!rounds.includes(r50)) rounds.push(r50);
-                          // Next 100 AED round-up
-                          const r100 = Math.ceil(total / 100) * 100;
-                          if (!rounds.includes(r100)) rounds.push(r100);
-                          // Standard 500, 1000 only if applicable
-                          if (total > 100 && !rounds.includes(500)) rounds.push(500);
-                          if (total > 400 && !rounds.includes(1000)) rounds.push(1000);
+                          const rounds = [total];
+                          for (const step of [50, 100, 200, 500, 1000]) {
+                            const rounded = Math.ceil(total / step) * step;
+                            if (rounded > total && !rounds.includes(rounded)) rounds.push(rounded);
+                          }
+                          const nearestAbove = Math.min(...rounds.filter(r => r > total));
+                          const nextThousand = Math.ceil((nearestAbove + 1) / 1000) * 1000;
+                          if (nextThousand > nearestAbove && !rounds.includes(nextThousand)) rounds.push(nextThousand);
+                          // Always offer at least one note above the exact amount, even for tiny totals.
+                          if (rounds.length === 1) rounds.push(Math.ceil((total + 1) / 50) * 50);
                           return [...new Set(rounds)].sort((a, b) => a - b).slice(0, 6).map(d => (
                             <button key={d} type="button" onClick={() => { setTenderedAmount(d === total ? String(total.toFixed(2)) : String(d)); setCheckoutKeypadTarget('tender'); }}
                               className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${parseFloat(tenderedAmount) === d ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
