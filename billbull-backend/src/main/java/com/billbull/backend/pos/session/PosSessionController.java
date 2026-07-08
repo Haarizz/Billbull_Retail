@@ -109,6 +109,28 @@ public class PosSessionController {
         return ResponseEntity.ok(service.getZReport(branchId, reportDate));
     }
 
+    /** Hard gate checked before the frontend commits the X-Report to print/PDF/Excel.
+     *  The report may still be viewed on screen while the session is open (see
+     *  {@code getXReport}); this returns 409 unless the session is CLOSED. */
+    @PostMapping("/{id}/x-report/print-check")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> checkXReportPrintable(@PathVariable Long id) {
+        service.assertXReportPrintable(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Hard gate checked before the frontend commits the Z-Report to print/PDF/Excel.
+     *  Returns 409 unless the business day has already been closed. */
+    @GetMapping("/z-report/print-check")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> checkZReportPrintable(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        service.assertZReportPrintable(branchId, reportDate);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/close-day")
     @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
     public ResponseEntity<Map<String, Object>> closeDay(

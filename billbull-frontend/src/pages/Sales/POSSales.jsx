@@ -27,6 +27,7 @@ import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
+  checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
@@ -5642,8 +5643,22 @@ export default function POSSales() {
     }
   };
 
-  const handleZReportPrint = () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+  // ERP rule: Z-Report print/PDF/Excel export requires the business day to already be
+  // closed (matches the backend gate in PosSessionController#checkZReportPrintable).
+  const assertZReportPrintable = async () => {
+    if (!zReportData) { alert('Please generate the Z-Report first.'); return false; }
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    try {
+      await checkPosZReportPrintable(branchId, zReportDate);
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.message || 'Z-Report can only be printed or exported after the business day is closed.');
+      return false;
+    }
+  };
+
+  const handleZReportPrint = async () => {
+    if (!(await assertZReportPrintable())) return;
     const vm = buildZReportViewModel();
     const cp = reportCompanyProfile();
     printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
@@ -5659,7 +5674,7 @@ export default function POSSales() {
   };
 
   const handleZReportExportPDF = async () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+    if (!(await assertZReportPrintable())) return;
     const vm = buildZReportViewModel();
     const cp = reportCompanyProfile();
     // PDF export always uses the A4 template (a thermal roll PDF is not useful here).
@@ -5672,7 +5687,7 @@ export default function POSSales() {
   };
 
   const handleZReportExportExcel = async () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+    if (!(await assertZReportPrintable())) return;
     const rows = buildZReportExcelSections();
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
@@ -5689,7 +5704,23 @@ export default function POSSales() {
     });
   };
 
-  const handleXReportPrint = () => {
+  // ERP rule: X-Report print/PDF/Excel export requires the session to already be closed
+  // (matches the backend gate in PosSessionController#checkXReportPrintable). Viewing the
+  // report on screen — Preview, and the report page itself — stays available while open.
+  const assertXReportPrintable = async () => {
+    const sessId = xReportData?.session?.id || currentSession?.id;
+    if (!sessId) { alert('No session to report on.'); return false; }
+    try {
+      await checkPosXReportPrintable(sessId);
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.message || 'X-Report can only be printed or exported after the session is closed.');
+      return false;
+    }
+  };
+
+  const handleXReportPrint = async () => {
+    if (!(await assertXReportPrintable())) return;
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
@@ -5706,6 +5737,7 @@ export default function POSSales() {
   };
 
   const handleXReportExportPDF = async () => {
+    if (!(await assertXReportPrintable())) return;
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
@@ -5719,6 +5751,7 @@ export default function POSSales() {
   };
 
   const handleXReportExportExcel = async () => {
+    if (!(await assertXReportPrintable())) return;
     const rows = buildXReportExcelRows();
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
@@ -5914,9 +5947,9 @@ export default function POSSales() {
                 <option value="58mm">Thermal 58mm</option>
               </select>
               <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleZReportPrint} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-              <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
               <button
                 onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
                 disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
@@ -6342,9 +6375,9 @@ export default function POSSales() {
                 <option value="58mm">Thermal 58mm</option>
               </select>
               <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-              <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
               <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
                 {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
               </button>
@@ -6908,9 +6941,9 @@ export default function POSSales() {
           <button onClick={() => setCurrentView('dashboard')} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3 w-3 rotate-180" />Back to POS</button>
           <div className="flex items-center gap-2">
             <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview Report</button>
-            <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-            <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-            <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
+            <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+            <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+            <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
             {!isBalanced && actualCash > 0 ? (
               <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
             ) : (
