@@ -83,6 +83,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   showLoyaltyPoints = false,
   showFooterText = true,
   showBarcode = true,
+  showDelivery = true,
+  showArabic = true,
   branchName = '', saleType = '',
   outletAddress = '', outletPhone = '',
   cashierName = '', terminalId = '', counterName = '',
@@ -159,6 +161,9 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     for (const ln of wrap(text, size, bold, CW)) { drawEn(ln, W / 2, size, { bold, align: 'center' }); y += lineH(size); }
   };
   const centerAr = (text, size, bold = false) => {
+    // Bilingual OFF (Show Arabic toggle) suppresses every Arabic mirror line so
+    // the ESC/POS raster matches the English-only HTML/preview output.
+    if (!showArabic) return;
     for (const ln of wrap(text, size, bold, CW, true)) { drawAr(ln, W / 2, size, { bold, align: 'center' }); y += lineH(size); }
   };
 
@@ -179,7 +184,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     ctx.font = fontEn(size, bold); // measure with the same font just drawn
     const enLabelW = ctx.measureText(String(lbl.en)).width;
     y += lineH(size);
-    if (lbl.ar) { drawAr(lbl.ar, M, size - 1, { align: 'left', bold: false }); y += lineH(size - 1); }
+    if (showArabic && lbl.ar) { drawAr(lbl.ar, M, size - 1, { align: 'left', bold: false }); y += lineH(size - 1); }
     const rowEnd = y;
     // Value: right-aligned on the EN label's line; shrink it (never below 12px
     // design size) rather than let it collide with the label.
@@ -200,7 +205,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   const sectionTitle = (lbl) => {
     y += Math.round(4 * S);
     drawEn(lbl.en, M, 20, { bold: true });
-    drawAr(lbl.ar, W - M, 20, { bold: true, align: 'right' });
+    if (showArabic) drawAr(lbl.ar, W - M, 20, { bold: true, align: 'right' });
     y += lineH(20);
     solid(2);
     y += Math.round(4 * S);
@@ -286,7 +291,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   }
 
   // ── Delivery address ──────────────────────────────────────────────────────
-  if (deliveryAddress) {
+  if (showDelivery && deliveryAddress) {
     dashed();
     sectionTitle(L.DELIVERY_ADDRESS);
     for (const ln of wrap(oneLine(deliveryAddress), 16, false, CW)) { drawEn(ln, M, 16); y += lineH(16); }
@@ -306,10 +311,12 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   drawEn(L.QTY.en, colQtyX, 16, { bold: true, align: 'right' });
   drawEn(L.RATE.en, colRateX, 16, { bold: true, align: 'right' });
   y += lineH(16);
-  drawAr(L.ITEM.ar, M, 16, { align: 'left' });
-  drawAr(L.QTY.ar, colQtyX, 16);
-  drawAr(L.RATE.ar, colRateX, 16);
-  y += lineH(16);
+  if (showArabic) {
+    drawAr(L.ITEM.ar, M, 16, { align: 'left' });
+    drawAr(L.QTY.ar, colQtyX, 16);
+    drawAr(L.RATE.ar, colRateX, 16);
+    y += lineH(16);
+  }
   solid(2);
   y += Math.round(4 * S);
 
@@ -331,7 +338,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
     const rowY = y;
     for (const ln of wrap(name, 19, true, nameMax)) { drawEn(ln, M, 19, { bold: true }); y += lineH(19); }
-    if (nameAr) for (const ln of wrap(nameAr, 18, false, nameMax, true)) { drawAr(ln, M, 18, { align: 'left' }); y += lineH(18); }
+    if (showArabic && nameAr) for (const ln of wrap(nameAr, 18, false, nameMax, true)) { drawAr(ln, M, 18, { align: 'left' }); y += lineH(18); }
     const metaBits = [it.sku || it.itemCode ? `SKU ${it.sku || it.itemCode}` : '', disc > 0 && discPct > 0 ? `Disc ${discPct.toFixed(discPct % 1 ? 2 : 0)}%` : ''].filter(Boolean);
     const serial = it.serialNumber ? `S/N ${it.serialNumber}` : (it.batchNumber || it.pinnedBatchNumber ? `Batch ${it.batchNumber || it.pinnedBatchNumber}` : '');
     if (serial) metaBits.push(serial);

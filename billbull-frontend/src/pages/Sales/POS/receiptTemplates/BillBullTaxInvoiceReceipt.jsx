@@ -158,6 +158,10 @@ export const TEMPLATE2_CSS = `
     direction: rtl;
     unicode-bidi: isolate;
   }
+  /* Bilingual OFF: hide every Arabic secondary line (Show Arabic toggle). The
+     English label/value in each row is a separate element, so the row keeps its
+     meaning — only the Arabic mirror text is removed. */
+  .bb-receipt.no-ar .ar { display: none !important; }
   .bb-receipt .center { text-align: center; }
   .bb-receipt .bold { font-weight: 700; }
   .bb-receipt .upper { text-transform: uppercase; }
@@ -283,6 +287,14 @@ export const TEMPLATE2_FONT_LINK =
 export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }) => {
   const { business, meta, customer, balance, delivery, items, totals, payment, loyalty, vatSummary, currency } = data;
 
+  // Show/Hide flags from the data mapper. Undefined ⇒ ON, so standalone renders
+  // (SAMPLE_DATA has no `flags`) keep the full receipt. Data-gated sections
+  // (customer/balance/delivery/loyalty/payment) are already nulled upstream when
+  // toggled off; these flags cover the always-present sections + Arabic text.
+  const flags = data.flags || {};
+  const showFlag = (k) => flags[k] !== false;
+  const showArabic = showFlag("showArabic");
+
   const showCustomer = customer && (customer.name || customer.mobile || customer.customerCode);
   const showBalance = balance && (balance.previousBalance != null || balance.newBalanceDue != null);
   const showDelivery = delivery && ((delivery.lineEn && delivery.lineEn.length) || (delivery.lineAr && delivery.lineAr.length));
@@ -298,34 +310,45 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
   const paperVar = String(paperSize).includes("58") ? "58mm" : "80mm";
 
   return (
-    <div className="bb-receipt" style={{ "--paper-width": paperVar }}>
+    <div className={`bb-receipt${showArabic ? "" : " no-ar"}`} style={{ "--paper-width": paperVar }}>
       {/* ================= HEADER / BRAND ================= */}
       <div className="center">
-        <div className="logo-mark">
-          {business.logoDataUrl ? <img src={business.logoDataUrl} alt="logo" /> : "BB"}
-        </div>
-        <div className="brand-name">{business.nameEn}</div>
-        {business.nameAr && <div className="brand-name-ar ar">{business.nameAr}</div>}
-        {business.tagline && <div className="brand-tagline">{business.tagline}</div>}
-        <div className="addr-block">
-          {(business.addressEnLines || []).map((line, i) => (
-            <React.Fragment key={i}>
-              {line}
-              <br />
-            </React.Fragment>
-          ))}
-          Tel: {business.phone} &nbsp;|&nbsp; TRN: {business.trn}
-        </div>
-        {(business.addressArLines || []).length > 0 && (
-          <div className="addr-block-ar ar">
-            {business.addressArLines.map((line, i) => (
-              <React.Fragment key={i}>
-                {line}
-                <br />
-              </React.Fragment>
-            ))}
-            الرقم الضريبي: {business.trn}
+        {showFlag("showLogo") && (
+          <div className="logo-mark">
+            {business.logoDataUrl ? <img src={business.logoDataUrl} alt="logo" /> : "BB"}
           </div>
+        )}
+        {showFlag("showCompanyDetails") && (
+          <>
+            <div className="brand-name">{business.nameEn}</div>
+            {showArabic && business.nameAr && <div className="brand-name-ar ar">{business.nameAr}</div>}
+            {business.tagline && <div className="brand-tagline">{business.tagline}</div>}
+            <div className="addr-block">
+              {(business.addressEnLines || []).map((line, i) => (
+                <React.Fragment key={i}>
+                  {line}
+                  <br />
+                </React.Fragment>
+              ))}
+              Tel: {business.phone}
+              {showFlag("showTrn") && (
+                <>
+                  &nbsp;|&nbsp; TRN: {business.trn}
+                </>
+              )}
+            </div>
+            {showArabic && (business.addressArLines || []).length > 0 && (
+              <div className="addr-block-ar ar">
+                {business.addressArLines.map((line, i) => (
+                  <React.Fragment key={i}>
+                    {line}
+                    <br />
+                  </React.Fragment>
+                ))}
+                {showFlag("showTrn") && <>الرقم الضريبي: {business.trn}</>}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -531,35 +554,43 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
       )}
 
       {/* ================= VAT SUMMARY ================= */}
-      <SectionTitle en="VAT SUMMARY" ar="ملخص الضريبة" />
-      <KV className="small" en="Standard (5%)" ar="القياسية (5٪)" value={fmt(vatSummary.standardRateAmount)} />
-      <KV className="small" en="Zero-rated (0%)" ar="معدل صفر (0٪)" value={fmt(vatSummary.zeroRateAmount)} />
-      <KV className="small bold" en="Total VAT" ar="إجمالي الضريبة" value={fmt(vatSummary.totalVat)} />
+      {showFlag("showVatSummary") && (
+        <>
+          <SectionTitle en="VAT SUMMARY" ar="ملخص الضريبة" />
+          <KV className="small" en="Standard (5%)" ar="القياسية (5٪)" value={fmt(vatSummary.standardRateAmount)} />
+          <KV className="small" en="Zero-rated (0%)" ar="معدل صفر (0٪)" value={fmt(vatSummary.zeroRateAmount)} />
+          <KV className="small bold" en="Total VAT" ar="إجمالي الضريبة" value={fmt(vatSummary.totalVat)} />
 
-      <div className="dashed" />
+          <div className="dashed" />
+        </>
+      )}
 
       {/* ================= FOOTER ================= */}
-      <div className="center">
-        <div className="footer-msg">{business.footerMsgEn || "Thank you for shopping with us!"}</div>
-        <div className="footer-msg-ar ar">{business.footerMsgAr || "شكراً لتسوقكم معنا!"}</div>
-        {business.footerFine && (
-          <div className="footer-fine" style={{ marginTop: "1.5mm" }}>
-            {business.footerFine}
-          </div>
-        )}
-      </div>
+      {showFlag("showFooterText") && (
+        <div className="center">
+          <div className="footer-msg">{business.footerMsgEn || "Thank you for shopping with us!"}</div>
+          <div className="footer-msg-ar ar">{business.footerMsgAr || "شكراً لتسوقكم معنا!"}</div>
+          {business.footerFine && (
+            <div className="footer-fine" style={{ marginTop: "1.5mm" }}>
+              {business.footerFine}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Real, scannable Code 128B symbol of the invoice number (Fix 9) — same
           symbol the ESC/POS raster prints, so on-screen preview == thermal print.
           Falls back to nothing rather than the old decorative CSS placeholder. */}
-      {meta.invoiceNo && (
-        <div
-          className="barcode-svg"
-          style={{ margin: "2mm auto 1mm" }}
-          dangerouslySetInnerHTML={{ __html: code128Svg(meta.invoiceNo, { height: 44 }) }}
-        />
+      {showFlag("showBarcode") && meta.invoiceNo && (
+        <>
+          <div
+            className="barcode-svg"
+            style={{ margin: "2mm auto 1mm" }}
+            dangerouslySetInnerHTML={{ __html: code128Svg(meta.invoiceNo, { height: 44 }) }}
+          />
+          <div className="center small">{meta.invoiceNo}</div>
+        </>
       )}
-      <div className="center small">{meta.invoiceNo}</div>
 
       {/* Stamp (uploaded) replaces the QR — same rule as Template 1. Otherwise a
           real ZATCA QR image. The checkerboard `.qr` placeholder is used only for

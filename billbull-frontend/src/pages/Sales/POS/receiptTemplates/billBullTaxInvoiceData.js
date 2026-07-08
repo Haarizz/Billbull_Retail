@@ -20,16 +20,39 @@ const splitLines = (s) =>
     .filter(Boolean);
 
 /**
- * @param {object} outlet  { name, trn, address, phone, logoDataUrl, qrDataUrl, footerText, nameAr, addressAr }
- * @param {object} txn     normalized POS transaction (see buildSampleTxn for shape)
+ * Template 2 Show/Hide toggle flags. Every flag defaults ON (undefined ⇒ shown)
+ * so existing callers that don't pass toggles keep the full receipt. A section
+ * whose flag is explicitly `false` is either dropped from the data model
+ * (data-gated: customer/balance/delivery/loyalty ⇒ null) or flagged off on the
+ * returned `flags` object (always-present: header parts, VAT, payment, footer
+ * text, barcode, and the Arabic bilingual text).
+ */
+const on = (v) => v !== false;
+
+/**
+ * @param {object} outlet   { name, trn, address, phone, logoDataUrl, qrDataUrl, footerText, nameAr, addressAr }
+ * @param {object} txn      normalized POS transaction (see buildSampleTxn for shape)
+ * @param {object} toggles  Template 2 Show/Hide flags (see above); all default ON
  * @returns {object} ReceiptData for <BillBullTaxInvoiceReceipt data=... />
  */
-export function mapToTemplate2Data(outlet = {}, txn = {}) {
+export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
   const currency = txn.currency || "AED";
   const footerLines = splitLines(outlet.footerText);
 
   return {
     currency,
+    // Show/Hide flags for always-present sections + bilingual Arabic text,
+    // consumed by <TaxInvoiceReceiptBody>. Data-gated sections below are nulled.
+    flags: {
+      showLogo: on(toggles.showLogo),
+      showCompanyDetails: on(toggles.showCompanyDetails),
+      showTrn: on(toggles.showTrn),
+      showArabic: on(toggles.showArabic),
+      showVatSummary: on(toggles.showVatSummary),
+      showPaymentDetails: on(toggles.showPaymentDetails),
+      showFooterText: on(toggles.showFooterText),
+      showBarcode: on(toggles.showBarcode),
+    },
     business: {
       nameEn: outlet.name || "Branch Name",
       nameAr: outlet.nameAr || "",
@@ -39,11 +62,13 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
       phone: outlet.phone || "",
       trn: outlet.trn || "",
       logoDataUrl: outlet.logoDataUrl || null,
-      qrDataUrl: outlet.qrDataUrl || null,
-      stampDataUrl: outlet.stampDataUrl || null,
+      // QR / stamp gated by the Show QR toggle so hiding it drops the whole
+      // QR block (real ZATCA QR, uploaded stamp, and placeholder alike).
+      qrDataUrl: on(toggles.showQRCode) ? outlet.qrDataUrl || null : null,
+      stampDataUrl: on(toggles.showQRCode) ? outlet.stampDataUrl || null : null,
       // Designer-only hint: render the placeholder QR box when QR is enabled but
       // there's no live ZATCA QR/stamp image to show (no real invoice to encode).
-      qrPlaceholder: !!outlet.qrPlaceholder,
+      qrPlaceholder: on(toggles.showQRCode) && !!outlet.qrPlaceholder,
       footerMsgEn: footerLines[0] || "",
       footerFine: footerLines.slice(1).join(" "),
     },
@@ -57,7 +82,7 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
       shiftNo: txn.shiftNo || "",
       saleType: txn.saleType || "",
     },
-    customer: txn.customer
+    customer: on(toggles.showCustomerDetails) && txn.customer
       ? {
           name: txn.customer.name || "",
           mobile: txn.customer.mobile || "",
@@ -65,8 +90,8 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
           customerTrn: txn.customer.trn || "",
         }
       : null,
-    balance: txn.balance || null,
-    delivery: txn.delivery
+    balance: on(toggles.showAccountBalance) ? txn.balance || null : null,
+    delivery: on(toggles.showDelivery) && txn.delivery
       ? {
           lineEn: splitLines(txn.delivery.addressEn),
           lineAr: splitLines(txn.delivery.addressAr),
@@ -91,7 +116,7 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
       roundOff: Number(txn.totals?.roundOff || 0),
       totalToPay: Number(txn.totals?.totalToPay || 0),
     },
-    payment: txn.payment
+    payment: on(toggles.showPaymentDetails) && txn.payment
       ? {
           mode: txn.payment.mode || "",
           paidAmount: Number(txn.payment.paidAmount || 0),
@@ -99,7 +124,7 @@ export function mapToTemplate2Data(outlet = {}, txn = {}) {
           cardRef: txn.payment.cardRef || "",
         }
       : null,
-    loyalty: txn.loyalty || null,
+    loyalty: on(toggles.showLoyalty) ? txn.loyalty || null : null,
     vatSummary: {
       standardRateAmount: Number(txn.vatSummary?.standardRateAmount ?? txn.totals?.vat5 ?? 0),
       zeroRateAmount: Number(txn.vatSummary?.zeroRateAmount ?? txn.totals?.vat0 ?? 0),

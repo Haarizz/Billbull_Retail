@@ -887,6 +887,27 @@ export default function POSSales() {
   // what the till prints at checkout, not just the designer's own test print.
   const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
 
+  // ── Template 2 (Arabic/bilingual) Show/Hide toggles ─────────────────────────
+  // Template 2 renders its own sections (Account Balance, Delivery, Loyalty,
+  // bilingual Arabic text) that Template 1 doesn't have, so it carries its OWN
+  // independent toggle state rather than reusing Template 1's. Selecting
+  // Template 2 in the designer swaps the toggle list AND its saved values.
+  // Persisted alongside the rest of printTemplateConfig. Defaults preserve the
+  // current Template 2 output (everything on except QR, which stays opt-in).
+  const [t2ShowLogo, setT2ShowLogo] = useState(true);
+  const [t2ShowCompanyDetails, setT2ShowCompanyDetails] = useState(true);
+  const [t2ShowTrn, setT2ShowTrn] = useState(true);
+  const [t2ShowArabic, setT2ShowArabic] = useState(true);
+  const [t2ShowCustomerDetails, setT2ShowCustomerDetails] = useState(true);
+  const [t2ShowAccountBalance, setT2ShowAccountBalance] = useState(true);
+  const [t2ShowDelivery, setT2ShowDelivery] = useState(true);
+  const [t2ShowVatSummary, setT2ShowVatSummary] = useState(true);
+  const [t2ShowPaymentDetails, setT2ShowPaymentDetails] = useState(true);
+  const [t2ShowLoyalty, setT2ShowLoyalty] = useState(true);
+  const [t2ShowQRCode, setT2ShowQRCode] = useState(false);
+  const [t2ShowFooterText, setT2ShowFooterText] = useState(true);
+  const [t2ShowBarcode, setT2ShowBarcode] = useState(true);
+
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
     const next = new Set(prev);
@@ -1012,6 +1033,19 @@ export default function POSSales() {
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
       if (receiptTemplateId === 'billbull-ar') {
         const isWalkInPreview = !customer || customer.id === 'walk-in';
+        // Template 2 has its OWN Show/Hide toggles (independent of Template 1's
+        // invoice toggles). The preview honours them so what the merchant sees
+        // here matches what the till prints at checkout.
+        const t2Toggles = {
+          showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+          showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+          showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+          showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+          showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+          showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+        };
+        const t2StampAvailable = t2ShowQRCode && !!tplStampDataUrl;
+        const t2ShowQr = t2ShowQRCode && !t2StampAvailable;
         const txn = mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
@@ -1023,7 +1057,8 @@ export default function POSSales() {
           // — show it when the credit block is enabled and we have a balance for a
           // non-walk-in customer. Invoice Credit = grand total, Amount Paid = 0
           // (nothing collected yet in the preview), New Balance = prev + this.
-          showCreditBalance: tplInvoiceShowBankDetails && !isWalkInPreview && checkoutPreviewCreditBalance != null,
+          // Additionally gated by Template 2's own Account Balance toggle.
+          showCreditBalance: t2ShowAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
           creditPreviousBalance: checkoutPreviewCreditBalance,
           creditInvoiceCredit: previewGrand,
           creditAmountPaid: 0,
@@ -1034,11 +1069,11 @@ export default function POSSales() {
           logoDataUrl: tplLogoDataUrl,
           // Real QR in preview when QR is enabled and no stamp overrides it; stamp
           // image shown separately when uploaded (parity with Template 1 preview).
-          qrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
-          stampDataUrl: stampAvailable ? tplStampDataUrl : null,
+          qrDataUrl: t2ShowQr ? checkoutPreviewQrDataUrl : null,
+          stampDataUrl: t2StampAvailable ? tplStampDataUrl : null,
           footerText: tplInvoiceFooter,
         };
-        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn));
+        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
         checkoutPreviewFreezeRef.current = html;
         return html;
       }
@@ -1072,7 +1107,9 @@ export default function POSSales() {
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession]);
+    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
@@ -1411,6 +1448,20 @@ export default function POSSales() {
               if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
               if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
               if (tpl.receiptTemplateId != null) setReceiptTemplateId(tpl.receiptTemplateId);
+              // Template 2 (Arabic) independent Show/Hide toggles
+              if (tpl.t2ShowLogo != null) setT2ShowLogo(tpl.t2ShowLogo);
+              if (tpl.t2ShowCompanyDetails != null) setT2ShowCompanyDetails(tpl.t2ShowCompanyDetails);
+              if (tpl.t2ShowTrn != null) setT2ShowTrn(tpl.t2ShowTrn);
+              if (tpl.t2ShowArabic != null) setT2ShowArabic(tpl.t2ShowArabic);
+              if (tpl.t2ShowCustomerDetails != null) setT2ShowCustomerDetails(tpl.t2ShowCustomerDetails);
+              if (tpl.t2ShowAccountBalance != null) setT2ShowAccountBalance(tpl.t2ShowAccountBalance);
+              if (tpl.t2ShowDelivery != null) setT2ShowDelivery(tpl.t2ShowDelivery);
+              if (tpl.t2ShowVatSummary != null) setT2ShowVatSummary(tpl.t2ShowVatSummary);
+              if (tpl.t2ShowPaymentDetails != null) setT2ShowPaymentDetails(tpl.t2ShowPaymentDetails);
+              if (tpl.t2ShowLoyalty != null) setT2ShowLoyalty(tpl.t2ShowLoyalty);
+              if (tpl.t2ShowQRCode != null) setT2ShowQRCode(tpl.t2ShowQRCode);
+              if (tpl.t2ShowFooterText != null) setT2ShowFooterText(tpl.t2ShowFooterText);
+              if (tpl.t2ShowBarcode != null) setT2ShowBarcode(tpl.t2ShowBarcode);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -3039,7 +3090,10 @@ export default function POSSales() {
     // dithers the logo raster if any) are independent of each other. Running them
     // concurrently instead of one-after-the-other roughly halves the wait before the
     // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
-    const qrDataUrlPromise = tplInvoiceShowQRCode
+    // QR image is needed when the ACTIVE template's QR toggle is on — Template 2
+    // has its own (t2ShowQRCode); Template 1 uses the invoice toggle.
+    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? t2ShowQRCode : tplInvoiceShowQRCode;
+    const qrDataUrlPromise = qrToggleOn
       ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : Promise.resolve(null);
     const escPosOpts = {
@@ -3090,6 +3144,40 @@ export default function POSSales() {
       creditUpdatedBalance,
       currency: activeCurrency,
     };
+
+    // Template 2 (Arabic/bilingual) carries its OWN independent Show/Hide
+    // toggles. When it's the active template, override the shared opts bag's
+    // toggle flags with the t2* values so the real checkout print honours the
+    // Template 2 designer settings — not Template 1's invoice toggles. These
+    // keys are consumed by the bilingual canvas renderer (ESC/POS) and, below,
+    // by mapToTemplate2Data (HTML fallback).
+    const t2Toggles = {
+      showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+      showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+      showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+      showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+      showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+      showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+    };
+    if (receiptTemplateId === 'billbull-ar') {
+      escPosOpts.showLogo = t2ShowLogo;
+      escPosOpts.showCompanyDetails = t2ShowCompanyDetails;
+      escPosOpts.showTrn = t2ShowTrn;
+      escPosOpts.showArabic = t2ShowArabic;
+      escPosOpts.showCustomerDetails = t2ShowCustomerDetails;
+      escPosOpts.showVatSummary = t2ShowVatSummary;
+      escPosOpts.showPaymentDetails = t2ShowPaymentDetails;
+      escPosOpts.showLoyaltyPoints = t2ShowLoyalty;
+      escPosOpts.showDelivery = t2ShowDelivery;
+      escPosOpts.showFooterText = t2ShowFooterText;
+      escPosOpts.showBarcode = t2ShowBarcode;
+      escPosOpts.showQRCode = t2ShowQRCode;
+      escPosOpts.qrContent = t2ShowQRCode ? qrContent : null;
+      escPosOpts.stampDataUrl = t2ShowQRCode ? tplStampDataUrl : null;
+      // Account Balance section is data-gated (showCreditBalance) — respect the
+      // T2 toggle on top of the existing credit-block resolution.
+      escPosOpts.showCreditBalance = resolvedShowCreditBalance && t2ShowAccountBalance;
+    }
     // Whichever template is SAVED in Print Templates (Template 1 "native" vs
     // Template 2 "billbull-ar") drives the actual checkout print — not just the
     // designer's own Test Print. Both builders share the same
@@ -3114,16 +3202,19 @@ export default function POSSales() {
             // Real ZATCA QR (image) when QR is enabled AND no stamp is uploaded;
             // an uploaded stamp replaces the QR (same rule as Template 1). Kept
             // separate so the component prints a genuine verifiable QR, not the
-            // stamp image mislabelled as a QR.
-            qrDataUrl: tplInvoiceShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
-            stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+            // stamp image mislabelled as a QR. Gated by Template 2's own QR toggle.
+            qrDataUrl: t2ShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
+            stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
             footerText: tplInvoiceFooter,
           },
           mapInvoiceToTxn(full, {
             ...escPosOpts,
+            // Account Balance is data-gated on showCreditBalance in the mapper;
+            // the T2 toggle is already folded into escPosOpts.showCreditBalance.
             cashierName: cashierNameOverride || cashierDisplayName,
             terminalId: full.posTerminalId || currentTerminal?.terminalId,
           }),
+          t2Toggles,
         ))
       : buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
@@ -3193,6 +3284,8 @@ export default function POSSales() {
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
@@ -6842,6 +6935,11 @@ export default function POSSales() {
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
+    // Template 2 (Arabic) independent Show/Hide toggles + setters
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
+    setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
 

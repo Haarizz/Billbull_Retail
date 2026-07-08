@@ -44,6 +44,10 @@ const POSConsole = React.memo((props) => {
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails, 
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
     receiptTemplateId, setReceiptTemplateId,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
+    setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
@@ -626,6 +630,8 @@ const POSConsole = React.memo((props) => {
                       jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
                       jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
                       receiptTemplateId,
+                      t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
+                      t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                     setPosSettings(saved);
@@ -1464,12 +1470,44 @@ const POSConsole = React.memo((props) => {
                     // mislabelled as a scannable QR. The designer has no live ZATCA
                     // QR to render, so the component shows its placeholder when QR
                     // is enabled with no stamp — an honest "QR appears here" hint.
-                    logoDataUrl: tplLogoDataUrl, stampDataUrl: cfg.showQRCode ? tplStampDataUrl : null,
-                    qrPlaceholder: cfg.showQRCode, footerText: cfg.footer,
+                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
+                    qrPlaceholder: t2ShowQRCode, footerText: cfg.footer,
                   },
                   buildSampleTxn(),
+                  {
+                    // Template 2's own independent Show/Hide toggles drive which
+                    // sections the designer preview (and, at checkout, the real
+                    // receipt) renders.
+                    showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+                    showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+                    showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+                    showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+                    showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+                    showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+                  },
                 )
               : null;
+
+            // Template 2 (Arabic/bilingual) carries its OWN independent toggle
+            // set — it renders sections Template 1 doesn't (Account Balance,
+            // Delivery, Loyalty, bilingual Arabic). When Template 2 is the active
+            // component template, the Show/Hide list swaps to this map and binds
+            // to the t2* state instead of the shared native `cfg`.
+            const t2cfg = {
+              showLogo: t2ShowLogo, setShowLogo: setT2ShowLogo,
+              showCompanyDetails: t2ShowCompanyDetails, setShowCompanyDetails: setT2ShowCompanyDetails,
+              showTrn: t2ShowTrn, setShowTrn: setT2ShowTrn,
+              showArabic: t2ShowArabic, setShowArabic: setT2ShowArabic,
+              showCustomerDetails: t2ShowCustomerDetails, setShowCustomerDetails: setT2ShowCustomerDetails,
+              showAccountBalance: t2ShowAccountBalance, setShowAccountBalance: setT2ShowAccountBalance,
+              showDelivery: t2ShowDelivery, setShowDelivery: setT2ShowDelivery,
+              showVatSummary: t2ShowVatSummary, setShowVatSummary: setT2ShowVatSummary,
+              showPaymentDetails: t2ShowPaymentDetails, setShowPaymentDetails: setT2ShowPaymentDetails,
+              showLoyalty: t2ShowLoyalty, setShowLoyalty: setT2ShowLoyalty,
+              showQRCode: t2ShowQRCode, setShowQRCode: setT2ShowQRCode,
+              showFooterText: t2ShowFooterText, setShowFooterText: setT2ShowFooterText,
+              showBarcode: t2ShowBarcode, setShowBarcode: setT2ShowBarcode,
+            };
 
             const fieldToggleSection = (label, items) => (
               <div key={label}>
@@ -1579,6 +1617,31 @@ const POSConsole = React.memo((props) => {
                 creditInvoiceCredit: cfg.showCreditBalance ? sampleInvoice.invoiceTotal : null,
                 creditAmountPaid: cfg.showCreditBalance ? 0 : null,
               };
+              // Template 2 (Arabic) test print honours its OWN independent toggle
+              // set (t2cfg), not the shared native `cfg`, so the Test Print matches
+              // the Template 2 Live Preview and the real checkout receipt.
+              if (useComponentTemplate) {
+                Object.assign(escPosOpts, {
+                  showLogo: t2cfg.showLogo,
+                  showCompanyDetails: t2cfg.showCompanyDetails,
+                  showTrn: t2cfg.showTrn,
+                  showArabic: t2cfg.showArabic,
+                  showCustomerDetails: t2cfg.showCustomerDetails,
+                  showVatSummary: t2cfg.showVatSummary,
+                  showPaymentDetails: t2cfg.showPaymentDetails,
+                  showLoyaltyPoints: t2cfg.showLoyalty,
+                  showDelivery: t2cfg.showDelivery,
+                  showFooterText: t2cfg.showFooterText,
+                  showBarcode: t2cfg.showBarcode,
+                  showQRCode: t2cfg.showQRCode,
+                  qrContent: t2cfg.showQRCode ? 'https://billbull.ae/verify/DI-28-042' : null,
+                  showCreditBalance: t2cfg.showAccountBalance,
+                  creditPreviousBalance: t2cfg.showAccountBalance ? 245.5 : null,
+                  creditInvoiceCredit: t2cfg.showAccountBalance ? sampleInvoice.invoiceTotal : null,
+                  creditAmountPaid: t2cfg.showAccountBalance ? 0 : null,
+                  deliveryAddress: t2cfg.showDelivery ? 'Villa 22, Street 7, Al Faseel, Fujairah, UAE' : null,
+                });
+              }
 
               try {
                 const dataBase64 = useComponentTemplate
@@ -1765,6 +1828,37 @@ const POSConsole = React.memo((props) => {
                             ['Customer Signature Line', cfg.showCustomerSignature, cfg.setShowCustomerSignature],
                             ['Show Footer Custom Text', cfg.showFooterText, cfg.setShowFooterText],
                             ['Show Stamp', cfg.showStamp, cfg.setShowStamp],
+                          ])}
+                        </>) : useComponentTemplate ? (<>
+                          {/* ── Template 2 (Arabic / bilingual) toggle set ── */}
+                          {fieldToggleSection('HEADER', [
+                            ['Show Logo', t2cfg.showLogo, t2cfg.setShowLogo],
+                            ['Show Company Name & Address', t2cfg.showCompanyDetails, t2cfg.setShowCompanyDetails],
+                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn],
+                            ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
+                          ])}
+                          {fieldToggleSection('CUSTOMER DETAILS', [
+                            ['Show Customer Details', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
+                          ])}
+                          {fieldToggleSection('ACCOUNT', [
+                            ['Show Account Balance', t2cfg.showAccountBalance, t2cfg.setShowAccountBalance],
+                          ])}
+                          {fieldToggleSection('DELIVERY', [
+                            ['Show Delivery Address', t2cfg.showDelivery, t2cfg.setShowDelivery],
+                          ])}
+                          {fieldToggleSection('TRANSACTION', [
+                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary],
+                            ['Show Payment Details (Mode / Paid / Change)', t2cfg.showPaymentDetails, t2cfg.setShowPaymentDetails],
+                          ])}
+                          {fieldToggleSection('LOYALTY', [
+                            ['Show Loyalty Program', t2cfg.showLoyalty, t2cfg.setShowLoyalty],
+                          ])}
+                          {fieldToggleSection('AFTER PAYMENT', [
+                            ['Show QR / Social Image', t2cfg.showQRCode, t2cfg.setShowQRCode],
+                          ])}
+                          {fieldToggleSection('FOOTER', [
+                            ['Show Footer Custom Text', t2cfg.showFooterText, t2cfg.setShowFooterText],
+                            ['Show Barcode', t2cfg.showBarcode, t2cfg.setShowBarcode],
                           ])}
                         </>) : (<>
                           {fieldToggleSection('HEADER', [
