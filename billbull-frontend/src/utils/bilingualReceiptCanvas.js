@@ -93,6 +93,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
+  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -416,7 +417,22 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (showPaymentDetails) {
     y += Math.round(6 * S);
     if (invoice.paymentMode) kv2(L.PAYMENT_MODE, String(invoice.paymentMode).toUpperCase());
-    if (cashGiven != null && parseFloat(cashGiven) > 0) kv2(L.CASH_RECEIVED, fmt(cashGiven));
+    // Mixed (cash + card) split — surface how much was tendered on each tender so
+    // the receipt reconciles with the drawer + card batch. Card row label carries
+    // the card brand when known (e.g. "Card Paid (VISA)").
+    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
+      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
+    if (hasMixedSplit) {
+      if (parseFloat(mixedCashGiven) > 0) kv2(L.CASH_PAID, fmt(mixedCashGiven));
+      if (parseFloat(mixedCardGiven) > 0) {
+        const cardLabel = mixedCardType
+          ? { en: `${L.CARD_PAID.en} (${mixedCardType})`, ar: L.CARD_PAID.ar }
+          : L.CARD_PAID;
+        kv2(cardLabel, fmt(mixedCardGiven));
+      }
+    } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      kv2(L.CASH_RECEIVED, fmt(cashGiven));
+    }
     if (changeAmount != null && parseFloat(changeAmount) > 0) kv2(L.CHANGE, fmt(changeAmount), { bold: true });
   }
 

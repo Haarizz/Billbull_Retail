@@ -593,6 +593,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
+  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -792,7 +793,16 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showPaymentDetails) {
     if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
-    if (cashGiven != null && parseFloat(cashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
+    // Mixed (cash + card) split — each tender's portion so the receipt reconciles
+    // with the drawer + card batch. Otherwise fall back to Cash Received.
+    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
+      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
+    if (hasMixedSplit) {
+      if (parseFloat(mixedCashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Paid:', fmt(mixedCashGiven), width));
+      if (parseFloat(mixedCardGiven) > 0) w.gline(gutter, buildFixedWidthLine(`Card Paid${mixedCardType ? ` (${mixedCardType})` : ''}:`, fmt(mixedCardGiven), width));
+    } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      w.gline(gutter, buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
+    }
     if (changeAmount != null && parseFloat(changeAmount) > 0) w.gline(gutter, buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
     emitDivider(w, gutter, hr);
   }

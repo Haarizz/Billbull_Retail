@@ -103,6 +103,8 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       nameAr: it.nameAr || "",
       sku: it.sku || it.code || "",
       vatLabel: it.vatLabel || "",
+      discountPercent: Number(it.discountPercent || 0),
+      discountAmount: Number(it.discountAmount || 0),
       qty: Number(it.qty || 0),
       rate: Number(it.rate || 0),
       amount: Number(it.amount || 0),
@@ -122,6 +124,9 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
           paidAmount: Number(txn.payment.paidAmount || 0),
           changeReturned: Number(txn.payment.changeReturned || 0),
           cardRef: txn.payment.cardRef || "",
+          mixedCashGiven: txn.payment.mixedCashGiven != null ? Number(txn.payment.mixedCashGiven) : null,
+          mixedCardGiven: txn.payment.mixedCardGiven != null ? Number(txn.payment.mixedCardGiven) : null,
+          mixedCardType: txn.payment.mixedCardType || "",
         }
       : null,
     loyalty: on(toggles.showLoyalty) ? txn.loyalty || null : null,
@@ -265,6 +270,16 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
     delivery,
     items: items.map((it) => {
       const rate = Number(it.taxPercent ?? it.vatPercent ?? null);
+      // Per-line discount — mirror the ESC/POS canvas renderer so the checkout
+      // preview shows the same "Disc X%" meta + "Discount: -amount" line the
+      // printed receipt does. discountAmount preferred; else gross × discount%.
+      const qty = Number(it.quantity || 0);
+      const gross = Number(it.grossAmount ?? qty * Number(it.unitPrice ?? it.price ?? 0)) || 0;
+      const discPct = Number(it.discountPercent ?? it.discount ?? 0) || 0;
+      const lineTotal = Number(it.netAmount ?? it.grossAmount ?? 0) || 0;
+      const discAmt = it.discountAmount != null
+        ? Number(it.discountAmount) || 0
+        : (discPct > 0 ? gross * (discPct / 100) : Math.max(0, gross - lineTotal));
       return {
         nameEn: it.itemName || it.nameEn || it.name || "",
         // Arabic name lives on the persisted invoice item as `localName`; the
@@ -272,9 +287,11 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
         nameAr: it.localName || it.nameAr || it.arabicName || "",
         sku: it.sku || it.itemCode || it.code || "",
         vatLabel: Number.isFinite(rate) ? `VAT ${rate}%` : "",
-        qty: Number(it.quantity || 0),
+        discountPercent: discPct,
+        discountAmount: discAmt,
+        qty,
         rate: Number(it.unitPrice || 0),
-        amount: Number(it.netAmount ?? it.grossAmount ?? 0),
+        amount: lineTotal,
       };
     }),
     totals: {
@@ -291,6 +308,11 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
       paidAmount: Number(opts.cashGiven ?? invoice.invoiceTotal ?? 0),
       changeReturned: Number(opts.changeAmount || 0),
       cardRef: opts.cardRef || invoice.cardRef || "",
+      // Mixed (cash + card) split — how much was tendered on each tender. Null
+      // unless a genuine mixed payment supplied both portions.
+      mixedCashGiven: opts.mixedCashGiven != null ? Number(opts.mixedCashGiven) : null,
+      mixedCardGiven: opts.mixedCardGiven != null ? Number(opts.mixedCardGiven) : null,
+      mixedCardType: opts.mixedCardType || "",
     },
     vatSummary: {
       standardRateAmount: vatStandard,
@@ -336,9 +358,9 @@ export function buildSampleTxn() {
       contactNote: "Contact on arrival: +971 50 123 4567",
     },
     items: [
-      { nameEn: "Margherita Pizza", nameAr: "بيتزا مارغريتا", sku: "SKU 10023", vatLabel: "VAT 5%", qty: 1, rate: 45.0, amount: 45.0 },
-      { nameEn: "Coke", nameAr: "كولا", sku: "SKU 10981", vatLabel: "VAT 5%", qty: 2, rate: 8.0, amount: 16.0 },
-      { nameEn: "Caesar Salad", nameAr: "سلطة سيزر", sku: "SKU 11532", vatLabel: "VAT 5%", qty: 1, rate: 28.0, amount: 28.0 },
+      { nameEn: "Margherita Pizza", nameAr: "بيتزا مارغريتا", sku: "10023", vatLabel: "VAT 5%", qty: 1, rate: 45.0, amount: 45.0 },
+      { nameEn: "Coke", nameAr: "كولا", sku: "10981", vatLabel: "VAT 5%", qty: 2, rate: 8.0, amount: 16.0 },
+      { nameEn: "Caesar Salad", nameAr: "سلطة سيزر", sku: "11532", vatLabel: "VAT 5%", qty: 1, rate: 28.0, amount: 28.0 },
     ],
     totals: {
       subtotal: 89.0,

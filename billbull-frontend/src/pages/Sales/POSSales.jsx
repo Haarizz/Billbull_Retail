@@ -1028,6 +1028,13 @@ export default function POSSales() {
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
 
+      // Mixed (cash + card) split for the receipt preview — only when the mode is
+      // Mixed and both portions were entered, so cash/card/credit sales don't show
+      // an empty split. Passed to BOTH template renderers below.
+      const previewMixedCash = checkoutPayMode === 'mixed' ? (parseFloat(mixedCashAmount) || 0) : 0;
+      const previewMixedCard = checkoutPayMode === 'mixed' ? (parseFloat(mixedCardAmount) || 0) : 0;
+      const previewHasMixed = checkoutPayMode === 'mixed' && (previewMixedCash > 0 || previewMixedCard > 0);
+
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
@@ -1063,6 +1070,9 @@ export default function POSSales() {
           creditInvoiceCredit: previewGrand,
           creditAmountPaid: 0,
           creditUpdatedBalance: checkoutPreviewCreditBalance != null ? Number(checkoutPreviewCreditBalance) + previewGrand : null,
+          mixedCashGiven: previewHasMixed ? previewMixedCash : null,
+          mixedCardGiven: previewHasMixed ? previewMixedCard : null,
+          mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
         });
         const outlet = {
           name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
@@ -1092,7 +1102,10 @@ export default function POSSales() {
         showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
-        currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement
+        currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+        mixedCashGiven: previewHasMixed ? previewMixedCash : null,
+        mixedCardGiven: previewHasMixed ? previewMixedCard : null,
+        mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
       });
 
       checkoutPreviewFreezeRef.current = html;
@@ -1102,7 +1115,7 @@ export default function POSSales() {
       return '';
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
-    checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
+    checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
@@ -3053,6 +3066,9 @@ export default function POSSales() {
     isReprint = false,
     cashGiven = null,
     changeAmount = null,
+    mixedCashGiven = null,
+    mixedCardGiven = null,
+    mixedCardType = null,
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
@@ -3132,6 +3148,9 @@ export default function POSSales() {
       deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
+      mixedCashGiven,
+      mixedCardGiven,
+      mixedCardType,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -3243,6 +3262,9 @@ export default function POSSales() {
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      mixedCashGiven,
+      mixedCardGiven,
+      mixedCardType,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -3591,6 +3613,11 @@ export default function POSSales() {
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
                 changeAmount: changeDue,
+                // Mixed (cash + card) split — only for a genuine mixed payment where
+                // both portions were entered, so cash/card/credit sales stay clean.
+                mixedCashGiven: checkoutPayMode === 'mixed' && mixedCashNum > 0 ? mixedCashNum : null,
+                mixedCardGiven: checkoutPayMode === 'mixed' && mixedCardNum > 0 ? mixedCardNum : null,
+                mixedCardType: checkoutPayMode === 'mixed' ? (mixedCardType || 'Card') : null,
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.

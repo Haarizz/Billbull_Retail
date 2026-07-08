@@ -68,9 +68,9 @@ export const SAMPLE_DATA = {
     contactNote: "Contact on arrival: +971 50 123 4567",
   },
   items: [
-    { nameEn: "Basmati Rice 5kg", nameAr: "أرز بسمتي 5 كجم", sku: "SKU 10023", vatLabel: "VAT 5%", qty: 1, rate: 42.0, amount: 42.0 },
-    { nameEn: "Fresh Milk 1L", nameAr: "حليب طازج 1 لتر", sku: "SKU 10981", vatLabel: "VAT 0%", qty: 2, rate: 6.5, amount: 13.0 },
-    { nameEn: "Olive Oil 1L", nameAr: "زيت زيتون 1 لتر", sku: "SKU 11532", vatLabel: "VAT 5% · Disc 10%", qty: 1, rate: 38.0, amount: 34.2 },
+    { nameEn: "Basmati Rice 5kg", nameAr: "أرز بسمتي 5 كجم", sku: "10023", vatLabel: "VAT 5%", qty: 1, rate: 42.0, amount: 42.0 },
+    { nameEn: "Fresh Milk 1L", nameAr: "حليب طازج 1 لتر", sku: "10981", vatLabel: "VAT 0%", qty: 2, rate: 6.5, amount: 13.0 },
+    { nameEn: "Olive Oil 1L", nameAr: "زيت زيتون 1 لتر", sku: "11532", vatLabel: "VAT 5%", discountPercent: 10, discountAmount: 3.8, qty: 1, rate: 38.0, amount: 34.2 },
   ],
   totals: {
     subtotal: 89.2,
@@ -459,9 +459,21 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               <td>
                 <div className="item-name">{item.nameEn}</div>
                 {item.nameAr && <div className="item-name-ar ar">{item.nameAr}</div>}
-                {(item.sku || item.vatLabel) && (
+                {(item.sku || item.vatLabel || item.discountPercent > 0) && (
                   <div className="item-meta">
-                    {[item.sku, item.vatLabel].filter(Boolean).join(" · ")}
+                    {[
+                      item.sku && `SKU ${item.sku}`,
+                      item.vatLabel,
+                      item.discountPercent > 0 &&
+                        `Disc ${Number(item.discountPercent).toFixed(item.discountPercent % 1 ? 2 : 0)}%`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                )}
+                {item.discountAmount > 0 && (
+                  <div className="item-meta">
+                    Discount: - {currency} {fmt(item.discountAmount)}
                   </div>
                 )}
               </td>
@@ -514,7 +526,25 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               <span className="pay-mode">{payment.mode}</span>
             </div>
           </div>
-          <KV en="Paid Amount" ar="المبلغ المدفوع" value={`${currency} ${fmt(payment.paidAmount)}`} />
+          {/* Mixed (cash + card) split — show each tender's portion so the receipt
+              reconciles with the drawer + card batch. Falls back to a single
+              "Paid Amount" row for non-mixed payments. */}
+          {(payment.mixedCashGiven > 0 || payment.mixedCardGiven > 0) ? (
+            <>
+              {payment.mixedCashGiven > 0 && (
+                <KV en="Cash Paid" ar="المبلغ النقدي المدفوع" value={`${currency} ${fmt(payment.mixedCashGiven)}`} />
+              )}
+              {payment.mixedCardGiven > 0 && (
+                <KV
+                  en={`Card Paid${payment.mixedCardType ? ` (${payment.mixedCardType})` : ""}`}
+                  ar="المبلغ المدفوع بالبطاقة"
+                  value={`${currency} ${fmt(payment.mixedCardGiven)}`}
+                />
+              )}
+            </>
+          ) : (
+            <KV en="Paid Amount" ar="المبلغ المدفوع" value={`${currency} ${fmt(payment.paidAmount)}`} />
+          )}
           {!!payment.changeReturned && (
             <KV className="bold" en="Change Returned" ar="المبلغ المرتجع" value={`${currency} ${fmt(payment.changeReturned)}`} />
           )}
