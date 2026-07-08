@@ -60,6 +60,16 @@ public class AdvanceApplicationService {
     }
 
     /**
+     * True if this customer has ever had an ADVANCE_RECEIVED voucher, regardless of
+     * whether it's still open. Lets the UI distinguish "never received an advance"
+     * from "received one but it's fully applied" — both render as an empty
+     * findOpenAdvances() list otherwise.
+     */
+    public boolean hasAdvanceHistory(String customerCode) {
+        return !receiptRepo.findByCustomerCodeAndPurpose(customerCode, ReceiptPurpose.ADVANCE_RECEIVED).isEmpty();
+    }
+
+    /**
      * Applies an advance receipt against a sales invoice.
      * Posts: Dr Customer Advance (2104) / Cr Accounts Receivable (1110)
      *

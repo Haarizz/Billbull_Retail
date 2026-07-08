@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { saveSalesPayment, getOpenInvoicesForCustomer } from '../../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
-import { getOpenAdvances, applyAdvance } from '../../../api/advanceApplicationApi';
+import { getOpenAdvances, applyAdvance, hasAdvanceHistory, applyAdvanceAgainstOutstanding } from '../../../api/advanceApplicationApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
@@ -79,9 +79,12 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [receiptSuccess, setReceiptSuccess] = React.useState(null);
   const [lastPayment, setLastPayment]       = React.useState(null);
   const [receiptPrintBusy, setReceiptPrintBusy] = React.useState(false);
-  const [receiptInvoice, setReceiptInvoice] = React.useState('');
   const [receiptOpenInvoices, setReceiptOpenInvoices] = React.useState([]);
   const [receiptInvoicesLoading, setReceiptInvoicesLoading] = React.useState(false);
+  // Multi-invoice settlement (mirrors the back-office Receive Money screen):
+  // a map of invoiceNumber -> selected, and invoiceNumber -> amount-to-settle.
+  const [receiptSelectedInvoices, setReceiptSelectedInvoices] = React.useState({});
+  const [receiptSettleAmounts, setReceiptSettleAmounts] = React.useState({});
 
   // Advance form state
   const [advAmount, setAdvAmount]   = React.useState('');
@@ -89,17 +92,32 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [advNotes, setAdvNotes]     = React.useState('');
   const [advBusy, setAdvBusy]       = React.useState(false);
   const [advSuccess, setAdvSuccess] = React.useState(null);
+  // Opt-in: sweep the newly-received advance against the customer's existing
+  // open invoices immediately instead of leaving it fully unapplied. Off by
+  // default — "Receive Advance" is a deliberate deposit-for-later action, so
+  // auto-settling past invoices without asking would surprise the cashier.
+  const [advAutoApply, setAdvAutoApply] = React.useState(false);
 
-  // Apply Existing Advance — open-advances list + apply modal state
-  const [applyAdvCust, setApplyAdvCust]     = React.useState(null);
+  // Apply Existing Advance — shares advanceCust (the "Receive Advance Payment"
+  // customer selection above it) instead of its own picker, so selecting a
+  // customer once on this tab drives both boxes.
   const [openAdvances, setOpenAdvances]     = React.useState([]);
   const [openAdvBusy, setOpenAdvBusy]       = React.useState(false);
   const [openAdvError, setOpenAdvError]     = React.useState(null);
+  // Distinguishes "customer never received an advance" from "received one but
+  // it's fully applied" — both otherwise render as an empty openAdvances list.
+  const [advHasHistory, setAdvHasHistory]   = React.useState(false);
   const [applyModalAdv, setApplyModalAdv]   = React.useState(null); // the AdvanceBalance row being applied
-  const [applyInvoiceNo, setApplyInvoiceNo] = React.useState('');
-  const [applyAmount, setApplyAmount]       = React.useState('');
   const [applyDate, setApplyDate]           = React.useState(new Date().toISOString().slice(0, 10));
   const [applyBusy, setApplyBusy]           = React.useState(false);
+  // Open invoices for the Apply Advance modal's invoice checklist (mirrors the
+  // Customer Receipt tab's receiptOpenInvoices).
+  const [applyOpenInvoices, setApplyOpenInvoices] = React.useState([]);
+  const [applyInvoicesLoading, setApplyInvoicesLoading] = React.useState(false);
+  // Multi-invoice apply — same selected/amount-map pattern as Customer Receipt,
+  // capped by the advance's own open balance instead of a payment amount.
+  const [applySelectedInvoices, setApplySelectedInvoices] = React.useState({});
+  const [applySettleAmounts, setApplySettleAmounts]       = React.useState({});
 
   // Statement form state
   const [stmtFromDate, setStmtFromDate] = React.useState('');
@@ -125,7 +143,8 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   // targeted at one instead of the default oldest-invoice-first auto-apply.
   React.useEffect(() => {
     const selected = customerOptions.find(c => c.id === receiptCust);
-    setReceiptInvoice('');
+    setReceiptSelectedInvoices({});
+    setReceiptSettleAmounts({});
     if (!selected) { setReceiptOpenInvoices([]); return; }
     let cancelled = false;
     setReceiptInvoicesLoading(true);
@@ -135,6 +154,70 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       .finally(() => { if (!cancelled) setReceiptInvoicesLoading(false); });
     return () => { cancelled = true; };
   }, [receiptCust, customerOptions]);
+
+  // Sum of amount-to-settle across every checked invoice — drives the
+  // "Payment Amount" total shown/used when recording the payment, same as
+  // the back office's Total Settlement.
+  const receiptTotalToSettle = React.useMemo(() => (
+    Object.keys(receiptSelectedInvoices).reduce((sum, invNo) => (
+      receiptSelectedInvoices[invNo] ? sum + (parseFloat(receiptSettleAmounts[invNo]) || 0) : sum
+    ), 0)
+  ), [receiptSelectedInvoices, receiptSettleAmounts]);
+
+  const handleReceiptInvoiceToggle = React.useCallback((inv, checked) => {
+    setReceiptSelectedInvoices(prev => ({ ...prev, [inv.invoiceNumber]: checked }));
+    setReceiptSettleAmounts(prev => (
+      checked
+        ? { ...prev, [inv.invoiceNumber]: Number(inv.balance ?? 0) }
+        : (() => { const next = { ...prev }; delete next[inv.invoiceNumber]; return next; })()
+    ));
+  }, []);
+
+  const handleReceiptSelectAll = React.useCallback((checked) => {
+    if (!checked) { setReceiptSelectedInvoices({}); setReceiptSettleAmounts({}); return; }
+    const nextSelected = {};
+    const nextAmounts = {};
+    receiptOpenInvoices.forEach(inv => {
+      nextSelected[inv.invoiceNumber] = true;
+      nextAmounts[inv.invoiceNumber] = Number(inv.balance ?? 0);
+    });
+    setReceiptSelectedInvoices(nextSelected);
+    setReceiptSettleAmounts(nextAmounts);
+  }, [receiptOpenInvoices]);
+
+  const handleReceiptSettleAmountChange = React.useCallback((invoiceNo, value, maxAmount) => {
+    let val = parseFloat(value) || 0;
+    if (val > maxAmount) val = maxAmount;
+    if (val < 0) val = 0;
+    setReceiptSettleAmounts(prev => ({ ...prev, [invoiceNo]: val }));
+  }, []);
+
+  // Entering a Received Amount auto-allocates it across open invoices,
+  // oldest first, exactly like the back-office "Received Amount (Auto-Allocate)".
+  const handleReceiptAutoAllocate = React.useCallback((amount) => {
+    setReceiptAmount(amount);
+    const totalReceived = parseFloat(amount) || 0;
+    if (totalReceived <= 0) {
+      setReceiptSelectedInvoices({});
+      setReceiptSettleAmounts({});
+      return;
+    }
+    let remaining = totalReceived;
+    const nextSelected = {};
+    const nextAmounts = {};
+    const sorted = [...receiptOpenInvoices].sort((a, b) => new Date(a.invoiceDate) - new Date(b.invoiceDate));
+    for (const inv of sorted) {
+      if (remaining <= 0) break;
+      const balance = Number(inv.balance ?? 0);
+      const allocate = Math.min(remaining, balance);
+      if (allocate <= 0) continue;
+      nextSelected[inv.invoiceNumber] = true;
+      nextAmounts[inv.invoiceNumber] = allocate;
+      remaining -= allocate;
+    }
+    setReceiptSelectedInvoices(nextSelected);
+    setReceiptSettleAmounts(nextAmounts);
+  }, [receiptOpenInvoices]);
 
   // Tracks voucher keys already AUTO-printed so the automatic print fired after a
   // successful save can't double-fire (e.g. the Record Payment / Receive Advance
@@ -225,55 +308,100 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const handleRecordPayment = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === receiptCust);
     if (!selected) return alert('Please select a customer.');
-    if (!receiptAmount || Number(receiptAmount) <= 0) return alert('Enter a valid payment amount.');
     if (!receiptMethod) return alert('Please select a payment method.');
     if (receiptMethod !== 'Cash' && !receiptBank) return alert('Please select a bank account for this payment method.');
+
+    const invoicesToPay = Object.keys(receiptSelectedInvoices).filter(k => receiptSelectedInvoices[k]);
+    const totalAmount = invoicesToPay.length > 0 ? receiptTotalToSettle : Number(receiptAmount) || 0;
+    if (totalAmount <= 0) return alert('Enter a valid payment amount.');
+
     setReceiptBusy(true);
     setReceiptSuccess(null);
     try {
-      const saved = await saveSalesPayment({
-        paymentDate: new Date().toISOString().slice(0, 10),
-        paymentType: 'RECEIVED',
-        customerCode: selected.code,
-        customerName: selected.name,
-        amount: Number(receiptAmount),
-        paymentMode: receiptMethod,
-        bankName: receiptMethod !== 'Cash' ? receiptBank : null,
-        chequeDate: receiptMethod === 'Cheque' && receiptChequeDate ? receiptChequeDate : null,
-        referenceNumber: receiptRef || null,
-        linkedInvoice: receiptInvoice || null,
-        status: 'COMPLETED',
-      });
+      let saved = null;
+      // Tracks every invoice actually settled in this transaction — whether
+      // picked manually or via auto-allocate — so the printed receipt can list
+      // all of them instead of just the last saved record.
+      const settledInvoices = [];
+      if (invoicesToPay.length > 0) {
+        // Multi-invoice settlement — one payment record per selected invoice,
+        // same pattern as the back-office Receive Money screen.
+        for (const invNo of invoicesToPay) {
+          const amount = receiptSettleAmounts[invNo];
+          const inv = receiptOpenInvoices.find(i => i.invoiceNumber === invNo);
+          if (!inv || amount <= 0) continue;
+          saved = await saveSalesPayment({
+            paymentDate: new Date().toISOString().slice(0, 10),
+            paymentType: 'RECEIVED',
+            customerCode: selected.code,
+            customerName: selected.name,
+            amount,
+            paymentMode: receiptMethod,
+            bankName: receiptMethod !== 'Cash' ? receiptBank : null,
+            chequeDate: receiptMethod === 'Cheque' && receiptChequeDate ? receiptChequeDate : null,
+            referenceNumber: receiptRef || null,
+            linkedInvoice: invNo,
+            invoiceAmount: inv.invoiceTotal,
+            invoiceBalance: inv.balance,
+            status: amount < Number(inv.balance ?? 0) ? 'PARTIAL' : 'COMPLETED',
+          });
+          settledInvoices.push({ invoiceNumber: invNo, amount });
+        }
+      } else {
+        saved = await saveSalesPayment({
+          paymentDate: new Date().toISOString().slice(0, 10),
+          paymentType: 'RECEIVED',
+          customerCode: selected.code,
+          customerName: selected.name,
+          amount: totalAmount,
+          paymentMode: receiptMethod,
+          bankName: receiptMethod !== 'Cash' ? receiptBank : null,
+          chequeDate: receiptMethod === 'Cheque' && receiptChequeDate ? receiptChequeDate : null,
+          referenceNumber: receiptRef || null,
+          linkedInvoice: null,
+          status: 'COMPLETED',
+        });
+      }
       setLastPayment(saved);
       setReceiptSuccess(
-        receiptInvoice
-          ? `Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name} against invoice ${receiptInvoice}.`
-          : `Payment of ${Number(receiptAmount).toFixed(2)} recorded for ${selected.name}.`
+        invoicesToPay.length > 1
+          ? `Payment of ${totalAmount.toFixed(2)} recorded for ${selected.name} across ${invoicesToPay.length} invoices.`
+          : invoicesToPay.length === 1
+            ? `Payment of ${totalAmount.toFixed(2)} recorded for ${selected.name} against invoice ${invoicesToPay[0]}.`
+            : `Payment of ${totalAmount.toFixed(2)} recorded for ${selected.name}.`
       );
       setReceiptAmount('');
       setReceiptMethod('');
       setReceiptBank('');
       setReceiptChequeDate('');
       setReceiptRef('');
-      setReceiptInvoice('');
+      setReceiptSelectedInvoices({});
+      setReceiptSettleAmounts({});
       if (typeof syncPosData === 'function') syncPosData();
-      // Auto-print the Customer Payment Receipt now that the transaction has
-      // succeeded — fire-and-forget so it never blocks the form reset/workflow.
-      // Uses the freshly-saved object (not lastPayment state, which hasn't
-      // committed yet); the dedupe guard stops a later manual Print click from
-      // reprinting the same receipt.
-      void printVoucherToConfiguredPrinter(saved, {
-        documentTitle: 'PAYMENT RECEIPT',
-        title: `Receipt ${saved?.paymentNumber || ''}`.trim(),
-        customer: selected,
-        auto: true,
-      });
+      // Refresh open invoices for this customer so settled ones drop off the list.
+      getOpenInvoicesForCustomer(selected.code)
+        .then(data => setReceiptOpenInvoices(Array.isArray(data) ? data : []))
+        .catch(() => {});
+      // Auto-print a single Customer Payment Receipt covering the whole
+      // transaction — total amount plus every settled invoice — rather than
+      // one print per saved payment record. Fire-and-forget so it never
+      // blocks the form reset/workflow.
+      if (saved) {
+        const combinedVoucher = { ...saved, amount: totalAmount, settledInvoices };
+        setLastPayment(combinedVoucher);
+        void printVoucherToConfiguredPrinter(combinedVoucher, {
+          documentTitle: 'PAYMENT RECEIPT',
+          title: `Receipt ${saved?.paymentNumber || ''}`.trim(),
+          customer: selected,
+          auto: true,
+        });
+      }
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record payment.');
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptInvoice, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptSelectedInvoices, receiptSettleAmounts, receiptTotalToSettle, receiptOpenInvoices, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
 
   const handlePrintReceipt = React.useCallback(async () => {
     if (!lastPayment) return;
@@ -284,6 +412,26 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       customer,
     });
   }, [lastPayment, customerOptions, printVoucherToConfiguredPrinter]);
+
+  const refreshOpenAdvances = React.useCallback(async (custId) => {
+    const selected = customerOptions.find(c => c.id === custId);
+    if (!selected) { setOpenAdvances([]); setAdvHasHistory(false); return; }
+    setOpenAdvBusy(true);
+    setOpenAdvError(null);
+    try {
+      const [data, hist] = await Promise.all([
+        getOpenAdvances(selected.code),
+        hasAdvanceHistory(selected.code).catch(() => false),
+      ]);
+      setOpenAdvances(Array.isArray(data) ? data : []);
+      setAdvHasHistory(hist);
+    } catch (e) {
+      setOpenAdvError(e?.response?.data?.message || e?.response?.data || 'Failed to load open advances.');
+      setOpenAdvances([]);
+    } finally {
+      setOpenAdvBusy(false);
+    }
+  }, [customerOptions]);
 
   const handleReceiveAdvance = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === advanceCust);
@@ -307,11 +455,33 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       const fd = new FormData();
       fd.append('data', JSON.stringify(payload));
       const savedAdvance = await receiptVoucherApi.create(fd);
-      setAdvSuccess(`Advance of ${Number(advAmount).toFixed(2)} received for ${selected.name}.`);
+      let successMsg = `Advance of ${Number(advAmount).toFixed(2)} received for ${selected.name}.`;
+      // Opt-in sweep against the customer's existing open invoices (see
+      // advAutoApply declaration). Failure here shouldn't roll back the
+      // advance itself — it was already saved — so just surface it.
+      if (advAutoApply && savedAdvance?.id) {
+        try {
+          const result = await applyAdvanceAgainstOutstanding({
+            customerCode: selected.code,
+            advanceReceiptId: savedAdvance.id,
+          });
+          const appliedAmt = Number(result?.applied ?? 0);
+          if (appliedAmt > 0) {
+            successMsg += ` ${appliedAmt.toFixed(2)} auto-applied to outstanding invoices.`;
+          }
+        } catch {
+          successMsg += ' (Could not auto-apply to outstanding invoices — apply manually below.)';
+        }
+      }
+      setAdvSuccess(successMsg);
       setAdvAmount('');
       setAdvMethod('');
       setAdvNotes('');
       if (typeof syncPosData === 'function') syncPosData();
+      // Refresh the "Apply Existing Advance" list below so the newly-received
+      // advance (or its remaining open balance after auto-apply) shows up
+      // immediately without re-selecting the customer.
+      refreshOpenAdvances(advanceCust);
       // Auto-print the Advance Receipt now that the advance is recorded. Map the
       // created voucher (falling back to the just-sent payload if the API returns
       // no body) into the shared receipt-voucher shape, then print silently and
@@ -338,60 +508,139 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setAdvBusy(false);
     }
-  }, [advanceCust, advAmount, advMethod, advNotes, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
-
-  const refreshOpenAdvances = React.useCallback(async (custId) => {
-    const selected = customerOptions.find(c => c.id === custId);
-    if (!selected) { setOpenAdvances([]); return; }
-    setOpenAdvBusy(true);
-    setOpenAdvError(null);
-    try {
-      const data = await getOpenAdvances(selected.code);
-      setOpenAdvances(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setOpenAdvError(e?.response?.data?.message || e?.response?.data || 'Failed to load open advances.');
-      setOpenAdvances([]);
-    } finally {
-      setOpenAdvBusy(false);
-    }
-  }, [customerOptions]);
+  }, [advanceCust, advAmount, advMethod, advNotes, advAutoApply, customerOptions, syncPosData, printVoucherToConfiguredPrinter, refreshOpenAdvances]);
 
   React.useEffect(() => {
-    if (applyAdvCust) refreshOpenAdvances(applyAdvCust);
+    if (advanceCust) refreshOpenAdvances(advanceCust);
     else setOpenAdvances([]);
-  }, [applyAdvCust, refreshOpenAdvances]);
+  }, [advanceCust, refreshOpenAdvances]);
 
   const openApplyModal = React.useCallback((adv) => {
     setApplyModalAdv(adv);
-    setApplyInvoiceNo('');
-    setApplyAmount(Number(adv.openBalance ?? 0).toFixed(2));
+    setApplySelectedInvoices({});
+    setApplySettleAmounts({});
     setApplyDate(new Date().toISOString().slice(0, 10));
-  }, []);
+    const selected = customerOptions.find(c => c.id === advanceCust);
+    if (selected) {
+      setApplyInvoicesLoading(true);
+      getOpenInvoicesForCustomer(selected.code)
+        .then(data => setApplyOpenInvoices(Array.isArray(data) ? data : []))
+        .catch(() => setApplyOpenInvoices([]))
+        .finally(() => setApplyInvoicesLoading(false));
+    } else {
+      setApplyOpenInvoices([]);
+    }
+  }, [customerOptions, advanceCust]);
 
   const closeApplyModal = React.useCallback(() => setApplyModalAdv(null), []);
 
+  // Sum of amount-to-apply across every checked invoice — same shape as
+  // receiptTotalToSettle, but capped against the advance's own open balance.
+  const applyTotalToApply = React.useMemo(() => (
+    Object.keys(applySelectedInvoices).reduce((sum, invNo) => (
+      applySelectedInvoices[invNo] ? sum + (parseFloat(applySettleAmounts[invNo]) || 0) : sum
+    ), 0)
+  ), [applySelectedInvoices, applySettleAmounts]);
+
+  const handleApplyInvoiceToggle = React.useCallback((inv, checked) => {
+    setApplySelectedInvoices(prev => ({ ...prev, [inv.invoiceNumber]: checked }));
+    setApplySettleAmounts(prev => {
+      if (!checked) {
+        const next = { ...prev }; delete next[inv.invoiceNumber]; return next;
+      }
+      // Default each newly-checked row to its own balance capped by the advance's
+      // total open balance — not "whatever's left after other checked rows" (that
+      // silently zeroed out every row after the first once the cap was hit).
+      // The total-vs-cap banner above already warns if the sum overshoots; the
+      // user retypes amounts to redistribute, same as Customer Receipt's model.
+      const openBalance = Number(applyModalAdv?.openBalance ?? 0);
+      const balance = Number(inv.balance ?? 0);
+      return { ...prev, [inv.invoiceNumber]: Math.min(balance, openBalance).toFixed(2) };
+    });
+  }, [applyModalAdv]);
+
+  const handleApplySelectAll = React.useCallback((checked) => {
+    if (!checked) { setApplySelectedInvoices({}); setApplySettleAmounts({}); return; }
+    const openBalance = Number(applyModalAdv?.openBalance ?? 0);
+    let remaining = openBalance;
+    const nextSelected = {};
+    const nextAmounts = {};
+    const sorted = [...applyOpenInvoices].sort((a, b) => new Date(a.invoiceDate) - new Date(b.invoiceDate));
+    for (const inv of sorted) {
+      if (remaining <= 0) break;
+      const balance = Number(inv.balance ?? 0);
+      const allocate = Math.min(balance, remaining);
+      if (allocate <= 0) continue;
+      nextSelected[inv.invoiceNumber] = true;
+      nextAmounts[inv.invoiceNumber] = allocate.toFixed(2);
+      remaining -= allocate;
+    }
+    setApplySelectedInvoices(nextSelected);
+    setApplySettleAmounts(nextAmounts);
+  }, [applyOpenInvoices, applyModalAdv]);
+
+  const handleApplySettleAmountChange = React.useCallback((invoiceNo, value, maxAmount) => {
+    let val = parseFloat(value) || 0;
+    if (val > maxAmount) val = maxAmount;
+    if (val < 0) val = 0;
+    setApplySettleAmounts(prev => ({ ...prev, [invoiceNo]: val }));
+  }, []);
+
   const handleApplyAdvance = React.useCallback(async () => {
     if (!applyModalAdv) return;
-    if (!applyInvoiceNo.trim()) return alert('Enter an invoice number.');
-    const amt = Number(applyAmount);
-    if (!amt || amt <= 0) return alert('Enter a valid amount.');
+    const targets = Object.keys(applySelectedInvoices)
+      .filter(invNo => applySelectedInvoices[invNo] && (parseFloat(applySettleAmounts[invNo]) || 0) > 0)
+      .map(invNo => ({ invoiceNo: invNo, amount: parseFloat(applySettleAmounts[invNo]) || 0 }));
+    if (targets.length === 0) return alert('Select at least one invoice and amount to apply.');
+    const totalAmt = targets.reduce((sum, t) => sum + t.amount, 0);
+    if (totalAmt > Number(applyModalAdv.openBalance ?? 0) + 0.01) {
+      return alert('Total amount to apply exceeds the open advance balance.');
+    }
     setApplyBusy(true);
     try {
-      await applyAdvance({
-        advanceReceiptId: applyModalAdv.receiptId,
-        invoiceNumber: applyInvoiceNo.trim(),
-        amount: amt,
-        appliedDate: applyDate,
-      });
-      toast.success(`Applied ${amt.toFixed(2)} to invoice ${applyInvoiceNo.trim()}.`);
+      // Sequential, not parallel: each apply() re-reads the advance's remaining
+      // open balance under a row lock, so concurrent calls against the same
+      // receipt would race each other unnecessarily.
+      for (const t of targets) {
+        await applyAdvance({
+          advanceReceiptId: applyModalAdv.receiptId,
+          invoiceNumber: t.invoiceNo,
+          amount: t.amount,
+          appliedDate: applyDate,
+        });
+      }
+      toast.success(
+        targets.length === 1
+          ? `Applied ${targets[0].amount.toFixed(2)} to invoice ${targets[0].invoiceNo}.`
+          : `Applied ${totalAmt.toFixed(2)} across ${targets.length} invoices.`
+      );
       setApplyModalAdv(null);
-      refreshOpenAdvances(applyAdvCust);
+      refreshOpenAdvances(advanceCust);
+      // Print a confirmation voucher for the advance-to-invoice application, same
+      // 80mm layout as Payment/Advance receipts — lets the cashier hand the
+      // customer proof the advance was applied, not just a silent toast.
+      const selected = customerOptions.find(c => c.id === advanceCust);
+      void printVoucherToConfiguredPrinter({
+        receiptNumber: applyModalAdv.voucherId,
+        customerName: selected?.name,
+        customerCode: selected?.code,
+        amount: totalAmt,
+        paymentMode: 'Advance Credit',
+        paymentDate: applyDate,
+        appliedInvoice: targets.map(t => t.invoiceNo).join(', '),
+      }, {
+        documentTitle: 'ADVANCE APPLIED',
+        title: `Advance Applied ${applyModalAdv.voucherId || ''}`.trim(),
+        customer: selected,
+        auto: true,
+      });
     } catch (e) {
       toast.error(e?.response?.data?.message || e?.response?.data || 'Failed to apply advance.');
+      refreshOpenAdvances(advanceCust);
     } finally {
       setApplyBusy(false);
     }
-  }, [applyModalAdv, applyInvoiceNo, applyAmount, applyDate, applyAdvCust, refreshOpenAdvances]);
+  }, [applyModalAdv, applySelectedInvoices, applySettleAmounts, applyDate, advanceCust, customerOptions, refreshOpenAdvances, printVoucherToConfiguredPrinter]);
 
   const handleViewStatement = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === statementCust);
@@ -536,6 +785,11 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const receiptSelected = React.useMemo(
     () => realCustomers.find(c => c.id === receiptCust) || null,
     [realCustomers, receiptCust]
+  );
+
+  const advanceSelected = React.useMemo(
+    () => realCustomers.find(c => c.id === advanceCust) || null,
+    [realCustomers, advanceCust]
   );
 
   const SkeletonRows = () => (
@@ -703,55 +957,120 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         {/* Receipt — lazy mount */}
         <div style={{ display: custTab === 'receipt' ? 'block' : 'none' }}>
           {visited.receipt && (
-            <div className="py-5 max-w-2xl">
+            <div className="py-5 w-full">
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-[#327F74]/5 to-transparent">
                   <div className="p-2 bg-[#327F74]/10 rounded-lg"><Receipt className="h-5 w-5 text-[#327F74]" /></div>
                   <div><h2 className="text-base font-semibold text-[#1E293B]">Record Customer Payment</h2><p className="text-xs text-gray-500">Receive payment against a customer outstanding balance</p></div>
                 </div>
-                <div className="p-6 space-y-5">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-700">Select Customer <span className="text-red-500">*</span></label>
-                    <CustomerPicker customers={realCustomers} value={receiptCust} onChange={setReceiptCust} />
-                  </div>
-                  {receiptSelected && (
-                    <div className={`rounded-lg px-4 py-3 flex items-center gap-3 text-sm ${(receiptSelected.balance || 0) > 0 ? 'bg-orange-50 border border-orange-100' : 'bg-emerald-50 border border-emerald-100'}`}>
-                      <AlertCircle className={`h-4 w-4 shrink-0 ${(receiptSelected.balance || 0) > 0 ? 'text-orange-500' : 'text-emerald-500'}`} />
-                      <div>
-                        <span className="font-semibold">{receiptSelected.name}</span>{' — Outstanding: '}
-                        {(receiptSelected.balance || 0) > 0
-                          ? <span className="font-bold text-orange-600 inline-flex items-center gap-0.5"><DirhamSymbol />{(receiptSelected.balance || 0).toFixed(2)}</span>
-                          : <span className="text-emerald-600 font-semibold">Cleared</span>}
-                      </div>
-                    </div>
-                  )}
-                  {receiptSuccess && (
-                    <div className="rounded-lg px-4 py-3 bg-emerald-50 border border-emerald-100 text-sm text-emerald-700 flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 shrink-0" />{receiptSuccess}
-                    </div>
-                  )}
-                  {receiptCust && (
+                <div className="p-6 grid grid-cols-1 xl:grid-cols-5 gap-6">
+                  {/* Left — customer, invoices to settle */}
+                  <div className="xl:col-span-3 space-y-5">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-gray-700">Apply to Invoice <span className="text-gray-400 font-normal">(optional)</span></label>
-                      <Select value={receiptInvoice} onValueChange={setReceiptInvoice} disabled={receiptInvoicesLoading || receiptOpenInvoices.length === 0}>
-                        <SelectTrigger className="h-10 border-gray-200">
-                          <SelectValue placeholder={receiptInvoicesLoading ? 'Loading invoices…' : receiptOpenInvoices.length === 0 ? 'No open invoices — will apply oldest-first' : 'Auto-apply oldest invoice first…'} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {receiptOpenInvoices.map(inv => (
-                            <SelectItem key={inv.id} value={inv.invoiceNumber}>
-                              {inv.invoiceNumber} — Balance <DirhamSymbol />{Number(inv.balance ?? 0).toFixed(2)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-[11px] text-gray-400">Leave blank to auto-apply against the oldest outstanding invoice(s); any excess is kept as an advance credit.</p>
+                      <label className="text-xs font-semibold text-gray-700">Select Customer <span className="text-red-500">*</span></label>
+                      <CustomerPicker customers={realCustomers} value={receiptCust} onChange={setReceiptCust} />
                     </div>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {receiptSelected && (
+                      <div className={`rounded-lg px-4 py-3 flex items-center gap-3 text-sm ${(receiptSelected.balance || 0) > 0 ? 'bg-orange-50 border border-orange-100' : 'bg-emerald-50 border border-emerald-100'}`}>
+                        <AlertCircle className={`h-4 w-4 shrink-0 ${(receiptSelected.balance || 0) > 0 ? 'text-orange-500' : 'text-emerald-500'}`} />
+                        <div>
+                          <span className="font-semibold">{receiptSelected.name}</span>{' — Outstanding: '}
+                          {(receiptSelected.balance || 0) > 0
+                            ? <span className="font-bold text-orange-600 inline-flex items-center gap-0.5"><DirhamSymbol />{(receiptSelected.balance || 0).toFixed(2)}</span>
+                            : <span className="text-emerald-600 font-semibold">Cleared</span>}
+                        </div>
+                      </div>
+                    )}
+                    {receiptSuccess && (
+                      <div className="rounded-lg px-4 py-3 bg-emerald-50 border border-emerald-100 text-sm text-emerald-700 flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 shrink-0" />{receiptSuccess}
+                      </div>
+                    )}
+                    {receiptCust && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-gray-700">Outstanding Invoices <span className="text-gray-400 font-normal">(select one or more to settle)</span></label>
+                          {receiptOpenInvoices.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleReceiptSelectAll(Object.keys(receiptSelectedInvoices).filter(k => receiptSelectedInvoices[k]).length !== receiptOpenInvoices.length)}
+                              className="text-[11px] font-bold text-[#327F74] hover:underline"
+                            >
+                              {Object.keys(receiptSelectedInvoices).filter(k => receiptSelectedInvoices[k]).length === receiptOpenInvoices.length ? 'Clear All' : 'Select All'}
+                            </button>
+                          )}
+                        </div>
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                          <div className="max-h-96 overflow-y-auto">
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50 text-gray-500 sticky top-0">
+                                <tr>
+                                  <th className="px-3 py-2 w-8 text-center"><input type="checkbox" checked={receiptOpenInvoices.length > 0 && Object.keys(receiptSelectedInvoices).filter(k => receiptSelectedInvoices[k]).length === receiptOpenInvoices.length} onChange={e => handleReceiptSelectAll(e.target.checked)} disabled={receiptOpenInvoices.length === 0} /></th>
+                                  <th className="px-3 py-2 text-left font-semibold">Invoice</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Date</th>
+                                  <th className="px-3 py-2 text-right font-semibold">Balance</th>
+                                  <th className="px-3 py-2 text-right font-semibold w-32">Settle</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {receiptInvoicesLoading && (
+                                  <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">Loading invoices…</td></tr>
+                                )}
+                                {!receiptInvoicesLoading && receiptOpenInvoices.length === 0 && (
+                                  <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">No open invoices — payment will be kept as an advance credit.</td></tr>
+                                )}
+                                {receiptOpenInvoices.map(inv => {
+                                  const balance = Number(inv.balance ?? 0);
+                                  const checked = !!receiptSelectedInvoices[inv.invoiceNumber];
+                                  return (
+                                    <tr key={inv.id} className={checked ? 'bg-[#327F74]/5' : ''}>
+                                      <td className="px-3 py-2 text-center">
+                                        <input type="checkbox" checked={checked} onChange={e => handleReceiptInvoiceToggle(inv, e.target.checked)} />
+                                      </td>
+                                      <td className="px-3 py-2 font-medium text-gray-700">{inv.invoiceNumber}</td>
+                                      <td className="px-3 py-2 text-gray-500">{inv.invoiceDate}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-orange-600"><DirhamSymbol />{balance.toFixed(2)}</td>
+                                      <td className="px-3 py-2 text-right">
+                                        {checked ? (
+                                          <input
+                                            type="number"
+                                            value={receiptSettleAmounts[inv.invoiceNumber] ?? ''}
+                                            onChange={e => handleReceiptSettleAmountChange(inv.invoiceNumber, e.target.value, balance)}
+                                            className="w-full text-right text-xs font-bold border border-gray-300 rounded px-2 py-1 focus:border-[#327F74] focus:ring-1 focus:ring-[#327F74] outline-none"
+                                          />
+                                        ) : (
+                                          <button type="button" onClick={() => handleReceiptInvoiceToggle(inv, true)} className="text-[#327F74] font-bold hover:underline">Settle Full</button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-gray-400">Selecting invoices updates the Payment Amount; leave none selected to record an unapplied advance credit.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right — payment details & actions */}
+                  <div className="xl:col-span-2 space-y-5">
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-700">Payment Amount (<DirhamSymbol />)</label>
-                      <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span><Input type="number" placeholder="0.00" className="pl-8 h-10 border-gray-200" value={receiptAmount} onChange={e => setReceiptAmount(e.target.value)} /></div>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span>
+                        <Input
+                          type="number"
+                          placeholder="0.00"
+                          className="pl-8 h-10 border-gray-200"
+                          value={Object.keys(receiptSelectedInvoices).some(k => receiptSelectedInvoices[k]) ? receiptTotalToSettle.toFixed(2) : receiptAmount}
+                          onChange={e => handleReceiptAutoAllocate(e.target.value)}
+                        />
+                      </div>
+                      {Object.keys(receiptSelectedInvoices).some(k => receiptSelectedInvoices[k]) && (
+                        <p className="text-[11px] text-gray-400">Auto-filled from selected invoices — edit an invoice row to change it.</p>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-gray-700">Payment Method</label>
@@ -765,9 +1084,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
-                  {receiptMethod && receiptMethod !== 'Cash' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {receiptMethod && receiptMethod !== 'Cash' && (
                       <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-gray-700">Bank Account <span className="text-red-500">*</span></label>
                         <Select value={receiptBank} onValueChange={setReceiptBank}>
@@ -779,21 +1096,21 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                           </SelectContent>
                         </Select>
                       </div>
-                      {receiptMethod === 'Cheque' && (
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-semibold text-gray-700">Cheque Date</label>
-                          <Input type="date" className="h-10 border-gray-200" value={receiptChequeDate} onChange={e => setReceiptChequeDate(e.target.value)} />
-                        </div>
-                      )}
+                    )}
+                    {receiptMethod === 'Cheque' && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-gray-700">Cheque Date</label>
+                        <Input type="date" className="h-10 border-gray-200" value={receiptChequeDate} onChange={e => setReceiptChequeDate(e.target.value)} />
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-gray-700">Reference / Notes</label>
+                      <Input placeholder="Cheque no., transfer ref, or notes…" className="h-10 border-gray-200" value={receiptRef} onChange={e => setReceiptRef(e.target.value)} />
                     </div>
-                  )}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-700">Reference / Notes</label>
-                    <Input placeholder="Cheque no., transfer ref, or notes…" className="h-10 border-gray-200" value={receiptRef} onChange={e => setReceiptRef(e.target.value)} />
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <Button className="flex-1 bg-[#327F74] hover:bg-[#2a6b61] text-white h-10" disabled={receiptBusy} onClick={handleRecordPayment}><CheckCircle className="h-4 w-4 mr-2" /> {receiptBusy ? 'Saving…' : 'Record Payment'}</Button>
-                    <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled={!lastPayment || receiptPrintBusy} onClick={handlePrintReceipt}><Printer className="h-4 w-4 mr-2" /> {receiptPrintBusy ? 'Preparing…' : 'Print Receipt'}</Button>
+                    <div className="flex gap-3 pt-2">
+                      <Button className="flex-1 bg-[#327F74] hover:bg-[#2a6b61] text-white h-10" disabled={receiptBusy} onClick={handleRecordPayment}><CheckCircle className="h-4 w-4 mr-2" /> {receiptBusy ? 'Saving…' : 'Record Payment'}</Button>
+                      <Button variant="outline" className="border-gray-200 text-gray-600 h-10" disabled={!lastPayment || receiptPrintBusy} onClick={handlePrintReceipt}><Printer className="h-4 w-4 mr-2" /> {receiptPrintBusy ? 'Preparing…' : 'Print Receipt'}</Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -804,7 +1121,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         {/* Advance — lazy mount */}
         <div style={{ display: custTab === 'advance' ? 'block' : 'none' }}>
           {visited.advance && (
-            <div className="py-5 max-w-2xl">
+            <div className="py-5 w-full grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-[#F5C742]/10 to-transparent">
                   <div className="p-2 bg-[#F5C742]/15 rounded-lg"><Wallet className="h-5 w-5 text-[#9A7B00]" /></div>
@@ -845,26 +1162,37 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
                   <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700 flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />Advance payments are credited to the customer account and applied against future invoices.
                   </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" className="h-3.5 w-3.5" checked={advAutoApply} onChange={e => setAdvAutoApply(e.target.checked)} />
+                    Auto-apply to this customer's existing open invoices, oldest first
+                  </label>
                   <Button className="w-full bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold h-10" disabled={advBusy} onClick={handleReceiveAdvance}><Wallet className="h-4 w-4 mr-2" /> {advBusy ? 'Saving…' : 'Receive Advance'}</Button>
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-5">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-[#327F74]/10 to-transparent">
                   <div className="p-2 bg-[#327F74]/15 rounded-lg"><Wallet className="h-5 w-5 text-[#327F74]" /></div>
                   <div><h2 className="text-base font-semibold text-[#1E293B]">Apply Existing Advance to Invoice</h2><p className="text-xs text-gray-500">Settle an open advance balance against a specific invoice</p></div>
                 </div>
                 <div className="p-6 space-y-5">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-700">Select Customer <span className="text-red-500">*</span></label>
-                    <CustomerPicker customers={realCustomers} value={applyAdvCust} onChange={setApplyAdvCust} />
-                  </div>
+                  {!advanceCust ? (
+                    <div className="text-center text-sm text-gray-400 py-6">Select a customer above to view their open advance balances.</div>
+                  ) : (
+                    <div className="text-xs text-gray-500">
+                      Showing open advances for <span className="font-semibold text-[#1E293B]">{advanceSelected?.name}</span>.
+                    </div>
+                  )}
                   {openAdvError && <div className="rounded-lg px-4 py-3 bg-red-50 border border-red-100 text-sm text-red-600">{openAdvError}</div>}
-                  {applyAdvCust && (
+                  {advanceCust && (
                     openAdvBusy ? (
                       <div className="text-center text-sm text-gray-400 py-6">Loading open advances…</div>
                     ) : openAdvances.length === 0 ? (
-                      <div className="text-center text-sm text-gray-400 py-6">No open advance balance for this customer.</div>
+                      <div className="text-center text-sm text-gray-400 py-6">
+                        {advHasHistory
+                          ? 'This customer has received advances before, but all of them are fully applied — nothing left to allocate.'
+                          : "This customer hasn't received an advance yet. Use the form above to record one."}
+                      </div>
                     ) : (
                       <div className="rounded-xl border border-gray-200 overflow-hidden">
                         <div className="overflow-x-auto">
@@ -975,7 +1303,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
 
       {applyModalAdv && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-          <div className="bg-white w-[480px] max-w-[96vw] rounded-xl shadow-2xl overflow-hidden">
+          <div className="bg-white w-[640px] max-w-[96vw] rounded-xl shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-[#327F74]/15 rounded-lg"><Wallet className="h-5 w-5 text-[#327F74]" /></div>
@@ -984,30 +1312,87 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
               <button className="text-gray-400 hover:text-gray-600" onClick={closeApplyModal} aria-label="Close">✕</button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 gap-3 bg-[#F7F7FA] rounded-lg p-4 text-center">
+              <div className="grid grid-cols-2 gap-3 bg-[#F7F7FA] rounded-lg p-4 text-center">
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Open Advance Balance</p>
                   <p className="text-sm font-bold text-[#1E293B] inline-flex items-center gap-0.5"><DirhamSymbol />{Number(applyModalAdv.openBalance ?? 0).toFixed(2)}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Selected to Apply</p>
+                  <p className={`text-sm font-bold inline-flex items-center gap-0.5 ${applyTotalToApply > Number(applyModalAdv.openBalance ?? 0) + 0.01 ? 'text-red-600' : 'text-[#327F74]'}`}><DirhamSymbol />{applyTotalToApply.toFixed(2)}</p>
+                </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Invoice Number <span className="text-red-500">*</span></label>
-                <Input placeholder="e.g. INV-2026-0052" className="h-10 border-gray-200" value={applyInvoiceNo} onChange={e => setApplyInvoiceNo(e.target.value)} />
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Outstanding Invoices <span className="text-gray-400 font-normal">(select one or more to apply)</span></label>
+                  {applyOpenInvoices.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleApplySelectAll(Object.keys(applySelectedInvoices).filter(k => applySelectedInvoices[k]).length !== applyOpenInvoices.length)}
+                      className="text-[11px] font-bold text-[#327F74] hover:underline"
+                    >
+                      {Object.keys(applySelectedInvoices).filter(k => applySelectedInvoices[k]).length === applyOpenInvoices.length ? 'Clear All' : 'Select All'}
+                    </button>
+                  )}
+                </div>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="max-h-72 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 text-gray-500 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 w-8 text-center"><input type="checkbox" checked={applyOpenInvoices.length > 0 && Object.keys(applySelectedInvoices).filter(k => applySelectedInvoices[k]).length === applyOpenInvoices.length} onChange={e => handleApplySelectAll(e.target.checked)} disabled={applyOpenInvoices.length === 0} /></th>
+                          <th className="px-3 py-2 text-left font-semibold">Invoice</th>
+                          <th className="px-3 py-2 text-left font-semibold">Date</th>
+                          <th className="px-3 py-2 text-right font-semibold">Balance</th>
+                          <th className="px-3 py-2 text-right font-semibold w-32">Apply</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {applyInvoicesLoading && (
+                          <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">Loading invoices…</td></tr>
+                        )}
+                        {!applyInvoicesLoading && applyOpenInvoices.length === 0 && (
+                          <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">No open invoices for this customer.</td></tr>
+                        )}
+                        {applyOpenInvoices.map(inv => {
+                          const balance = Number(inv.balance ?? 0);
+                          const checked = !!applySelectedInvoices[inv.invoiceNumber];
+                          return (
+                            <tr key={inv.id ?? inv.invoiceNumber} className={checked ? 'bg-[#327F74]/5' : ''}>
+                              <td className="px-3 py-2 text-center">
+                                <input type="checkbox" checked={checked} onChange={e => handleApplyInvoiceToggle(inv, e.target.checked)} />
+                              </td>
+                              <td className="px-3 py-2 font-medium text-gray-700">{inv.invoiceNumber}</td>
+                              <td className="px-3 py-2 text-gray-500">{inv.invoiceDate}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-orange-600"><DirhamSymbol />{balance.toFixed(2)}</td>
+                              <td className="px-3 py-2 text-right">
+                                {checked ? (
+                                  <input
+                                    type="number"
+                                    value={applySettleAmounts[inv.invoiceNumber] ?? ''}
+                                    onChange={e => handleApplySettleAmountChange(inv.invoiceNumber, e.target.value, balance)}
+                                    className="w-full text-right text-xs font-bold border border-gray-300 rounded px-2 py-1 focus:border-[#327F74] focus:ring-1 focus:ring-[#327F74] outline-none"
+                                  />
+                                ) : (
+                                  <button type="button" onClick={() => handleApplyInvoiceToggle(inv, true)} className="text-[#327F74] font-bold hover:underline">Apply</button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-gray-700">Amount to Apply</label>
-                  <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><DirhamSymbol /></span><Input type="number" className="pl-8 h-10 border-gray-200" value={applyAmount} onChange={e => setApplyAmount(e.target.value)} /></div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-gray-700">Applied Date</label>
-                  <Input type="date" className="h-10 border-gray-200" value={applyDate} onChange={e => setApplyDate(e.target.value)} />
-                </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Applied Date</label>
+                <Input type="date" className="h-10 border-gray-200 w-40" value={applyDate} onChange={e => setApplyDate(e.target.value)} />
               </div>
             </div>
             <div className="flex gap-3 px-6 py-4 border-t border-gray-100">
               <Button variant="outline" className="flex-1 border-gray-200 text-gray-600 h-10" onClick={closeApplyModal}>Cancel</Button>
-              <Button className="flex-1 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold h-10" disabled={applyBusy} onClick={handleApplyAdvance}>{applyBusy ? 'Applying…' : 'Confirm'}</Button>
+              <Button className="flex-1 bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold h-10" disabled={applyBusy || applyTotalToApply <= 0} onClick={handleApplyAdvance}>{applyBusy ? 'Applying…' : 'Confirm'}</Button>
             </div>
           </div>
         </div>

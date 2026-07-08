@@ -27,11 +27,11 @@ const POSConsole = React.memo((props) => {
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash, 
     tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone, 
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl, 
-    tplReceiptHeader, setTplReceiptHeader, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper, 
+    tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, 
     tplReceiptColItemCode, tplReceiptColItemImage, tplReceiptColBatchNo, tplReceiptColDiscount, tplReceiptColVatPct, tplReceiptColVatAmt, 
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature, 
-    tplInvoiceHeader, tplInvoiceFooter, tplInvoicePaper, 
+    tplInvoiceHeader, tplInvoiceHeaderAr, setTplInvoiceHeaderAr, tplInvoiceFooter, tplInvoicePaper,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature, 
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
     tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
@@ -48,6 +48,14 @@ const POSConsole = React.memo((props) => {
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
     setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails, t2ReceiptShowAccountBalance, t2ReceiptShowDelivery,
+    t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails, t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    setT2ReceiptShowLogo, setT2ReceiptShowCompanyDetails, setT2ReceiptShowTrn, setT2ReceiptShowArabic, setT2ReceiptShowCustomerDetails, setT2ReceiptShowAccountBalance, setT2ReceiptShowDelivery,
+    setT2ReceiptShowVatSummary, setT2ReceiptShowPaymentDetails, setT2ReceiptShowLoyalty, setT2ReceiptShowQRCode, setT2ReceiptShowFooterText, setT2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails, t2InvoiceShowAccountBalance, t2InvoiceShowDelivery,
+    t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails, t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
+    setT2InvoiceShowLogo, setT2InvoiceShowCompanyDetails, setT2InvoiceShowTrn, setT2InvoiceShowArabic, setT2InvoiceShowCustomerDetails, setT2InvoiceShowAccountBalance, setT2InvoiceShowDelivery,
+    setT2InvoiceShowVatSummary, setT2InvoiceShowPaymentDetails, setT2InvoiceShowLoyalty, setT2InvoiceShowQRCode, setT2InvoiceShowFooterText, setT2InvoiceShowBarcode,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
@@ -607,12 +615,12 @@ const POSConsole = React.memo((props) => {
                     const tplConfig = JSON.stringify({
                       outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
                       logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                      receiptHeader:tplReceiptHeader,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+                      receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
                       receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
                       receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
                       receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
                       receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                      invoiceHeader:tplInvoiceHeader,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+                      invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
                       invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                       invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                       invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
@@ -632,6 +640,10 @@ const POSConsole = React.memo((props) => {
                       receiptTemplateId,
                       t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
                       t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
+                      t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
+                      t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
+                      t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
+                      t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                     setPosSettings(saved);
@@ -1336,6 +1348,7 @@ const POSConsole = React.memo((props) => {
               receipt: {
                 paper: tplReceiptPaper, setPaper: setTplReceiptPaper,
                 header: tplReceiptHeader, setHeader: setTplReceiptHeader,
+                headerAr: tplReceiptHeaderAr, setHeaderAr: setTplReceiptHeaderAr,
                 footer: tplReceiptFooter, setFooter: setTplReceiptFooter,
                 showLogo: tplReceiptShowLogo, setShowLogo: setTplReceiptShowLogo,
                 showTrn: tplReceiptShowTrn, setShowTrn: setTplReceiptShowTrn,
@@ -1362,6 +1375,7 @@ const POSConsole = React.memo((props) => {
               invoice: {
                 paper: tplInvoicePaper, setPaper: setTplInvoicePaper,
                 header: tplInvoiceHeader, setHeader: setTplInvoiceHeader,
+                headerAr: tplInvoiceHeaderAr, setHeaderAr: setTplInvoiceHeaderAr,
                 footer: tplInvoiceFooter, setFooter: setTplInvoiceFooter,
                 showLogo: tplInvoiceShowLogo, setShowLogo: setTplInvoiceShowLogo,
                 showTrn: tplInvoiceShowTrn, setShowTrn: setTplInvoiceShowTrn,
@@ -1450,7 +1464,51 @@ const POSConsole = React.memo((props) => {
               { id:'jobcard', label:'Service Job Card',  icon:<Wrench className="h-3.5 w-3.5" /> },
             ];
 
-            const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
+            const rawCfg = tplCfg[templateSubTab] || tplCfg.receipt;
+            // POS Receipt is the no-tax template — TRN/VAT summary are never
+            // relevant on it (see hasTax routing at checkout), so they're forced
+            // off here once rather than at every Live Preview / Test Print /
+            // Full Preview call site that reads cfg.showTrn / cfg.showVatSummary.
+            const cfg = templateSubTab === 'receipt'
+              ? { ...rawCfg, showTrn: false, showVatSummary: false }
+              : rawCfg;
+
+            // Template 2 designer state is scoped per sub-tab (POS Receipt vs Tax
+            // Invoice) so toggling it on one tab doesn't bleed into the other —
+            // mirrors the real checkout's hasTax routing in POSSales.jsx. showTrn /
+            // showVatSummary are forced off on the receipt tab — same reasoning as
+            // the native `cfg` override above.
+            const t2State = templateSubTab === 'receipt'
+              ? {
+                  showLogo: t2ReceiptShowLogo, setShowLogo: setT2ReceiptShowLogo,
+                  showCompanyDetails: t2ReceiptShowCompanyDetails, setShowCompanyDetails: setT2ReceiptShowCompanyDetails,
+                  showTrn: false, setShowTrn: setT2ReceiptShowTrn,
+                  showArabic: t2ReceiptShowArabic, setShowArabic: setT2ReceiptShowArabic,
+                  showCustomerDetails: t2ReceiptShowCustomerDetails, setShowCustomerDetails: setT2ReceiptShowCustomerDetails,
+                  showAccountBalance: t2ReceiptShowAccountBalance, setShowAccountBalance: setT2ReceiptShowAccountBalance,
+                  showDelivery: t2ReceiptShowDelivery, setShowDelivery: setT2ReceiptShowDelivery,
+                  showVatSummary: false, setShowVatSummary: setT2ReceiptShowVatSummary,
+                  showPaymentDetails: t2ReceiptShowPaymentDetails, setShowPaymentDetails: setT2ReceiptShowPaymentDetails,
+                  showLoyalty: t2ReceiptShowLoyalty, setShowLoyalty: setT2ReceiptShowLoyalty,
+                  showQRCode: t2ReceiptShowQRCode, setShowQRCode: setT2ReceiptShowQRCode,
+                  showFooterText: t2ReceiptShowFooterText, setShowFooterText: setT2ReceiptShowFooterText,
+                  showBarcode: t2ReceiptShowBarcode, setShowBarcode: setT2ReceiptShowBarcode,
+                }
+              : {
+                  showLogo: t2InvoiceShowLogo, setShowLogo: setT2InvoiceShowLogo,
+                  showCompanyDetails: t2InvoiceShowCompanyDetails, setShowCompanyDetails: setT2InvoiceShowCompanyDetails,
+                  showTrn: t2InvoiceShowTrn, setShowTrn: setT2InvoiceShowTrn,
+                  showArabic: t2InvoiceShowArabic, setShowArabic: setT2InvoiceShowArabic,
+                  showCustomerDetails: t2InvoiceShowCustomerDetails, setShowCustomerDetails: setT2InvoiceShowCustomerDetails,
+                  showAccountBalance: t2InvoiceShowAccountBalance, setShowAccountBalance: setT2InvoiceShowAccountBalance,
+                  showDelivery: t2InvoiceShowDelivery, setShowDelivery: setT2InvoiceShowDelivery,
+                  showVatSummary: t2InvoiceShowVatSummary, setShowVatSummary: setT2InvoiceShowVatSummary,
+                  showPaymentDetails: t2InvoiceShowPaymentDetails, setShowPaymentDetails: setT2InvoiceShowPaymentDetails,
+                  showLoyalty: t2InvoiceShowLoyalty, setShowLoyalty: setT2InvoiceShowLoyalty,
+                  showQRCode: t2InvoiceShowQRCode, setShowQRCode: setT2InvoiceShowQRCode,
+                  showFooterText: t2InvoiceShowFooterText, setShowFooterText: setT2InvoiceShowFooterText,
+                  showBarcode: t2InvoiceShowBarcode, setShowBarcode: setT2InvoiceShowBarcode,
+                };
 
             // ── Receipt template selection (Template 1 / Template 2 Arabic …) ──
             // The alternate (component) templates are 80mm thermal receipts, so the
@@ -1470,20 +1528,21 @@ const POSConsole = React.memo((props) => {
                     // mislabelled as a scannable QR. The designer has no live ZATCA
                     // QR to render, so the component shows its placeholder when QR
                     // is enabled with no stamp — an honest "QR appears here" hint.
-                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
-                    qrPlaceholder: t2ShowQRCode, footerText: cfg.footer,
+                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2State.showQRCode ? tplStampDataUrl : null,
+                    qrPlaceholder: t2State.showQRCode, footerText: cfg.footer,
+                    titleEn: cfg.header, titleAr: cfg.headerAr,
                   },
                   buildSampleTxn(),
                   {
                     // Template 2's own independent Show/Hide toggles drive which
                     // sections the designer preview (and, at checkout, the real
                     // receipt) renders.
-                    showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-                    showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-                    showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-                    showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-                    showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-                    showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+                    showLogo: t2State.showLogo, showCompanyDetails: t2State.showCompanyDetails, showTrn: t2State.showTrn,
+                    showArabic: t2State.showArabic, showCustomerDetails: t2State.showCustomerDetails,
+                    showAccountBalance: t2State.showAccountBalance, showDelivery: t2State.showDelivery,
+                    showVatSummary: t2State.showVatSummary, showPaymentDetails: t2State.showPaymentDetails,
+                    showLoyalty: t2State.showLoyalty, showQRCode: t2State.showQRCode,
+                    showFooterText: t2State.showFooterText, showBarcode: t2State.showBarcode,
                   },
                 )
               : null;
@@ -1492,31 +1551,17 @@ const POSConsole = React.memo((props) => {
             // set — it renders sections Template 1 doesn't (Account Balance,
             // Delivery, Loyalty, bilingual Arabic). When Template 2 is the active
             // component template, the Show/Hide list swaps to this map and binds
-            // to the t2* state instead of the shared native `cfg`.
-            const t2cfg = {
-              showLogo: t2ShowLogo, setShowLogo: setT2ShowLogo,
-              showCompanyDetails: t2ShowCompanyDetails, setShowCompanyDetails: setT2ShowCompanyDetails,
-              showTrn: t2ShowTrn, setShowTrn: setT2ShowTrn,
-              showArabic: t2ShowArabic, setShowArabic: setT2ShowArabic,
-              showCustomerDetails: t2ShowCustomerDetails, setShowCustomerDetails: setT2ShowCustomerDetails,
-              showAccountBalance: t2ShowAccountBalance, setShowAccountBalance: setT2ShowAccountBalance,
-              showDelivery: t2ShowDelivery, setShowDelivery: setT2ShowDelivery,
-              showVatSummary: t2ShowVatSummary, setShowVatSummary: setT2ShowVatSummary,
-              showPaymentDetails: t2ShowPaymentDetails, setShowPaymentDetails: setT2ShowPaymentDetails,
-              showLoyalty: t2ShowLoyalty, setShowLoyalty: setT2ShowLoyalty,
-              showQRCode: t2ShowQRCode, setShowQRCode: setT2ShowQRCode,
-              showFooterText: t2ShowFooterText, setShowFooterText: setT2ShowFooterText,
-              showBarcode: t2ShowBarcode, setShowBarcode: setT2ShowBarcode,
-            };
+            // to the sub-tab-scoped t2State instead of the shared native `cfg`.
+            const t2cfg = t2State;
 
             const fieldToggleSection = (label, items) => (
               <div key={label}>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
                 <div className="space-y-1">
-                  {items.map(([lbl, val, setter]) => (
-                    <div key={lbl} className="flex items-center justify-between py-2.5 px-1">
+                  {items.map(([lbl, val, setter, disabled]) => (
+                    <div key={lbl} className={`flex items-center justify-between py-2.5 px-1${disabled ? ' opacity-50' : ''}`}>
                       <span className="text-sm text-[#1E293B]">{lbl}</span>
-                      <Switch checked={!!val} onCheckedChange={setter} />
+                      <Switch checked={!!val} onCheckedChange={setter} disabled={disabled} />
                     </div>
                   ))}
                 </div>
@@ -1611,7 +1656,8 @@ const POSConsole = React.memo((props) => {
               const escPosOpts = {
                 ...buildSampleOpts({ outlet, cfg }),
                 isReturn,
-                documentTitle: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+                documentTitle: isReturn ? 'CREDIT NOTE' : (cfg.header || 'TAX INVOICE'),
+                documentTitleAr: isReturn ? null : (cfg.headerAr || null),
                 showCreditBalance: cfg.showCreditBalance,
                 creditPreviousBalance: cfg.showCreditBalance ? 245.5 : null,
                 creditInvoiceCredit: cfg.showCreditBalance ? sampleInvoice.invoiceTotal : null,
@@ -1743,6 +1789,13 @@ const POSConsole = React.memo((props) => {
                           <textarea value={cfg.header} onChange={e=>cfg.setHeader(e.target.value)} rows={2} placeholder="e.g. Thank you for dining with us!" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" readOnly={templateSubTab==='jobcard'} />
                           <p className="text-[10px] text-gray-400 mt-1">Supports: branch name, address, phone, TRN, cashier, table/order ref — use branch info section above for those.</p>
                         </div>
+                        {useComponentTemplate && cfg.setHeaderAr && (
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Text (Arabic) — Template 2 only</label>
+                            <input dir="rtl" value={cfg.headerAr} onChange={e=>cfg.setHeaderAr(e.target.value)} placeholder="فاتورة ضريبية" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                            <p className="text-[10px] text-gray-400 mt-1">Arabic title shown alongside the English header above on the bilingual (Template 2) receipt.</p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1834,7 +1887,10 @@ const POSConsole = React.memo((props) => {
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', t2cfg.showLogo, t2cfg.setShowLogo],
                             ['Show Company Name & Address', t2cfg.showCompanyDetails, t2cfg.setShowCompanyDetails],
-                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn],
+                            // POS Receipt is the no-tax template — t2cfg.showTrn is
+                            // already forced false above; disable so it reads as
+                            // locked rather than merely unchecked.
+                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn, templateSubTab === 'receipt'],
                             ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
                           ])}
                           {fieldToggleSection('CUSTOMER DETAILS', [
@@ -1847,7 +1903,7 @@ const POSConsole = React.memo((props) => {
                             ['Show Delivery Address', t2cfg.showDelivery, t2cfg.setShowDelivery],
                           ])}
                           {fieldToggleSection('TRANSACTION', [
-                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary],
+                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary, templateSubTab === 'receipt'],
                             ['Show Payment Details (Mode / Paid / Change)', t2cfg.showPaymentDetails, t2cfg.setShowPaymentDetails],
                           ])}
                           {fieldToggleSection('LOYALTY', [
@@ -1864,12 +1920,15 @@ const POSConsole = React.memo((props) => {
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', cfg.showLogo, cfg.setShowLogo],
                             ['Show Company Name & Address', cfg.showCompanyDetails, cfg.setShowCompanyDetails],
-                            ['Show TRN', cfg.showTrn, cfg.setShowTrn],
+                            // POS Receipt is the no-tax template — cfg.showTrn is
+                            // already forced false above; disable so it reads as
+                            // locked rather than merely unchecked.
+                            ['Show TRN', cfg.showTrn, cfg.setShowTrn, templateSubTab === 'receipt'],
                             ...(cfg.paper !== 'A4' ? [] : [['Show Stamp / Seal', cfg.showStamp, cfg.setShowStamp]]),
                           ])}
                           {cfg.paper !== 'A4' && fieldToggleSection('TRANSACTION', [
                             ['Show Service Charge', cfg.showServiceCharge, cfg.setShowServiceCharge],
-                            ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary],
+                            ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary, templateSubTab === 'receipt'],
                             ['Show Payment Details (Cash / Change / Mode)', cfg.showPaymentDetails, cfg.setShowPaymentDetails],
                           ])}
                           {cfg.paper !== 'A4' && fieldToggleSection('AFTER PAYMENT', [
@@ -2028,12 +2087,12 @@ const POSConsole = React.memo((props) => {
                       const tplConfig = JSON.stringify({
                         outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
                         logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                        receiptHeader:tplReceiptHeader,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+                        receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
                         receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
                         receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
                         receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
                         receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                        invoiceHeader:tplInvoiceHeader,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+                        invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
                         invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                         invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                         invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,

@@ -49,9 +49,9 @@ export function buildTemplate2Html(data) {
   .bb-receipt table.items{table-layout:fixed}
   .bb-receipt table.items td,.bb-receipt table.items th{word-break:break-word;overflow-wrap:anywhere}
   .bb-receipt table.items th:nth-child(1),.bb-receipt table.items td:nth-child(1){width:auto}
-  .bb-receipt table.items th:nth-child(2),.bb-receipt table.items td:nth-child(2){width:10%}
-  .bb-receipt table.items th:nth-child(3),.bb-receipt table.items td:nth-child(3){width:24%}
-  .bb-receipt table.items th:nth-child(4),.bb-receipt table.items td:nth-child(4){width:24%}
+  .bb-receipt table.items th:nth-child(2),.bb-receipt table.items td:nth-child(2){width:11%}
+  .bb-receipt table.items th:nth-child(3),.bb-receipt table.items td:nth-child(3){width:19%}
+  .bb-receipt table.items th:nth-child(4),.bb-receipt table.items td:nth-child(4){width:20%}
   /* Print path renders the bare receipt (no gray designer wrapper) and fills
      the full page/panel width. --paper-width:100% overrides the 80mm token so
      the receipt body and its children stretch edge-to-edge. */

@@ -148,17 +148,12 @@ export const ThermalMock = ({
         </div>
       )}
 
-      {/* ── TAX INVOICE label (receipt/return only) ── */}
+      {/* ── Document title (receipt/return only) — headerText overrides the default so
+          the designer preview matches whichever title the Print Templates tab is
+          actually configured with, instead of always showing "TAX INVOICE". ── */}
       {!isJobCard && (
         <div style={{ textAlign: 'center', fontSize: fs, fontWeight: '700', color: '#111827', marginBottom: 4 }}>
-          {isReturn ? 'CREDIT NOTE' : 'TAX INVOICE'}
-        </div>
-      )}
-
-      {/* ── Header text ── */}
-      {headerText && (
-        <div style={{ textAlign: 'center', fontSize: fs, color: '#374151', marginBottom: 4, lineHeight: 1.5 }}>
-          {headerText}
+          {headerText || (isReturn ? 'CREDIT NOTE' : 'TAX INVOICE')}
         </div>
       )}
 

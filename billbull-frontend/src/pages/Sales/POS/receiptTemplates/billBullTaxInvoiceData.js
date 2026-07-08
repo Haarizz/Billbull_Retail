@@ -62,6 +62,8 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       phone: outlet.phone || "",
       trn: outlet.trn || "",
       logoDataUrl: outlet.logoDataUrl || null,
+      titleEn: outlet.titleEn || "Tax Invoice",
+      titleAr: outlet.titleAr || "فاتورة ضريبية",
       // QR / stamp gated by the Show QR toggle so hiding it drops the whole
       // QR block (real ZATCA QR, uploaded stamp, and placeholder alike).
       qrDataUrl: on(toggles.showQRCode) ? outlet.qrDataUrl || null : null,
