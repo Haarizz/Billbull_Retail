@@ -7217,7 +7217,7 @@ export default function POSSales() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F7F7FA]">
+    <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── IDLE LOCK OVERLAY ─── */}
       {isIdleLocked && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
