@@ -63,6 +63,8 @@ export const RECEIPT_LABELS = {
 
   PAYMENT_MODE:      { en: 'Payment Mode',           ar: 'طريقة الدفع' },
   CASH_RECEIVED:     { en: 'Cash Received',          ar: 'المبلغ النقدي المستلم' },
+  CASH_PAID:         { en: 'Cash Paid',              ar: 'المبلغ النقدي المدفوع' },
+  CARD_PAID:         { en: 'Card Paid',              ar: 'المبلغ المدفوع بالبطاقة' },
   CHANGE:            { en: 'Change Returned',        ar: 'المبلغ المرتجع' },
 
   LOYALTY:           { en: 'LOYALTY PROGRAM',        ar: 'برنامج الولاء' },

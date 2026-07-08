@@ -177,6 +177,8 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
   cashGiven = null, changeAmount = null,
+  // Mixed (cash + card) split — how much was tendered on each tender.
+  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
   // Layaway/Hold deposit already collected, shown as a reduction with the remaining
   // balance due, when this sale settles a reserved order (§Layaway conversion).
   depositApplied = null, balanceDue = null,
@@ -354,9 +356,18 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
   if (showPaymentDetails) {
     if (payMode) html += `<div class="row"><span class="lbl">${isReturn ? 'Refund Method:' : 'Payment Mode:'}</span><span class="val">${esc(payMode)}</span></div>`;
-    if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    // Mixed (cash + card) split — surface each tender's portion so the receipt
+    // reconciles with the drawer + card batch. Otherwise fall back to Cash Received.
+    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
+      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
+    if (hasMixedSplit) {
+      if (parseFloat(mixedCashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Paid:</span><span class="num">${cur} ${fmt(mixedCashGiven)}</span></div>`;
+      if (parseFloat(mixedCardGiven) > 0) html += `<div class="row"><span class="lbl">Card Paid${mixedCardType ? ` (${esc(mixedCardType)})` : ''}:</span><span class="num">${cur} ${fmt(mixedCardGiven)}</span></div>`;
+    } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    }
     if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
-    if (payMode || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
+    if (payMode || hasMixedSplit || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
   }
 
   // ── QR / Stamp / footer image (§4+§5) ──
