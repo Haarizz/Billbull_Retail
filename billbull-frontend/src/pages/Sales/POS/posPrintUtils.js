@@ -1,6 +1,6 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
-import { buildFixedWidthLine } from '../../../utils/escPosReceipt';
+import { buildFixedWidthLine, resolveLineDiscount } from '../../../utils/escPosReceipt';
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -177,6 +177,8 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
   cashGiven = null, changeAmount = null,
+  // Mixed (cash + card) split — how much was tendered on each tender.
+  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
   // Layaway/Hold deposit already collected, shown as a reduction with the remaining
   // balance due, when this sale settles a reserved order (§Layaway conversion).
   depositApplied = null, balanceDue = null,
@@ -187,6 +189,9 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   customerPhone = null, customerEmail = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
+  // Delivery address (ported from Template 2) — printed as its own section when a
+  // shipping address is present on the sale.
+  deliveryAddress = null,
   currency = 'AED',
   // QR/stamp/footer-image placement relative to the footer text: 'before' | 'after' (§4).
   qrPlacement = 'before',
@@ -278,6 +283,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   if (cashier) html += `<div class="row"><span class="lbl">Cashier:</span><span class="val">${esc(cashier)}</span></div>`;
   if (terminal) html += `<div class="row"><span class="lbl">Terminal ID:</span><span class="num">${esc(terminal)}</span></div>`;
   if (counter) html += `<div class="row"><span class="lbl">Counter:</span><span class="num">${esc(counter)}</span></div>`;
+  // Sale Type (ported from Template 2) — retail / delivery / etc. when present.
+  const saleType = invoice.salesType || invoice.saleType || '';
+  if (saleType) html += `<div class="row"><span class="lbl">Sale Type:</span><span class="val">${esc(saleType)}</span></div>`;
   html += D;
 
   // ── Line items (§5): "Qty x Name" on row 1, then "@ unit  =  line total" on
@@ -292,7 +300,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
     const discountPercent = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
     const grossAmount = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
-    const lineDiscountAmount = parseFloat(it.discountAmount ?? Math.max(0, grossAmount - total)) || 0;
+    // gross × discount% (backend basis), NOT gross − net which understates the
+    // discount by the VAT-on-discount portion in exclusive mode. See resolveLineDiscount.
+    const lineDiscountAmount = resolveLineDiscount(it, grossAmount, discountPercent, total);
     const netUnit = qty > 0 ? total / qty : unit;
     const batch = it.batchNumber || it.pinnedBatchNumber || '';
     const serial = it.serialNumber || '';
@@ -331,6 +341,8 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // as their own lines so the total always ties out on the printed invoice.
   if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmtAmt(invoice.deliveryCharge)}</span></div>`;
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmtAmt(shippingCharge)}</span></div>`;
+  const roundOffAmt = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
+  if (Math.abs(roundOffAmt) >= 0.005) html += `<div class="row"><span class="lbl">Round Off:</span><span class="num">${cur} ${fmtAmt(roundOffAmt)}</span></div>`;
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmtAmt(grandTotal)}</span></div>`;
   // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
@@ -344,9 +356,18 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
   if (showPaymentDetails) {
     if (payMode) html += `<div class="row"><span class="lbl">${isReturn ? 'Refund Method:' : 'Payment Mode:'}</span><span class="val">${esc(payMode)}</span></div>`;
-    if (cashGiven != null && parseFloat(cashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    // Mixed (cash + card) split — surface each tender's portion so the receipt
+    // reconciles with the drawer + card batch. Otherwise fall back to Cash Received.
+    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
+      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
+    if (hasMixedSplit) {
+      if (parseFloat(mixedCashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Paid:</span><span class="num">${cur} ${fmt(mixedCashGiven)}</span></div>`;
+      if (parseFloat(mixedCardGiven) > 0) html += `<div class="row"><span class="lbl">Card Paid${mixedCardType ? ` (${esc(mixedCardType)})` : ''}:</span><span class="num">${cur} ${fmt(mixedCardGiven)}</span></div>`;
+    } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+    }
     if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
-    if (payMode || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
+    if (payMode || hasMixedSplit || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
   }
 
   // ── QR / Stamp / footer image (§4+§5) ──
@@ -376,6 +397,20 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += `<div class="row"><span class="lbl">Name:</span><span class="val">${esc(customerName)}</span></div>`;
     if (custPhone) html += `<div class="row"><span class="lbl">Mobile:</span><span class="num">${esc(custPhone)}</span></div>`;
     if (custEmail) html += `<div class="row"><span class="lbl">Email:</span><span class="val">${esc(custEmail)}</span></div>`;
+    // Customer Code (ported from Template 2) — skip the walk-in sentinel.
+    // Use .val (wraps) not .num (white-space:nowrap) so a long code/name wraps
+    // within the paper width instead of overflowing off the right edge.
+    const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
+    if (custCode) html += `<div class="row"><span class="lbl">Customer Code:</span><span class="val">${esc(custCode)}</span></div>`;
+    html += D;
+  }
+
+  // ── Delivery address (ported from Template 2) — collapsed to one line, wrapped
+  // within the paper width. Only shown when a shipping address exists on the sale.
+  const deliveryAddr = oneLineAddress(deliveryAddress || invoice.shippingAddress || '');
+  if (deliveryAddr) {
+    html += `<div class="s">DELIVERY ADDRESS</div>`;
+    html += `<div style="word-break:break-word;overflow-wrap:anywhere">${esc(deliveryAddr)}</div>`;
     html += D;
   }
 
@@ -596,9 +631,16 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   lines.push(hr);
   pushCentered(documentTitle || 'TAX INVOICE');
   lines.push(buildFixedWidthLine('Invoice', invoice.invoiceNumber || invoice.id || '', width));
-  if (invoice.invoiceDate) {
-    const dt = new Date(invoice.invoiceDate);
-    lines.push(buildFixedWidthLine('Date', dt.toLocaleString('en-GB'), width));
+  if (invoice.createdAt || invoice.invoiceDate) {
+    // invoiceDate is date-only (no time component) — parsing it as a Date and
+    // calling toLocaleString would show a fabricated UTC-midnight time shifted
+    // by the viewer's UTC offset. Only show a time when createdAt (the real
+    // sale timestamp) is available.
+    if (invoice.createdAt) {
+      lines.push(buildFixedWidthLine('Date', new Date(invoice.createdAt).toLocaleString('en-GB'), width));
+    } else {
+      lines.push(buildFixedWidthLine('Date', new Date(invoice.invoiceDate).toLocaleDateString('en-GB'), width));
+    }
   }
   if (cashierName) lines.push(buildFixedWidthLine('Cashier', cashierName, width));
   if (terminalId) lines.push(buildFixedWidthLine('Terminal', terminalId, width));
@@ -621,7 +663,9 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     // (BBQA-5.3-015) so the text fallback matches the checkout preview too.
     const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
     const grossAmount = parseFloat(item.grossAmount ?? (qty * unitPrice)) || 0;
-    const lineDiscountAmount = parseFloat(item.discountAmount ?? Math.max(0, grossAmount - lineTotal)) || 0;
+    // gross × discount% (backend basis) — NOT gross − net, which understates the
+    // discount by the VAT-on-discount portion in exclusive mode. See resolveLineDiscount.
+    const lineDiscountAmount = resolveLineDiscount(item, grossAmount, discountPercent, lineTotal);
     const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
     lines.push(`${qty}x ${name}`.slice(0, width));
     if (lineDiscountAmount > 0) {
@@ -794,7 +838,8 @@ ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</
 };
 
 export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = n => {
     const v = parseFloat(n) || 0;
@@ -863,6 +908,10 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
 export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   logoDataUrl = null, currency = 'AED', customer = null,
+  // Heading shown at the top of the voucher. Defaults to the customer-payment
+  // wording; the Receive-Advance flow passes 'ADVANCE RECEIPT' so the same layout
+  // serves both receipt types without a second template.
+  documentTitle = 'PAYMENT RECEIPT',
 }) => {
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
@@ -894,7 +943,7 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">PAYMENT RECEIPT</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle)}</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
   html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
@@ -997,8 +1046,17 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 export const buildReceiptVoucherThermalText = (paperSize, payment, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   currency = 'AED', customer = null,
+  documentTitle = 'PAYMENT RECEIPT',
+  // When true, skip the plain-text company header block — the caller prepends the
+  // shared branded ESC/POS header (logo + company block) via buildEscPosDocument
+  // instead, so the header isn't printed twice.
+  omitHeader = false,
 } = {}) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable column count after the shared symmetric page inset (MARGIN_COLS=1 each
+  // side, applied by buildEscPosDocument via GS L / GS W): 46 @ 80mm, 30 @ 58mm.
+  // Building to this width lines the body up inside the same left/right gutters as
+  // every other 80mm print instead of floating short of the right gutter.
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = (n) => `${currency} ${(parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
@@ -1025,14 +1083,16 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
     });
   };
 
-  pushCentered('PAYMENT RECEIPT');
-  if (header) pushCentered(header);
-  pushCentered(companyName || '');
-  const addrLine = oneLineAddress(address);
-  if (addrLine) pushCentered(addrLine);
-  if (phone) pushCentered(`Tel: ${phone}`);
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  lines.push(hr);
+  if (!omitHeader) {
+    pushCentered(documentTitle);
+    if (header) pushCentered(header);
+    pushCentered(companyName || '');
+    const addrLine = oneLineAddress(address);
+    if (addrLine) pushCentered(addrLine);
+    if (phone) pushCentered(`Tel: ${phone}`);
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    lines.push(hr);
+  }
   lines.push(buildFixedWidthLine('Receipt No:', receiptNo, width));
   lines.push(buildFixedWidthLine('Date:', dateStr, width));
   lines.push(buildFixedWidthLine('Customer:', custName, width));
@@ -1056,8 +1116,12 @@ export const buildStatementThermalText = (paperSize, statement, {
   companyName, trn, address, phone, header, footer, showTrn = true,
   currency = 'AED', customer = null,
   startDate = '', endDate = '',
+  // See buildReceiptVoucherThermalText: when true, skip the plain-text company
+  // header so the caller's shared branded ESC/POS header isn't duplicated.
+  omitHeader = false,
 } = {}) => {
-  const width = String(paperSize || '').includes('58') ? 32 : 42;
+  // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
+  const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
   const fmt = (n) => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
@@ -1080,14 +1144,16 @@ export const buildStatementThermalText = (paperSize, statement, {
     });
   };
 
-  pushCentered('CUSTOMER STATEMENT');
-  if (header) pushCentered(header);
-  pushCentered(companyName || '');
-  const addrLine = oneLineAddress(address);
-  if (addrLine) pushCentered(addrLine);
-  if (phone) pushCentered(`Tel: ${phone}`);
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  lines.push(hr);
+  if (!omitHeader) {
+    pushCentered('CUSTOMER STATEMENT');
+    if (header) pushCentered(header);
+    pushCentered(companyName || '');
+    const addrLine = oneLineAddress(address);
+    if (addrLine) pushCentered(addrLine);
+    if (phone) pushCentered(`Tel: ${phone}`);
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    lines.push(hr);
+  }
   lines.push(buildFixedWidthLine('Customer:', custName, width));
   if (custCode) lines.push(buildFixedWidthLine('Code:', custCode, width));
   if (startDate || endDate) lines.push(buildFixedWidthLine('Period:', `${startDate} to ${endDate}`, width));

@@ -26,6 +26,8 @@ export const RECEIPT_LABELS = {
   NAME:              { en: 'Name',                   ar: 'الاسم' },
   MOBILE:            { en: 'Mobile',                 ar: 'الجوال' },
   EMAIL:             { en: 'Email',                  ar: 'البريد الإلكتروني' },
+  CUSTOMER_CODE:     { en: 'Customer Code',          ar: 'رمز العميل' },
+  CUSTOMER_TRN:      { en: 'Customer TRN',           ar: 'الرقم الضريبي للعميل' },
   WALK_IN:           { en: 'Walk-in Customer',       ar: 'عميل نقدي' },
 
   ACCOUNT_BALANCE:   { en: 'ACCOUNT BALANCE',        ar: 'رصيد الحساب' },
@@ -53,6 +55,7 @@ export const RECEIPT_LABELS = {
   SERVICE_CHARGE:    { en: 'Service Charge',         ar: 'رسوم الخدمة' },
   DELIVERY_CHARGE:   { en: 'Delivery Charge',        ar: 'رسوم التوصيل' },
   SHIPPING:          { en: 'Shipping',               ar: 'الشحن' },
+  ROUND_OFF:         { en: 'Round Off',              ar: 'التقريب' },
 
   TOTAL_TO_PAY:      { en: 'TOTAL TO PAY',           ar: 'المبلغ الإجمالي المستحق' },
   DEPOSIT_PAID:      { en: 'Deposit Paid',           ar: 'العربون المدفوع' },
@@ -60,6 +63,8 @@ export const RECEIPT_LABELS = {
 
   PAYMENT_MODE:      { en: 'Payment Mode',           ar: 'طريقة الدفع' },
   CASH_RECEIVED:     { en: 'Cash Received',          ar: 'المبلغ النقدي المستلم' },
+  CASH_PAID:         { en: 'Cash Paid',              ar: 'المبلغ النقدي المدفوع' },
+  CARD_PAID:         { en: 'Card Paid',              ar: 'المبلغ المدفوع بالبطاقة' },
   CHANGE:            { en: 'Change Returned',        ar: 'المبلغ المرتجع' },
 
   LOYALTY:           { en: 'LOYALTY PROGRAM',        ar: 'برنامج الولاء' },

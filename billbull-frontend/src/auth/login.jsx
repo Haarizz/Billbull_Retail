@@ -43,6 +43,7 @@ const Login = () => {
       sessionStorage.setItem("role", data.primaryRole || data.role);
       sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
       sessionStorage.setItem("user", data.username);
+      sessionStorage.setItem("fullName", data.fullName || data.username);
 
       refreshCompany();
       // Tell BranchProvider to reload — it mounted before the token existed

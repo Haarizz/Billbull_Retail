@@ -14,7 +14,7 @@ import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
-import { buildEscPosFromPlainTextBase64 } from '../../../utils/escPosReceipt';
+import { buildEscPosDocumentBase64 } from '../../../utils/escPosReceipt';
 import { exportToPDF } from '../../../utils/exportUtils';
 import { mapStatementEntriesForExport, STATEMENT_EXPORT_COLUMNS } from '../../../utils/statementUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
@@ -35,9 +35,22 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal, printTemplate }) => {
   const { company } = useCompany();
   const { activeBranch } = useBranch();
+  // Branding for the branded ESC/POS header — prefer the print-template config
+  // passed down from POSSales (same source the Tax Invoice uses, so the logo +
+  // company block are identical, req 12), falling back to the company profile.
+  const brand = React.useMemo(() => ({
+    companyName: printTemplate?.companyName || company?.companyName,
+    trn: printTemplate?.trn || company?.trn,
+    address: printTemplate?.address || company?.address,
+    phone: printTemplate?.phone || company?.phone,
+    logoDataUrl: printTemplate?.logoDataUrl || company?.logoUrl,
+    showLogo: printTemplate?.showLogo !== false,
+    showTrn: printTemplate?.showTrn !== false,
+    currency: printTemplate?.currency || company?.currency || 'AED',
+  }), [printTemplate, company]);
   const [custTab, setCustTab]             = React.useState('list');
   const [custSearch, setCustSearch]       = React.useState('');
   const [custBalanceFilter, setCustBalanceFilter] = React.useState('all');
@@ -123,6 +136,92 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     return () => { cancelled = true; };
   }, [receiptCust, customerOptions]);
 
+  // Tracks voucher keys already AUTO-printed so the automatic print fired after a
+  // successful save can't double-fire (e.g. the Record Payment / Receive Advance
+  // action button is clicked twice). The manual "Print Receipt" button is a
+  // deliberate reprint and intentionally bypasses this guard.
+  const printedVoucherKeysRef = React.useRef(new Set());
+
+  // Single 80mm voucher print path, shared by the Customer Receipt and Receive
+  // Advance flows (auto-print after save + the manual button). `voucher` is the
+  // saved payment/advance object; `documentTitle` sets the heading; `auto` runs it
+  // silently (no toast on the happy path) so an automatic print never interrupts
+  // the workflow. `dedupe` (defaults to `auto`) guards against duplicate AUTO
+  // prints; the manual button passes it false so an intentional reprint always
+  // works.
+  const printVoucherToConfiguredPrinter = React.useCallback(async (voucher, {
+    documentTitle = 'PAYMENT RECEIPT', title = 'Receipt', customer = null, auto = false, dedupe = auto,
+  } = {}) => {
+    if (!voucher) return;
+    const key = String(voucher.id ?? voucher.paymentNumber ?? voucher.receiptNumber ?? '')
+      || `${documentTitle}:${voucher.customerCode || ''}:${voucher.amount || ''}:${voucher.date || voucher.paymentDate || ''}`;
+    if (dedupe && key && printedVoucherKeysRef.current.has(key)) return;
+    if (dedupe && key) printedVoucherKeysRef.current.add(key);
+
+    setReceiptPrintBusy(true);
+    try {
+      const opts = {
+        companyName: brand.companyName,
+        trn: brand.trn,
+        address: brand.address,
+        phone: brand.phone,
+        header: activeBranch?.name,
+        logoDataUrl: brand.logoDataUrl,
+        showTrn: brand.showTrn,
+        currency: brand.currency,
+        customer,
+        documentTitle,
+      };
+      // Print straight to the configured 80mm printer when one's reachable — only
+      // fall back to the browser print-preview dialog when there's genuinely no
+      // device (and, on auto-print, only surface that as a quiet toast).
+      const printer = resolvePrinterForContext(printerConfigs, {
+        deviceType: 'RECEIPT_PRINTER',
+        branchId: currentTerminal?.branchId || null,
+        terminalId: currentTerminal?.terminalId || null,
+      });
+      if (!printer) {
+        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
+        printHtml(buildReceiptVoucherThermalHtml('80mm', voucher, opts), { fast: true });
+        return;
+      }
+      // Body-only text (omitHeader) — the branded ESC/POS header (logo + company
+      // block), identical to the POS Sales receipt, is prepended below.
+      const text = buildReceiptVoucherThermalText('80mm', voucher, { ...opts, omitHeader: true });
+      const headerText = buildReceiptVoucherThermalText('80mm', voucher, opts);
+      try {
+        // ESC/POS bridge (same as the POS Sales receipt) — real density/heat on
+        // the print head plus a cut command, and now the shared branded header
+        // (logo + big company name + address/Tel/TRN) instead of plain text.
+        const escPosBase64 = await buildEscPosDocumentBase64(text, {
+          paperSize: '80mm',
+          documentTitle,
+          companyName: opts.companyName,
+          header: opts.header,
+          trn: opts.trn,
+          outletAddress: opts.address,
+          outletPhone: opts.phone,
+          logoDataUrl: opts.logoDataUrl,
+          showLogo: brand.showLogo,
+          showTrn: brand.showTrn,
+        });
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: headerText, title });
+      } catch (err) {
+        console.warn('Configured printer failed for receipt voucher, falling back to browser print preview', err);
+        // A send failure means the receipt did NOT print — release the dedupe key
+        // so the fallback preview / a manual retry can still produce a copy.
+        if (dedupe && key) printedVoucherKeysRef.current.delete(key);
+        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
+        printHtml(buildReceiptVoucherThermalHtml('80mm', voucher, opts), { fast: true });
+      }
+    } catch (e) {
+      if (!auto) toast.error(e?.message || 'Failed to generate receipt print layout.');
+      else console.warn('Auto-print of receipt voucher failed', e);
+    } finally {
+      setReceiptPrintBusy(false);
+    }
+  }, [brand, activeBranch, printerConfigs, currentTerminal]);
+
   const handleRecordPayment = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === receiptCust);
     if (!selected) return alert('Please select a customer.');
@@ -158,59 +257,33 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setReceiptRef('');
       setReceiptInvoice('');
       if (typeof syncPosData === 'function') syncPosData();
+      // Auto-print the Customer Payment Receipt now that the transaction has
+      // succeeded — fire-and-forget so it never blocks the form reset/workflow.
+      // Uses the freshly-saved object (not lastPayment state, which hasn't
+      // committed yet); the dedupe guard stops a later manual Print click from
+      // reprinting the same receipt.
+      void printVoucherToConfiguredPrinter(saved, {
+        documentTitle: 'PAYMENT RECEIPT',
+        title: `Receipt ${saved?.paymentNumber || ''}`.trim(),
+        customer: selected,
+        auto: true,
+      });
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record payment.');
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptInvoice, customerOptions, syncPosData]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptInvoice, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
 
   const handlePrintReceipt = React.useCallback(async () => {
     if (!lastPayment) return;
-    setReceiptPrintBusy(true);
-    try {
-      const customer = customerOptions.find(c => c.code === lastPayment.customerCode) || null;
-      const opts = {
-        companyName: company?.companyName,
-        trn: company?.trn,
-        address: company?.address,
-        phone: company?.phone,
-        header: activeBranch?.name,
-        logoDataUrl: company?.logoUrl,
-        currency: company?.currency || 'AED',
-        customer,
-      };
-      // Print straight to the configured printer when one's reachable — only fall
-      // back to the browser print-preview dialog when there's genuinely no device.
-      const printer = resolvePrinterForContext(printerConfigs, {
-        deviceType: 'RECEIPT_PRINTER',
-        branchId: currentTerminal?.branchId || null,
-        terminalId: currentTerminal?.terminalId || null,
-      });
-      if (!printer) {
-        toast.error('No receipt printer is configured for this terminal — showing print preview instead.');
-        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
-        return;
-      }
-      const text = buildReceiptVoucherThermalText('80mm', lastPayment, opts);
-      try {
-        // ESC/POS bridge (same as layaway slips / X-Z reports) instead of the
-        // plain-text agent path — real density/heat on the print head plus a
-        // cut command, and on NETWORK_IP printers it relays via the backend so
-        // no local agent is needed.
-        const escPosBase64 = buildEscPosFromPlainTextBase64(text);
-        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim() });
-      } catch (err) {
-        console.warn('Configured printer failed for receipt voucher, falling back to browser print preview', err);
-        toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
-        printHtml(buildReceiptVoucherThermalHtml('80mm', lastPayment, opts), { fast: true });
-      }
-    } catch (e) {
-      toast.error(e?.message || 'Failed to generate receipt print layout.');
-    } finally {
-      setReceiptPrintBusy(false);
-    }
-  }, [lastPayment, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
+    const customer = customerOptions.find(c => c.code === lastPayment.customerCode) || null;
+    await printVoucherToConfiguredPrinter(lastPayment, {
+      documentTitle: 'PAYMENT RECEIPT',
+      title: `Receipt ${lastPayment?.paymentNumber || ''}`.trim(),
+      customer,
+    });
+  }, [lastPayment, customerOptions, printVoucherToConfiguredPrinter]);
 
   const handleReceiveAdvance = React.useCallback(async () => {
     const selected = customerOptions.find(c => c.id === advanceCust);
@@ -233,18 +306,39 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       };
       const fd = new FormData();
       fd.append('data', JSON.stringify(payload));
-      await receiptVoucherApi.create(fd);
+      const savedAdvance = await receiptVoucherApi.create(fd);
       setAdvSuccess(`Advance of ${Number(advAmount).toFixed(2)} received for ${selected.name}.`);
       setAdvAmount('');
       setAdvMethod('');
       setAdvNotes('');
       if (typeof syncPosData === 'function') syncPosData();
+      // Auto-print the Advance Receipt now that the advance is recorded. Map the
+      // created voucher (falling back to the just-sent payload if the API returns
+      // no body) into the shared receipt-voucher shape, then print silently and
+      // non-blocking. Same 80mm template as the payment receipt, titled
+      // "ADVANCE RECEIPT". Dedupe guard prevents a double-click reprinting it.
+      const voucher = {
+        id: savedAdvance?.id,
+        receiptNumber: savedAdvance?.receiptNumber || savedAdvance?.voucherNumber || savedAdvance?.paymentNumber || null,
+        customerName: savedAdvance?.memberName || selected.name,
+        customerCode: savedAdvance?.customerCode || selected.code,
+        amount: savedAdvance?.amount ?? Number(advAmount),
+        paymentMode: savedAdvance?.paymentMode || advMethod,
+        paymentDate: savedAdvance?.date || payload.date,
+        referenceNumber: savedAdvance?.notes || advNotes || null,
+      };
+      void printVoucherToConfiguredPrinter(voucher, {
+        documentTitle: 'ADVANCE RECEIPT',
+        title: `Advance ${voucher.receiptNumber || ''}`.trim(),
+        customer: selected,
+        auto: true,
+      });
     } catch (e) {
       alert(e?.response?.data?.message || e?.response?.data || 'Failed to record advance.');
     } finally {
       setAdvBusy(false);
     }
-  }, [advanceCust, advAmount, advMethod, advNotes, customerOptions, syncPosData]);
+  }, [advanceCust, advAmount, advMethod, advNotes, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
 
   const refreshOpenAdvances = React.useCallback(async (custId) => {
     const selected = customerOptions.find(c => c.id === custId);
@@ -330,13 +424,14 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       setStmtData(freshStatement);
       setStmtEntries(freshStatement?.entries || freshStatement?.lines || []);
       const opts = {
-        companyName: company?.companyName,
-        trn: company?.trn,
-        address: company?.address,
-        phone: company?.phone,
+        companyName: brand.companyName,
+        trn: brand.trn,
+        address: brand.address,
+        phone: brand.phone,
         header: activeBranch?.name,
-        logoDataUrl: company?.logoUrl,
-        currency: company?.currency || 'AED',
+        logoDataUrl: brand.logoDataUrl,
+        showTrn: brand.showTrn,
+        currency: brand.currency,
         customer: selected,
         startDate: from,
         endDate: to,
@@ -353,11 +448,24 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         printHtml(buildStatementThermalHtml('80mm', freshStatement, opts), { fast: true });
         return;
       }
-      const text = buildStatementThermalText('80mm', freshStatement, opts);
+      const text = buildStatementThermalText('80mm', freshStatement, { ...opts, omitHeader: true });
+      const headerText = buildStatementThermalText('80mm', freshStatement, opts);
       try {
-        // ESC/POS bridge — see handlePrintReceipt above for why.
-        const escPosBase64 = buildEscPosFromPlainTextBase64(text);
-        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: `Statement ${selected.code || selected.name || ''}`.trim() });
+        // ESC/POS bridge with the shared branded header (logo + company block),
+        // identical to the POS Sales receipt — see printVoucherToConfiguredPrinter.
+        const escPosBase64 = await buildEscPosDocumentBase64(text, {
+          paperSize: '80mm',
+          documentTitle: 'CUSTOMER STATEMENT',
+          companyName: opts.companyName,
+          header: opts.header,
+          trn: opts.trn,
+          outletAddress: opts.address,
+          outletPhone: opts.phone,
+          logoDataUrl: opts.logoDataUrl,
+          showLogo: brand.showLogo,
+          showTrn: brand.showTrn,
+        });
+        await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: headerText, title: `Statement ${selected.code || selected.name || ''}`.trim() });
       } catch (err) {
         console.warn('Configured printer failed for statement, falling back to browser print preview', err);
         toast.error(`Couldn't reach "${printer.deviceName || printer.systemPrinterName || 'configured printer'}" — showing print preview instead.`);
@@ -368,7 +476,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setStmtPrintBusy(false);
     }
-  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, company, activeBranch, printerConfigs, currentTerminal]);
+  }, [statementCust, stmtFromDate, stmtToDate, customerOptions, brand, activeBranch, printerConfigs, currentTerminal]);
 
   const handleExportStatementPdf = React.useCallback(() => {
     const selected = customerOptions.find(c => c.id === statementCust);

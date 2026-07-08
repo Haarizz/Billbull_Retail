@@ -8,6 +8,11 @@ import { Input } from '../../../components/ui/input';
 import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
 import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
+import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
+import { buildSampleTxn } from './receiptTemplates/billBullTaxInvoiceData';
+import { buildSampleInvoice, buildSampleOpts } from './receiptTemplates/sampleInvoice';
+import { buildEscPosReceiptBase64 } from '../../../utils/escPosReceipt';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { getPosScanners, createPosScanner, decommissionPosScanner } from '../../../api/posScannerApi';
 import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } from '../../../api/posCashDrawerApi';
@@ -37,8 +42,13 @@ const POSConsole = React.memo((props) => {
     tplReturnShowGrandTotalBanner, tplReturnShowTerms, tplReturnShowNotes, tplReturnShowQRCode, tplReturnShowSignature, tplReturnShowCreditBalance, 
     tplJobCardFooter, tplJobCardPaper, 
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails, 
-    tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms, 
-    posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton, 
+    tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
+    receiptTemplateId, setReceiptTemplateId,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
+    setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
+    posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
@@ -619,6 +629,9 @@ const POSConsole = React.memo((props) => {
                       jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
                       jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
                       jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
+                      receiptTemplateId,
+                      t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
+                      t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                     setPosSettings(saved);
@@ -1439,6 +1452,63 @@ const POSConsole = React.memo((props) => {
 
             const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
 
+            // ── Receipt template selection (Template 1 / Template 2 Arabic …) ──
+            // The alternate (component) templates are 80mm thermal receipts, so the
+            // selector is offered on both the POS Receipt and Tax Invoice sub-tabs
+            // whenever a thermal paper size is selected (not A4). receiptTemplateId
+            // is a single global setting — the same choice drives both documents at
+            // checkout — so Return / Job Card stay pinned to the native template.
+            const templateSelectorAvailable = (templateSubTab === 'receipt' || templateSubTab === 'invoice') && cfg.paper !== 'A4';
+            const activeTemplate = getReceiptTemplate(templateSelectorAvailable ? receiptTemplateId : DEFAULT_RECEIPT_TEMPLATE_ID);
+            const useComponentTemplate = templateSelectorAvailable && activeTemplate.kind === 'component';
+            // Build the shared data model once for component templates (preview + print).
+            const componentTemplateData = useComponentTemplate
+              ? activeTemplate.mapData(
+                  {
+                    name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+                    // Stamp is passed as stampDataUrl (not qrDataUrl) so it isn't
+                    // mislabelled as a scannable QR. The designer has no live ZATCA
+                    // QR to render, so the component shows its placeholder when QR
+                    // is enabled with no stamp — an honest "QR appears here" hint.
+                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
+                    qrPlaceholder: t2ShowQRCode, footerText: cfg.footer,
+                  },
+                  buildSampleTxn(),
+                  {
+                    // Template 2's own independent Show/Hide toggles drive which
+                    // sections the designer preview (and, at checkout, the real
+                    // receipt) renders.
+                    showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+                    showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+                    showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+                    showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+                    showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+                    showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+                  },
+                )
+              : null;
+
+            // Template 2 (Arabic/bilingual) carries its OWN independent toggle
+            // set — it renders sections Template 1 doesn't (Account Balance,
+            // Delivery, Loyalty, bilingual Arabic). When Template 2 is the active
+            // component template, the Show/Hide list swaps to this map and binds
+            // to the t2* state instead of the shared native `cfg`.
+            const t2cfg = {
+              showLogo: t2ShowLogo, setShowLogo: setT2ShowLogo,
+              showCompanyDetails: t2ShowCompanyDetails, setShowCompanyDetails: setT2ShowCompanyDetails,
+              showTrn: t2ShowTrn, setShowTrn: setT2ShowTrn,
+              showArabic: t2ShowArabic, setShowArabic: setT2ShowArabic,
+              showCustomerDetails: t2ShowCustomerDetails, setShowCustomerDetails: setT2ShowCustomerDetails,
+              showAccountBalance: t2ShowAccountBalance, setShowAccountBalance: setT2ShowAccountBalance,
+              showDelivery: t2ShowDelivery, setShowDelivery: setT2ShowDelivery,
+              showVatSummary: t2ShowVatSummary, setShowVatSummary: setT2ShowVatSummary,
+              showPaymentDetails: t2ShowPaymentDetails, setShowPaymentDetails: setT2ShowPaymentDetails,
+              showLoyalty: t2ShowLoyalty, setShowLoyalty: setT2ShowLoyalty,
+              showQRCode: t2ShowQRCode, setShowQRCode: setT2ShowQRCode,
+              showFooterText: t2ShowFooterText, setShowFooterText: setT2ShowFooterText,
+              showBarcode: t2ShowBarcode, setShowBarcode: setT2ShowBarcode,
+            };
+
             const fieldToggleSection = (label, items) => (
               <div key={label}>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
@@ -1454,6 +1524,12 @@ const POSConsole = React.memo((props) => {
             );
 
             const handleFullPreview = () => {
+              // Component-based templates (e.g. Template 2 Arabic) render via the registry.
+              if (useComponentTemplate) {
+                const w = window.open('', '_blank');
+                w && w.document.write(activeTemplate.buildHtml(componentTemplateData));
+                return;
+              }
               let html;
               if (cfg.paper === 'A4') {
                 html = templateSubTab === 'jobcard'
@@ -1476,25 +1552,109 @@ const POSConsole = React.memo((props) => {
               w && w.document.write(html);
             };
 
-            const handleTestPrint = () => {
-              const toggles = {
-                showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
-                showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
-                showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
-                colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
-                colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
-                logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-              };
+            // Fallback HTML (browser print-preview) for the thermal receipt Test Print —
+            // used only when no printer is configured for this terminal, or the silent
+            // ESC/POS send fails. Kept as a plain function (not inline) so both the
+            // native and component branches below can call the same fallback.
+            const printReceiptViaBrowserFallback = () => {
+              if (useComponentTemplate) {
+                printHtml(activeTemplate.buildHtml(componentTemplateData));
+                return;
+              }
+              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+            };
+
+            const handleTestPrint = async () => {
+              // A4 and the Service Job Card always use the browser print pipeline —
+              // there is no thermal/ESC-POS equivalent for those, and this task only
+              // changes the 58mm/80mm receipt path.
               if (cfg.paper === 'A4') {
+                const toggles = {
+                  showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
+                  showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
+                  showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
+                  colItemCode:cfg.colItemCode,colItemImage:cfg.colItemImage,colBarcode:cfg.colBarcode,colBatchNo:cfg.colBatchNo,
+                  colDiscount:cfg.colDiscount,colVatPct:cfg.colVatPct,colVatAmt:cfg.colVatAmt,
+                  logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
+                };
                 const html = templateSubTab === 'jobcard'
                   ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
                   : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},toggles);
                 printHtml(html);
-              } else if (templateSubTab === 'jobcard') {
+                return;
+              }
+              if (templateSubTab === 'jobcard') {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
-              } else {
-                printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+                return;
+              }
+
+              // 58mm/80mm receipt (Template 1 or Template 2): print straight to the
+              // configured printer through the SAME silent ESC/POS agent pipeline the
+              // real sales checkout uses (see localPrintAgent.js / CustomerView.jsx's
+              // printVoucherToConfiguredPrinter) — no browser print-preview dialog.
+              // Only fall back to the browser preview when there's genuinely no
+              // reachable printer, exactly like the checkout flow already does.
+              const printer = resolvePrinterForContext(printerConfigs, {
+                deviceType: 'RECEIPT_PRINTER',
+                branchId: currentTerminal?.branchId || null,
+                terminalId: currentTerminal?.terminalId || null,
+              });
+              if (!printer) {
+                printReceiptViaBrowserFallback();
+                return;
+              }
+
+              const isReturn = templateSubTab === 'return';
+              const sampleInvoice = buildSampleInvoice({ isReturn });
+              const outlet = { name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
+              const escPosOpts = {
+                ...buildSampleOpts({ outlet, cfg }),
+                isReturn,
+                documentTitle: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+                showCreditBalance: cfg.showCreditBalance,
+                creditPreviousBalance: cfg.showCreditBalance ? 245.5 : null,
+                creditInvoiceCredit: cfg.showCreditBalance ? sampleInvoice.invoiceTotal : null,
+                creditAmountPaid: cfg.showCreditBalance ? 0 : null,
+              };
+              // Template 2 (Arabic) test print honours its OWN independent toggle
+              // set (t2cfg), not the shared native `cfg`, so the Test Print matches
+              // the Template 2 Live Preview and the real checkout receipt.
+              if (useComponentTemplate) {
+                Object.assign(escPosOpts, {
+                  showLogo: t2cfg.showLogo,
+                  showCompanyDetails: t2cfg.showCompanyDetails,
+                  showTrn: t2cfg.showTrn,
+                  showArabic: t2cfg.showArabic,
+                  showCustomerDetails: t2cfg.showCustomerDetails,
+                  showVatSummary: t2cfg.showVatSummary,
+                  showPaymentDetails: t2cfg.showPaymentDetails,
+                  showLoyaltyPoints: t2cfg.showLoyalty,
+                  showDelivery: t2cfg.showDelivery,
+                  showFooterText: t2cfg.showFooterText,
+                  showBarcode: t2cfg.showBarcode,
+                  showQRCode: t2cfg.showQRCode,
+                  qrContent: t2cfg.showQRCode ? 'https://billbull.ae/verify/DI-28-042' : null,
+                  showCreditBalance: t2cfg.showAccountBalance,
+                  creditPreviousBalance: t2cfg.showAccountBalance ? 245.5 : null,
+                  creditInvoiceCredit: t2cfg.showAccountBalance ? sampleInvoice.invoiceTotal : null,
+                  creditAmountPaid: t2cfg.showAccountBalance ? 0 : null,
+                  deliveryAddress: t2cfg.showDelivery ? 'Villa 22, Street 7, Al Faseel, Fujairah, UAE' : null,
+                });
+              }
+
+              try {
+                const dataBase64 = useComponentTemplate
+                  ? await activeTemplate.buildEscPosBase64(cfg.paper, sampleInvoice, escPosOpts)
+                  : await buildEscPosReceiptBase64(cfg.paper, sampleInvoice, escPosOpts);
+                await sendEscPosReceiptToConfiguredPrinter(printer, {
+                  dataBase64,
+                  receiptText: `${activeTemplate.label} test print — ${sampleInvoice.invoiceNumber}`,
+                  title: `BillBull Test Print (${activeTemplate.label})`,
+                });
+              } catch (err) {
+                console.warn('Silent test print failed, falling back to browser print preview', err);
+                printReceiptViaBrowserFallback();
               }
             };
 
@@ -1669,6 +1829,37 @@ const POSConsole = React.memo((props) => {
                             ['Show Footer Custom Text', cfg.showFooterText, cfg.setShowFooterText],
                             ['Show Stamp', cfg.showStamp, cfg.setShowStamp],
                           ])}
+                        </>) : useComponentTemplate ? (<>
+                          {/* ── Template 2 (Arabic / bilingual) toggle set ── */}
+                          {fieldToggleSection('HEADER', [
+                            ['Show Logo', t2cfg.showLogo, t2cfg.setShowLogo],
+                            ['Show Company Name & Address', t2cfg.showCompanyDetails, t2cfg.setShowCompanyDetails],
+                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn],
+                            ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
+                          ])}
+                          {fieldToggleSection('CUSTOMER DETAILS', [
+                            ['Show Customer Details', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
+                          ])}
+                          {fieldToggleSection('ACCOUNT', [
+                            ['Show Account Balance', t2cfg.showAccountBalance, t2cfg.setShowAccountBalance],
+                          ])}
+                          {fieldToggleSection('DELIVERY', [
+                            ['Show Delivery Address', t2cfg.showDelivery, t2cfg.setShowDelivery],
+                          ])}
+                          {fieldToggleSection('TRANSACTION', [
+                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary],
+                            ['Show Payment Details (Mode / Paid / Change)', t2cfg.showPaymentDetails, t2cfg.setShowPaymentDetails],
+                          ])}
+                          {fieldToggleSection('LOYALTY', [
+                            ['Show Loyalty Program', t2cfg.showLoyalty, t2cfg.setShowLoyalty],
+                          ])}
+                          {fieldToggleSection('AFTER PAYMENT', [
+                            ['Show QR / Social Image', t2cfg.showQRCode, t2cfg.setShowQRCode],
+                          ])}
+                          {fieldToggleSection('FOOTER', [
+                            ['Show Footer Custom Text', t2cfg.showFooterText, t2cfg.setShowFooterText],
+                            ['Show Barcode', t2cfg.showBarcode, t2cfg.setShowBarcode],
+                          ])}
                         </>) : (<>
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', cfg.showLogo, cfg.setShowLogo],
@@ -1729,9 +1920,36 @@ const POSConsole = React.memo((props) => {
                         </span>
                       </div>
 
+                      {/* ── Receipt template selector (Template 1 / Template 2 …) ── */}
+                      {templateSelectorAvailable && (
+                        <div className="px-4 pt-3 flex flex-wrap gap-1.5">
+                          {RECEIPT_TEMPLATES.map(t => (
+                            <button key={t.id} type="button" onClick={() => setReceiptTemplateId(t.id)}
+                              className={`flex-1 min-w-[110px] flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${receiptTemplateId===t.id ? 'bg-[#F5C742]/15 border-[#F5C742]/50 text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                              <span>{t.label}</span>
+                              {t.sublabel && <span className={`text-[10px] font-medium ${receiptTemplateId===t.id ? 'text-[#b8920e]' : 'text-gray-400'}`}>{t.sublabel}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Preview body */}
                       <div className="p-4 bg-[#F7F7FA] overflow-y-auto flex flex-col gap-4" style={{ maxHeight: 900 }}>
-                        {cfg.paper === 'A4'
+                        {useComponentTemplate
+                          ? (() => {
+                              const Preview = activeTemplate.Preview;
+                              // Render at natural paper width (80mm ≈ 302px / 58mm ≈
+                              // 219px) — no down-scale — so this preview reads at the
+                              // same visual width as Template 1's ThermalMock (~330px)
+                              // instead of appearing noticeably narrower. The preview
+                              // sizes to the chosen paper (58mm vs 80mm) via paperSize.
+                              return (
+                                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                  <Preview data={componentTemplateData} paperSize={cfg.paper} />
+                                </div>
+                              );
+                            })()
+                          : cfg.paper === 'A4'
                           ? <A4LivePreview
                               category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
                               companyName={tplOutletName} trn={tplOutletTrn}

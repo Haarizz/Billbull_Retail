@@ -16,7 +16,7 @@ import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProd
 import { getDepartments } from '../../api/departmentsApi';
 import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
-import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage } from '../../api/salesInvoiceApi';
+import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
@@ -159,7 +159,10 @@ import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
-import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64 } from '../../utils/escPosReceipt';
+import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
+import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
+import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
+import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -346,9 +349,13 @@ export default function POSSales() {
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
   const [isIdleLocked, setIsIdleLocked] = useState(false);
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
-  // Logged-in POS user shown as "Cashier" on the receipt (§2A). Mirrors the
-  // Sidebar's display-name derivation: strip the @domain then title-case.
+  // Logged-in POS user shown as "Cashier" on the receipt (§2A). Prefers the
+  // employee's real first/last name (stored at login as "fullName", resolved
+  // server-side from the linked HR employee record) over the login username —
+  // a shared/system account like "admin" should never appear on a receipt.
   const cashierDisplayName = useMemo(() => {
+    const storedFullName = sessionStorage.getItem('fullName');
+    if (storedFullName) return formatUserDisplayName(storedFullName);
     const raw = sessionStorage.getItem('user') || '';
     return formatUserDisplayName(raw.includes('@') ? raw.split('@')[0] : raw);
   }, []);
@@ -372,6 +379,13 @@ export default function POSSales() {
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
   const [zReportData, setZReportData] = useState(null);
+  // Auto-print bookkeeping for X/Z reports: printedReportKeysRef dedupes so a
+  // report is auto-printed at most once per session/day close; the pending refs
+  // arm the auto-print to fire from the effect that runs once the fresh report
+  // data lands in state (so we print exactly what the preview shows).
+  const printedReportKeysRef = useRef(new Set());
+  const pendingXAutoPrintRef = useRef(null); // session id awaiting X-Report auto-print
+  const pendingZAutoPrintRef = useRef(null); // date string awaiting Z-Report auto-print
   // When the Z-Report is blocked because terminals still owe an X-Report, this
   // holds the pending-terminal list to display; zReportData is cleared so the
   // report body and its print/export actions stay hidden until eligible.
@@ -506,6 +520,12 @@ export default function POSSales() {
   // commit that the phase switch unmounts that iframe — that race is what threw
   // "Failed to execute 'removeChild' on 'Node'" on Settle Payment.
   const [checkoutSettling, setCheckoutSettling] = useState(false);
+  // True while post-payment side-effects (receipt printing, cash drawer, layaway
+  // conversion) run AFTER the payment itself has already been confirmed by the
+  // backend and the success screen is showing. Drives the subtle "Printing
+  // receipt…" indicator on the complete screen so the cashier isn't blocked on
+  // the checkout form waiting for the printer round-trip (perceived-latency fix).
+  const [checkoutFinalizing, setCheckoutFinalizing] = useState(false);
   const checkoutPreviewFreezeRef = useRef('');
   // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
   // and no company stamp occupies that slot — "stamp if uploaded, else QR").
@@ -569,6 +589,12 @@ export default function POSSales() {
   const [barcodeScanFeedback, setBarcodeScanFeedback] = useState(null);
   const barcodeInputRef = useRef(null);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
+  // Real next invoice number previewed from the backend numbering sequence
+  // (GET /api/sales-invoices/next-number). POS checkout posts through the same
+  // SalesInvoice save path, so this is the number the sale will actually get —
+  // used for the checkout header + receipt preview instead of a fabricated
+  // client-side counter. Null until fetched; callers fall back gracefully.
+  const [previewInvoiceNo, setPreviewInvoiceNo] = useState(null);
   const [lastScannedItem, setLastScannedItem] = useState(null);
   const [posActionMode, setPosActionMode] = useState('none');
   // Classic layout inline numpad
@@ -855,6 +881,32 @@ export default function POSSales() {
   const [tplJobCardShowExpectedDate, setTplJobCardShowExpectedDate] = useState(true);
   const [tplJobCardShowCustomerSignature, setTplJobCardShowCustomerSignature] = useState(true);
   const [tplJobCardShowTerms, setTplJobCardShowTerms] = useState(true);
+  // Which receipt template (Template 1 "native" vs Template 2 "billbull-ar")
+  // drives the actual checkout print — persisted alongside the rest of
+  // printTemplateConfig so the Print Templates designer's saved selection is
+  // what the till prints at checkout, not just the designer's own test print.
+  const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
+
+  // ── Template 2 (Arabic/bilingual) Show/Hide toggles ─────────────────────────
+  // Template 2 renders its own sections (Account Balance, Delivery, Loyalty,
+  // bilingual Arabic text) that Template 1 doesn't have, so it carries its OWN
+  // independent toggle state rather than reusing Template 1's. Selecting
+  // Template 2 in the designer swaps the toggle list AND its saved values.
+  // Persisted alongside the rest of printTemplateConfig. Defaults preserve the
+  // current Template 2 output (everything on except QR, which stays opt-in).
+  const [t2ShowLogo, setT2ShowLogo] = useState(true);
+  const [t2ShowCompanyDetails, setT2ShowCompanyDetails] = useState(true);
+  const [t2ShowTrn, setT2ShowTrn] = useState(true);
+  const [t2ShowArabic, setT2ShowArabic] = useState(true);
+  const [t2ShowCustomerDetails, setT2ShowCustomerDetails] = useState(true);
+  const [t2ShowAccountBalance, setT2ShowAccountBalance] = useState(true);
+  const [t2ShowDelivery, setT2ShowDelivery] = useState(true);
+  const [t2ShowVatSummary, setT2ShowVatSummary] = useState(true);
+  const [t2ShowPaymentDetails, setT2ShowPaymentDetails] = useState(true);
+  const [t2ShowLoyalty, setT2ShowLoyalty] = useState(true);
+  const [t2ShowQRCode, setT2ShowQRCode] = useState(false);
+  const [t2ShowFooterText, setT2ShowFooterText] = useState(true);
+  const [t2ShowBarcode, setT2ShowBarcode] = useState(true);
 
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
@@ -900,9 +952,21 @@ export default function POSSales() {
 
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
 
+  // Single source of truth for "who is this sale's customer". In Credit mode the
+  // cashier picks in the dedicated credit search box (checkoutCreditCustomer),
+  // which lives in its own state; if that pick never mirrored back onto
+  // selectedCustomer, the preview, printed receipt AND the posted invoice all fell
+  // back to Walk-in even though a real customer was chosen. Resolve the effective
+  // customer here so every consumer (preview, print, backend payload) agrees:
+  // prefer the Credit-box selection when in Credit mode, else the main selection.
+  const effectiveCustomerId = useMemo(
+    () => (checkoutPayMode === 'credit' && checkoutCreditCustomer) ? checkoutCreditCustomer : selectedCustomer,
+    [checkoutPayMode, checkoutCreditCustomer, selectedCustomer]
+  );
+
   const selectedCustomerData = useMemo(
-    () => customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER,
-    [customerOptions, selectedCustomer]
+    () => customerOptions.find(c => c.id === effectiveCustomerId) || WALK_IN_CUSTOMER,
+    [customerOptions, effectiveCustomerId]
   );
 
   const checkoutThermalHtml = useMemo(() => {
@@ -910,10 +974,15 @@ export default function POSSales() {
     if (!currentInvoice) return '';
     try {
       const now = new Date();
-      const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
+      // Real next number from the backend sequence; blank until fetched so the
+      // preview never shows a fabricated SI-POS-000001.
+      const invoiceNo = previewInvoiceNo || '';
       const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
       const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
-      const customer = customerOptions.find(c => c.id === selectedCustomer) || WALK_IN_CUSTOMER;
+      // Use the same authoritative resolution the printed receipt + backend payload
+      // use (selectedCustomerData) so the preview never disagrees with the actual
+      // print — in Credit mode this honours the credit-box selection.
+      const customer = selectedCustomerData;
       const previewShipping = Number(shippingCharge) || 0;
 
       const mockInvoice = {
@@ -923,6 +992,11 @@ export default function POSSales() {
         customerName: customer?.name || 'Walk-in Customer',
         customerPhone: customer?.phone || '',
         customerEmail: customer?.email || '',
+        // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
+        customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
+        customerTrn: customer?.trn || '',
+        saleType: currentInvoice.saleType || '',
+        shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
         paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
@@ -934,11 +1008,16 @@ export default function POSSales() {
         items: (currentInvoice.items || []).map(it => ({
           itemCode: it.code || it.productId || it.id || '',
           itemName: it.name || '',
+          // Arabic item name (Fix 5) — carried from the cart line's nameAr, which
+          // the cart builder now sources from the product's localName.
+          localName: it.nameAr || it.localName || '',
           description: it.description || '',
           quantity: it.quantity || 0,
           unitPrice: it.price || 0,
           netAmount: it.total || 0,
           discountPercent: it.discount || 0,
+          taxPercent: it.taxRate != null ? it.taxRate : undefined,
+          taxAmount: it.taxAmount != null ? it.taxAmount : undefined,
           grossAmount: (it.quantity || 0) * (it.price || 0),
           batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
           serialNumber: it.serialNumber || '',
@@ -948,6 +1027,67 @@ export default function POSSales() {
 
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
+
+      // Mixed (cash + card) split for the receipt preview — only when the mode is
+      // Mixed and both portions were entered, so cash/card/credit sales don't show
+      // an empty split. Passed to BOTH template renderers below.
+      const previewMixedCash = checkoutPayMode === 'mixed' ? (parseFloat(mixedCashAmount) || 0) : 0;
+      const previewMixedCard = checkoutPayMode === 'mixed' ? (parseFloat(mixedCardAmount) || 0) : 0;
+      const previewHasMixed = checkoutPayMode === 'mixed' && (previewMixedCash > 0 || previewMixedCard > 0);
+
+      // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
+      // preview must show whichever template is saved in Print Templates, same
+      // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
+      if (receiptTemplateId === 'billbull-ar') {
+        const isWalkInPreview = !customer || customer.id === 'walk-in';
+        // Template 2 has its OWN Show/Hide toggles (independent of Template 1's
+        // invoice toggles). The preview honours them so what the merchant sees
+        // here matches what the till prints at checkout.
+        const t2Toggles = {
+          showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+          showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+          showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+          showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+          showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+          showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+        };
+        const t2StampAvailable = t2ShowQRCode && !!tplStampDataUrl;
+        const t2ShowQr = t2ShowQRCode && !t2StampAvailable;
+        const txn = mapInvoiceToTxn(mockInvoice, {
+          currency: activeCurrency,
+          terminalId: currentTerminal?.terminalId,
+          cashierName: cashierDisplayName,
+          customerPhone: customer?.phone,
+          branchName: currentTerminal?.branchName || currentSession?.branchName || '',
+          shippingCharge: previewShipping > 0 ? previewShipping : null,
+          // Account Balance section (Fix 3): mirror Template 1's checkout preview
+          // — show it when the credit block is enabled and we have a balance for a
+          // non-walk-in customer. Invoice Credit = grand total, Amount Paid = 0
+          // (nothing collected yet in the preview), New Balance = prev + this.
+          // Additionally gated by Template 2's own Account Balance toggle.
+          showCreditBalance: t2ShowAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
+          creditPreviousBalance: checkoutPreviewCreditBalance,
+          creditInvoiceCredit: previewGrand,
+          creditAmountPaid: 0,
+          creditUpdatedBalance: checkoutPreviewCreditBalance != null ? Number(checkoutPreviewCreditBalance) + previewGrand : null,
+          mixedCashGiven: previewHasMixed ? previewMixedCash : null,
+          mixedCardGiven: previewHasMixed ? previewMixedCard : null,
+          mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
+        });
+        const outlet = {
+          name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+          logoDataUrl: tplLogoDataUrl,
+          // Real QR in preview when QR is enabled and no stamp overrides it; stamp
+          // image shown separately when uploaded (parity with Template 1 preview).
+          qrDataUrl: t2ShowQr ? checkoutPreviewQrDataUrl : null,
+          stampDataUrl: t2StampAvailable ? tplStampDataUrl : null,
+          footerText: tplInvoiceFooter,
+        };
+        const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
+        checkoutPreviewFreezeRef.current = html;
+        return html;
+      }
+
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
@@ -962,7 +1102,10 @@ export default function POSSales() {
         showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
-        currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement
+        currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+        mixedCashGiven: previewHasMixed ? previewMixedCash : null,
+        mixedCardGiven: previewHasMixed ? previewMixedCard : null,
+        mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
       });
 
       checkoutPreviewFreezeRef.current = html;
@@ -971,13 +1114,15 @@ export default function POSSales() {
       console.warn('Checkout Thermal preview failed:', e);
       return '';
     }
-  }, [checkoutSettling, currentInvoice, customerOptions, selectedCustomer, invoiceCounter, activeLayawayDeposit, shippingCharge,
-    checkoutPayMode, checkoutCardType, currentTerminal, cashierDisplayName, activeCurrency,
+  }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
+    checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
-    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance]);
+    tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
 
@@ -1009,9 +1154,16 @@ export default function POSSales() {
       return;
     }
     let cancelled = false;
+    // Seed 0 (not null) so the Credit Account section renders in the preview the
+    // instant the toggle is on and a real customer is picked — the builder gate is
+    // `creditPreviousBalance != null`, so a null here would hide the whole section.
+    // A customer with no prior ledger record (lookup found:false) legitimately has
+    // a 0 previous balance; the print path uses the same 0-fallback, so the preview
+    // and the printed receipt now agree instead of the preview silently dropping it.
+    setCheckoutPreviewCreditBalance(0);
     posCreditBalance(code)
-      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : null); })
-      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(null); });
+      .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : 0); })
+      .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(0); });
     return () => { cancelled = true; };
   }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
 
@@ -1043,7 +1195,7 @@ export default function POSSales() {
     let cancelled = false;
     try {
       const mockInv = {
-        invoiceNumber: `INV-2026-${String(invoiceCounter).padStart(4, '0')}`,
+        invoiceNumber: previewInvoiceNo || '',
         invoiceDate: new Date().toISOString(),
         customerName: selectedCustomer?.name || 'Walk-in Customer',
         subTotal: currentInvoice?.subtotal || 0,
@@ -1065,7 +1217,7 @@ export default function POSSales() {
     } catch { setCheckoutPreviewQrDataUrl(null); }
     return () => { cancelled = true; };
   }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
-    currentInvoice, invoiceCounter, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
+    currentInvoice, previewInvoiceNo, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
 
   // Safety net: whenever the checkout overlay is fully dismissed, drop the
   // settle-freeze so the next sale's preview tracks the live cart again. Covers
@@ -1074,6 +1226,21 @@ export default function POSSales() {
   useEffect(() => {
     if (!showPaymentDialog && checkoutSettling) setCheckoutSettling(false);
   }, [showPaymentDialog, checkoutSettling]);
+
+  // Fetch the REAL next invoice number from the backend numbering sequence when
+  // the checkout dialog opens, so the header + receipt preview show the number
+  // the sale will actually be assigned (not a fabricated SI-POS-000001). It's a
+  // preview (numberingService.preview) — no sequence is consumed until the sale
+  // posts — so it's re-fetched each time the dialog opens and after each sale
+  // (invoiceCounter bump) to stay current under concurrent tills.
+  useEffect(() => {
+    if (!showPaymentDialog) return;
+    let cancelled = false;
+    getNextInvoiceNumber()
+      .then(no => { if (!cancelled && no) setPreviewInvoiceNo(no); })
+      .catch(() => { /* keep last value; UI falls back to blank if never fetched */ });
+    return () => { cancelled = true; };
+  }, [showPaymentDialog, invoiceCounter]);
 
   useEffect(() => {
     const code = selectedCustomerData?.code;
@@ -1293,6 +1460,21 @@ export default function POSSales() {
               if (tpl.jobCardShowExpectedDate != null) setTplJobCardShowExpectedDate(tpl.jobCardShowExpectedDate);
               if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
               if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
+              if (tpl.receiptTemplateId != null) setReceiptTemplateId(tpl.receiptTemplateId);
+              // Template 2 (Arabic) independent Show/Hide toggles
+              if (tpl.t2ShowLogo != null) setT2ShowLogo(tpl.t2ShowLogo);
+              if (tpl.t2ShowCompanyDetails != null) setT2ShowCompanyDetails(tpl.t2ShowCompanyDetails);
+              if (tpl.t2ShowTrn != null) setT2ShowTrn(tpl.t2ShowTrn);
+              if (tpl.t2ShowArabic != null) setT2ShowArabic(tpl.t2ShowArabic);
+              if (tpl.t2ShowCustomerDetails != null) setT2ShowCustomerDetails(tpl.t2ShowCustomerDetails);
+              if (tpl.t2ShowAccountBalance != null) setT2ShowAccountBalance(tpl.t2ShowAccountBalance);
+              if (tpl.t2ShowDelivery != null) setT2ShowDelivery(tpl.t2ShowDelivery);
+              if (tpl.t2ShowVatSummary != null) setT2ShowVatSummary(tpl.t2ShowVatSummary);
+              if (tpl.t2ShowPaymentDetails != null) setT2ShowPaymentDetails(tpl.t2ShowPaymentDetails);
+              if (tpl.t2ShowLoyalty != null) setT2ShowLoyalty(tpl.t2ShowLoyalty);
+              if (tpl.t2ShowQRCode != null) setT2ShowQRCode(tpl.t2ShowQRCode);
+              if (tpl.t2ShowFooterText != null) setT2ShowFooterText(tpl.t2ShowFooterText);
+              if (tpl.t2ShowBarcode != null) setT2ShowBarcode(tpl.t2ShowBarcode);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -1347,6 +1529,42 @@ export default function POSSales() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView]);
+
+  // Auto-print the X-Report once, after Close Session, when the fresh report data
+  // has loaded into state (armed by handleCloseSession). Waiting for xReportData
+  // guarantees the printout matches the on-screen X-Report exactly.
+  useEffect(() => {
+    if (!pendingXAutoPrintRef.current) return;
+    if (xReportLoading || !xReportData) return;
+    const sessId = pendingXAutoPrintRef.current;
+    pendingXAutoPrintRef.current = null;
+    const vm = buildXReportViewModel();
+    const cp = reportCompanyProfile();
+    const sess = xReportData?.session || currentSession;
+    void autoPrintReportThermal(
+      vm, cp,
+      { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] },
+      `x-report:${sessId}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xReportData, xReportLoading]);
+
+  // Auto-print the Z-Report once, after Close Day, when the fresh report data has
+  // loaded into state (armed by handleCloseDay).
+  useEffect(() => {
+    if (!pendingZAutoPrintRef.current) return;
+    if (zReportLoading || !zReportData) return;
+    const dateKey = pendingZAutoPrintRef.current;
+    pendingZAutoPrintRef.current = null;
+    const vm = buildZReportViewModel();
+    const cp = reportCompanyProfile();
+    void autoPrintReportThermal(
+      vm, cp,
+      { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] },
+      `z-report:${dateKey}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zReportData, zReportLoading]);
 
   // Load dashboard stats once the session becomes available on initial page load.
   // The view-change effect above misses this because currentView is already 'dashboard'
@@ -1640,11 +1858,19 @@ export default function POSSales() {
             closingRemarks: xReportClosingRemarks,
           });
           setCurrentSession(closed);
+          // Arm the X-Report auto-print: the session is now closed & saved. The
+          // x-report view mounts below and loadXReport() populates xReportData;
+          // an effect fires the 80mm auto-print once that fresh data lands, so we
+          // print exactly what the X-Report preview shows. Dedupe is keyed on the
+          // session id so re-closing can't double-print.
+          pendingXAutoPrintRef.current = currentSession.id;
         } else {
           setCurrentSession({ ...currentSession, status: 'CLOSED' });
         }
       } catch (err) {
         console.warn('Close session API error', err);
+        // Close failed server-side — do NOT arm the auto-print (req: only print on
+        // a successful operation). The local CLOSED flag is UI-only.
         setCurrentSession({ ...currentSession, status: 'CLOSED' });
       }
       setShowCloseSessionDialog(false);
@@ -1731,7 +1957,9 @@ export default function POSSales() {
           id: isPinned ? `${product.id}::${pinKey}` : product.id,
           productId: product.id,
           name: product.name,
-          nameAr: product.nameAr || '',
+          // Arabic name: the Product master persists it as `localName` (Jackson
+          // serializes it under that key); `nameAr` kept as a fallback alias.
+          nameAr: product.localName || product.nameAr || '',
           barcode: product.barcode || product.code || product.id,
           code: product.code || '',
           image: product.image || null,
@@ -2079,6 +2307,11 @@ export default function POSSales() {
       setZReportLoading(true);
       const data = await closePosDay(branchId, zReportDate);
       setZReportData(data);
+      // Day closed successfully → arm the Z-Report auto-print. The effect watching
+      // zReportData fires the 80mm print once, keyed on the closed date so a repeat
+      // Close Day can't double-print. Only reached on success (a failure throws to
+      // the catch below and never arms this).
+      pendingZAutoPrintRef.current = zReportDate;
       alert('Business day has been officially closed.');
     } catch (err) {
       const body = err?.response?.data;
@@ -2300,12 +2533,18 @@ export default function POSSales() {
             : null;
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
+            customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
             creditPreviousBalance: creditPrevBalAuto,
             creditInvoiceCredit: creditInvoiceCreditAuto,
             creditAmountPaid: creditAmountPaidAuto,
             creditUpdatedBalance: creditUpdatedBalanceAuto,
+            // Delivery Order receipt (Out for Delivery): the goods are not yet paid
+            // for — settlement happens later via Delivery Settle. Suppress the CREDIT
+            // ACCOUNT block here so the receipt ends after the Customer section; the
+            // block reappears on the Delivery Settlement receipt.
+            showCreditBalanceOverride: false,
           });
           await printThermalReceiptWithConfiguredPrinter({
             full: savedInvoice,
@@ -2598,7 +2837,7 @@ export default function POSSales() {
             } else {
               try {
                 const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
-                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText);
+                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText, tplReceiptPaper);
                 await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
                 console.warn('ESC/POS print failed for layaway receipt', err);
@@ -2823,10 +3062,14 @@ export default function POSSales() {
   ]);
 
   const buildThermalReceiptArtifacts = useCallback(async ({
-    full,
+    full: fullArg,
     isReprint = false,
     cashGiven = null,
     changeAmount = null,
+    mixedCashGiven = null,
+    mixedCardGiven = null,
+    mixedCardType = null,
+    customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
     creditPreviousBalance = null,
@@ -2837,7 +3080,25 @@ export default function POSSales() {
     depositApplied = null,
     balanceDue = null,
     shippingCharge = null,
+    // Per-call override of the CREDIT ACCOUNT block visibility. Normally the block
+    // follows the tplInvoiceShowBankDetails template toggle, but specific workflows
+    // pin it: a Delivery Order print (Out for Delivery) hides it (null → suppressed),
+    // while a Delivery Settlement print shows it. null = defer to template toggle.
+    showCreditBalanceOverride = null,
   }) => {
+    const resolvedShowCreditBalance = showCreditBalanceOverride != null
+      ? showCreditBalanceOverride
+      : tplInvoiceShowBankDetails;
+    // Customer name (client item 3): the printed receipt must show the SAME
+    // customer the checkout preview shows. The preview reads the selected customer
+    // object directly (customer.name), while the print path was reading it off the
+    // round-tripped backend invoice — which reads "Walk-in Customer" whenever the
+    // saved customerName came back blank. When the caller passes the live selected
+    // name, override it onto a shallow copy so BOTH the ESC/POS and HTML builders
+    // (which read invoice.customerName) print the real customer, not "Walk-in".
+    const full = (customerNameOverride && customerNameOverride.trim())
+      ? { ...fullArg, customerName: customerNameOverride.trim() }
+      : fullArg;
     const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
 
     // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
@@ -2845,10 +3106,13 @@ export default function POSSales() {
     // dithers the logo raster if any) are independent of each other. Running them
     // concurrently instead of one-after-the-other roughly halves the wait before the
     // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
-    const qrDataUrlPromise = tplInvoiceShowQRCode
+    // QR image is needed when the ACTIVE template's QR toggle is on — Template 2
+    // has its own (t2ShowQRCode); Template 1 uses the invoice toggle.
+    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? t2ShowQRCode : tplInvoiceShowQRCode;
+    const qrDataUrlPromise = qrToggleOn
       ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : Promise.resolve(null);
-    const escPosPromise = buildEscPosReceiptBase64(tplInvoicePaper, full, {
+    const escPosOpts = {
       companyName: tplOutletName,
       trn: tplOutletTrn,
       header: tplInvoiceHeader,
@@ -2865,32 +3129,113 @@ export default function POSSales() {
       showPaymentDetails: tplInvoiceColDiscount,
       showQRCode: tplInvoiceShowQRCode,
       qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      // Social/stamp image + placement — same values the HTML preview below gets,
+      // so a merchant-uploaded social image prints (and suppresses the QR) on the
+      // ESC/POS path too, honouring the configured before/after-footer placement.
+      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+      qrPlacement: tplInvoiceQrPlacement,
       showCustomerDetails: tplInvoiceShowCustomerDetails,
       showFooterText: tplInvoiceShowTerms,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
+      // Template 2 (bilingual canvas) reads these extras; Template 1's ESC/POS
+      // builder ignores them, so it's safe to always pass them on the shared bag.
+      branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
+      saleType: full.salesType || full.saleType || '',
+      showBarcode: tplReceiptShowBarcode !== false,
+      showLoyaltyPoints: tplInvoiceShowNotes,
+      deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
+      mixedCashGiven,
+      mixedCardGiven,
+      mixedCardType,
       depositApplied,
       balanceDue,
       shippingCharge,
       customerPhone,
       customerEmail,
-      showCreditBalance: tplInvoiceShowBankDetails,
+      showCreditBalance: resolvedShowCreditBalance,
       creditPreviousBalance,
       creditInvoiceCredit,
       creditAmountPaid,
       creditUpdatedBalance,
       currency: activeCurrency,
-    }).catch((err) => {
+    };
+
+    // Template 2 (Arabic/bilingual) carries its OWN independent Show/Hide
+    // toggles. When it's the active template, override the shared opts bag's
+    // toggle flags with the t2* values so the real checkout print honours the
+    // Template 2 designer settings — not Template 1's invoice toggles. These
+    // keys are consumed by the bilingual canvas renderer (ESC/POS) and, below,
+    // by mapToTemplate2Data (HTML fallback).
+    const t2Toggles = {
+      showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
+      showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
+      showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
+      showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
+      showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
+      showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+    };
+    if (receiptTemplateId === 'billbull-ar') {
+      escPosOpts.showLogo = t2ShowLogo;
+      escPosOpts.showCompanyDetails = t2ShowCompanyDetails;
+      escPosOpts.showTrn = t2ShowTrn;
+      escPosOpts.showArabic = t2ShowArabic;
+      escPosOpts.showCustomerDetails = t2ShowCustomerDetails;
+      escPosOpts.showVatSummary = t2ShowVatSummary;
+      escPosOpts.showPaymentDetails = t2ShowPaymentDetails;
+      escPosOpts.showLoyaltyPoints = t2ShowLoyalty;
+      escPosOpts.showDelivery = t2ShowDelivery;
+      escPosOpts.showFooterText = t2ShowFooterText;
+      escPosOpts.showBarcode = t2ShowBarcode;
+      escPosOpts.showQRCode = t2ShowQRCode;
+      escPosOpts.qrContent = t2ShowQRCode ? qrContent : null;
+      escPosOpts.stampDataUrl = t2ShowQRCode ? tplStampDataUrl : null;
+      // Account Balance section is data-gated (showCreditBalance) — respect the
+      // T2 toggle on top of the existing credit-block resolution.
+      escPosOpts.showCreditBalance = resolvedShowCreditBalance && t2ShowAccountBalance;
+    }
+    // Whichever template is SAVED in Print Templates (Template 1 "native" vs
+    // Template 2 "billbull-ar") drives the actual checkout print — not just the
+    // designer's own Test Print. Both builders share the same
+    // (paperSize, invoice, opts) signature, so this is a straight swap.
+    const activeReceiptTemplate = getReceiptTemplate(receiptTemplateId);
+    const buildReceiptEscPosBase64 = activeReceiptTemplate.buildEscPosBase64 || buildEscPosReceiptBase64;
+    const escPosPromise = buildReceiptEscPosBase64(tplInvoicePaper, full, escPosOpts).catch((err) => {
       console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
       return null;
     });
 
     const [qrDataUrl, escPosBase64] = await Promise.all([qrDataUrlPromise, escPosPromise]);
 
-    const html = buildThermalReceiptHtml(tplInvoicePaper, full, {
+    // Template 2 (Arabic/bilingual) uses its own HTML renderer for the browser
+    // print-preview / fallback path — same swap the ESC/POS build above already
+    // makes, so a fallback print (or reprint) still matches the saved template.
+    const html = receiptTemplateId === 'billbull-ar'
+      ? buildTemplate2Html(mapToTemplate2Data(
+          {
+            name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+            logoDataUrl: tplLogoDataUrl,
+            // Real ZATCA QR (image) when QR is enabled AND no stamp is uploaded;
+            // an uploaded stamp replaces the QR (same rule as Template 1). Kept
+            // separate so the component prints a genuine verifiable QR, not the
+            // stamp image mislabelled as a QR. Gated by Template 2's own QR toggle.
+            qrDataUrl: t2ShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
+            stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
+            footerText: tplInvoiceFooter,
+          },
+          mapInvoiceToTxn(full, {
+            ...escPosOpts,
+            // Account Balance is data-gated on showCreditBalance in the mapper;
+            // the T2 toggle is already folded into escPosOpts.showCreditBalance.
+            cashierName: cashierNameOverride || cashierDisplayName,
+            terminalId: full.posTerminalId || currentTerminal?.terminalId,
+          }),
+          t2Toggles,
+        ))
+      : buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
       header: tplInvoiceHeader,
@@ -2910,18 +3255,22 @@ export default function POSSales() {
       showQRCode: tplInvoiceShowQRCode,
       showCustomerDetails: tplInvoiceShowCustomerDetails,
       showLoyaltyPoints: tplInvoiceShowNotes,
-      showCreditBalance: tplInvoiceShowBankDetails,
+      showCreditBalance: resolvedShowCreditBalance,
       showFooterText: tplInvoiceShowTerms,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,
       changeAmount,
+      mixedCashGiven,
+      mixedCardGiven,
+      mixedCardType,
       depositApplied,
       balanceDue,
       shippingCharge,
       customerPhone,
       customerEmail,
+      deliveryAddress: full.shippingAddress || null,
       creditPreviousBalance,
       creditInvoiceCredit,
       creditAmountPaid,
@@ -2955,7 +3304,10 @@ export default function POSSales() {
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
-    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl,
+    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
+    tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
@@ -3127,18 +3479,18 @@ export default function POSSales() {
         items,
       };
 
+      // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
+      // posCheckout resolving is the backend's authoritative confirmation that
+      // the sale posted (GL, stock, receivable all committed). Everything below
+      // — cash drawer, receipt printing, layaway conversion — is a post-success
+      // side-effect that does NOT gate whether the payment succeeded. So we show
+      // the success screen the moment this resolves and run those side-effects in
+      // the background, instead of making the cashier wait on the printer round-
+      // trip (the bulk of the old 3–5 s). No false success: this only runs after
+      // the await above resolves; a rejection skips straight to catch().
       const savedInvoice = await posCheckout(payload);
 
       const changeDue = checkoutPayMode === 'cash' ? Math.max(0, tenderedNum - effectiveDueAmt) : 0;
-
-      // Cash drawer — open on cash settlement / completion, and again if change is due.
-      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
-        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
-      if (cashTaken) {
-        openCashDrawer('CASH_SETTLEMENT');
-        openCashDrawer('CASH_PAYMENT');
-      }
-      if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
 
       // Credit account posting for THIS invoice — same formula for every payment
       // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
@@ -3176,62 +3528,21 @@ export default function POSSales() {
         creditUpdatedBalance: creditUpdatedBalanceAuto,
       };
 
-      try {
-        if (tplInvoicePaper === 'A4') {
-          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
-          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
-          printHtml(await generatePrintHtmlAsync(template, data, options));
-          openCashDrawer('RECEIPT_PRINT');
-        } else {
-          let creditPrevBalAuto = null;
-          if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in' && savedInvoice.customerCode) {
-            try { const cr = await posCreditBalance(savedInvoice.customerCode); if (cr?.found) creditPrevBalAuto = cr.outstanding ?? null; } catch (_) {}
-          }
-          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-            full: savedInvoice,
-            cashGiven: paid.paidAmount,
-            changeAmount: changeDue,
-            customerPhone: customer?.phone,
-            customerEmail: customer?.email,
-            creditPreviousBalance: creditPrevBalAuto,
-            creditInvoiceCredit: creditInvoiceCreditAuto,
-            creditAmountPaid: creditAmountPaidAuto,
-            creditUpdatedBalance: creditUpdatedBalanceAuto,
-            depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
-            balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
-            shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
-          });
-          await printThermalReceiptWithConfiguredPrinter({
-            full: savedInvoice,
-            text,
-            escPosBase64,
-            title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
-          });
-          openCashDrawer('RECEIPT_PRINT');
-        }
-      } catch (autoPrintErr) {
-        console.warn('Automatic receipt print failed', autoPrintErr);
-        alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
-      }
+      // Snapshot everything the background finalize needs into locals BEFORE the
+      // state resets below wipe the React state it was reading from (customer,
+      // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
+      const layawayIdSnapshot = activeLayawayId;
+      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
+        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
+      const printPaper = tplInvoicePaper;
 
-      // If this checkout settled a layaway, stamp it converted (releases its
-      // reservations; the sale above re-reserved its own batches). Best-effort —
-      // the sale already posted, so a failure here just leaves the layaway open.
-      if (activeLayawayId) {
-        try {
-          await convertLayaway(activeLayawayId, {
-            invoiceId: savedInvoice.id,
-            invoiceNumber: savedInvoice.invoiceNumber,
-          });
-        } catch (convErr) {
-          console.warn('Layaway mark-converted failed', convErr);
-        }
-        setActiveLayawayId(null);
-        setActiveLayawayDeposit(0);
-      }
-
+      // ── Show success immediately, then finalize in the background ───────────
+      // The payment is already confirmed (posCheckout resolved). Commit the
+      // success state + clear the cart NOW so the cashier sees "Payment Complete"
+      // without waiting on the printer. checkoutFinalizing drives the subtle
+      // "Printing receipt…" indicator on the complete screen until printing ends.
       setLastPaidInvoice(paid);
+      setCheckoutFinalizing(true);
       setInvoiceCounter(c => c + 1);
       clearInvoice();
       syncPosData();
@@ -3257,6 +3568,7 @@ export default function POSSales() {
       setCheckoutCreditReceivedCardType('');
       setCheckoutCreditReceivedRef('');
       setCheckoutCreditReceivedBankAccountId('');
+      if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
       // resets above (clearInvoice, setCheckoutPayMode, etc.) are committed
@@ -3266,6 +3578,90 @@ export default function POSSales() {
       // indicator divs) while simultaneously unmounting those buttons — which
       // throws "Failed to execute 'removeChild' on 'Node'".
       queueMicrotask(() => setCheckoutPhase('complete'));
+
+      // Post-success side-effects: cash drawer, receipt print, layaway convert.
+      // Fire-and-forget — the success screen is already up; failures here surface
+      // as a non-blocking notice (the sale itself is safely posted). NOT awaited,
+      // so the checkout handler's finally{} releases checkoutLoading right away.
+      void (async () => {
+        try {
+          // Cash drawer — open on cash settlement, and again if change is due.
+          if (cashTaken) {
+            openCashDrawer('CASH_SETTLEMENT');
+            openCashDrawer('CASH_PAYMENT');
+          }
+          if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
+
+          try {
+            if (printPaper === 'A4') {
+              const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
+              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
+              const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+              printHtml(await generatePrintHtmlAsync(template, data, options));
+              openCashDrawer('RECEIPT_PRINT');
+            } else {
+              // Credit account fields ALL come from the single pre-checkout snapshot
+              // (creditPrevBalAuto, read at line ~3280 BEFORE posCheckout posted this
+              // invoice) so Previous Balance + Invoice Credit − Amount Paid = Updated
+              // Balance holds internally. Do NOT re-query posCreditBalance here: after
+              // checkout the ledger already includes this invoice, so the re-queried
+              // value is the NEW balance — passing it as "Previous Balance" while the
+              // other three fields stay on the pre-sale snapshot made the printed math
+              // contradict itself (Previous showed the post-sale balance, Updated the
+              // pre-sale one).
+              const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                full: savedInvoice,
+                cashGiven: paid.paidAmount,
+                changeAmount: changeDue,
+                // Mixed (cash + card) split — only for a genuine mixed payment where
+                // both portions were entered, so cash/card/credit sales stay clean.
+                mixedCashGiven: checkoutPayMode === 'mixed' && mixedCashNum > 0 ? mixedCashNum : null,
+                mixedCardGiven: checkoutPayMode === 'mixed' && mixedCardNum > 0 ? mixedCardNum : null,
+                mixedCardType: checkoutPayMode === 'mixed' ? (mixedCardType || 'Card') : null,
+                // Print the actual selected customer's name (client item 3) — the same
+                // `customer` object the checkout preview rendered. Walk-in stays null so
+                // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
+                customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
+                customerPhone: customer?.phone,
+                customerEmail: customer?.email,
+                creditPreviousBalance: creditPrevBalAuto,
+                creditInvoiceCredit: creditInvoiceCreditAuto,
+                creditAmountPaid: creditAmountPaidAuto,
+                creditUpdatedBalance: creditUpdatedBalanceAuto,
+                depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
+                balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
+                shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
+              });
+              await printThermalReceiptWithConfiguredPrinter({
+                full: savedInvoice,
+                text,
+                escPosBase64,
+                title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
+              });
+              openCashDrawer('RECEIPT_PRINT');
+            }
+          } catch (autoPrintErr) {
+            console.warn('Automatic receipt print failed', autoPrintErr);
+            alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
+          }
+
+          // If this checkout settled a layaway, stamp it converted (releases its
+          // reservations; the sale re-reserved its own batches). Best-effort — the
+          // sale already posted, so a failure here just leaves the layaway open.
+          if (layawayIdSnapshot) {
+            try {
+              await convertLayaway(layawayIdSnapshot, {
+                invoiceId: savedInvoice.id,
+                invoiceNumber: savedInvoice.invoiceNumber,
+              });
+            } catch (convErr) {
+              console.warn('Layaway mark-converted failed', convErr);
+            }
+          }
+        } finally {
+          setCheckoutFinalizing(false);
+        }
+      })();
     } catch (err) {
       // Settle failed — the cart is untouched (clearInvoice only runs on success).
       // Do NOT unfreeze the preview here: flipping checkoutSettling false in the
@@ -3368,17 +3764,20 @@ export default function POSSales() {
           }
         } else {
           const custRec = customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode);
-          const isWalkIn = !full.customerName || full.customerName === 'Walk-in Customer';
-          let creditPrevBal = null;
-          if (tplInvoiceShowBankDetails && !isWalkIn && full.customerCode) {
-            try { const cr = await posCreditBalance(full.customerCode); if (cr?.found) creditPrevBal = cr.outstanding ?? null; } catch (_) { }
-          }
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
             customerPhone: custRec?.phone,
             customerEmail: custRec?.email,
-            creditPreviousBalance: creditPrevBal,
+            // Suppress the CREDIT ACCOUNT block on a reprint of a historical invoice.
+            // The block is a point-in-time snapshot of the ledger AS OF the original
+            // sale, and those figures are not persisted on the invoice. Re-querying
+            // posCreditBalance returns the customer's CURRENT outstanding (which may
+            // reflect many later transactions), so using it as "Previous Balance" —
+            // then letting the renderer fabricate Updated = prev + invoiceTotal —
+            // prints numbers that never existed. A "COPY / REPRINT" with an invented
+            // balance is worse than a reprint that simply omits it.
+            showCreditBalanceOverride: false,
             cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
           });
           openCashDrawer('RECEIPT_PRINT');
@@ -5164,6 +5563,27 @@ export default function POSSales() {
     return generateReportA4Html(vm, cp, meta);
   };
 
+  // Build an X/Z report as ESC/POS with the SAME branded header the POS Sales
+  // receipt uses (logo + big company name + branch + TRN), then the report body.
+  // The body is generated with omitHeader so its own plain-text company block is
+  // suppressed and not printed twice. The report title (e.g. "X-REPORT / SESSION
+  // CLOSE REPORT") becomes the branded header's bold document title.
+  const buildReportEscPosWithBrandedHeader = (vm, cp, meta) => {
+    const paper = meta.paper === '58mm' ? '58mm' : '80mm';
+    const body = generateReportThermalText(vm, cp, { ...meta, omitHeader: true });
+    return buildEscPosDocumentBase64(body, {
+      paperSize: paper,
+      documentTitle: (meta.reportTitle || vm.reportTitle || 'POS REPORT').toUpperCase(),
+      companyName: cp.companyName || tplOutletName,
+      header: cp.branchName || '',
+      trn: cp.trn || tplOutletTrn,
+      outletAddress: cp.address || tplOutletAddress,
+      outletPhone: cp.phone || tplOutletPhone,
+      logoDataUrl: cp.logoUrl || tplLogoDataUrl,
+      showLogo: cp.showLogo !== false,
+    });
+  };
+
   // Thermal reports go straight to the configured default printer (no browser
   // print dialog); A4 reports keep using the browser dialog since the local
   // print agent only carries raw text/ESC-POS, not full HTML, today.
@@ -5182,12 +5602,43 @@ export default function POSSales() {
       return;
     }
     try {
-      const text = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
-      const escPosBase64 = buildEscPosFromPlainTextBase64(text);
-      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+      const escPosBase64 = await buildReportEscPosWithBrandedHeader(vm, cp, { ...meta, paper: reportPrintMode });
+      const fallbackText = generateReportThermalText(vm, cp, { ...meta, paper: reportPrintMode });
+      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
     } catch (err) {
       console.warn('ESC/POS print failed for report print', err);
       notifyPrintFallback(`Report failed to print: ${err?.message || 'printer error'}.`);
+    }
+  };
+
+  // Auto-print an X/Z report to the configured 80mm printer after a successful
+  // Close Session / Close Day — ALWAYS forces 80mm (unlike the manual buttons,
+  // which honour the user's chosen reportPrintMode) and is dedupe-guarded so the
+  // same session/day report can't be pushed to the printer twice (e.g. the user
+  // clicks Close again). Runs silently and non-blocking; a missing printer or send
+  // failure only surfaces as the existing dismissible fallback toast, never an
+  // interruption of the close workflow.
+  const autoPrintReportThermal = async (vm, cp, meta, dedupeKey) => {
+    if (dedupeKey && printedReportKeysRef.current.has(dedupeKey)) return;
+    if (dedupeKey) printedReportKeysRef.current.add(dedupeKey);
+    const printer = resolvePrinterForContext(printerConfigs, {
+      deviceType: 'RECEIPT_PRINTER',
+      branchId: currentTerminal?.branchId || null,
+      terminalId: currentTerminal?.terminalId || null,
+    });
+    if (!printer) {
+      if (dedupeKey) printedReportKeysRef.current.delete(dedupeKey);
+      notifyPrintFallback('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
+      return;
+    }
+    try {
+      const escPosBase64 = await buildReportEscPosWithBrandedHeader(vm, cp, { ...meta, paper: '80mm' });
+      const fallbackText = generateReportThermalText(vm, cp, { ...meta, paper: '80mm' });
+      await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: meta.reportTitle || vm.reportTitle || 'POS Report' });
+    } catch (err) {
+      console.warn('Auto-print failed for report', err);
+      if (dedupeKey) printedReportKeysRef.current.delete(dedupeKey);
+      notifyPrintFallback(`Report failed to auto-print: ${err?.message || 'printer error'}.`);
     }
   };
 
@@ -6500,6 +6951,7 @@ export default function POSSales() {
     tplJobCardFooter, setTplJobCardFooter, tplJobCardPaper, setTplJobCardPaper,
     tplJobCardShowLogo, tplJobCardShowTrn, tplJobCardShowStamp, tplJobCardShowCompanyDetails, tplJobCardShowCustomerDetails,
     tplJobCardShowSerialNumber, tplJobCardShowWarranty, tplJobCardShowTechnician, tplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, tplJobCardShowTerms,
+    receiptTemplateId, setReceiptTemplateId,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings,
     consoleDevices, setConsoleDevices, showAddDevice, setShowAddDevice, newDevType, setNewDevType, newDevName, setNewDevName, newDevPort, setNewDevPort, newDevIp, setNewDevIp,
@@ -6510,6 +6962,11 @@ export default function POSSales() {
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
+    // Template 2 (Arabic) independent Show/Hide toggles + setters
+    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
+    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
+    setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
 
@@ -6913,7 +7370,21 @@ export default function POSSales() {
       {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal} />}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
+        printTemplate={{
+          // Same branding the Tax Invoice header uses, so the Customer Receipt /
+          // Receive Advance / Statement prints render an identical logo + company
+          // block (req 12). tplLogoDataUrl is a data URL — safe for the ESC/POS
+          // raster ditherer — unlike the company profile's logoUrl (a server path).
+          logoDataUrl: tplLogoDataUrl,
+          companyName: tplOutletName,
+          trn: tplOutletTrn,
+          address: tplOutletAddress,
+          phone: tplOutletPhone,
+          showLogo: tplInvoiceShowLogo,
+          showTrn: tplInvoiceShowTrn,
+          currency: activeCurrency,
+        }} />}
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
 
       {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}
@@ -7338,6 +7809,9 @@ export default function POSSales() {
             setShowPaymentDialog(false);
             setCheckoutPhase('payment');
             setCheckoutSettling(false);
+            // Clear the finalize indicator on close — the receipt print is a
+            // fire-and-forget background task and doesn't need to block closing.
+            setCheckoutFinalizing(false);
             setReceiptSharePhone('');
             setReceiptShareEmail('');
             setSelectedCustomer(WALK_IN_CUSTOMER.id);
@@ -7361,6 +7835,15 @@ export default function POSSales() {
                   </p>
                   <p className="text-[10px] text-gray-500 mt-1 font-semibold">Successfully settled via {lastPaidInvoice.paymentMode || 'Cash'}</p>
                 </div>
+                {/* Background finalize indicator — subtle, non-blocking. The sale is
+                    already confirmed; this only reflects that the receipt is being
+                    sent to the printer. Disappears once printing/finalize completes. */}
+                {checkoutFinalizing && (
+                  <div className="bg-[#327F74]/5 border-b border-[#327F74]/15 px-6 py-2.5 flex items-center justify-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-[#327F74]/40 border-t-[#327F74] rounded-full animate-spin" />
+                    <span className="text-[11px] font-bold text-[#327F74]">Printing receipt…</span>
+                  </div>
+                )}
                 {/* Change Due alert (only if change is > 0) */}
                 {(lastPaidInvoice.changeAmount || 0) > 0 && (
                   <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between">
@@ -7454,6 +7937,7 @@ export default function POSSales() {
                             full,
                             cashGiven: lastPaidInvoice?.paidAmount,
                             changeAmount: lastPaidInvoice?.changeAmount,
+                            customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null,
                             customerPhone: lastPaidInvoice?.customer?.phone,
                             customerEmail: lastPaidInvoice?.customer?.email,
                             creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
@@ -7496,7 +7980,9 @@ export default function POSSales() {
         const totalVat = currentInvoice.tax;
         const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
         const effectiveDue = Math.max(0, grandTotal - depositAmt);
-        const invoiceNo = `SI-POS-${String(invoiceCounter + 1).padStart(6, '0')}`;
+        // Real next number from the backend sequence (fetched when the dialog
+        // opened); blank until it lands so no fabricated number is shown.
+        const invoiceNo = previewInvoiceNo || '';
         const now = new Date();
         const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
         const timeStr = now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -7603,7 +8089,7 @@ export default function POSSales() {
                   </div>
                   <div>
                     <p className="text-white font-bold text-base leading-none">Checkout</p>
-                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''} · {invoiceNo}</p>
+                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -7802,7 +8288,7 @@ export default function POSSales() {
                         {checkoutCreditCustomerSearch && (
                           <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-md max-h-36 overflow-y-auto">
                             {checkoutCreditCustomerOptions.map(c => (
-                              <button key={c.id} type="button" onClick={() => { setCheckoutCreditCustomer(c.id); setCheckoutCreditCustomerSearch(''); }}
+                              <button key={c.id} type="button" onClick={() => { setCheckoutCreditCustomer(c.id); setSelectedCustomer(c.id); setCheckoutCreditCustomerSearch(''); }}
                                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5C742]/10 text-left border-b border-gray-50 last:border-0 transition-colors">
                                 <div className="w-7 h-7 rounded-full bg-[#F5C742] flex items-center justify-center text-xs font-bold text-[#1E293B]">{c.name.charAt(0)}</div>
                                 <div><p className="text-sm font-medium text-[#1E293B]">{c.name}</p><p className="text-[10px] text-gray-400">{c.membershipId}</p></div>
@@ -10206,13 +10692,36 @@ export default function POSSales() {
                   branchId: inv.branchId || currentTerminal?.branchId || null,
                   terminalId: currentTerminal?.terminalId || null,
                 });
+                // Credit-account block for a return. The backend does NOT return the
+                // customer's post-return balance on the save response, so the old code
+                // fell back to Previous=0 / Updated=returnNet — i.e. it printed the
+                // return amount as a NEW positive balance the customer owes, the exact
+                // opposite of what a credit note does. Fix: a Credit Voucher reduces the
+                // customer's outstanding, so query the real post-approval balance (the
+                // return is APPROVED above) and render it as a reduction — Invoice Credit
+                // is 0 (no new charge) and "Amount Paid" carries the credited amount, so
+                // Previous − returnNet = Updated holds. A cash/card Refund does not touch
+                // the credit ledger, so the block is suppressed for it (nothing to show).
+                let retCreditPrev = null, retCreditUpdated = null, retShowCredit = false;
+                if (tplReturnShowCreditBalance && returnRefundMethod === 'Credit Voucher'
+                    && inv.customerCode && inv.customerName && inv.customerName !== 'Walk-in Customer') {
+                  try {
+                    const cr = await posCreditBalance(inv.customerCode);
+                    if (cr?.found && cr.outstanding != null) {
+                      retCreditUpdated = parseFloat(cr.outstanding) || 0;
+                      retCreditPrev = retCreditUpdated + returnNet;
+                      retShowCredit = true;
+                    }
+                  } catch (_) { /* leave the block suppressed if the lookup fails */ }
+                }
                 if (!returnPrinter) {
                   notifyPrintFallback('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
                 } else {
                   try {
                     const qrContent = tplReturnShowQRCode ? buildQrContent(returnA4Data, tplOutletName) : null;
                     const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
-                    const returnEscPosBase64 = await buildEscPosReceiptBase64(tplReturnPaper, returnInvoiceData, {
+                    const returnBuildEscPosBase64 = (getReceiptTemplate(receiptTemplateId).buildEscPosBase64) || buildEscPosReceiptBase64;
+                    const returnEscPosBase64 = await returnBuildEscPosBase64(tplReturnPaper, returnInvoiceData, {
                       companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
                       showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE',
                       logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
@@ -10224,11 +10733,11 @@ export default function POSSales() {
                       cashierName: cashierDisplayName,
                       terminalId: currentTerminal?.terminalId,
                       counterName: currentTerminal?.counterName,
-                      showCreditBalance: tplReturnShowCreditBalance,
-                      creditPreviousBalance: saved?.creditPreviousBalance != null ? saved.creditPreviousBalance : (tplReturnShowCreditBalance ? 0 : null),
-                      creditInvoiceCredit: returnNet,
-                      creditAmountPaid: 0,
-                      creditUpdatedBalance: saved?.creditUpdatedBalance != null ? saved.creditUpdatedBalance : (tplReturnShowCreditBalance ? returnNet : null),
+                      showCreditBalance: retShowCredit,
+                      creditPreviousBalance: retShowCredit ? retCreditPrev : null,
+                      creditInvoiceCredit: 0,
+                      creditAmountPaid: retShowCredit ? returnNet : 0,
+                      creditUpdatedBalance: retShowCredit ? retCreditUpdated : null,
                     });
                     await sendEscPosReceiptToConfiguredPrinter(returnPrinter, { dataBase64: returnEscPosBase64, receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
                   } catch (err) {
@@ -10532,16 +11041,18 @@ export default function POSSales() {
                             showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
                             showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
                             showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
-                            showCreditBalance: tplReturnShowCreditBalance, showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
+                            showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
                             cashierName: cashierDisplayName,
                             terminalId: currentTerminal?.terminalId,
                             counterName: currentTerminal?.counterName,
                             customerPhone: returnInvoiceFound?.customerPhone,
                             customerEmail: returnInvoiceFound?.customerEmail,
-                            creditPreviousBalance: tplReturnShowCreditBalance ? 0 : null,
-                            creditInvoiceCredit: tplReturnShowCreditBalance ? returnNet : null,
-                            creditAmountPaid: 0,
-                            creditUpdatedBalance: tplReturnShowCreditBalance ? returnNet : null
+                            // Suppress the credit-account block in the return PREVIEW: the
+                            // real post-return balance isn't known until the credit note is
+                            // approved (see the print path, which queries it then). Showing
+                            // Previous=0 / Updated=returnNet here printed the return amount
+                            // as a positive balance owed — the opposite of a credit note.
+                            showCreditBalance: false,
                           })}
                           style={{
                             width: tplReturnPaper === '58mm' ? '240px' : '320px',
@@ -11968,11 +12479,39 @@ export default function POSSales() {
                 const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {
+                // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this
+                // one MUST carry the CREDIT ACCOUNT block. Snapshot the customer's
+                // outstanding balance (which now already reflects this settlement, so
+                // it is the UPDATED balance) and derive the previous balance by adding
+                // back the amount just paid on this settlement.
+                let creditUpdatedBalanceSettle = null;
+                let creditPreviousBalanceSettle = null;
+                if (settledInvoice?.customerCode && custRec?.id !== 'walk-in') {
+                  try {
+                    const cr = await posCreditBalance(settledInvoice.customerCode);
+                    if (cr?.found && cr.outstanding != null) {
+                      creditUpdatedBalanceSettle = cr.outstanding;
+                      creditPreviousBalanceSettle = cr.outstanding + selBalance;
+                    }
+                  } catch (_) { /* fall back to no credit figures below */ }
+                }
                 const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                   full: receiptInvoice,
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
                   customerEmail: custRec?.email,
+                  // Force the CREDIT ACCOUNT block on for the settlement receipt.
+                  showCreditBalanceOverride: creditPreviousBalanceSettle != null,
+                  creditPreviousBalance: creditPreviousBalanceSettle,
+                  // A settlement is a PAYMENT against a balance that already carries
+                  // this invoice (it was added to the ledger at Out-for-Delivery). So
+                  // Invoice Credit here is 0 — nothing new is being charged — and the
+                  // block reads Previous − Amount Paid = Updated. Passing invoiceTotal
+                  // as Invoice Credit would double-count the invoice and make the
+                  // printed arithmetic (Previous + Credit − Paid) fail to equal Updated.
+                  creditInvoiceCredit: 0,
+                  creditAmountPaid: selBalance,
+                  creditUpdatedBalance: creditUpdatedBalanceSettle,
                 });
                 await printThermalReceiptWithConfiguredPrinter({
                   full: receiptInvoice,

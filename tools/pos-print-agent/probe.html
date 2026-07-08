@@ -42,6 +42,19 @@
   </div>
 </div>
 
+<div class="row" style="margin-top:14px;padding-top:12px;border-top:1px solid #ccc;">
+  <b>5. Arabic text test</b> — the printer's single-byte code page can't render
+  Arabic, so plain text prints as <code>?????</code>. The receipt fix rasterises
+  Arabic lines (canvas → GS v 0), the same proven path the logo uses. This prints
+  TWO slips so you can compare on the till: <b>A</b> = plain text bytes (expect
+  <code>?????</code>), <b>B</b> = raster (expect real Arabic). Edit the text below
+  (defaults to the bilingual "TAX INVOICE" second line).
+  <div class="row">
+    <input id="arabictext" value="فاتورة ضريبية" size="30" />
+    <button class="secondary" onclick="printArabic()">Print Arabic slips (A + B)</button>
+  </div>
+</div>
+
 <pre id="out">Ready.</pre>
 
 <script>
@@ -253,6 +266,95 @@ async function printRealLogo() {
   log('  • A garbage + B clean → PROVEN: raster-as-first-content is the trigger; the flush-line fix is correct.');
   log('  • Both clean → receipt pattern is fine in isolation; the divergence is routing (check ip_address on the printer row).');
   log('  • Both garbage → something changed on the printer/agent since round 3; collect the Desktop .bin files.');
+}
+
+// EXACT mirror of escPosReceipt.js renderTextLineToRasterCommand — draws one line
+// of text to a canvas (canvas fillText shapes Arabic/RTL natively), thresholds to
+// 1-bit, packs into GS v 0. This is how the receipt now prints Arabic instead of
+// '?'. Kept byte-shape-identical so a clean slip here proves the receipt path.
+function renderTextLineToRasterCommand(text, { widthDots, fontPx = 28, bold = false, align = 'center', rtl = false } = {}) {
+  const canvas = document.createElement('canvas');
+  const pad = Math.round(fontPx * 0.3);
+  canvas.width = widthDots;
+  canvas.height = fontPx + pad * 2;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#000000';
+  ctx.font = `${bold ? 'bold ' : ''}${fontPx}px 'Segoe UI', 'Tahoma', 'Arial', sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.direction = rtl ? 'rtl' : 'ltr';
+  ctx.textAlign = align;
+  const x = align === 'center' ? canvas.width / 2 : (align === 'right' ? canvas.width - pad : pad);
+  ctx.fillText(String(text ?? ''), x, canvas.height / 2);
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const w = canvas.width, h = canvas.height;
+  const bits = new Uint8Array(w * h);
+  for (let i = 0; i < bits.length; i++) {
+    const o = i * 4;
+    bits[i] = (0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2]) < 160 ? 1 : 0;
+  }
+  const bpr = Math.ceil(w / 8);
+  const raster = new Uint8Array(bpr * h);
+  for (let y = 0; y < h; y++) for (let x2 = 0; x2 < w; x2++) if (bits[y * w + x2]) raster[y * bpr + (x2 >> 3)] |= 0x80 >> (x2 & 7);
+  const header = [GS, 0x76, 0x30, 0x00, bpr & 0xff, (bpr >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff];
+  return { bytes: concat([u8(header), raster]), w, h, bpr };
+}
+
+// Prints TWO slips for the chosen Arabic string:
+//   A) plain text bytes through the printer code page (expect ?????)
+//   B) canvas raster via renderTextLineToRasterCommand (expect real Arabic — the fix)
+// Same /print/escpos path + preamble the receipt uses, so a clean B here means the
+// receipt's Arabic header/company/footer will print correctly too.
+async function printArabic() {
+  clear();
+  const text = $('arabictext').value || 'فاتورة ضريبية';
+  log(`Arabic text: "${text}" (${text.length} chars)`);
+
+  const INIT = [ESC, 0x40];
+  const HEATING = [ESC, 0x37, 9, 255, 2];
+  const CODEPAGE = [ESC, 0x74, 16];
+  const FONT_A = [ESC, 0x4d, 0x00];
+  const LINESP = [ESC, 0x33, 30];
+  const CENTER = [ESC, 0x61, 0x01], LEFT = [ESC, 0x61, 0x00];
+  const TAIL = [0x0a, ESC, 0x64, 0x04, GS, 0x56, 0x01];
+  const label = (s) => [...new TextEncoder().encode(s), 0x0a];
+
+  // A: naive plain-text bytes (what the OLD receipt did → prints ? per Arabic char).
+  const arabicTextBytes = new Uint8Array([...text].map(() => 0x3f)); // code page yields '?'
+  const streamA = concat([
+    u8([...INIT, ...HEATING, ...CODEPAGE, ...FONT_A, ...LINESP, ...CENTER]),
+    u8(label('TEXT SLIP A — plain text bytes:')),
+    u8([...arabicTextBytes, 0x0a]),
+    u8([...LEFT]), u8(label('(expect ????? above — the bug)')), u8([...TAIL]),
+  ]);
+
+  // B: raster via the fix (expect real Arabic glyphs, right-to-left).
+  const { bytes: raster, w, h } = renderTextLineToRasterCommand(text, {
+    widthDots: Math.round(576 * 0.92), fontPx: 34, bold: true, align: 'center', rtl: true,
+  });
+  log(`Raster slip B: ${w}x${h} dots (yH=${(h >> 8) & 0xff})`);
+  const streamB = concat([
+    u8([...INIT, ...HEATING, ...CODEPAGE, ...FONT_A, ...LINESP, ...CENTER]),
+    u8(label('RASTER SLIP B — canvas GS v 0:')),
+    u8([0x20, 0x0a]), // flush line before raster (POS-80C raster-first workaround)
+    raster, u8([0x0a]),
+    u8([...LEFT]), u8(label('(expect real Arabic above — the fix)')), u8([...TAIL]),
+  ]);
+
+  for (const [name, stream] of [['A: plain text (?????)', streamA], ['B: raster (Arabic)', streamB]]) {
+    try {
+      const r = await fetch(`${agent()}/print/escpos`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerName: printer(), dataBase64: b64(stream) }),
+      });
+      const j = await r.json();
+      log(`  ${j.ok ? 'sent' : 'FAIL'}  ${name}  (${stream.length} bytes)`, j.ok ? null : 'bad');
+    } catch (e) { log(`  FAIL  ${name}: ${e.message}`, 'bad'); }
+    await new Promise((r) => setTimeout(r, 900));
+  }
+  log('\nREAD BOTH SLIPS:');
+  log('  • A shows ????? + B shows real Arabic → the raster fix works; receipt Arabic will print.', 'ok');
+  log('  • B also garbled → the printer choked on this raster (unlikely — same GS v 0 as the logo); collect the .bin.');
 }
 </script>
 </body>

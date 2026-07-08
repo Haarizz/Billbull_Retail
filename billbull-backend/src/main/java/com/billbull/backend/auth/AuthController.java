@@ -74,6 +74,7 @@ public class AuthController {
         return new LoginResponse(
                 token,
                 user.getUsername(),
+                user.getResolvedDisplayName(),
                 primaryRole,  // `role` field now always equals primaryRole
                 primaryRole,
                 user.getBranch() != null ? user.getBranch().getId() : null,

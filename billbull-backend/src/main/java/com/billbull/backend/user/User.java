@@ -204,6 +204,23 @@ public class User extends BaseEntity {
         this.linkedEmployee = linkedEmployee;
     }
 
+    /**
+     * Display name for UI/receipts: prefers the linked HR employee's first +
+     * last name (the authoritative record of who this account belongs to)
+     * over the free-text {@link #fullName} field, and falls back to the
+     * username when neither is set.
+     */
+    public String getResolvedDisplayName() {
+        if (linkedEmployee != null) {
+            String first = linkedEmployee.getFirstName() != null ? linkedEmployee.getFirstName().trim() : "";
+            String last = linkedEmployee.getLastName() != null ? linkedEmployee.getLastName().trim() : "";
+            String combined = (first + " " + last).trim();
+            if (!combined.isEmpty()) return combined;
+        }
+        if (fullName != null && !fullName.isBlank()) return fullName;
+        return username;
+    }
+
     public Branch getBranch() {
         return branch;
     }

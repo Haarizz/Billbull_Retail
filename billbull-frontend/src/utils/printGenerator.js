@@ -908,6 +908,11 @@ export const generateReportA4Html = (viewModel = {}, companyProfile = {}, meta =
 // ──────────────────────────────────────────────────────────────────────────
 
 const THERMAL_WIDTHS = { '58mm': 32, '80mm': 48 };
+// Usable column count after the shared symmetric page inset (MARGIN_COLS=1 each
+// side in escPosReceipt.js) — the width the ESC/POS report BODY is built to so it
+// centres inside the same left/right gutters as every other 80mm print. The full
+// THERMAL_WIDTHS above still feed the HTML preview (which insets via CSS instead).
+const THERMAL_USABLE_WIDTHS = { '58mm': 30, '80mm': 46 };
 
 const padThermalRow = (left, right, width) => {
     const l = String(left ?? '');
@@ -1035,7 +1040,10 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
 // raw lines for the local print agent's text path (no HTML/driver dialog involved).
 export const generateReportThermalText = (viewModel = {}, companyProfile = {}, meta = {}) => {
     const paper = meta.paper === '58mm' ? '58mm' : '80mm';
-    const width = THERMAL_WIDTHS[paper];
+    // Build to the USABLE (post-inset) width so the report body centres inside the
+    // same symmetric left/right gutters as every other 80mm print (the ESC/POS
+    // preamble sets those gutters via GS L / GS W).
+    const width = THERMAL_USABLE_WIDTHS[paper];
     const hr = '-'.repeat(width);
 
     const companyName = companyProfile.companyName || companyProfile.name || 'BillBull ERP';
@@ -1046,12 +1054,17 @@ export const generateReportThermalText = (viewModel = {}, companyProfile = {}, m
     const kpis = Array.isArray(viewModel.kpis) ? viewModel.kpis : [];
 
     const lines = [];
-    lines.push(centerThermal(companyName.toUpperCase(), width));
-    if (branch) lines.push(centerThermal(branch, width));
-    if (trn) lines.push(centerThermal(`TRN: ${trn}`, width));
-    lines.push(hr);
-    lines.push(centerThermal(reportTitle.toUpperCase(), width));
-    lines.push(hr);
+    // When meta.omitHeader is set, the caller prepends the shared branded ESC/POS
+    // header (logo + company block + report title) via buildEscPosDocument, so the
+    // plain-text company/title block is skipped here to avoid printing it twice.
+    if (!meta.omitHeader) {
+        lines.push(centerThermal(companyName.toUpperCase(), width));
+        if (branch) lines.push(centerThermal(branch, width));
+        if (trn) lines.push(centerThermal(`TRN: ${trn}`, width));
+        lines.push(hr);
+        lines.push(centerThermal(reportTitle.toUpperCase(), width));
+        lines.push(hr);
+    }
 
     if (viewModel.note) {
         String(viewModel.note).split('|').map(s => s.trim()).filter(Boolean)
