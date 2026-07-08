@@ -563,9 +563,14 @@ public class PosSessionService {
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
-        // Sales Return module figures for this session's branch+date — same source and
-        // shape as the Z-Report's Returns/Refund Summary, so the two reports agree.
-        ReturnsSummary returns = buildReturnsSummary(session.getBranchId(), session.getSessionDate());
+        // Sales Return module figures for THIS session only — same source and shape as
+        // the Z-Report's Returns/Refund Summary (buildReturnsSummary), but restricted to
+        // returns linked to this session's own invoices. Returns are stored per branch+day
+        // with no posSessionId, so without this filter a same-day return made against a
+        // different session (another device, or another cashier's concurrent session)
+        // would leak into this X-Report. The Z-Report intentionally keeps the unfiltered
+        // branch+day view since it aggregates the whole business day.
+        ReturnsSummary returns = buildSessionReturnsSummary(session.getBranchId(), session.getSessionDate(), invoices);
         summary.put("salesReturnCount", returns.totalCount);
         summary.put("salesReturnTotal", returns.totalAmount);
         summary.put("creditNoteCount", returns.creditNoteCount);
@@ -886,8 +891,26 @@ public class PosSessionService {
     }
 
     private ReturnsSummary buildReturnsSummary(Long branchId, LocalDate date) {
+        return aggregateReturns(returnRepository.findByReturnDateAndBranchWithItems(date, branchId));
+    }
+
+    /** Same Sales Return source as {@link #buildReturnsSummary}, but restricted to returns
+     *  linked to invoices belonging to THIS session — required so the X-Report never picks
+     *  up a same-day return posted against another session (different device/terminal, or
+     *  a different cashier's concurrent session) sharing the same branch+date. */
+    private ReturnsSummary buildSessionReturnsSummary(Long branchId, LocalDate date, List<SalesInvoice> sessionInvoices) {
+        java.util.Set<String> sessionInvoiceNumbers = sessionInvoices.stream()
+                .map(SalesInvoice::getInvoiceNumber)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        List<SalesReturn> returns = returnRepository.findByReturnDateAndBranchWithItems(date, branchId).stream()
+                .filter(r -> sessionInvoiceNumbers.contains(r.getLinkedInvoice()))
+                .toList();
+        return aggregateReturns(returns);
+    }
+
+    private ReturnsSummary aggregateReturns(List<SalesReturn> returns) {
         ReturnsSummary rs = new ReturnsSummary();
-        List<SalesReturn> returns = returnRepository.findByReturnDateAndBranchWithItems(date, branchId);
         for (SalesReturn r : returns) {
             if (r.getStatus() != SalesReturnStatus.APPROVED) continue;
             BigDecimal amount = nz(r.getTotalAmount());
