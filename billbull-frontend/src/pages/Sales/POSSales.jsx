@@ -37,6 +37,7 @@ import {
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
+import { computeLineTaxTotals } from '../../utils/vatMath';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -479,6 +480,11 @@ export default function POSSales() {
   const [deliverySettleLoading, setDeliverySettleLoading] = useState(false);
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
+  // Customer History pane — invoice preview modal
+  const [showCustomerHistoryPreview, setShowCustomerHistoryPreview] = useState(false);
+  const [customerHistoryPreviewInvoice, setCustomerHistoryPreviewInvoice] = useState(null);
+  const [customerHistoryPreviewLoading, setCustomerHistoryPreviewLoading] = useState(false);
+  const [customerHistoryPreviewError, setCustomerHistoryPreviewError] = useState('');
 
   // Checkout pay mode
   const [checkoutPayMode, setCheckoutPayMode] = useState('cash');
@@ -1484,6 +1490,25 @@ export default function POSSales() {
     }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [barcodeInput, posActionMode]);
+
+  // Customer History pane — fetch the full invoice (with line items) for preview.
+  // The history list only carries summary fields, so this pulls the complete
+  // record the same way Reprint/Last Receipt do.
+  const openCustomerHistoryPreview = useCallback(async (inv) => {
+    setShowCustomerHistoryPreview(true);
+    setCustomerHistoryPreviewInvoice(null);
+    setCustomerHistoryPreviewError('');
+    if (!inv?.id) { setCustomerHistoryPreviewError('This invoice has no details to preview.'); return; }
+    setCustomerHistoryPreviewLoading(true);
+    try {
+      const full = await getSalesInvoiceById(inv.id);
+      setCustomerHistoryPreviewInvoice(full);
+    } catch (err) {
+      setCustomerHistoryPreviewError(err?.response?.data?.message || 'Failed to load invoice details.');
+    } finally {
+      setCustomerHistoryPreviewLoading(false);
+    }
+  }, []);
 
   const loadPosCustomers = useCallback(async () => {
     setPosCustomersLoading(true);
@@ -7505,7 +7530,7 @@ export default function POSSales() {
   const touchScreenProps = {
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
-    setCurrentView, currentSession, sessionId,
+    setCurrentView, currentSession, sessionId, posSettings,
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
@@ -7516,7 +7541,7 @@ export default function POSSales() {
     scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
-    filteredCustomerOptions, customerHistory, customerHistoryLoading,
+    filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
@@ -9529,6 +9554,192 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Customer History — Invoice Preview Modal */}
+      <Dialog open={showCustomerHistoryPreview} onOpenChange={(open) => { setShowCustomerHistoryPreview(open); if (!open) { setCustomerHistoryPreviewInvoice(null); setCustomerHistoryPreviewError(''); } }}>
+        <DialogContent className="sm:max-w-xl border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden max-h-[88vh] flex flex-col">
+          {(() => {
+            const inv = customerHistoryPreviewInvoice;
+            const statusMeta = {
+              PAID: { label: 'Paid', cls: 'bg-green-100 text-green-700 border-green-200' },
+              POSTED: { label: 'Posted', cls: 'bg-green-100 text-green-700 border-green-200' },
+              PARTIALLY_PAID: { label: 'Partially Paid', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+              DRAFT: { label: 'Draft', cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+              CANCELLED: { label: 'Cancelled', cls: 'bg-red-100 text-red-700 border-red-200' },
+            }[inv?.status] || { label: inv?.status || '—', cls: 'bg-gray-100 text-gray-600 border-gray-200' };
+
+            return (
+              <>
+                <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-gray-100 shrink-0 bg-gradient-to-r from-[#327F74]/5 to-transparent">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2.5 rounded-xl bg-[#327F74]/10 shrink-0">
+                        <Receipt className="h-5 w-5 text-[#327F74]" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-base font-bold text-[#1E293B] truncate">{inv?.invoiceNumber || 'Invoice Preview'}</h2>
+                          {inv && <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border shrink-0 ${statusMeta.cls}`}>{statusMeta.label}</span>}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{inv?.branchName || 'BillBull Retail'}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setShowCustomerHistoryPreview(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5 shrink-0">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1">
+                  {customerHistoryPreviewLoading && (
+                    <div className="flex flex-col items-center justify-center h-48 text-center">
+                      <RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" />
+                      <p className="text-sm text-gray-400">Loading invoice…</p>
+                    </div>
+                  )}
+                  {!customerHistoryPreviewLoading && customerHistoryPreviewError && (
+                    <div className="flex flex-col items-center justify-center h-48 text-center">
+                      <AlertTriangle className="h-8 w-8 text-red-300 mb-3" />
+                      <p className="text-sm text-red-500">{customerHistoryPreviewError}</p>
+                    </div>
+                  )}
+                  {!customerHistoryPreviewLoading && !customerHistoryPreviewError && inv && (() => {
+                    const items = (inv.items || []).filter(it => !it.voided);
+                    const itemDiscountTotal = items.reduce((s, it) => s + (Number(it.discountAmount) || (Number(it.discountPercent) || 0) * (Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0) / 100), 0);
+                    const billDiscount = Number(inv.billDiscountAmount) || 0;
+                    const totalDiscount = Number(inv.discountTotal) || (itemDiscountTotal + billDiscount) || 0;
+                    const amountPaid = inv.amountPaid ?? (inv.invoiceTotal - (inv.balance || 0));
+                    const cashierName = inv.createdBy ? formatUserDisplayName(inv.createdBy.includes('@') ? inv.createdBy.split('@')[0] : inv.createdBy) : (inv.posCounterName || '—');
+                    const invoiceTime = inv.createdAt ? new Date(inv.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null;
+
+                    return (
+                      <div className="space-y-4">
+                        {/* Meta info card */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5 text-xs bg-gray-50 border border-gray-100 rounded-xl p-4">
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Date &amp; Time</span><span className="text-[#1E293B] font-semibold">{inv.invoiceDate || '—'}{invoiceTime ? ` · ${invoiceTime}` : ''}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment Mode</span><span className="text-[#1E293B] font-semibold">{inv.paymentMode || '—'}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Customer</span><span className="text-[#1E293B] font-semibold truncate">{inv.customerName || 'Walk-in Customer'}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cashier</span><span className="text-[#1E293B] font-semibold truncate">{cashierName}</span></div>
+                          {inv.posCounterName && (
+                            <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Terminal</span><span className="text-[#1E293B] font-semibold">{inv.posCounterName}</span></div>
+                          )}
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Items</span><span className="text-[#1E293B] font-semibold">{items.length} item{items.length !== 1 ? 's' : ''}</span></div>
+                        </div>
+
+                        {/* Line items — internally scrollable so a long invoice doesn't push
+                            the totals/footer off screen; header stays pinned while scrolling. */}
+                        <div className="border border-gray-100 rounded-xl overflow-hidden">
+                          <div className="overflow-x-auto">
+                            <div className="max-h-64 overflow-y-auto">
+                              <table className="w-full text-xs min-w-[420px]">
+                                <thead className="bg-gray-50 sticky top-0 z-10">
+                                  <tr className="text-gray-500">
+                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px]">Item</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Qty</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Price</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                  {items.length === 0 ? (
+                                    <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-400">No line items on this invoice.</td></tr>
+                                  ) : items.map((it, i) => {
+                                    const imgSrc = it.image
+                                      ? (it.image.startsWith('data:') || it.image.startsWith('http') ? it.image : `data:image/jpeg;base64,${it.image}`)
+                                      : null;
+                                    return (
+                                      <tr key={i} className={i % 2 === 1 ? 'bg-gray-50/60' : ''}>
+                                        <td className="px-3 py-2.5 text-[#1E293B] align-top">
+                                          <div className="flex items-start gap-2.5">
+                                            <div className="w-9 h-9 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                                              {imgSrc
+                                                ? <img src={imgSrc} alt="" className="w-full h-full object-cover" />
+                                                : <Package className="w-4 h-4 text-gray-300" />}
+                                            </div>
+                                            <div className="min-w-0">
+                                              <p className="font-medium leading-tight">{it.itemName || it.itemCode}</p>
+                                              <p className="text-[10px] font-mono text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
+                                                {it.itemCode && <span>{it.itemCode}</span>}
+                                                {(it.pinnedBatchNumber || it.batchNumber) && (
+                                                  <span className="text-amber-600 font-sans font-semibold">⛓ {it.pinnedBatchNumber || it.batchNumber}</span>
+                                                )}
+                                                {(it.discountPercent > 0) && (
+                                                  <span className="text-orange-500 font-sans font-semibold">−{it.discountPercent}%</span>
+                                                )}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{it.quantity}</td>
+                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{formatCurrency(it.unitPrice ?? it.price ?? 0)}</td>
+                                        <td className="px-3 py-2.5 text-right font-semibold text-[#1E293B] align-top">{formatCurrency(it.netAmount ?? it.lineTotal ?? 0)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Totals */}
+                        <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-1.5 text-xs">
+                          <div className="flex justify-between"><span className="text-gray-500">Subtotal</span><span className="text-[#1E293B] font-medium">{formatCurrency(inv.subTotal || 0)}</span></div>
+                          {totalDiscount > 0 && (
+                            <div className="flex justify-between"><span className="text-gray-500">Discount</span><span className="text-orange-600 font-medium">−{formatCurrency(totalDiscount)}</span></div>
+                          )}
+                          <div className="flex justify-between"><span className="text-gray-500">VAT</span><span className="text-[#1E293B] font-medium">{formatCurrency(inv.taxTotal || 0)}</span></div>
+                          <div className="flex items-center justify-between border-t border-gray-200 pt-2 mt-1">
+                            <span className="text-sm font-bold text-[#1E293B]">Grand Total</span>
+                            <span className="text-lg font-black text-[#327F74]">{formatCurrency(inv.invoiceTotal || 0)}</span>
+                          </div>
+                          {(inv.balance || 0) > 0 && (
+                            <div className="flex justify-between pt-1.5 border-t border-gray-200 mt-1">
+                              <span className="text-gray-500">Amount Paid</span>
+                              <span className="text-[#1E293B] font-medium">{formatCurrency(amountPaid)}</span>
+                            </div>
+                          )}
+                          {(inv.balance || 0) > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-red-500 font-semibold">Balance Due</span>
+                              <span className="text-red-500 font-bold">{formatCurrency(inv.balance)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="px-4 sm:px-6 pb-6 pt-2 flex items-center justify-end gap-3 flex-wrap shrink-0 border-t border-gray-100">
+                  <button
+                    onClick={() => setShowCustomerHistoryPreview(false)}
+                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    disabled={!inv}
+                    onClick={() => {
+                      const invNo = inv?.invoiceNumber;
+                      const invDate = inv?.invoiceDate;
+                      setShowCustomerHistoryPreview(false);
+                      if (invDate) { setReprintFilterDateFrom(invDate); setReprintFilterDateTo(invDate); }
+                      setReprintFilterInvoiceNo(invNo || '');
+                      setShowReprintModal(true);
+                      setReprintSelectedInvoice(invNo || null);
+                    }}
+                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] disabled:opacity-40 flex items-center gap-2 transition-colors"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print / Reprint
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Reprint Invoice Modal */}
       {showReprintModal && (() => {
         const toDisplayStatus = (s) => {
@@ -11010,23 +11221,28 @@ export default function POSSales() {
 
       {/* ─── SALES RETURN MODAL ─── */}
       {showReturn && (() => {
-        // Compute totals from real returnable items
+        // Compute totals from real returnable items. Must match the linked
+        // invoice's VAT mode, or a return against a VAT-inclusive sale
+        // double-counts VAT on top of the already-inclusive price.
+        const returnVatMode = returnInvoiceFound?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE';
         const activeItems = returnableItems.filter(it => (returnSelectedItems[it.itemCode] || 0) > 0);
-        const returnSubtotal = returnableItems.reduce((s, it) => {
-          const qty = returnSelectedItems[it.itemCode] || 0;
-          return s + qty * parseFloat(it.unitPrice || 0);
-        }, 0);
         const returnDiscount = returnableItems.reduce((s, it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
           return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.discountPercent || 0) / 100);
         }, 0);
-        const returnVAT = returnableItems.reduce((s, it) => {
+        const returnLineTotals = returnableItems.map((it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
           const gross = qty * parseFloat(it.unitPrice || 0);
           const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
-          return s + (gross - disc) * (parseFloat(it.taxRate || 5) / 100);
-        }, 0);
-        const returnNet = returnSubtotal - returnDiscount + returnVAT;
+          return computeLineTaxTotals({
+            netAfterDiscount: gross - disc,
+            taxPercent: parseFloat(it.taxRate || 5),
+            vatMode: returnVatMode,
+          });
+        });
+        const returnSubtotal = returnLineTotals.reduce((s, r) => s + r.taxableAmount, 0);
+        const returnVAT = returnLineTotals.reduce((s, r) => s + r.taxAmount, 0);
+        const returnNet = returnSubtotal + returnVAT;
         const anyItemSelected = activeItems.length > 0;
 
         const doSearchInvoice = async () => {
@@ -11131,9 +11347,11 @@ export default function POSSales() {
                 const itemStatus = returnItemConditions[it.itemCode] || 'Good';
                 const grossAmt = qty * parseFloat(it.unitPrice || 0);
                 const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
-                const netAmt = grossAmt - discountAmt;
-                const taxAmt = netAmt * (parseFloat(it.taxRate || 5) / 100);
-                const itemTotal = netAmt + taxAmt;
+                const { taxAmount: taxAmt, total: itemTotal } = computeLineTaxTotals({
+                  netAfterDiscount: grossAmt - discountAmt,
+                  taxPercent: parseFloat(it.taxRate || 5),
+                  vatMode: returnVatMode,
+                });
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
                   batchNumber: b.batchNumber, binCode: b.binCode, quantity: 1, expiryDate: b.expiryDate,
@@ -11149,6 +11367,7 @@ export default function POSSales() {
             const payload = {
               linkedInvoice: inv.invoiceNumber, returnDate: new Date().toISOString().split('T')[0],
               customerCode: inv.customerCode, customerName: inv.customerName,
+              taxInclusive: returnVatMode === 'INCLUSIVE',
               subTotal: returnSubtotal, taxAmount: returnVAT, totalAmount: returnNet,
               reason: Object.values(returnReasons).filter(Boolean).join(', ') || 'POS Return',
               returnAction: returnRefundMethod === 'Credit Voucher' ? 'Credit Note' : 'Refund',

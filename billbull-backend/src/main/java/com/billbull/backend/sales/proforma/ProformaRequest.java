@@ -23,6 +23,7 @@ public class ProformaRequest {
     public String paymentReference;
     public String paymentNotes;
     public BigDecimal billDiscount;
+    public Boolean taxInclusive;
 
     public List<ProformaItemRequest> items;
 }

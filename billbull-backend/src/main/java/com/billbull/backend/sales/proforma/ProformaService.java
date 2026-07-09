@@ -224,8 +224,10 @@ public class ProformaService {
         pi.setPaymentReference(req.paymentReference);
         pi.setPaymentNotes(req.paymentNotes);
 
-        BigDecimal gross = BigDecimal.ZERO;
-        BigDecimal lineDiscTotal = BigDecimal.ZERO;
+        boolean taxInclusive = Boolean.TRUE.equals(req.taxInclusive);
+        pi.setTaxInclusive(taxInclusive);
+
+        BigDecimal taxableTotal = BigDecimal.ZERO;
         BigDecimal tax = BigDecimal.ZERO;
 
         if (pi.getItems() == null) {
@@ -239,22 +241,24 @@ public class ProformaService {
             BigDecimal discRate = i.discountPercent != null ? i.discountPercent : BigDecimal.ZERO;
 
             BigDecimal lineGross = qty.multiply(price);
-            
-            // Note: Simplistic FOC deduction if units match. 
-            // In a real system we'd use unit conversions here, 
+
+            // Note: Simplistic FOC deduction if units match.
+            // In a real system we'd use unit conversions here,
             // matching the frontend logic exactly.
             BigDecimal focValue = BigDecimal.ZERO;
             if (i.foc != null && i.foc > 0) {
                 focValue = price.multiply(BigDecimal.valueOf(i.foc));
-                // Simplified: assuming foc uses same unit as quantity here for brevity 
+                // Simplified: assuming foc uses same unit as quantity here for brevity
                 // but real logic should track unit conversions.
             }
-            
             BigDecimal preDisc = lineGross.subtract(focValue).max(BigDecimal.ZERO);
-            BigDecimal lineDisc = preDisc.multiply(discRate).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
-            BigDecimal taxable = preDisc.subtract(lineDisc);
-            BigDecimal lineTax = taxable.multiply(taxRate).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
-            BigDecimal lineTotal = taxable.add(lineTax);
+
+            // Route the (already FOC-adjusted) line value through the shared VAT
+            // helper as a qty=1 line, so discount% and inclusive/exclusive VAT
+            // extraction match SalesInvoiceService exactly.
+            com.billbull.backend.sales.common.VatCalculator.LineResult result =
+                    com.billbull.backend.sales.common.VatCalculator.compute(
+                            BigDecimal.ONE, preDisc, discRate, BigDecimal.ZERO, taxRate, taxInclusive);
 
             ProformaInvoiceItem item = new ProformaInvoiceItem();
             item.setProforma(pi);
@@ -270,23 +274,23 @@ public class ProformaService {
             item.setFocUnit(i.focUnit);
             item.setRemarks(i.remarks);
             hydrateProformaItemDisplayData(item);
-            item.setLineTotal(lineTotal);
+            item.setTaxableAmount(result.taxableAmount.setScale(2, java.math.RoundingMode.HALF_UP));
+            item.setTaxAmount(result.taxAmount.setScale(2, java.math.RoundingMode.HALF_UP));
+            item.setLineTotal(result.netAmount.setScale(2, java.math.RoundingMode.HALF_UP));
 
             pi.getItems().add(item);
 
-            gross = gross.add(lineGross);
-            lineDiscTotal = lineDiscTotal.add(lineDisc);
-            tax = tax.add(lineTax);
+            taxableTotal = taxableTotal.add(result.taxableAmount);
+            tax = tax.add(result.taxAmount);
         }
 
-        BigDecimal taxableSubtotal = gross.subtract(lineDiscTotal);
-        pi.setSubTotal(taxableSubtotal);
+        pi.setSubTotal(taxableTotal.setScale(2, java.math.RoundingMode.HALF_UP));
         pi.setBillDiscount(req.billDiscount != null ? req.billDiscount : BigDecimal.ZERO);
-        
-        BigDecimal billDiscAmount = taxableSubtotal.multiply(pi.getBillDiscount()).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
-        
-        pi.setTaxTotal(tax);
-        pi.setGrandTotal(taxableSubtotal.subtract(billDiscAmount).add(tax));
+
+        BigDecimal billDiscAmount = taxableTotal.multiply(pi.getBillDiscount()).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
+
+        pi.setTaxTotal(tax.setScale(2, java.math.RoundingMode.HALF_UP));
+        pi.setGrandTotal(taxableTotal.subtract(billDiscAmount).add(tax).setScale(2, java.math.RoundingMode.HALF_UP));
         pi.setBalanceDue(pi.getGrandTotal().subtract(pi.getAdvancePaid()));
 
         return pi;
@@ -324,6 +328,7 @@ public class ProformaService {
         res.setBillDiscount(pi.getBillDiscount());
         res.setTaxTotal(pi.getTaxTotal());
         res.setGrandTotal(pi.getGrandTotal());
+        res.setTaxInclusive(pi.getTaxInclusive());
 
         res.setAdvancePaid(pi.getAdvancePaid());
         res.setBalanceDue(pi.getBalanceDue());
@@ -348,6 +353,8 @@ public class ProformaService {
                     ir.setFoc(item.getFoc());
                     ir.setFocUnit(item.getFocUnit());
                     ir.setRemarks(item.getRemarks());
+                    ir.setTaxableAmount(item.getTaxableAmount());
+                    ir.setTaxAmount(item.getTaxAmount());
                     ir.setLineTotal(item.getLineTotal());
                     return ir;
                 }).toList();

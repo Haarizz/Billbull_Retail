@@ -394,7 +394,9 @@ const SalesInvoice = () => {
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
-        taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
+        taxableAmount: (i.netAmount != null || i.net != null)
+            ? Math.max(0, (i.netAmount ?? i.net ?? 0) - (i.taxAmount ?? i.taxAmt ?? 0))
+            : Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
         cost: i.cost || 0,
         gp: 0,
         foc: i.foc || 0,
@@ -1134,8 +1136,8 @@ const SalesInvoice = () => {
     // ==========================================
     // Total before round-off, used to derive the automatic rounding adjustment.
     const preRoundSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }),
-        [items, billDiscount, billDiscountType, deliveryCharge]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }, vatMode),
+        [items, billDiscount, billDiscountType, deliveryCharge, vatMode]
     );
     // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
     const autoRoundOff = useMemo(
@@ -1155,8 +1157,8 @@ const SalesInvoice = () => {
     }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const invoiceSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }),
-        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }, vatMode),
+        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff, vatMode]
     );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
@@ -2754,12 +2756,13 @@ const SalesInvoice = () => {
         const resolvedSummary = summarizeSalesItems(items || [], makeFooterDiscount(billDiscountType, resolvedBillDiscount), {
             deliveryCharge: resolvedDeliveryCharge,
             roundOff: resolvedRoundOff
-        });
+        }, vatMode);
 
         return {
             title: 'SALES INVOICE',
             docNo: invoiceNo,
             date: invoiceDate,
+            vatMode,
             customer: {
                 name: selectedCustomer?.name || '',
                 address: fullCustomer?.address || fullCustomer?.billingAddress || '',
@@ -2889,10 +2892,12 @@ const SalesInvoice = () => {
                 : Number(dataToPrint.billDiscountAmount) || 0;
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
+            const resolvedVatMode = dataToPrint.vatMode
+                || (dataToPrint.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
             const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
-            });
+            }, resolvedVatMode);
 
             {
                 // Find Customer details
@@ -2905,6 +2910,7 @@ const SalesInvoice = () => {
                     title: titleOverride || 'SALES INVOICE',
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
+                    vatMode: resolvedVatMode,
                     customer: {
                         name: dataToPrint.customerName || '',
                         code: dataToPrint.customerCode || fullCustomer?.code || '',

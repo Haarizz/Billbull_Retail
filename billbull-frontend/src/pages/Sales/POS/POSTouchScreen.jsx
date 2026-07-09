@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber } from './posUtils';
+import { computeLineTaxTotals } from '../../../utils/vatMath';
 
 const POSTouchScreen = React.memo((props) => {
   const {
@@ -15,6 +16,8 @@ const POSTouchScreen = React.memo((props) => {
     setCurrentView,
     // session
     currentSession,
+    // settings
+    posSettings,
     // invoice
     currentInvoice, currentInvoiceRef, invoiceCounter,
     // products
@@ -29,7 +32,7 @@ const POSTouchScreen = React.memo((props) => {
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
-    filteredCustomerOptions, customerHistory, customerHistoryLoading,
+    filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
     // cart actions
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
@@ -420,8 +423,11 @@ const POSTouchScreen = React.memo((props) => {
                   const discountPct = cartItem?.discount || matchingProduct?.defaultDiscount || 0;
                   const taxRate = cartItem?.taxRate ?? matchingProduct?.salesTax ?? 5;
                   const discountedUnitPrice = unitPrice * (1 - discountPct / 100);
-                  const netPrice = discountedUnitPrice / (1 + taxRate / 100);
-                  const vatAmount = discountedUnitPrice - netPrice;
+                  const { taxableAmount: netPrice, taxAmount: vatAmount } = computeLineTaxTotals({
+                    netAfterDiscount: discountedUnitPrice,
+                    taxPercent: taxRate,
+                    vatMode: posSettings?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE',
+                  });
                   const stockQty = matchingProduct?.stock ?? 25;
 
                   return (
@@ -775,7 +781,8 @@ const POSTouchScreen = React.memo((props) => {
                         ? new Date(inv.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                         : '—';
                       return (
-                        <div key={inv.id} className="px-3 py-2.5 hover:bg-[#327F74]/5 transition-colors">
+                        <button type="button" key={inv.id} onClick={() => openCustomerHistoryPreview(inv)}
+                          className="group w-full text-left px-3 py-2.5 hover:bg-[#327F74]/5 transition-colors">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-bold text-[#1E293B] leading-tight">{inv.invoiceNumber}</p>
@@ -786,14 +793,19 @@ const POSTouchScreen = React.memo((props) => {
                                 }`}>{mode}</span>
                             </div>
                             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                              <span className="text-sm font-black text-[#327F74]">{formatCurrency(inv.invoiceTotal)}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black text-[#327F74] leading-none">{formatCurrency(inv.invoiceTotal)}</span>
+                                <span className="flex items-center justify-center w-6 h-6 rounded-md bg-white border border-gray-200 text-gray-400 group-hover:border-[#327F74]/40 group-hover:text-[#327F74] transition-colors">
+                                  <Eye className="h-3.5 w-3.5" />
+                                </span>
+                              </div>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${inv.status === 'PAID' ? 'bg-green-50 text-green-700 border-green-200' :
                                   inv.status === 'PARTIALLY_PAID' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
                                     'bg-gray-50 text-gray-500 border-gray-200'
                                 }`}>{inv.status?.replace('_', ' ')}</span>
                             </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1442,13 +1454,19 @@ const POSTouchScreen = React.memo((props) => {
                         ? new Date(inv.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
                         : '—';
                       return (
-                        <div key={inv.id} className="flex items-center justify-between px-2.5 py-2 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                          <div>
-                            <p className="font-semibold text-[#1E293B]">{inv.invoiceNumber}</p>
-                            <p className="text-[9px] text-gray-400">{fmtDate} · {inv.itemCount} items</p>
+                        <button type="button" key={inv.id} onClick={() => openCustomerHistoryPreview(inv)}
+                          className="group w-full flex items-center justify-between gap-2 px-2.5 py-2 bg-gray-50 hover:bg-[#F5C742]/10 rounded-xl border border-gray-100 hover:border-[#F5C742]/40 text-xs transition-colors text-left">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-[#1E293B] leading-tight">{inv.invoiceNumber}</p>
+                            <p className="text-[9px] text-gray-400 leading-tight mt-0.5">{fmtDate} · {inv.itemCount} items</p>
                           </div>
-                          <span className="font-bold text-[#327F74]">{formatCurrency(inv.invoiceTotal)}</span>
-                        </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="font-bold text-[#327F74] leading-none">{formatCurrency(inv.invoiceTotal)}</span>
+                            <span className="flex items-center justify-center w-6 h-6 rounded-md bg-white border border-gray-200 text-gray-400 group-hover:border-[#327F74]/40 group-hover:text-[#327F74] transition-colors">
+                              <Eye className="h-3.5 w-3.5" />
+                            </span>
+                          </div>
+                        </button>
                       );
                     })}
                   </div>

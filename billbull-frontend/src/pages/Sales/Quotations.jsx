@@ -1477,8 +1477,8 @@ const Quotations = () => {
 
     // ✅ UPDATED CALCULATIONS
     const quotationSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount)),
-        [items, billDiscount, billDiscountType]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode),
+        [items, billDiscount, billDiscountType, vatMode]
     );
     const grossTotal = quotationSummary.grossTotal;
     const totalItemDiscount = quotationSummary.itemDiscountTotal;
@@ -1526,7 +1526,7 @@ const Quotations = () => {
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
-            items: allocateFooterDiscount(activeItems, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+            items: allocateFooterDiscount(activeItems, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
                 const footerDisc = Number(i.allocatedFooterDiscount) || 0;
                 const itemNetBeforeFooter = Number(i.total || 0) - Number(i.taxAmt || 0);
                 const itemNet = Math.max(0, itemNetBeforeFooter - footerDisc);
@@ -2279,13 +2279,14 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
             const _qtnDiscType1 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
             const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType1, _qtnDiscType1 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
-            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const _cleanCustomerName = (qtn) => fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
+                vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE',
                 customer: {
                     name: _cleanCustomerName(qtn),
                     code: qtn.customerCode || '',
@@ -2361,10 +2362,10 @@ const Quotations = () => {
             if (!defaultTemplate) return;
             const _qtnDiscType2 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
             const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType2, _qtnDiscType2 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
-            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             // Use the PRINT HTML (real @page / page-break CSS) and let the
             // backend render it with headless Chromium — same engine as the
             // print preview, so the PDF paginates and aligns identically.

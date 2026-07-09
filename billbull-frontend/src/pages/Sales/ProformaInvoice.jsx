@@ -54,7 +54,7 @@ import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { resolveLineTaxRate } from '../../utils/vatMath';
+import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -323,9 +323,11 @@ const ProformaInvoice = () => {
 
   // Summary Calcs
   const [billDiscount, setBillDiscount] = useState(0);
+  // VAT mode — drives line tax math (inclusive vs exclusive), mirrors Quotations/SalesOrders/SalesInvoice.
+  const [vatMode, setVatMode] = useState('EXCLUSIVE');
   const proformaSummary = useMemo(
-    () => summarizeSalesItems(items, billDiscount),
-    [items, billDiscount]
+    () => summarizeSalesItems(items, billDiscount, {}, vatMode),
+    [items, billDiscount, vatMode]
   );
   const grossTotal = proformaSummary.grossTotal;
   const totalItemDiscount = proformaSummary.itemDiscountTotal;
@@ -521,6 +523,7 @@ const ProformaInvoice = () => {
       title: 'PROFORMA INVOICE',
       docNo: `${piNumber} (Rev ${version})`,
       date: piDate,
+      vatMode,
       customer: {
         name: selectedCustomer?.name || '',
         code: selectedCustomer?.code || fullCustomer?.code || '',
@@ -548,6 +551,7 @@ const ProformaInvoice = () => {
         price: Number(i.price),
         disc: Number(i.disc),
         tax: Number(i.tax),
+        taxableAmount: Number(i.taxableAmount || 0),
         taxAmt: Number(i.taxAmt || 0),
         total: Number(i.total),
         image: i.image ? getImageUrl(i.image) : ''
@@ -641,9 +645,16 @@ const ProformaInvoice = () => {
 
     const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
     const discountAmount = preDiscountAmount * (discPercent / 100);
-    const taxableAmount = preDiscountAmount - discountAmount;
-    const taxAmount = taxableAmount * (taxPercent / 100);
-    const total = taxableAmount + taxAmount;
+    const netAfterDiscount = preDiscountAmount - discountAmount;
+
+    // Taxable, Tax, Line Total — driven by the document VAT mode. When
+    // INCLUSIVE, the entered price already contains tax so tax is extracted
+    // out of the line; when EXCLUSIVE, tax is added on top.
+    const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+      netAfterDiscount,
+      taxPercent,
+      vatMode,
+    });
 
     return {
       ...item,
@@ -652,10 +663,18 @@ const ProformaInvoice = () => {
       foc: focQty,
       disc: discPercent,
       tax: taxPercent,
+      taxableAmount,
       taxAmt: taxAmount,
       total
     };
   };
+
+  // When the document VAT mode flips, every existing line needs its
+  // taxableAmount/taxAmt/total recomputed against the new interpretation.
+  useEffect(() => {
+    setItems(prev => prev.map(item => calculateRow(item)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vatMode]);
 
   const normalizeProformaItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
     const resolvedUnit = item.unit || item.focUnit || 'PCS';
@@ -877,6 +896,7 @@ const ProformaInvoice = () => {
       setReservationWarehouseId(full.warehouseId || defaultBranch?.defaultWarehouseId || null);
       setLiveStockMap({});
       setBillDiscount(Number(full.billDiscount) || 0);
+      setVatMode(full.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
       setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
       setSourceSearch('');
 
@@ -913,6 +933,7 @@ const ProformaInvoice = () => {
     setVersion(1);
     setItems([createBlankProformaItem()]);
     setAdvanceAmount(0);
+    setVatMode('EXCLUSIVE');
 
     // âœ… Set default customer to Walk-in
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
@@ -953,6 +974,7 @@ const ProformaInvoice = () => {
         paymentMethod,
         advancePaid: finalAdvance,
         billDiscount: Number(billDiscount),
+        taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
         shippingAddress,
@@ -1072,6 +1094,7 @@ const ProformaInvoice = () => {
         paymentMethod,
         advancePaid: Number(advanceAmount),
         billDiscount: Number(billDiscount),
+        taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
         shippingAddress,
@@ -1903,16 +1926,33 @@ const ProformaInvoice = () => {
                       <ShoppingCart size={16} className="text-yellow-500" /> Proforma Invoice Items
                       <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                     </h3>
-                    {!isReadOnly && (
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
+                      {/* VAT mode toggle — drives line tax math (inclusive vs exclusive). */}
+                      <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                        <button
+                          type="button"
+                          disabled={isReadOnly}
+                          onClick={() => setVatMode('EXCLUSIVE')}
+                          className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          title="Prices entered exclude VAT — tax added on top"
+                        >VAT Excl.</button>
+                        <button
+                          type="button"
+                          disabled={isReadOnly}
+                          onClick={() => setVatMode('INCLUSIVE')}
+                          className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          title="Prices entered already include VAT — tax extracted out"
+                        >VAT Incl.</button>
+                      </div>
+                      {!isReadOnly && (
                         <button
                           onClick={() => setIsProductSelectorOpen(true)}
                           className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                         >
                           <Plus size={14} /> Select from Products
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
                   <div
