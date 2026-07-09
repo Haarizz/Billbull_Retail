@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers } from 'lucide-react';
 import POSCounters from '../POSCounters';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
-import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
-import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
+import { A4LivePreview, A4PreviewFrame, ThermalMock, PaperSizePicker } from './POSPrintPreview';
+import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText, buildPosPrintData, USE_NEW_POS_PRINT_TEMPLATE } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
+import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
 import { buildSampleTxn } from './receiptTemplates/billBullTaxInvoiceData';
 import { buildSampleInvoice, buildSampleOpts } from './receiptTemplates/sampleInvoice';
@@ -20,6 +21,29 @@ import { assignTerminalCounter } from '../../../api/posApi';
 import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
+
+/**
+ * Renders the real, resolved Back Office "Sales Invoice"/"Sales Return" PrintTemplate
+ * through the actual production renderer (generateDocumentPrintHtml), fed with the
+ * same sample invoice data used elsewhere in this designer's Test Print — so this
+ * live preview shows exactly what checkout will print, not a separate approximation
+ * built from this screen's own toggles (which is what A4LivePreview does).
+ */
+const ResolvedTemplateA4Preview = ({ template, isReturn, outlet, footerNote, scale }) => {
+  const html = useMemo(() => {
+    const sampleInvoice = buildSampleInvoice({ isReturn });
+    const data = buildPosPrintData(sampleInvoice, footerNote);
+    const options = {
+      companyProfile: {
+        companyName: outlet.name, trn: outlet.trn, address: outlet.address, phone: outlet.phone,
+        currency: 'AED', logoUrl: outlet.logoDataUrl || undefined, stampUrl: outlet.stampDataUrl || undefined,
+        showStampInPrint: !!outlet.stampDataUrl,
+      },
+    };
+    return generateDocumentPrintHtml(template, data, options);
+  }, [template, isReturn, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote]);
+  return <A4PreviewFrame html={html} scale={scale} />;
+};
 
 const POSConsole = React.memo((props) => {
   const { 
@@ -61,7 +85,12 @@ const POSConsole = React.memo((props) => {
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
-    setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
+    // Phase 3 cutover: real resolved "Sales Invoice"/"Sales Return" PrintTemplate
+    // rows (read-only here — see POSSales.jsx for the fetch). Used so this designer's
+    // live preview shows the SAME template that actually prints at checkout, instead
+    // of a separate approximation built from this screen's own toggles.
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
@@ -71,6 +100,7 @@ const POSConsole = React.memo((props) => {
     setTplJobCardFooter, setTplJobCardPaper,
   } = props;
 
+    // Phase 3 cutover (reworked): POS now resolves the real Back Office "Sales
     const allBtnList = [
       { id:'add-qty',label:'Add Qty' },{ id:'remove',label:'Remove Item' },{ id:'discount',label:'Discount' },
       { id:'layaways',label:'Layaways' },{ id:'save-layaway',label:'Save Layaway' },{ id:'save-order',label:'Save as Order' },
@@ -2009,7 +2039,15 @@ const POSConsole = React.memo((props) => {
                               );
                             })()
                           : cfg.paper === 'A4'
-                          ? <A4LivePreview
+                          ? (USE_NEW_POS_PRINT_TEMPLATE && (templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate))
+                            ? <ResolvedTemplateA4Preview
+                                template={templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate}
+                                isReturn={templateSubTab==='return'}
+                                outlet={{ name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl }}
+                                footerNote={cfg.footer}
+                                scale={0.42}
+                              />
+                            : <A4LivePreview
                               category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
                               companyName={tplOutletName} trn={tplOutletTrn}
                               address={tplOutletAddress} phone={tplOutletPhone}

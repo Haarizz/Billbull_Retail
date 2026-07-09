@@ -11,6 +11,12 @@ import React, { useMemo } from 'react';
 import { Upload } from 'lucide-react';
 import { buildDocumentPreviewHtml, buildServiceJobA4Html, stripForPreview } from './posPrintUtils';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
+import { useA4BlobUrl, A4PreviewFrame } from '../../../components/print/DocumentA4Preview';
+
+// Re-exported so existing call sites (POSSales.jsx) importing these from this file
+// keep working unchanged — the underlying implementation now lives in the shared
+// components/print/DocumentA4Preview.jsx so Back Office designers can reuse it too.
+export { useA4BlobUrl, A4PreviewFrame };
 
 // Rich thermal receipt preview that mirrors the actual print output exactly
 export const ThermalMock = ({
@@ -304,42 +310,6 @@ export const ThermalMock = ({
   );
 };
 
-export const useA4BlobUrl = (html) => {
-  const [url, setUrl] = React.useState('');
-  React.useEffect(() => {
-    if (!html) {
-      setUrl('');
-      return;
-    }
-    const blob = new Blob([html], { type: 'text/html' });
-    const blobUrl = URL.createObjectURL(blob);
-    setUrl(blobUrl);
-    // Revoke on a macrotask well after React's commit + paint cycle. A delay
-    // of 0ms can fire within the same animation frame in some browsers, racing
-    // the iframe teardown. 100ms gives React ample headroom to finish removing
-    // the iframe DOM node before the blob URL is freed.
-    return () => {
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
-    };
-  }, [html]);
-  return url;
-};
-
-export const A4PreviewFrame = ({ html, scale }) => {
-  const url = useA4BlobUrl(html);
-  const s = scale ?? 0.455;
-  return (
-    <div
-      className="relative overflow-hidden rounded-xl border border-gray-200 bg-white w-full"
-      style={{ height: Math.round(1055 * s) }}
-    >
-      <div style={{ width: 794, transformOrigin: 'top left', transform: `scale(${s})`, position: 'absolute', top: 0, left: 0 }}>
-        {url && <iframe src={url} style={{ width: 794, height: 1055, border: 'none', display: 'block' }} title="A4 preview" />}
-      </div>
-    </div>
-  );
-};
-
 export const A4LivePreview = ({ category, companyName, trn, address, phone, footerNote, scale, toggles }) => {
   const html = useMemo(
     () => buildDocumentPreviewHtml(category, { companyName, trn, address, phone, footerNote }, toggles),
@@ -364,11 +334,10 @@ export const PaperSizePicker = ({ value, onChange }) => (
         type="button"
         key={s}
         onClick={() => onChange(s)}
-        className={`px-3 py-1 rounded-lg border text-xs font-bold transition-all ${
-          value === s
+        className={`px-3 py-1 rounded-lg border text-xs font-bold transition-all ${value === s
             ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]'
             : 'border-gray-200 text-gray-400 hover:border-gray-300'
-        }`}
+          }`}
       >
         {s}
       </button>
@@ -460,10 +429,13 @@ export function A4ScaledPreview({ src, fillWidth = false }) {
   );
 }
 
-export function ThermalScaledPreview({ src }) {
+export function ThermalScaledPreview({ src, paperSize = '80mm' }) {
+  const is58 = String(paperSize || '').includes('58');
+  const containerWidth = is58 ? 'w-[240px]' : 'w-[340px]';
+
   return (
     <div className="flex-1 flex justify-center bg-[#f0f2f5] p-6 overflow-y-auto">
-      <div className="w-[340px] max-w-full bg-white shadow-2xl p-4 rounded-xl border border-gray-200 shrink-0 flex flex-col" style={{ minHeight: '500px' }}>
+      <div className={`${containerWidth} max-w-full bg-white shadow-2xl p-4 rounded-xl border border-gray-200 shrink-0 flex flex-col transition-all duration-300`} style={{ minHeight: '500px' }}>
         <iframe src={src} style={{ width: '100%', flex: 1, border: 'none', display: 'block', height: '100%', minHeight: '600px' }} title="Thermal Receipt Preview" />
       </div>
     </div>

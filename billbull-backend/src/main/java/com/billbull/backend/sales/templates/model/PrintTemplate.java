@@ -3,7 +3,6 @@ package com.billbull.backend.sales.templates.model;
 import com.billbull.backend.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -20,6 +19,15 @@ public class PrintTemplate extends BaseEntity {
 
     @Column(nullable = false)
     private String name;
+
+    /**
+     * Owning branch, or null for a global/shared template (the historical behavior for
+     * every category). Resolution order when looking up an effective template for a
+     * branch is: branch-specific row, then the global (null) row, then a hardcoded
+     * system default — see {@link com.billbull.backend.sales.templates.service.PrintTemplateService#resolveTemplate}.
+     */
+    @Column(name = "branch_id")
+    private Long branchId;
 
     @JsonProperty("isDefault")
     @Column(name = "is_default")
@@ -39,23 +47,23 @@ public class PrintTemplate extends BaseEntity {
 
     private String orientation;
 
-    @Lob
+    // NOTE: deliberately NOT @Lob. On PostgreSQL, @Lob on a String field makes Hibernate
+    // store the value as a Large Object (an OID reference into pg_largeobject) instead of
+    // inline TEXT — the column then holds a small OID number, not the actual content. A
+    // plain @Column with columnDefinition="TEXT" is correct and sufficient here; Hibernate
+    // maps un-annotated long Strings to TEXT/CLOB appropriately without @Lob's OID behavior.
     @Column(name = "header_content", columnDefinition = "TEXT")
     private String headerContent;
 
-    @Lob
     @Column(name = "terms_content", columnDefinition = "TEXT")
     private String termsContent;
 
-    @Lob
     @Column(name = "footer_content", columnDefinition = "TEXT")
     private String footerContent;
 
-    @Lob
     @Column(name = "display_options", columnDefinition = "TEXT")
     private String displayOptions; // JSON string
 
-    @Lob
     @Column(name = "columns_config", columnDefinition = "TEXT")
     private String columns; // JSON string
 }
