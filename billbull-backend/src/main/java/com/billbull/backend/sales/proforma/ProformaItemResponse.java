@@ -13,6 +13,8 @@ public class ProformaItemResponse {
 	private BigDecimal price;
 	private BigDecimal taxPercent;
 	private BigDecimal discountPercent;
+	private BigDecimal taxableAmount;
+	private BigDecimal taxAmount;
 	private BigDecimal lineTotal;
 	private Integer foc;
 	private String focUnit;
@@ -109,6 +111,22 @@ public class ProformaItemResponse {
 
 	public void setLineTotal(BigDecimal lineTotal) {
 		this.lineTotal = lineTotal;
+	}
+
+	public BigDecimal getTaxableAmount() {
+		return taxableAmount;
+	}
+
+	public void setTaxableAmount(BigDecimal taxableAmount) {
+		this.taxableAmount = taxableAmount;
+	}
+
+	public BigDecimal getTaxAmount() {
+		return taxAmount;
+	}
+
+	public void setTaxAmount(BigDecimal taxAmount) {
+		this.taxAmount = taxAmount;
 	}
 
 	public void setFoc(Integer foc) {

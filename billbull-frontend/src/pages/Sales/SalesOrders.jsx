@@ -581,7 +581,7 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount));
+    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -1210,7 +1210,7 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
-      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
         const footerDisc = Number(i.allocatedFooterDiscount) || 0;
         const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
         const taxPercent = Number(i.tax) || 0;

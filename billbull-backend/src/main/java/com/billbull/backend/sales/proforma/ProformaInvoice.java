@@ -56,6 +56,9 @@ public class ProformaInvoice {
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
+    // True when line prices already include VAT (extract tax rather than add it on top).
+    private Boolean taxInclusive = Boolean.FALSE;
+
     // ---- Payment (INLINE, SIMPLE) ----
     private BigDecimal advancePaid;
     private BigDecimal balanceDue;
@@ -156,6 +159,14 @@ public class ProformaInvoice {
 
 	public BigDecimal getGrandTotal() {
 		return grandTotal;
+	}
+
+	public Boolean getTaxInclusive() {
+		return taxInclusive;
+	}
+
+	public void setTaxInclusive(Boolean taxInclusive) {
+		this.taxInclusive = taxInclusive;
 	}
 
 	public BigDecimal getAdvancePaid() {

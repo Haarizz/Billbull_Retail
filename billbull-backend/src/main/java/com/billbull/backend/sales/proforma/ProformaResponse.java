@@ -43,6 +43,7 @@ public class ProformaResponse {
     private BigDecimal billDiscount;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
+    private Boolean taxInclusive;
 
     private BigDecimal advancePaid;
     private BigDecimal balanceDue;
@@ -121,6 +122,14 @@ public class ProformaResponse {
 
 	public BigDecimal getGrandTotal() {
 		return grandTotal;
+	}
+
+	public Boolean getTaxInclusive() {
+		return taxInclusive;
+	}
+
+	public void setTaxInclusive(Boolean taxInclusive) {
+		this.taxInclusive = taxInclusive;
 	}
 
 	public BigDecimal getAdvancePaid() {

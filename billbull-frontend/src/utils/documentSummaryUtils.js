@@ -1,3 +1,5 @@
+import { computeLineTaxTotals, VAT_MODES } from './vatMath';
+
 const toNumber = (value) => {
     const parsed = Number(value ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -29,7 +31,7 @@ const getFocDeduction = (item = {}, unitPrice = 0, sellingUnit = 'PCS') => {
 //   - a number (treated as percentage, legacy)
 //   - { type: 'percent', value: number }
 //   - { type: 'amount', value: number }
-export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}) => {
+export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, vatMode = VAT_MODES.EXCLUSIVE) => {
     // Normalise the footer-discount descriptor.
     let footerDiscType = 'percent';
     let footerDiscValue = 0;
@@ -79,7 +81,14 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}) =
             taxableDerivedFromLineTotal = true;
         }
         if (!hasValue(taxableAmount)) {
-            taxableAmount = preDiscountAmount - discountAmount;
+            // No pre-computed taxable amount on the item — derive it from the
+            // raw price via the shared VAT helper so an Inclusive-mode raw
+            // price isn't mistaken for an already ex-VAT amount.
+            taxableAmount = computeLineTaxTotals({
+                netAfterDiscount: preDiscountAmount - discountAmount,
+                taxPercent,
+                vatMode,
+            }).taxableAmount;
         }
         // Recalculate discountAmount from (grossAmount - taxableAmount) only
         // when taxableAmount came from an explicit item field (e.g. item.taxableAmount)
@@ -156,7 +165,7 @@ export const makeFooterDiscount = (type, value) => ({ type: type === 'amount' ? 
 
 // Allocate footer discount proportionally across items and return enriched item array.
 // Each returned item gains an `allocatedFooterDiscount` field (absolute amount).
-export const allocateFooterDiscount = (items = [], billDiscount = 0) => {
+export const allocateFooterDiscount = (items = [], billDiscount = 0, vatMode = VAT_MODES.EXCLUSIVE) => {
     let footerDiscType = 'percent';
     let footerDiscValue = 0;
     if (billDiscount !== null && typeof billDiscount === 'object') {
@@ -173,8 +182,10 @@ export const allocateFooterDiscount = (items = [], billDiscount = 0) => {
         const qty = toNumber(item.qty ?? item.quantity);
         const price = toNumber(item.price);
         const discPct = toNumber(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent);
+        const taxPercent = toNumber(item.tax ?? item.taxRate ?? item.taxPercent);
         const gross = qty * price;
-        return Math.max(0, gross - gross * (discPct / 100));
+        const netAfterDiscount = Math.max(0, gross - gross * (discPct / 100));
+        return computeLineTaxTotals({ netAfterDiscount, taxPercent, vatMode }).taxableAmount;
     });
 
     const totalNet = nets.reduce((s, n) => s + n, 0);

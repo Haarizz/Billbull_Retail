@@ -14,6 +14,7 @@ import {
 } from './countryCurrencyOptions';
 import { generatePickListHtml } from './pickListPrintTemplate';
 import { INTER_REGULAR_B64, INTER_BOLD_B64 } from './interFontBase64';
+import { computeLineTaxTotals, VAT_MODES } from './vatMath';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -667,20 +668,38 @@ const normaliseDescription = (item = {}) => {
     };
 };
 
-const normaliseItem = (item = {}) => {
+const normaliseItem = (item = {}, vatMode = VAT_MODES.EXCLUSIVE) => {
     const description = normaliseDescription(item);
     const qty = asNumber(item.qty ?? item.quantity ?? 0);
     const price = asNumber(item.price ?? item.unitPrice ?? item.unitCost ?? 0);
     const discountPercent = asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0);
+    const taxPercent = asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0);
     const grossAmount = qty * price;
     const discountAmount = asNumber(
         item.discountAmount ?? item.discountAmt ?? item.lineDiscount ?? (grossAmount * (discountPercent || 0) / 100)
     );
-    const taxableAmount = asNumber(
-        item.taxableAmount ?? (grossAmount - discountAmount)
-    );
     const taxAmount = asNumber(item.taxAmt ?? item.taxAmount ?? 0);
-    const total = asNumber(item.total ?? item.lineAmount ?? (taxableAmount + taxAmount));
+    const explicitTotal = item.total ?? item.lineAmount;
+
+    let taxableAmount;
+    if (item.taxableAmount !== null && item.taxableAmount !== undefined && item.taxableAmount !== '') {
+        taxableAmount = asNumber(item.taxableAmount);
+    } else if (explicitTotal !== null && explicitTotal !== undefined && explicitTotal !== '') {
+        // total - tax is always the true ex-VAT base, regardless of VAT mode
+        // (Inclusive: total == gross-of-VAT, so total - tax == ex-VAT taxable.
+        //  Exclusive: total == taxable + tax, so total - tax == taxable.)
+        taxableAmount = asNumber(explicitTotal) - taxAmount;
+    } else {
+        // No pre-computed figures on the item at all — derive from raw price
+        // via the shared VAT helper so an Inclusive-mode raw price isn't
+        // mistaken for an already ex-VAT amount.
+        taxableAmount = computeLineTaxTotals({
+            netAfterDiscount: grossAmount - discountAmount,
+            taxPercent,
+            vatMode,
+        }).taxableAmount;
+    }
+    const total = asNumber(explicitTotal ?? (taxableAmount + taxAmount));
 
     return {
         code: item.code || item.productId || item.itemCode || '',
@@ -698,7 +717,7 @@ const normaliseItem = (item = {}) => {
         price,
         taxableAmount,
         taxAmount,
-        taxPercent: asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0),
+        taxPercent,
         discountPercent,
         discountAmount,
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
@@ -3569,7 +3588,12 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         .filter((row) => shouldShowPurchaseMetaRow(row, designerSettings)));
 
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category
@@ -3706,7 +3730,12 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         data.meta?.locationStore, data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse
     );
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category
@@ -3877,7 +3906,12 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     const documentSalesPerson = firstNonEmpty(data.meta?.salesPerson, data.meta?.salesperson, data.meta?.accountExecutive);
     const documentLocation = firstNonEmpty(data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse);
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category

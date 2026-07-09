@@ -736,32 +736,15 @@ public class SalesInvoiceService {
         BigDecimal price = nz(item.getPrice());
         BigDecimal discountPercent = BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0);
         BigDecimal taxPercent = BigDecimal.valueOf(item.getTaxRate() != null ? item.getTaxRate() : 0);
-
-        BigDecimal gross = qty.multiply(price);
-        BigDecimal discountAmount = gross.multiply(discountPercent).divide(BigDecimal.valueOf(100));
         BigDecimal footerDisc = nz(item.getFooterDiscount());
-        BigDecimal taxableAmount = gross.subtract(discountAmount).subtract(footerDisc).max(BigDecimal.ZERO);
 
-        BigDecimal taxAmount;
-        BigDecimal netAmount;
-        if (taxInclusive) {
-            // Price already includes VAT: the discounted line value IS the
-            // customer-paid (gross-of-VAT) total. Extract the embedded tax so
-            // subTotal aggregation (netAmount − taxAmount) still yields ex-VAT.
-            BigDecimal divisor = BigDecimal.valueOf(100).add(taxPercent);
-            BigDecimal exVat = divisor.signum() == 0 ? taxableAmount
-                    : taxableAmount.multiply(BigDecimal.valueOf(100)).divide(divisor, 6, java.math.RoundingMode.HALF_UP);
-            taxAmount = taxableAmount.subtract(exVat);
-            netAmount = taxableAmount;
-        } else {
-            // Price is net of VAT: tax is added on top of the discounted value.
-            taxAmount = taxableAmount.multiply(taxPercent).divide(BigDecimal.valueOf(100));
-            netAmount = taxableAmount.add(taxAmount);
-        }
+        com.billbull.backend.sales.common.VatCalculator.LineResult result =
+                com.billbull.backend.sales.common.VatCalculator.compute(
+                        qty, price, discountPercent, footerDisc, taxPercent, taxInclusive);
 
-        item.setGrossAmount(roundCurrency(gross));
-        item.setTaxAmount(roundCurrency(taxAmount));
-        item.setNetAmount(roundCurrency(netAmount));
+        item.setGrossAmount(roundCurrency(result.grossAmount));
+        item.setTaxAmount(roundCurrency(result.taxAmount));
+        item.setNetAmount(roundCurrency(result.netAmount));
     }
 
     private boolean isMissingOrZero(BigDecimal value) {
