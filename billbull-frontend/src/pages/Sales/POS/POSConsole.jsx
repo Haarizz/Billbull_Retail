@@ -68,7 +68,7 @@ const POSConsole = React.memo((props) => {
       { id:'layaways',label:'Layaways' },{ id:'save-layaway',label:'Save Layaway' },{ id:'save-order',label:'Save as Order' },
       { id:'add-shipping',label:'Add Shipping' },{ id:'add-customer',label:'Add Customer' },{ id:'coupons',label:'Coupons' },
       { id:'promotions',label:'Promotions' },{ id:'last-receipt',label:'Last Receipt' },{ id:'orders',label:'Orders' },
-      { id:'return',label:'Return' },{ id:'price-chk',label:'Price Check' },
+      { id:'return',label:'Return' },{ id:'search-products',label:'Search Products' },{ id:'price-chk',label:'Price Check' },
       { id:'cash-drop',label:'Cash Drawer' },{ id:'credit-balance',label:'Credit Balance' },
       { id:'z-report',label:'Z-Report' },{ id:'reprint',label:'Reprint' },
       { id:'lock-pos',label:'Lock POS' },{ id:'close-session',label:'Close Session' },

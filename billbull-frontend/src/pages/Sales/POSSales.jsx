@@ -400,6 +400,9 @@ export default function POSSales() {
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
+  // Live Session quick-view — dashboard tile that pops the current session's
+  // sales/cash figures without navigating away (X-Report is the full page version).
+  const [showLiveSessionDialog, setShowLiveSessionDialog] = useState(false);
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
@@ -589,6 +592,11 @@ export default function POSSales() {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeScanFeedback, setBarcodeScanFeedback] = useState(null);
   const barcodeInputRef = useRef(null);
+  // Live autocomplete for the Cart Focus scan/search box — shows a "select item"
+  // dropdown of matching products as the cashier types, so a name/code/barcode
+  // search works even when the Items Panel is hidden.
+  const [barcodeSuggestions, setBarcodeSuggestions] = useState([]);
+  const [barcodeSuggestionsLoading, setBarcodeSuggestionsLoading] = useState(false);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
   // Real next invoice number previewed from the backend numbering sequence
   // (GET /api/sales-invoices/next-number). POS checkout posts through the same
@@ -661,6 +669,14 @@ export default function POSSales() {
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [priceCheckQuery, setPriceCheckQuery] = useState('');
   const [priceCheckResult, setPriceCheckResult] = useState(null);
+  // Search Products modal — dedicated multi-result lookup by item code, barcode, or
+  // product name (substring match anywhere, backed by the same server-side LIKE
+  // search as the items grid) so cashiers can find and add items even when the Items
+  // Panel is hidden in Cart Focus.
+  const [showProductSearch, setShowProductSearch] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
   // Credit Balance modal
   const [showCreditBalance, setShowCreditBalance] = useState(false);
   const [creditBalanceQuery, setCreditBalanceQuery] = useState('');
@@ -1320,6 +1336,64 @@ export default function POSSales() {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Search Products modal — live, debounced lookup as the cashier types. Reuses the
+  // paginated product list endpoint, which already matches item code, SKU, barcode,
+  // and product name anywhere in the string (not just a prefix).
+  useEffect(() => {
+    if (!showProductSearch) return undefined;
+    const query = productSearchQuery.trim();
+    if (!query) {
+      setProductSearchResults([]);
+      setProductSearchLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setProductSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true);
+        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
+        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
+        setProductSearchResults(mapped);
+      } catch (error) {
+        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+        console.error('Product search failed', error);
+        setProductSearchResults([]);
+      } finally {
+        setProductSearchLoading(false);
+      }
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [productSearchQuery, showProductSearch]);
+
+  // Cart Focus scan/search box — live "select item" suggestions as the cashier
+  // types. Suppressed while the same field is repurposed as a qty/discount/price
+  // numpad (posActionMode !== 'none'), where its value is a number, not a search.
+  useEffect(() => {
+    const query = barcodeInput.trim();
+    if (posActionMode !== 'none' || !query) {
+      setBarcodeSuggestions([]);
+      setBarcodeSuggestionsLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setBarcodeSuggestionsLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true);
+        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
+        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
+        setBarcodeSuggestions(mapped);
+      } catch (error) {
+        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+        setBarcodeSuggestions([]);
+      } finally {
+        setBarcodeSuggestionsLoading(false);
+      }
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [barcodeInput, posActionMode]);
 
   const loadPosCustomers = useCallback(async () => {
     setPosCustomersLoading(true);
@@ -4787,6 +4861,33 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
+        {/* Live Session Tile — quick-view popup of current session sales/cash figures */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => {
+            if (!isSessionActive) return;
+            setShowLiveSessionDialog(true);
+            loadXReport();
+          }}
+        >
+          <CardHeader>
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
+              <Activity className="h-8 w-8 text-white" />
+            </div>
+            <CardTitle className="mt-4">Live Session</CardTitle>
+            <CardDescription>
+              Quick view of current session values
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              {isSessionActive
+                ? 'Sales, cash drop, cash out & drawer total at a glance'
+                : 'Start a session to view live session values'}
+            </p>
+          </CardContent>
+        </Card>
+
         {/* BillBull Console Tile */}
         <Card
           className={posDashboardTileClass}
@@ -7204,6 +7305,7 @@ export default function POSSales() {
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
@@ -7236,7 +7338,8 @@ export default function POSSales() {
       } catch { setOrdersList([]); } finally { setOrdersListLoading(false); }
     },
     setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,
-    setPriceCheckResult, setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
+    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,
+    setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
     setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
@@ -8934,6 +9037,107 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Live Session Quick View — dashboard tile popup showing current session
+          sales/cash figures, sourced from the same X-Report summary the full
+          X-Report page uses so the numbers never disagree. */}
+      <Dialog open={showLiveSessionDialog} onOpenChange={setShowLiveSessionDialog}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          {(() => {
+            const xSummary = xReportData?.summary || {};
+            const sess = xReportData?.session || currentSession;
+            const totalSales = Number(xSummary.totalSales ?? 0);
+            const txCount = Number(xSummary.invoiceCount ?? 0);
+            const openingCash = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
+            const cashSales = Number(xSummary.cashSales ?? 0);
+            const cardSales = Number(xSummary.cardSales ?? 0);
+            const walletSales = Number(xSummary.walletSales ?? 0);
+            const dropIn = Number(xSummary.cashDropIn ?? 0);
+            const dropOut = Number(xSummary.cashDropOut ?? 0);
+            const expectedCash = Number(xSummary.expectedCash ?? (openingCash + cashSales + dropIn - dropOut));
+            const sessionStart = sess?.openedAt ? parseUTCDate(sess.openedAt) : (sess?.startTime ? parseUTCDate(sess.startTime) : null);
+            const diffMin = sessionStart ? Math.floor((sessionNowMs - sessionStart.getTime()) / 60000) : 0;
+            const durH = Math.floor(diffMin / 60);
+            const durM = diffMin % 60;
+            const duration = sessionStart ? (durH > 0 ? `${durH}h ${durM}m` : `${durM}m`) : '—';
+            const loading = xReportLoading || xReportData === null;
+
+            const rows = [
+              { label: "Today's Sales", value: <CurrencyAmount amount={totalSales} />, accent: '#327F74' },
+              { label: 'Transactions', value: txCount, accent: '#6366F1' },
+              { label: 'Cash Sales', value: <CurrencyAmount amount={cashSales} />, accent: '#1E293B' },
+              { label: 'Card Sales', value: <CurrencyAmount amount={cardSales} />, accent: '#1E293B' },
+              { label: 'Wallet Sales', value: <CurrencyAmount amount={walletSales} />, accent: '#1E293B' },
+              { label: 'Opening Cash', value: <CurrencyAmount amount={openingCash} />, accent: '#1E293B' },
+              { label: 'Cash Drop In', value: <CurrencyAmount amount={dropIn} />, accent: '#327F74' },
+              { label: 'Cash Out', value: dropOut > 0 ? <>(<CurrencyAmount amount={dropOut} />)</> : <CurrencyAmount amount={0} />, accent: '#EF4444' },
+              { label: 'Expected Cash in Drawer', value: <CurrencyAmount amount={expectedCash} />, accent: '#F5C742' },
+            ];
+
+            return (
+              <>
+                <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-[#F5C742]/15">
+                        <Activity className="h-5 w-5 text-[#b8920e]" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold text-[#1E293B]">Live Session</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {sess?.id ? `Session #${sess.id}` : 'Current session'} · {duration} elapsed
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={loadXReport} disabled={xReportLoading} title="Refresh"
+                        className="text-gray-400 hover:text-[#327F74] transition-colors mt-0.5 disabled:opacity-40">
+                        <RefreshCw className={`h-4 w-4 ${xReportLoading ? 'animate-spin' : ''}`} />
+                      </button>
+                      <button onClick={() => setShowLiveSessionDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-6 py-5">
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-4">
+                    <p>Cashier: <span className="text-[#1E293B] font-medium">{sess?.openedBy || '—'}</span></p>
+                    <p>Terminal: <span className="text-[#1E293B] font-medium">{sess?.terminalId || currentTerminal?.terminalId || '—'}</span></p>
+                  </div>
+                  <div className="rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
+                    {rows.map(row => (
+                      <div key={row.label} className="flex items-center justify-between px-4 py-2.5">
+                        <span className="text-sm text-gray-600">{row.label}</span>
+                        <span className="text-sm font-bold" style={{ color: row.accent }}>
+                          {loading ? <span className="inline-block h-4 w-16 bg-gray-200 rounded animate-pulse" /> : row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="px-6 pb-6 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => setShowLiveSessionDialog(false)}
+                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => { setShowLiveSessionDialog(false); setCurrentView('x-report'); }}
+                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] flex items-center gap-2 transition-colors"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Full X-Report
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Close Day Reconciliation Variance Dialog */}
       <Dialog open={!!closeDayVariance} onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}>
         <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
@@ -10055,6 +10259,93 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* ─── SEARCH PRODUCTS MODAL ─── */}
+      {showProductSearch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowProductSearch(false)} />
+          <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
+              <div>
+                <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Search Products</span></div>
+                <p className="text-sm text-gray-500 mt-1">Search by item code, barcode, or product name — matches anywhere in the name.</p>
+              </div>
+              <button onClick={() => setShowProductSearch(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
+            </div>
+            <div className="bg-white border-b border-gray-100 px-6 py-4 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={productSearchQuery}
+                  onChange={e => setProductSearchQuery(e.target.value)}
+                  placeholder="Type an item code, barcode, or any part of a product name..."
+                  className="w-full pl-10 pr-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#F5C742] focus:bg-white"
+                />
+              </div>
+            </div>
+            <div className="overflow-auto flex-1 p-6">
+              {!productSearchQuery.trim() && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <Search className="h-12 w-12 text-gray-300 mb-4" />
+                  <p className="text-sm font-medium text-gray-500">Start typing to search the product catalogue.</p>
+                </div>
+              )}
+              {productSearchQuery.trim() && productSearchLoading && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
+                  <p className="text-sm font-medium text-gray-500">Searching...</p>
+                </div>
+              )}
+              {productSearchQuery.trim() && !productSearchLoading && productSearchResults.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
+                  <p className="text-sm font-medium text-gray-500">No products match "{productSearchQuery.trim()}".</p>
+                </div>
+              )}
+              {!productSearchLoading && productSearchResults.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {productSearchResults.map(product => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => {
+                        const res = addToInvoice(product, 1);
+                        if (res && res.ok === false) {
+                          showFeedback('error', res.reason || 'Could not add this item.');
+                          return;
+                        }
+                        showFeedback('success', `${product.name} added`);
+                      }}
+                      className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-[#F5C742] hover:shadow-md transition-all text-left"
+                    >
+                      <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                        {product.image
+                          ? <img src={product.image} className="w-full h-full object-cover" alt={product.name} />
+                          : <Package className="w-5 h-5 text-gray-300" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
+                        <p className="text-[11px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-[#327F74]">{formatCurrency(product.price)}</p>
+                        <p className={`text-[10px] font-bold ${product.stock > 10 ? 'text-green-600' : product.stock > 0 ? 'text-amber-600' : 'text-red-500'}`}>
+                          {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end shrink-0">
+              <button onClick={() => setShowProductSearch(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── CREDIT BALANCE MODAL ─── */}
       {showCreditBalance && (() => {

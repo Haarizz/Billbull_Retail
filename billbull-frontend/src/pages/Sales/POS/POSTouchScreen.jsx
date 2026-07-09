@@ -24,6 +24,7 @@ const POSTouchScreen = React.memo((props) => {
     // search / barcode
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
@@ -55,7 +56,8 @@ const POSTouchScreen = React.memo((props) => {
     setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway, setShowOrdersListDialog,
     setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,
-    setPriceCheckResult, setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
+    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,
+    setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
     setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
@@ -165,6 +167,19 @@ const POSTouchScreen = React.memo((props) => {
     }, 300);
   }, [toggleFavourite]);
 
+  // Selecting a suggestion from the Cart Focus scan/search dropdown adds it straight
+  // to the cart, same as scanning its barcode.
+  const selectBarcodeSuggestion = useCallback((product) => {
+    const res = addToInvoice(product, 1);
+    if (res && res.ok === false) {
+      showFeedback('error', res.reason || 'Could not add this item.');
+      return;
+    }
+    showFeedback('success', `${product.name} added`);
+    setBarcodeInput('');
+    setBarcodeSuggestions([]);
+  }, [addToInvoice, showFeedback, setBarcodeInput, setBarcodeSuggestions]);
+
   // Shared, template-independent Actions/Functions buttons. Defined once so the
   // Classic and Cart Focus panels render the same set, labels, icons and colours
   // and never drift apart. Interaction-specific buttons (Add Qty / Discount /
@@ -179,7 +194,8 @@ const POSTouchScreen = React.memo((props) => {
     { id: 'coupons', label: 'Coupons', icon: <Tag className={iconCls} />, color: 'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700', action: () => setShowCouponsDialog(true) },
     { id: 'promotions', label: 'Promotions', icon: <Zap className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800', action: () => setShowPromotionsDialog(true) },
     { id: 'return', label: 'Return', icon: <RotateCcw className={iconCls} />, color: 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action: () => { setReturnStep(1); setReturnInvoiceQuery(''); setReturnInvoiceFound(null); setReturnSelectedItems({}); setReturnReasons({}); setShowReturn(true); } },
-    { id: 'price-chk', label: 'Price Check', icon: <Search className={iconCls} />, color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700', action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
+    { id: 'search-products', label: 'Search Products', icon: <Search className={iconCls} />, color: 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700', action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },
+    { id: 'price-chk', label: 'Price Check', icon: <Calculator className={iconCls} />, color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700', action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
     { id: 'credit-balance', label: 'Credit Balance', icon: <CreditCard className={iconCls} />, color: 'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
     { id: 'serial-batch', label: 'Serial/Batch Check', icon: <Hash className={iconCls} />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
     { id: 'cash-drop', label: 'Cash Drawer', icon: <DollarSign className={iconCls} />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowCashDropDialog(true) },
@@ -503,7 +519,7 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Input Box & Scanner Status */}
-              <div className="mb-3">
+              <div className="mb-3 relative">
                 {scannerReady && (
                   <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-green-700 border border-green-200">
                     <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -517,6 +533,10 @@ const POSTouchScreen = React.memo((props) => {
                     value={barcodeInput}
                     onChange={e => setBarcodeInput(e.target.value)}
                     onKeyDown={e => {
+                      if (e.key === 'Escape') {
+                        setBarcodeSuggestions([]);
+                        return;
+                      }
                       if (e.key === 'Enter') {
                         if (posActionMode === 'qty' && selectedFocusItemId) {
                           const qty = parseInt(barcodeInput, 10);
@@ -539,6 +559,7 @@ const POSTouchScreen = React.memo((props) => {
                           updateItemPrice(selectedFocusItemId, val);
                           resetFocusMode();
                         } else {
+                          setBarcodeSuggestions([]);
                           handleBarcodeScan(barcodeInput);
                         }
                       }
@@ -547,11 +568,45 @@ const POSTouchScreen = React.memo((props) => {
                     className="w-full bg-transparent text-[#1E293B] placeholder-gray-300 px-1 text-sm font-mono focus:outline-none"
                     autoFocus
                   />
-                  <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
+                  <button type="button" onClick={() => { setBarcodeSuggestions([]); handleBarcodeScan(barcodeInput); }}
                     className="bg-[#F5C742] hover:opacity-90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm flex-shrink-0 ml-2">
                     ADD
                   </button>
                 </div>
+
+                {/* Live "select item" suggestions — item code, barcode, or product name,
+                    matched anywhere in the string. Hidden while the field is repurposed
+                    as a qty/discount/price numpad. */}
+                {posActionMode === 'none' && barcodeInput.trim() && (barcodeSuggestionsLoading || barcodeSuggestions.length > 0) && (
+                  <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white rounded-xl border border-gray-200 shadow-lg max-h-72 overflow-y-auto">
+                    {barcodeSuggestionsLoading && barcodeSuggestions.length === 0 ? (
+                      <div className="flex items-center justify-center gap-2 py-4 text-xs text-gray-400">
+                        <div className="w-3.5 h-3.5 border-2 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin" />
+                        Searching…
+                      </div>
+                    ) : (
+                      barcodeSuggestions.map(product => (
+                        <button
+                          key={product.id}
+                          type="button"
+                          onClick={() => selectBarcodeSuggestion(product)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#F5C742]/10 transition-colors text-left border-b border-gray-50 last:border-b-0"
+                        >
+                          <div className="w-8 h-8 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                            {product.image
+                              ? <img src={product.image} className="w-full h-full object-cover" alt="" />
+                              : <Package className="w-3.5 h-3.5 text-gray-300" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
+                            <p className="text-[10px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                          </div>
+                          <p className="text-xs font-bold text-[#327F74] shrink-0">{formatCurrency(product.price)}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
                 {barcodeScanFeedback && (
                   <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${barcodeScanFeedback.type === 'success' ? 'bg-green-500/20 text-green-700' :
                       barcodeScanFeedback.type === 'customer' ? 'bg-blue-500/20 text-blue-700' : 'bg-red-500/20 text-red-700'
@@ -668,38 +723,18 @@ const POSTouchScreen = React.memo((props) => {
                   ];
                   const allBtns = [...interactive, ...commonActionButtons('h-5 w-5')];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
+                  // Held bills are managed from the Layaways list (Save Layaway /
+                  // Layaways action) — not duplicated here as a separate notifier.
                   return (
-                    <>
-                      <div className="grid grid-cols-2 gap-2">
-                        {visible.map(btn => (
-                          <button key={btn.id} type="button" onClick={btn.action}
-                            className={`flex flex-col items-center justify-center gap-1.5 h-[72px] rounded-xl border transition-colors ${btn.color}`}>
-                            {btn.icon}
-                            <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                      {heldSales.length > 0 && (
-                        <div className="mt-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#F5C742] mb-2">Held Bills</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {heldSales.map((h) => (
-                              <div key={h.id} className="flex items-center gap-0.5">
-                                <button type="button" onClick={() => recallInvoice(h.id)}
-                                  className="px-3 py-1.5 text-xs font-bold text-amber-800 bg-[#F5C742]/10 hover:bg-amber-100 rounded-l-lg border border-r-0 border-[#327F74]/30 transition-colors">
-                                  {h.label} · {formatCurrency(h.total)}
-                                </button>
-                                <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
-                                  title="Delete held bill"
-                                  className="px-1.5 py-1.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-lg transition-colors">
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </>
+                    <div className="grid grid-cols-2 gap-2">
+                      {visible.map(btn => (
+                        <button key={btn.id} type="button" onClick={btn.action}
+                          className={`flex flex-col items-center justify-center gap-1.5 h-[72px] rounded-xl border transition-colors ${btn.color}`}>
+                          {btn.icon}
+                          <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   );
                 })()}
               </div>
@@ -1014,24 +1049,7 @@ const POSTouchScreen = React.memo((props) => {
                   </button>
                 </div>
               </div>
-              {/* Held recall pills */}
-              {heldSales.length > 0 && (
-                <div className="px-3 py-1.5 bg-amber-50 border-t border-[#F5C742]/20 flex flex-wrap gap-1">
-                  {heldSales.map((h) => (
-                    <div key={h.id} className="flex items-center">
-                      <button type="button" onClick={() => recallInvoice(h.id)}
-                        className="px-2 py-0.5 text-[10px] font-bold text-amber-800 bg-[#F5C742]/20 hover:bg-amber-200 rounded-l-full border border-r-0 border-[#F5C742]/30 transition-colors">
-                        {h.label} · {formatCurrency(h.total)}
-                      </button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
-                        title="Delete held bill"
-                        className="px-1 py-0.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-full transition-colors">
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* Held bills are recalled from the Layaways list, not shown here. */}
             </div>
           </div>
 
