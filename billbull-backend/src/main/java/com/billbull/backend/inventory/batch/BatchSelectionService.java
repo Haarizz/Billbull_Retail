@@ -886,7 +886,11 @@ public class BatchSelectionService {
         LocalDate minSaleDate = today.plusDays(minExpiryDays(product));
 
         if (expiry == null) {
-            return product.isExpiryEnabled() ? "missing expiry date" : null;
+            // Treat batches without an expiry date as non-expiring (always eligible).
+            // Previously this blocked sale when expiryEnabled was true, but purchase
+            // receipts don't always set expiry dates — blocking those units at POS
+            // caused "Insufficient Batch Stock" errors despite warehouse stock existing.
+            return null;
         }
         if (expiry.isBefore(today)) {
             return "expired on " + expiry;

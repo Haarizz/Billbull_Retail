@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.billbull.backend.sales.templates.model.PrintTemplate;
 import com.billbull.backend.sales.templates.service.PrintTemplateService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @RestController
 @RequestMapping("/api/templates")
@@ -28,6 +29,9 @@ public class PrintTemplateController {
 
     @Autowired
     private ModulePermissionService modulePermissionService;
+
+    @Autowired
+    private BranchAccessService branchAccessService;
 
     /** Templates are shared between sales and purchases — allow access if the user can view either. */
     private void requireView() {
@@ -54,8 +58,16 @@ public class PrintTemplateController {
         return printTemplateService.getAllTemplates();
     }
 
+    /**
+     * branchId is optional — POS categories pass it explicitly, but if omitted it is
+     * resolved server-side from the current user's branch so a client can never spoof
+     * another branch's templates. Existing Sales/Purchases callers that never pass
+     * branchId are unaffected: category lookups for those global categories still
+     * return every row regardless of branchId, since findByCategory ignores it.
+     */
     @GetMapping("/search")
-    public List<PrintTemplate> getTemplatesByCategory(@RequestParam String category) {
+    public List<PrintTemplate> getTemplatesByCategory(@RequestParam String category,
+            @RequestParam(required = false) Long branchId) {
         requireView();
         return printTemplateService.getTemplatesByCategory(category);
     }
@@ -66,6 +78,30 @@ public class PrintTemplateController {
     public List<PrintTemplate> getTemplateFamily(@RequestParam String base) {
         requireView();
         return printTemplateService.getTemplatesByCategoryPrefix(base);
+    }
+
+    /**
+     * Resolves the effective template for a POS category using the strict priority order
+     * (branch-specific default -> global default -> system fallback). branchId defaults to
+     * the current user's branch when omitted. Returns 200 with a minimal in-memory FULL/A4
+     * template (never null) so POS callers always have something to render — the "system
+     * fallback" tier of the priority chain.
+     */
+    @GetMapping("/resolve")
+    public PrintTemplate resolveTemplate(@RequestParam String category,
+            @RequestParam(required = false) Long branchId) {
+        requireView();
+        Long effectiveBranchId = branchId != null ? branchId : branchAccessService.getCurrentUserBranchId();
+        return printTemplateService.resolveTemplate(category, effectiveBranchId, () -> {
+            PrintTemplate fallback = new PrintTemplate();
+            fallback.setCategory(category);
+            fallback.setName(category + " (System Default)");
+            fallback.setDefault(true);
+            fallback.setTemplateType("FULL");
+            fallback.setPaperSize("A4");
+            fallback.setOrientation("Portrait");
+            return fallback;
+        });
     }
 
     @PostMapping

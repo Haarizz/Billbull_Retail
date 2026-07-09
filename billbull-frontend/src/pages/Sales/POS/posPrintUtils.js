@@ -2,6 +2,15 @@ import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRender
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
 
+/**
+ * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
+ * (Phase 3). Off by default: POS keeps using buildPosA4Template's fabricated
+ * in-memory template. Flip VITE_USE_NEW_POS_PRINT_TEMPLATE=true to resolve real,
+ * branch-scoped PrintTemplate rows instead — an env flag was chosen over a runtime
+ * DB toggle so rollback needs no redeploy of backend state, only a rebuild.
+ */
+export const USE_NEW_POS_PRINT_TEMPLATE = String(import.meta.env.VITE_USE_NEW_POS_PRINT_TEMPLATE || '').toLowerCase() === 'true';
+
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
   out = out.replace(/(html\s*,\s*\n?\s*body\s*\{[^}]*?)(width\s*:\s*[\d.]+mm)/g, '$1width:100%');
@@ -1437,7 +1446,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
 };
 
 export const buildPosPrintData = (full, footerNote = '') => ({
-  title: 'TAX INVOICE',
+  title: Number(full.taxTotal) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
   docNo: full.invoiceNumber || '',
   date: full.invoiceDate || '',
   customer: {
@@ -1475,6 +1484,97 @@ export const buildPosPrintData = (full, footerNote = '') => ({
     salesPerson: full.posCounterName || '',
   },
 });
+
+/**
+ * Builds a POS cart/session-shaped "draft invoice" object from live, pre-payment
+ * checkout state — same field shape as checkoutThermalHtml's mockInvoice in
+ * POSSales.jsx (itemCode/itemName/quantity/unitPrice/netAmount/discountPercent/
+ * taxPercent/taxAmount), which is what buildPosPrintData already expects as input.
+ * Piping this through buildPosPrintData gives an A4 checkout-time preview the exact
+ * same canonical printData shape the real, posted-invoice print/reprint path uses —
+ * without needing a posted SalesInvoice to exist yet.
+ */
+export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
+  const {
+    invoiceNumber = '',
+    invoiceDate = new Date().toISOString(),
+    customer,
+    saleType = '',
+    terminalId = '',
+    counterName = '',
+    paymentMode = 'Cash',
+    subTotal = 0,
+    taxTotal = 0,
+    taxInclusive = false,
+    invoiceTotal = 0,
+    discountTotal = 0,
+    items = [],
+    branchName = '',
+  } = cart;
+
+  const mockInvoice = {
+    invoiceNumber,
+    invoiceDate,
+    createdAt: invoiceDate,
+    customerName: customer?.name || 'Walk-in Customer',
+    customerPhone: customer?.phone || '',
+    customerEmail: customer?.email || '',
+    customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
+    customerTrn: customer?.trn || '',
+    customerAddress: customer?.shippingAddress || customer?.address || '',
+    saleType,
+    posTerminalId: terminalId,
+    posCounterName: counterName,
+    paymentMode,
+    subTotal,
+    taxTotal,
+    taxInclusive,
+    invoiceTotal,
+    discountTotal,
+    branchName,
+    items: items.map(it => ({
+      itemCode: it.itemCode || it.code || it.productId || it.id || '',
+      itemName: it.itemName || it.name || '',
+      description: it.description || '',
+      quantity: it.quantity || 0,
+      unitPrice: it.unitPrice || it.price || 0,
+      netAmount: it.netAmount || it.total || 0,
+      discountPercent: it.discountPercent || it.discount || 0,
+      taxPercent: it.taxPercent != null ? it.taxPercent : it.taxRate,
+      taxAmount: it.taxAmount,
+      batches: it.batchNumber ? [{ batchNumber: it.batchNumber }] : (it.batches || []),
+      batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+      voided: !!it.voided || !!it.isVoided,
+    })),
+  };
+
+  return buildPosPrintData(mockInvoice, footerNote);
+};
+
+/**
+ * Returns a shallow copy of a resolved PrintTemplate with VAT columns (colVAT/
+ * colVATAmount, at both the top-level displayOptions and nested
+ * salesDesignerSettings) forced off when the sale has no tax — mirrors the
+ * hasTax routing the thermal receipt path already applies (Tax Invoice title +
+ * VAT columns only when tax > 0, plain Sales Invoice otherwise), now extended to
+ * the real A4 template so the SAME resolved template prints correctly either
+ * way instead of needing a second template. Never mutates the original template
+ * object (the one held in React state / the designer's cache).
+ */
+export const applyTaxAwareDisplayOptions = (template, hasTax) => {
+  if (!template || hasTax) return template;
+  try {
+    const parsed = JSON.parse(template.displayOptions || '{}');
+    parsed.colVAT = false;
+    parsed.colVATAmount = false;
+    if (parsed.salesDesignerSettings) {
+      parsed.salesDesignerSettings = { ...parsed.salesDesignerSettings, colVAT: false, colVATAmount: false };
+    }
+    return { ...template, displayOptions: JSON.stringify(parsed) };
+  } catch {
+    return template;
+  }
+};
 
 export const buildPosA4Template = (footerNote = '', opts = {}, category = 'Sales Invoice') => {
   const ds = {

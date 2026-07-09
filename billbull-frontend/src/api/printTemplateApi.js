@@ -46,3 +46,17 @@ export const setDefaultTemplate = async (id, template) => {
 export const deletePrintTemplate = async (id) => {
     await api.delete(`/api/templates/${id}`);
 };
+
+/**
+ * Resolves the effective template for a category using the backend's strict
+ * priority order (branch-specific default -> global default -> system fallback).
+ * branchId is optional — server resolves the caller's own branch when omitted.
+ * Used by POS to resolve the same "Sales Invoice"/"Sales Return" templates Back
+ * Office's designer edits (Phase 3 cutover).
+ */
+export const resolvePrintTemplate = async (category, branchId) => {
+    const params = new URLSearchParams({ category });
+    if (branchId != null) params.set('branchId', String(branchId));
+    const res = await api.get(`/api/templates/resolve?${params.toString()}`);
+    return res.data;
+};

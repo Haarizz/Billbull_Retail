@@ -13,4 +13,10 @@ public interface PrintTemplateRepository extends JpaRepository<PrintTemplate, Lo
 
     /** All templates whose category begins with the given prefix (e.g. "Sales Invoice"). */
     List<PrintTemplate> findByCategoryStartingWith(String prefix);
+
+    List<PrintTemplate> findByCategoryAndBranchId(String category, Long branchId);
+
+    List<PrintTemplate> findByCategoryAndBranchIdIsNull(String category);
+
+    List<PrintTemplate> findByCategoryStartingWithAndBranchId(String prefix, Long branchId);
 }
