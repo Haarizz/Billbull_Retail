@@ -460,7 +460,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                 @Param("dateTo") LocalDate dateTo,
                 @Param("branchId") Long branchId);
 
-        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items WHERE s.salesChannel = 'POS' " +
+        @Query("SELECT DISTINCT s FROM SalesInvoice s LEFT JOIN FETCH s.items " +
+               "WHERE s.salesChannel IN ('POS', 'Retail_POS', 'Retail_Delivery') " +
                "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
                "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
@@ -477,4 +478,15 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @org.springframework.data.jpa.repository.Modifying
         @Query("UPDATE SalesInvoice s SET s.posReceiptQr = :qr WHERE s.id = :id")
         void updatePosReceiptQr(@Param("id") Long id, @Param("qr") String qr);
+
+        /**
+         * Record a receipt reprint as a single-column-family UPDATE (same rationale as
+         * {@link #updatePosReceiptQr}) — bumps the counter and stamps who/when, without
+         * touching any other invoice column.
+         */
+        @org.springframework.data.jpa.repository.Modifying
+        @Query("UPDATE SalesInvoice s SET s.reprintCount = COALESCE(s.reprintCount, 0) + 1, " +
+               "s.lastReprintedBy = :reprintedBy, s.lastReprintedAt = :reprintedAt WHERE s.id = :id")
+        void recordReprint(@Param("id") Long id, @Param("reprintedBy") String reprintedBy,
+                            @Param("reprintedAt") java.time.Instant reprintedAt);
 }
