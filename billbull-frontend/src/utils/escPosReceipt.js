@@ -685,12 +685,24 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   // BEFORE the credit-account block — not inline above the line items. It is
   // emitted in that position further down (client item 4: detail ordering).
 
+  // Voided lines are kept on the receipt (audit trail) but shown with negative
+  // amounts + a [VOID] tag and excluded from the total. Tally what they would
+  // have been for the informational "Voided Items" row emitted before TOTAL.
+  let voidedLineTotal = 0;
+  let voidedLineCount = 0;
   (invoice.items || []).forEach((item) => {
-    if (item.voided || item.isVoided) return;
+    const isVoided = Boolean(item.voided || item.isVoided);
+    // A voided line's amounts print with a leading "-" to signal it was pulled
+    // from the sale. `sgn` applies the sign; the value itself stays positive.
+    const sgn = (text) => (isVoided ? `- ${text}` : text);
     const qty = item.quantity || 0;
     const name = item.itemName || item.productName || item.name || 'Item';
     const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
     const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    if (isVoided) {
+      voidedLineTotal += Number.isFinite(lineTotal) ? lineTotal : 0;
+      voidedLineCount += 1;
+    }
     // Same per-line discount breakdown as the HTML preview (BBQA-5.3-015): base
     // price, discount %/amount, then the net line — so the ESC/POS printout
     // matches the checkout preview instead of silently reprinting a discounted
@@ -715,16 +727,18 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     // readable; the right-aligned price rows below are emitted separately, so
     // wrapping the name never shifts a price out of its column.
     w.push(CMD.BOLD_ON);
-    for (const ln of wrapToWidth(`${qty}x ${name}`, width, '   ')) w.gline(gutter, ln);
+    for (const ln of wrapToWidth(`${qty}x ${name}${isVoided ? ' [VOID]' : ''}`, width, '   ')) w.gline(gutter, ln);
     w.push(CMD.BOLD_OFF);
     w.push(CMD.FEED_DOTS(NAME_GAP_DOTS));
     if (lineDiscountAmount > 0) {
-      detailRow(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount));
+      detailRow(`Price @ ${fmt(unitPrice)}`, sgn(fmt(grossAmount)));
       detailRow(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`);
-      detailRow(`Net @ ${fmt(netUnit)}`, fmt(lineTotal));
+      detailRow(`Net @ ${fmt(netUnit)}`, sgn(fmt(lineTotal)));
     } else {
-      detailRow(`@ ${fmt(unitPrice)}`, fmt(lineTotal));
+      detailRow(`@ ${fmt(unitPrice)}`, sgn(fmt(lineTotal)));
     }
+    const vatRate = parseFloat(item.taxPercent ?? item.taxRate ?? item.vatPercent ?? NaN);
+    if (Number.isFinite(vatRate)) detailLine(`VAT: ${fmt(vatRate)}%`);
     const sku = item.sku || item.itemCode || '';
     if (sku) detailLine(`SKU: ${sku}`);
     const serial = item.serialNumber || '';
@@ -745,7 +759,14 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (invoice.discountTotal != null) {
     resolvedSubTotal = parseFloat(invoice.subTotal || 0) || 0;
     resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
-    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
+    const netAfterDiscount = resolvedSubTotal - resolvedDiscountTotal;
+    // Under INCLUSIVE VAT, netAfterDiscount is still tax-laden — extract VAT
+    // via the already-computed taxTotal (exact, rate-agnostic) instead of
+    // treating it directly as the ex-VAT taxable base.
+    const taxTotalForExtraction = parseFloat(invoice.taxTotal || 0) || 0;
+    resolvedTaxableAmount = invoice.taxInclusive
+      ? Math.max(0, netAfterDiscount - taxTotalForExtraction)
+      : netAfterDiscount;
   } else {
     resolvedTaxableAmount = parseFloat(invoice.subTotal || 0) || 0;
     const grossSubtotal = (invoice.items || []).reduce((sum, it) => {
@@ -770,6 +791,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   if (showVatSummary) w.gline(gutter, buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) w.gline(gutter, buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.gline(gutter, buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
+  // Informational disclosure of voided lines — excluded from TOTAL below, shown
+  // only when at least one line was voided.
+  if (voidedLineCount > 0) {
+    w.gline(gutter, buildFixedWidthLine(`Voided Items (${voidedLineCount}):`, `- ${fmt(voidedLineTotal)}`, width));
+  }
   emitDivider(w, gutter, hr, { after: 0 });
 
   // TOTAL emphasis (req 10): CHAR_SIZE(1,2) doubles HEIGHT only — the character

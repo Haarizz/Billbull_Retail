@@ -411,7 +411,8 @@ const SalesInvoice = () => {
         baseRequiredQuantity: Number(i.baseRequiredQuantity) || 0,
         batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
         batchSelectionMode: i.batchSelectionMode || 'AUTO_FEFO',
-        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        voided: Boolean(i.voided ?? i.isVoided ?? false),
     });
 
     // Items
@@ -1698,7 +1699,8 @@ const SalesInvoice = () => {
         }
     };
 
-    const calculateRow = (item) => {
+    const calculateRow = (item, vatModeOverride) => {
+        const effectiveVatMode = vatModeOverride || vatMode;
         const qty = Number(item.qty) || 0;
         const price = Number(item.price) || 0;
         const focQty = Number(item.foc) || 0;
@@ -1732,7 +1734,7 @@ const SalesInvoice = () => {
         const { taxableAmount, taxAmount, total: netAmount } = computeLineTaxTotals({
             netAfterDiscount,
             taxPercent,
-            vatMode,
+            vatMode: effectiveVatMode,
         });
 
         const salesExTax = taxableAmount;
@@ -1750,6 +1752,7 @@ const SalesInvoice = () => {
             taxAmt: taxAmount,
             gross: grossAmount,
             net: netAmount,
+            taxableAmount,
             gp: gpPercent
         };
     };
@@ -2259,9 +2262,14 @@ const SalesInvoice = () => {
         setSalesType(resolvedTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
-        // Map items back
+        // Map items back. Recompute each row's derived fields (taxableAmount,
+        // taxAmt, net) against the invoice's OWN vatMode explicitly — the
+        // `vatMode` state var may not have flushed yet (setVatMode above is
+        // async), and mapServerInvoiceItem's stored taxableAmount can be stale
+        // relative to whatever VAT mode the row is now being viewed under.
         if (invoice.items && invoice.items.length > 0) {
-            setItems(invoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            const loadedVatMode = invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE';
+            setItems(invoice.items.map((i, index) => calculateRow(mapServerInvoiceItem(i, Date.now() + index), loadedVatMode)));
         } else {
             setItems([createBlankInvoiceItem()]);
         }
@@ -2929,7 +2937,9 @@ const SalesInvoice = () => {
                         email: fullCustomer?.email || '',
                         trn: fullCustomer?.trn
                     },
-                    items: (dataToPrint.items || []).map(i => ({
+                    items: (dataToPrint.items || []).map(i => {
+                        const isVoided = Boolean(i.voided ?? i.isVoided ?? false);
+                        return {
                         code: i.itemCode || i.code,
                         name: i.itemName || i.name || '',
                         desc: i.description || i.shortDescription || i.desc || '',
@@ -2942,12 +2952,20 @@ const SalesInvoice = () => {
                         salesPerson: dataToPrint.salesperson || '',
                         location: dataToPrint.branch || '',
                         unit: i.unit,
+                        // Voided lines keep their REAL values (no longer zeroed): the
+                        // renderer prints them with a leading "-" + [VOID] tag via the
+                        // `voided` flag. They're already excluded from the totals by
+                        // summarizeSalesItems and disclosed in the Voided Items row.
+                        // When a stored voided line came back with netAmount/taxAmount
+                        // zeroed (older POS posts), pass them as undefined so the
+                        // renderer re-derives taxable/tax/total from qty×price×disc
+                        // instead of printing 0.00.
                         qty: Number(i.quantity || i.qty),
                         price: Number(i.price),
                         disc: Number(i.discount || i.disc),
                         tax: Number(i.taxRate || i.tax),
-                        taxAmt: Number(i.taxAmount || i.taxAmt || 0),
-                        total: Number(i.netAmount || i.net),
+                        taxAmt: (Number(i.taxAmount || i.taxAmt || 0) === 0 && isVoided) ? undefined : Number(i.taxAmount || i.taxAmt || 0),
+                        total: (Number(i.netAmount || i.net || 0) === 0 && isVoided) ? undefined : Number(i.netAmount || i.net),
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                         // QA-030: provide both joined (legacy) and singular
@@ -2959,8 +2977,10 @@ const SalesInvoice = () => {
                         batchNumbers: Array.isArray(i.batchSelections)
                             ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
                             : '',
-                        expiry: i.expiry || i.expiryDate || ''
-                    })),
+                        expiry: i.expiry || i.expiryDate || '',
+                        voided: isVoided,
+                        };
+                    }),
                     totals: {
                         subTotal: resolvedSummary.grossTotal,
                         // True ex-VAT taxable base (after item + footer discount). Passed
@@ -2978,7 +2998,10 @@ const SalesInvoice = () => {
                         // Use API-stored amount (always correct AED value) rather than re-computed value.
                         footerDiscountAmount: Number(dataToPrint.billDiscountAmount) || 0,
                         deliveryCharge: resolvedDeliveryCharge,
-                        roundOff: resolvedRoundOff
+                        roundOff: resolvedRoundOff,
+                        // Informational voided-lines disclosure (excluded from grandTotal).
+                        voidedTotal: resolvedSummary.voidedTotal || 0,
+                        voidedCount: resolvedSummary.voidedCount || 0
                     },
                     meta: {
                         status: dataToPrint.status,
@@ -4086,15 +4109,19 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {[...items].reverse().map((item, index) => (
+                                                        {[...items].reverse().map((item, index) => {
+                                                            const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
+                                                            return (
                                                             <React.Fragment key={item.id}>
-                                                                <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
+                                                                <tr className={`group transition-colors align-middle ${isVoided ? 'bg-red-50/50' : 'hover:bg-slate-50/50 bg-white'}`}>
                                                                     {/* Index */}
                                                                     <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{index + 1}</td>
 
                                                                     {/* Item / Description */}
                                                                     <td className="px-3 py-2">
-
+                                                                        {isVoided && (
+                                                                            <span className="inline-block mb-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-600 border border-red-200">VOID</span>
+                                                                        )}
                                                                         {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                                                                         {(!item.code && !item.name && !item.desc) ? (
                                                                             <InlineProductSearchCell
@@ -4270,11 +4297,12 @@ const SalesInvoice = () => {
 
                                                                     </td>
 
-                                                                    {/* Line Total */}
+                                                                    {/* Line Total — voided lines show the real net as negative (no
+                                                                        strike-through); excluded from the total, disclosed below. */}
                                                                     <td className="px-3 py-2 text-right">
 
-                                                                        <div className="font-bold text-slate-800 text-[13px] flex flex-col items-end">
-                                                                            {((item.net) || (item.total) || 0).toFixed(2)}
+                                                                        <div className={`font-bold text-[13px] flex flex-col items-end ${isVoided ? 'text-red-500' : 'text-slate-800'}`}>
+                                                                            {isVoided ? `- ${((item.net) || (item.total) || 0).toFixed(2)}` : ((item.net) || (item.total) || 0).toFixed(2)}
                                                                         </div>
 
                                                                     </td>
@@ -4341,7 +4369,7 @@ const SalesInvoice = () => {
                                                                     </tr>
                                                                 )}
                                                             </React.Fragment>
-                                                        ))}
+                                                        );})}
                                                     </tbody>
                                                 </table>
                                             </div>
@@ -4423,6 +4451,10 @@ const SalesInvoice = () => {
                                                     <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>Taxable Amount</span>
+                                                    <CurrencyAmount value={Math.max(0, taxableSubTotal - billDiscountAmount)} currency={invoiceCurrency} />
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Total Tax (VAT)</span>
                                                     <CurrencyAmount value={totalTax} currency={invoiceCurrency} />
                                                 </div>
@@ -4471,6 +4503,15 @@ const SalesInvoice = () => {
                                                         )}
                                                     </span>
                                                 </div>
+                                                {/* Informational: voided lines are excluded from Net Invoice
+                                                    Amount; this row just discloses what was voided. Shown
+                                                    only when at least one line was voided. */}
+                                                {invoiceSummary.voidedCount > 0 && (
+                                                    <div className="flex justify-between text-xs text-red-500">
+                                                        <span>Voided Items ({invoiceSummary.voidedCount})</span>
+                                                        <span className="font-medium">- <CurrencyAmount value={invoiceSummary.voidedTotal} currency={invoiceCurrency} /></span>
+                                                    </div>
+                                                )}
                                                 <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
                                                     <span>Net Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />

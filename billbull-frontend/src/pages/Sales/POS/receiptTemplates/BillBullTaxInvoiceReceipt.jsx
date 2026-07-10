@@ -201,6 +201,10 @@ export const TEMPLATE2_CSS = `
   .bb-receipt .kv2.small .lbl .en,
   .bb-receipt .kv2.small .lbl .ar,
   .bb-receipt .kv2.small .val { font-size: 9px; }
+  /* Voided-items disclosure row: red to match the voided line styling. */
+  .bb-receipt .kv2.void-total .lbl .en,
+  .bb-receipt .kv2.void-total .lbl .ar,
+  .bb-receipt .kv2.void-total .val { color: #dc2626; }
   .bb-receipt .section-title {
     display: flex;
     justify-content: space-between;
@@ -301,8 +305,11 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
   const showDelivery = delivery && ((delivery.lineEn && delivery.lineEn.length) || (delivery.lineAr && delivery.lineAr.length));
   const showLoyalty = loyalty && (loyalty.tier || loyalty.pointsEarned || loyalty.pointsBalance);
 
-  const totalItems = items.length;
-  const totalQty = items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+  // Voided lines stay on the receipt (audit trail) but don't count toward the
+  // item/qty totals — those reflect the sold lines only.
+  const activeItems = items.filter((i) => !i.voided);
+  const totalItems = activeItems.length;
+  const totalQty = activeItems.reduce((sum, i) => sum + Number(i.qty || 0), 0);
 
   // On-screen preview width: 58mm vs 80mm. The print builder overrides
   // --paper-width to 100% (the page is physically sized by @page), so this only
@@ -459,13 +466,20 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
           </tr>
         </thead>
         <tbody>
-          {items.map((item, i) => (
-            <tr className="item-row" key={i}>
+          {items.map((item, i) => {
+            // Voided line: muted red + [VOID] tag + negative amounts (no
+            // strike-through). Informational — excluded from the total below.
+            const sgn = (text) => (item.voided ? `- ${text}` : text);
+            return (
+            <tr className="item-row" key={i} style={item.voided ? { color: "#dc2626" } : undefined}>
               <td>
-                <div className="item-name">{item.nameEn}</div>
+                <div className="item-name">
+                  {item.nameEn}
+                  {item.voided && <span style={{ marginLeft: 4, fontWeight: 700, fontSize: 8 }}>[VOID]</span>}
+                </div>
                 {item.nameAr && <div className="item-name-ar ar">{item.nameAr}</div>}
                 {(item.sku || item.vatLabel || item.discountPercent > 0) && (
-                  <div className="item-meta">
+                  <div className="item-meta" style={item.voided ? { color: "#dc2626" } : undefined}>
                     {[
                       item.sku && `SKU ${item.sku}`,
                       item.vatLabel,
@@ -477,16 +491,17 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
                   </div>
                 )}
                 {item.discountAmount > 0 && (
-                  <div className="item-discount-line">
+                  <div className="item-discount-line" style={item.voided ? { color: "#dc2626" } : undefined}>
                     Discount: - {currency} {fmt(item.discountAmount)}
                   </div>
                 )}
               </td>
-              <td className="num">{item.qty}</td>
-              <td className="num">{fmt(item.rate)}</td>
-              <td className="num">{fmt(Number(item.qty || 0) * Number(item.rate || 0))}</td>
+              <td className="num">{sgn(String(item.qty))}</td>
+              <td className="num">{sgn(fmt(item.rate))}</td>
+              <td className="num">{sgn(fmt(Number(item.qty || 0) * Number(item.rate || 0)))}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
 
@@ -505,10 +520,21 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
       <div className="totals">
         <KV en="Subtotal" ar="المجموع الفرعي" value={`${currency} ${fmt(totals.subtotal)}`} />
         {!!totals.discount && <KV en="Discount" ar="الخصم" value={`- ${currency} ${fmt(totals.discount)}`} />}
+        <KV en="Taxable Amount" ar="المبلغ الخاضع للضريبة" value={`${currency} ${fmt(totals.taxableAmount)}`} />
         <KV en="VAT @ 5%" ar="ضريبة القيمة المضافة 5٪" value={`${currency} ${fmt(totals.vat5)}`} />
         {!!totals.vat0 && <KV en="VAT @ 0%" ar="ضريبة القيمة المضافة 0٪" value={`${currency} ${fmt(totals.vat0)}`} />}
         {!!totals.deliveryCharge && <KV en="Delivery Charge" ar="رسوم التوصيل" value={`${currency} ${fmt(totals.deliveryCharge)}`} />}
         {!!totals.roundOff && <KV en="Round Off" ar="التقريب" value={`${currency} ${fmt(totals.roundOff)}`} />}
+        {/* Informational: voided lines excluded from TOTAL TO PAY, shown only
+            when at least one line was voided. */}
+        {totals.voidedCount > 0 && (
+          <KV
+            className="void-total"
+            en={`Voided Items (${totals.voidedCount})`}
+            ar="الأصناف الملغاة"
+            value={`- ${currency} ${fmt(totals.voidedTotal)}`}
+          />
+        )}
       </div>
 
       {/* ================= TOTAL TO PAY ================= */}
