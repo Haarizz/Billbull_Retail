@@ -1174,6 +1174,12 @@ const SalesInvoice = () => {
     const previousOutstanding = customerOutstanding;
     const newTotalOutstanding = (previousOutstanding + netTotal) - amountCollected;
 
+    // Walk-in is a shared generic customer code, not a real account — it has no
+    // meaningful running balance, so outstanding figures shouldn't be shown for it.
+    const isWalkInCustomer = !!(selectedCustomer?.code === 'WALKIN'
+        || selectedCustomer?.name?.toLowerCase().includes('walk-in')
+        || selectedCustomer?.name?.toLowerCase().includes('walkin'));
+
     // ==========================================
     // HANDLERS
     // ==========================================
@@ -4473,10 +4479,12 @@ const SalesInvoice = () => {
 
                                             {/* RIGHT: Payment */}
                                             <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
+                                                {!isWalkInCustomer && (
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Previous Outstanding</span>
                                                     <CurrencyAmount value={previousOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                )}
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>This Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
@@ -4516,10 +4524,12 @@ const SalesInvoice = () => {
                                                     />
                                                 </div>
 
+                                                {!isWalkInCustomer && (
                                                 <div className="flex justify-between text-base font-bold text-red-600 border-t border-slate-200 pt-2 my-2">
                                                     <span>New Total Outstanding</span>
                                                     <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                )}
                                                 {paymentMode && (
                                                 <div>
                                                     <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
@@ -4957,7 +4967,7 @@ const SalesInvoice = () => {
                     currency={invoiceCurrency}
                     bankAccountOptions={bankAccountOptions}
                     isSaving={isSettlementSaving}
-                    hideCredit={!!(selectedCustomer?.code === 'WALKIN' || selectedCustomer?.name?.toLowerCase().includes('walk-in') || selectedCustomer?.name?.toLowerCase().includes('walkin'))}
+                    hideCredit={isWalkInCustomer}
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}
