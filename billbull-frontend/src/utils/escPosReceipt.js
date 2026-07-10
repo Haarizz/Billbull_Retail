@@ -579,6 +579,10 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   logoDataUrl = null, showLogo = true,
   showCompanyDetails = true, outletAddress = '', outletPhone = '',
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  // No-tax sale ⇒ suppress ALL tax content (per-line VAT%, Taxable Amount row,
+  // VAT summary row). TRN is separately gated by showTrn (already forced off by
+  // the caller when there's no tax). Defaults true to preserve historical output.
+  hasTax = true,
   showQRCode = true, qrContent = null,
   // Social/stamp image (data URL). When present it is printed INSTEAD of the QR
   // (client item 8) — mirrors buildThermalReceiptHtml's stamp-vs-QR precedence.
@@ -738,7 +742,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       detailRow(`@ ${fmt(unitPrice)}`, sgn(fmt(lineTotal)));
     }
     const vatRate = parseFloat(item.taxPercent ?? item.taxRate ?? item.vatPercent ?? NaN);
-    if (Number.isFinite(vatRate)) detailLine(`VAT: ${fmt(vatRate)}%`);
+    if (hasTax && Number.isFinite(vatRate)) detailLine(`VAT: ${fmt(vatRate)}%`);
     const sku = item.sku || item.itemCode || '';
     if (sku) detailLine(`SKU: ${sku}`);
     const serial = item.serialNumber || '';
@@ -785,10 +789,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   w.gline(gutter, buildFixedWidthLine('Subtotal:', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     w.gline(gutter, buildFixedWidthLine('Discount:', fmt(resolvedDiscountTotal), width));
-    w.gline(gutter, buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
+    // "Taxable Amount" is a tax-invoice-only label — omit on a no-tax sale.
+    if (hasTax) w.gline(gutter, buildFixedWidthLine('Taxable Amount:', fmt(resolvedTaxableAmount), width));
   }
   if (showServiceCharge && invoice.serviceChargeAmount) w.gline(gutter, buildFixedWidthLine('Service Charge:', fmt(invoice.serviceChargeAmount), width));
-  if (showVatSummary) w.gline(gutter, buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
+  if (hasTax && showVatSummary) w.gline(gutter, buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.):' : 'VAT:', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) w.gline(gutter, buildFixedWidthLine('Delivery Charge:', fmt(invoice.deliveryCharge), width));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) w.gline(gutter, buildFixedWidthLine('Shipping:', fmt(shippingCharge), width));
   // Informational disclosure of voided lines — excluded from TOTAL below, shown

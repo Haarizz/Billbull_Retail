@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
 import { A4LivePreview, A4PreviewFrame, ThermalMock, PaperSizePicker } from './POSPrintPreview';
-import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText, buildPosPrintData, USE_NEW_POS_PRINT_TEMPLATE } from './posPrintUtils';
+import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText, buildPosPrintData, applyTaxAwareDisplayOptions, USE_NEW_POS_PRINT_TEMPLATE } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
@@ -29,10 +29,14 @@ import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
  * live preview shows exactly what checkout will print, not a separate approximation
  * built from this screen's own toggles (which is what A4LivePreview does).
  */
-const ResolvedTemplateA4Preview = ({ template, isReturn, outlet, footerNote, scale }) => {
+// hasTax=false (POS Receipt sub-tab) builds a no-tax Sales Invoice sample AND
+// strips every tax element from the resolved template, so the designer preview
+// matches the real no-tax checkout print. Defaults true (Tax Invoice tab).
+const ResolvedTemplateA4Preview = ({ template, isReturn, hasTax = true, outlet, footerNote, scale }) => {
   const html = useMemo(() => {
-    const sampleInvoice = buildSampleInvoice({ isReturn });
+    const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTax });
     const data = buildPosPrintData(sampleInvoice, footerNote);
+    const taxAwareTemplate = applyTaxAwareDisplayOptions(template, hasTax);
     const options = {
       companyProfile: {
         companyName: outlet.name, trn: outlet.trn, address: outlet.address, phone: outlet.phone,
@@ -40,8 +44,8 @@ const ResolvedTemplateA4Preview = ({ template, isReturn, outlet, footerNote, sca
         showStampInPrint: !!outlet.stampDataUrl,
       },
     };
-    return generateDocumentPrintHtml(template, data, options);
-  }, [template, isReturn, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote]);
+    return generateDocumentPrintHtml(taxAwareTemplate, data, options);
+  }, [template, isReturn, hasTax, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote]);
   return <A4PreviewFrame html={html} scale={scale} />;
 };
 
@@ -1502,6 +1506,11 @@ const POSConsole = React.memo((props) => {
             const cfg = templateSubTab === 'receipt'
               ? { ...rawCfg, showTrn: false, showVatSummary: false }
               : rawCfg;
+            // The POS Receipt sub-tab is the no-tax document; every other sub-tab
+            // (Tax Invoice / Return / Job Card) is taxed. Drives whether the Live
+            // Preview / Full Preview / Test Print builders render any tax content,
+            // mirroring the real checkout's hasTax routing.
+            const hasTaxPreview = templateSubTab !== 'receipt';
 
             // Template 2 designer state is scoped per sub-tab (POS Receipt vs Tax
             // Invoice) so toggling it on one tab doesn't bleed into the other —
@@ -1566,7 +1575,10 @@ const POSConsole = React.memo((props) => {
                   {
                     // Template 2's own independent Show/Hide toggles drive which
                     // sections the designer preview (and, at checkout, the real
-                    // receipt) renders.
+                    // receipt) renders. hasTax=false (POS Receipt tab) drops all
+                    // tax content (Taxable/VAT rows, per-line VAT label, Customer
+                    // TRN, VAT summary) — same routing as the real checkout.
+                    hasTax: hasTaxPreview,
                     showLogo: t2State.showLogo, showCompanyDetails: t2State.showCompanyDetails, showTrn: t2State.showTrn,
                     showArabic: t2State.showArabic, showCustomerDetails: t2State.showCustomerDetails,
                     showAccountBalance: t2State.showAccountBalance, showDelivery: t2State.showDelivery,
@@ -1610,6 +1622,7 @@ const POSConsole = React.memo((props) => {
                 html = templateSubTab === 'jobcard'
                   ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
                   : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
+                      hasTax:hasTaxPreview,
                       showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
                       showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
                       showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
@@ -1621,7 +1634,7 @@ const POSConsole = React.memo((props) => {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
               } else {
-                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
+                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
               }
               const w = window.open('','_blank');
               w && w.document.write(html);
@@ -1636,7 +1649,7 @@ const POSConsole = React.memo((props) => {
                 printHtml(activeTemplate.buildHtml(componentTemplateData));
                 return;
               }
-              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
             };
 
             const handleTestPrint = async () => {
@@ -1645,6 +1658,7 @@ const POSConsole = React.memo((props) => {
               // changes the 58mm/80mm receipt path.
               if (cfg.paper === 'A4') {
                 const toggles = {
+                  hasTax:hasTaxPreview,
                   showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
                   showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
                   showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
@@ -1681,12 +1695,15 @@ const POSConsole = React.memo((props) => {
               }
 
               const isReturn = templateSubTab === 'return';
-              const sampleInvoice = buildSampleInvoice({ isReturn });
+              const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTaxPreview });
               const outlet = { name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
               const escPosOpts = {
                 ...buildSampleOpts({ outlet, cfg }),
                 isReturn,
-                documentTitle: isReturn ? 'CREDIT NOTE' : (cfg.header || 'TAX INVOICE'),
+                // No-tax (POS Receipt) test print drops all tax content and titles
+                // as SALES INVOICE — matches the real no-tax checkout receipt.
+                hasTax: hasTaxPreview,
+                documentTitle: isReturn ? 'CREDIT NOTE' : (cfg.header || (hasTaxPreview ? 'TAX INVOICE' : 'SALES INVOICE')),
                 documentTitleAr: isReturn ? null : (cfg.headerAr || null),
                 showCreditBalance: cfg.showCreditBalance,
                 creditPreviousBalance: cfg.showCreditBalance ? 245.5 : null,
@@ -2043,6 +2060,7 @@ const POSConsole = React.memo((props) => {
                             ? <ResolvedTemplateA4Preview
                                 template={templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate}
                                 isReturn={templateSubTab==='return'}
+                                hasTax={hasTaxPreview}
                                 outlet={{ name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl }}
                                 footerNote={cfg.footer}
                                 scale={0.42}
@@ -2053,6 +2071,7 @@ const POSConsole = React.memo((props) => {
                               address={tplOutletAddress} phone={tplOutletPhone}
                               footerNote={cfg.footer} scale={0.42}
                               toggles={{
+                                hasTax: hasTaxPreview,
                                 showLogo: cfg.showLogo, showCompanyDetails: cfg.showCompanyDetails,
                                 showTrn: cfg.showTrn, showCustomerDetails: cfg.showCustomerDetails,
                                 showTerms: cfg.showFooterText, showNotes: cfg.showLoyaltyPoints,

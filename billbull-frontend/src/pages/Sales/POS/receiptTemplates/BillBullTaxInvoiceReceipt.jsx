@@ -225,6 +225,7 @@ export const TEMPLATE2_CSS = `
   }
   .bb-receipt table.items thead th .ar { display: block; font-size: 9px; font-weight: 700; }
   .bb-receipt table.items th.num, .bb-receipt table.items td.num { text-align: right; }
+  .bb-receipt table.items td.num { white-space: nowrap; }
   .bb-receipt .item-row td { padding-top: 2mm; vertical-align: top; }
   .bb-receipt .item-name { font-weight: 600; }
   .bb-receipt .item-name-ar { font-weight: 600; font-size: 10px; margin-top: 0.3mm; }
@@ -299,6 +300,9 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
   const flags = data.flags || {};
   const showFlag = (k) => flags[k] !== false;
   const showArabic = showFlag("showArabic");
+  // No-tax sale ⇒ drop ALL tax content (Taxable Amount, VAT rows, per-line VAT
+  // label, Customer/Company TRN, VAT summary). Undefined ⇒ ON (sample renders).
+  const hasTax = showFlag("hasTax");
 
   const showCustomer = customer && (customer.name || customer.mobile || customer.customerCode);
   const showBalance = balance && (balance.previousBalance != null || balance.newBalanceDue != null);
@@ -389,7 +393,7 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
           <KV en="Name" ar="الاسم" value={customer.name || "—"} />
           {customer.mobile && <KV en="Mobile" ar="الجوال" value={customer.mobile} />}
           {customer.customerCode && <KV en="Customer Code" ar="رمز العميل" value={customer.customerCode} />}
-          <KV en="Customer TRN" ar="الرقم الضريبي للعميل" value={customer.customerTrn || "—"} />
+          {hasTax && <KV en="Customer TRN" ar="الرقم الضريبي للعميل" value={customer.customerTrn || "—"} />}
           <div className="dashed" />
         </>
       )}
@@ -478,11 +482,11 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
                   {item.voided && <span style={{ marginLeft: 4, fontWeight: 700, fontSize: 8 }}>[VOID]</span>}
                 </div>
                 {item.nameAr && <div className="item-name-ar ar">{item.nameAr}</div>}
-                {(item.sku || item.vatLabel || item.discountPercent > 0) && (
+                {(item.sku || (hasTax && item.vatLabel) || item.discountPercent > 0) && (
                   <div className="item-meta" style={item.voided ? { color: "#dc2626" } : undefined}>
                     {[
                       item.sku && `SKU ${item.sku}`,
-                      item.vatLabel,
+                      hasTax && item.vatLabel,
                       item.discountPercent > 0 &&
                         `Disc ${Number(item.discountPercent).toFixed(item.discountPercent % 1 ? 2 : 0)}%`,
                     ]
@@ -520,9 +524,9 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
       <div className="totals">
         <KV en="Subtotal" ar="المجموع الفرعي" value={`${currency} ${fmt(totals.subtotal)}`} />
         {!!totals.discount && <KV en="Discount" ar="الخصم" value={`- ${currency} ${fmt(totals.discount)}`} />}
-        <KV en="Taxable Amount" ar="المبلغ الخاضع للضريبة" value={`${currency} ${fmt(totals.taxableAmount)}`} />
-        <KV en="VAT @ 5%" ar="ضريبة القيمة المضافة 5٪" value={`${currency} ${fmt(totals.vat5)}`} />
-        {!!totals.vat0 && <KV en="VAT @ 0%" ar="ضريبة القيمة المضافة 0٪" value={`${currency} ${fmt(totals.vat0)}`} />}
+        {hasTax && <KV en="Taxable Amount" ar="المبلغ الخاضع للضريبة" value={`${currency} ${fmt(totals.taxableAmount)}`} />}
+        {hasTax && <KV en="VAT @ 5%" ar="ضريبة القيمة المضافة 5٪" value={`${currency} ${fmt(totals.vat5)}`} />}
+        {hasTax && !!totals.vat0 && <KV en="VAT @ 0%" ar="ضريبة القيمة المضافة 0٪" value={`${currency} ${fmt(totals.vat0)}`} />}
         {!!totals.deliveryCharge && <KV en="Delivery Charge" ar="رسوم التوصيل" value={`${currency} ${fmt(totals.deliveryCharge)}`} />}
         {!!totals.roundOff && <KV en="Round Off" ar="التقريب" value={`${currency} ${fmt(totals.roundOff)}`} />}
         {/* Informational: voided lines excluded from TOTAL TO PAY, shown only
@@ -616,7 +620,7 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
       )}
 
       {/* ================= VAT SUMMARY ================= */}
-      {showFlag("showVatSummary") && (
+      {hasTax && showFlag("showVatSummary") && (
         <>
           <SectionTitle en="VAT SUMMARY" ar="ملخص الضريبة" />
           <KV className="small" en="Standard (5%)" ar="القياسية (5٪)" value={fmt(vatSummary.standardRateAmount)} />

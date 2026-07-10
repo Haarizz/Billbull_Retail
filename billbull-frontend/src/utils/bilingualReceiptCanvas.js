@@ -78,6 +78,10 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   showCompanyDetails = true,
   showLogo = true, logoDataUrl = null,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  // No-tax sale ⇒ suppress ALL tax content (Taxable row, VAT row, VAT-summary
+  // section). TRN is separately gated by showTrn. Defaults true to preserve the
+  // historical tax-invoice output.
+  hasTax = true,
   showQRCode = true, qrContent = null,
   showCustomerDetails = true,
   showLoyaltyPoints = false,
@@ -411,9 +415,10 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (discountTotal > 0) {
     kv2(L.DISCOUNT, `- ${fmt(discountTotal)}`);
   }
-  kv2(L.TAXABLE, fmt(taxableAmount));
+  // "Taxable Amount" is a tax-invoice-only label — omit on a no-tax sale.
+  if (hasTax) kv2(L.TAXABLE, fmt(taxableAmount));
   if (showServiceCharge && invoice.serviceChargeAmount) kv2(L.SERVICE_CHARGE, fmt(invoice.serviceChargeAmount));
-  if (showVatSummary) kv2(invoice.taxInclusive ? L.VAT_INCL : L.VAT, fmt(invoice.taxTotal));
+  if (hasTax && showVatSummary) kv2(invoice.taxInclusive ? L.VAT_INCL : L.VAT, fmt(invoice.taxTotal));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) kv2(L.DELIVERY_CHARGE, fmt(invoice.deliveryCharge));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) kv2(L.SHIPPING, fmt(shippingCharge));
   const roundOff = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
@@ -489,7 +494,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   }
 
   // ── VAT summary (compliance): per-rate split when the lines carry tax data ─
-  if (showVatSummary && parseFloat(invoice.taxTotal || 0) >= 0) {
+  // Entirely omitted on a no-tax sale — a Sales Invoice has no VAT breakdown.
+  if (hasTax && showVatSummary && parseFloat(invoice.taxTotal || 0) >= 0) {
     dashed();
     sectionTitle(L.VAT_SUMMARY);
     // A line carries a rate under any of taxRate / taxPercent / vatPercent —
