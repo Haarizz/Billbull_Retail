@@ -87,13 +87,19 @@ export const stripForPreview = (html) => {
 export const buildDocumentPreviewHtml = (category, { companyName, trn, address, phone, footerNote }, toggles = {}) => {
   const isReturn = category === 'Sales Return';
   const t = toggles;
+  // hasTax=false (POS Receipt designer tab) ⇒ the A4 sample is a plain Sales
+  // Invoice: no TRN, no VAT %/Amount columns, no Taxable/Total-VAT rows, and a
+  // no-tax sample dataset — matching the real no-tax checkout print. Returns are
+  // always taxed. Undefined ⇒ ON (Tax Invoice tab / historical behaviour).
+  const hasTax = isReturn || t.hasTax !== false;
   const salesDesignerSettings = {
     showLogo:              t.showLogo             !== false,
     showCompanyName:       t.showCompanyDetails    !== false,
     showCompanyAddress:    t.showCompanyDetails    !== false,
-    showTRN:               t.showTrn               !== false,
+    showTRN:               hasTax && t.showTrn     !== false,
     showCustomerDetails:   t.showCustomerDetails   !== false,
     showBillTo:            t.showCustomerDetails   !== false,
+    showCustomerTRN:       hasTax,
     showTerms:             t.showTerms             !== false && !!footerNote,
     showNotes:             t.showNotes             !== false,
     showBankDetails:       !!t.showBankDetails,
@@ -106,14 +112,16 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     showGrandTotalBanner:  t.showGrandTotalBanner  !== false,
     showSummaryBar:        t.showGrandTotalBanner  !== false,
     showSubtotal:          true,
-    showVATTotal:          true,
+    showTaxableTotal:      hasTax,
+    showVATTotal:          hasTax,
     showGrandTotal:        true,
     colProductImage:       !!t.colItemImage,
     colBarcode:            !!t.colBarcode,
     colBatchNumber:        t.colBatchNo      !== false,
     colDiscount:           t.colDiscount     !== false,
-    colVAT:                t.colVatPct       !== false,
-    colVATAmount:          t.colVatAmt       !== false,
+    colTaxableAmount:      hasTax,
+    colVAT:                hasTax && t.colVatPct       !== false,
+    colVATAmount:          hasTax && t.colVatAmt       !== false,
     colItemCode:           t.colItemCode     !== false,
     primaryColor:          '#F5C742',
     accentColor:           '#F5C742',
@@ -127,12 +135,12 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     description:    true,
     qty:            true,
     unitPrice:      true,
-    taxableAmount:  true,
+    taxableAmount:  hasTax,
     barcode:        !!t.colBarcode,
     batchNumber:    t.colBatchNo      !== false,
     discount:       t.colDiscount     !== false,
-    taxPercent:     t.colVatPct       !== false,
-    tax:            t.colVatAmt       !== false,
+    taxPercent:     hasTax && t.colVatPct       !== false,
+    tax:            hasTax && t.colVatAmt       !== false,
     total:          true,
   });
   const displayOptions = JSON.stringify({
@@ -155,21 +163,29 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     displayOptions,
     salesDesignerSettings,
   };
+  // No-tax sample lines carry no tax rate/amount so the renderer prints no VAT.
   const items = isReturn
     ? [{ code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 5, taxAmt: 69, total: 1449, batchNumber: 'SGAL-120526' }]
-    : [
+    : hasTax
+    ? [
         { code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 5, taxAmt: 69, total: 1449, batchNumber: 'SGAL-120526' },
         { code: 'IPH-CASE', name: 'iPhone Leather Case', desc: 'Brown · Genuine leather', qty: 2, price: 22.5, disc: 0, tax: 5, taxAmt: 2.25, total: 47.25, batchNumber: '' },
+      ]
+    : [
+        { code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 0, taxAmt: 0, total: 1380, batchNumber: 'SGAL-120526' },
+        { code: 'IPH-CASE', name: 'iPhone Leather Case', desc: 'Brown · Genuine leather', qty: 2, price: 22.5, disc: 0, tax: 0, taxAmt: 0, total: 45, batchNumber: '' },
       ];
   const data = {
-    title: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+    title: isReturn ? 'CREDIT NOTE' : hasTax ? 'TAX INVOICE' : 'SALES INVOICE',
     docNo: isReturn ? 'SR-POS-000042' : 'SI-POS-000001',
     date: '22 Jun 2026',
     customer: { name: 'Fatima Hassan', address: 'Dubai, UAE', phone: '+971 50 123 4567' },
     items,
     totals: isReturn
       ? { subTotal: 1380, tax: 69, grandTotal: 1449, discountAmount: 0, billDiscountAmount: 0 }
-      : { subTotal: 1425, tax: 71.25, grandTotal: 1496.25, discountAmount: 0, billDiscountAmount: 0 },
+      : hasTax
+      ? { subTotal: 1425, taxableAmount: 1425, tax: 71.25, grandTotal: 1496.25, discountAmount: 0, billDiscountAmount: 0 }
+      : { subTotal: 1425, taxableAmount: 1425, tax: 0, grandTotal: 1425, discountAmount: 0, billDiscountAmount: 0 },
     meta: { notes: t.showNotes !== false ? (footerNote || 'Sample note line') : '', paymentTerm: '', dueDate: '', salesPerson: '', location: companyName || '' },
   };
   const options = {
@@ -244,6 +260,11 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   stampDataUrl = null,
   showLogo = true, showCompanyDetails = true, showCompanyAddress = true,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  // Whether this sale carries tax (Tax Amount > 0). When false, NO tax content is
+  // printed anywhere: no per-line VAT%, no Taxable Amount row, no VAT summary row,
+  // no TRN — the receipt reads as a plain Sales Invoice. Defaults true to preserve
+  // the historical tax-invoice output for callers that don't pass it.
+  hasTax = true,
   showQRCode = true, showCustomerDetails = true,
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
@@ -379,7 +400,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
       html += `<div class="row"><span class="lbl" style="font-size:10px;color:${amtColor};padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num"${isVoid ? ` style="color:${amtColor}"` : ''}>${sgn(`${cur} ${fmtAmt(total)}`)}</span></div>`;
     }
     const vatRate = parseFloat(it.taxPercent ?? it.taxRate ?? it.vatPercent ?? NaN);
-    if (Number.isFinite(vatRate)) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">VAT: ${fmt(vatRate)}%</div>`;
+    if (hasTax && Number.isFinite(vatRate)) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">VAT: ${fmt(vatRate)}%</div>`;
     if (sku) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">SKU: ${esc(sku)}</div>`;
     if (desc) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">${esc(desc)}</div>`;
     if (serial) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">S/N: ${esc(serial)}</div>`;
@@ -391,10 +412,12 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
   if (discountTotal > 0) {
     html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
+    // "Taxable Amount" is a tax-invoice-only label — omit it on a no-tax Sales
+    // Invoice (the discounted Subtotal already ties out to the TOTAL).
+    if (hasTax) html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
   }
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
+  if (hasTax && showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
   // as their own lines so the total always ties out on the printed invoice.
   if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmtAmt(invoice.deliveryCharge)}</span></div>`;
@@ -669,6 +692,9 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   customerPhone = null,
   customerEmail = null,
   showCustomerDetails = true,
+  // See buildThermalReceiptHtml: false ⇒ no tax content (Taxable Amount / VAT
+  // rows / TRN) is emitted. Defaults true to preserve historical output.
+  hasTax = true,
 } = {}) => {
   const width = String(paperSize || '').includes('58') ? 32 : 42;
   const hr = '-'.repeat(width);
@@ -764,9 +790,10 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   lines.push(buildFixedWidthLine('Subtotal', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
-    lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
+    // "Taxable Amount" is a tax-invoice-only label — omit on a no-tax sale.
+    if (hasTax) lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
   }
-  lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
+  if (hasTax) lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
     lines.push(buildFixedWidthLine('Delivery Charge', fmt(invoice.deliveryCharge), width));
   }
@@ -1375,14 +1402,19 @@ export const buildThermalSampleHtml = (paperSize, {
   showCreditBalance = true, showFooterText = true,
   logoDataUrl = null, stampDataUrl = null,
   isReturn = false, qrPlacement = 'before',
+  // false ⇒ no-tax sample (POS Receipt tab): no TRN, no Taxable/VAT rows, plain
+  // "SALES INVOICE" title. Returns are always taxed. Defaults true.
+  hasTax = true,
 }) => {
+  const taxed = hasTax && !isReturn;
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const D = `<div style="border-top:2px dashed #444;margin:4px 0"></div>`;
   const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#000;margin:4px 0 2px">${t}</div>`;
   const invNo = isReturn ? 'SR-28-042' : 'DI-28-042';
-  const total = isReturn ? 'AED -1,449.00' : 'AED 102.80';
+  // No-tax total = net + service charge only (no VAT): 89.00 + 8.90 = 97.90.
+  const total = isReturn ? 'AED -1,449.00' : taxed ? 'AED 102.80' : 'AED 97.90';
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
@@ -1401,7 +1433,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
       ? `<div style="text-align:center;margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`
       : `<div style="text-align:center;margin:4px 0 6px"><div style="width:52px;height:52px;border-radius:50%;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">Logo</div></div>`;
   }
-  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">${esc(header || (isReturn ? 'CREDIT NOTE' : 'TAX INVOICE'))}</div>`;
+  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">${esc(header || (isReturn ? 'CREDIT NOTE' : taxed ? 'TAX INVOICE' : 'SALES INVOICE'))}</div>`;
   html += `<div style="text-align:center;font-size:13px;font-weight:bold">${esc(companyName || 'Branch Name')}</div>`;
   if (showCompanyDetails) {
     html += `<div style="text-align:center;font-size:9px">Shop 12, Dubai Mall, Downtown Dubai, UAE</div>`;
@@ -1431,10 +1463,10 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   }
   html += D;
   html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');
-  if (!isReturn)         html += srow('Discount:', 'AED 0.00');
-  if (!isReturn)         html += srow('Taxable Amount:', 'AED 89.00');
-  if (showServiceCharge) html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
-  if (showVatSummary)    html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
+  if (!isReturn)             html += srow('Discount:', 'AED 0.00');
+  if (taxed)                 html += srow('Taxable Amount:', 'AED 89.00');
+  if (showServiceCharge)     html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
+  if (showVatSummary && (taxed || isReturn)) html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
   html += D;
   html += `<div class="row" style="font-weight:bold;font-size:13px"><span>TOTAL:</span><span>${total}</span></div>`;
   html += D;
@@ -1501,13 +1533,20 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
  *   Mirrors the cross-reference Back Office's SalesInvoice print builder already does
  *   against its own customersList.
  */
-export const buildPosPrintData = (full, footerNote = '', customersList = []) => {
+export const buildPosPrintData = (full, footerNote = '', customersList = [], titleOverride = null) => {
   const custRec = full.customerCode
     ? (customersList || []).find(c => c.code === full.customerCode || c.id === full.customerCode)
     : null;
   const { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
+  const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
   return {
-    title: Number(full.taxTotal) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
+    // titleOverride lets the caller pass the merchant's SAVED template header
+    // (POS Receipt tab header when no tax, Tax Invoice tab header when taxed) so
+    // the A4 title matches the thermal receipt instead of a generic fixed label.
+    // Falls back to the fixed SALES/TAX INVOICE label when no override is given.
+    title: (titleOverride && String(titleOverride).trim())
+      ? String(titleOverride).trim()
+      : (hasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
     docNo: full.invoiceNumber || '',
     date: full.invoiceDate || '',
     customer: {
@@ -1650,23 +1689,50 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
 };
 
 /**
- * Returns a shallow copy of a resolved PrintTemplate with VAT columns (colVAT/
- * colVATAmount, at both the top-level displayOptions and nested
- * salesDesignerSettings) forced off when the sale has no tax — mirrors the
- * hasTax routing the thermal receipt path already applies (Tax Invoice title +
- * VAT columns only when tax > 0, plain Sales Invoice otherwise), now extended to
- * the real A4 template so the SAME resolved template prints correctly either
- * way instead of needing a second template. Never mutates the original template
- * object (the one held in React state / the designer's cache).
+ * Returns a shallow copy of a resolved PrintTemplate with EVERY tax-specific
+ * element forced off when the sale has no tax (Tax Amount = 0), so a no-tax
+ * Sales Invoice prints with no tax content anywhere. This mirrors the hasTax
+ * routing the thermal receipt path applies (Tax Invoice + VAT rows/columns/TRN
+ * only when tax > 0, plain Sales Invoice otherwise), extended to the real A4
+ * template so the SAME resolved template prints correctly either way instead of
+ * needing a second template. The single funnel for the A4 surfaces: POS A4
+ * (checkout/reprint) and Back Office A4 (SalesInvoice.jsx) both call this.
+ *
+ * Suppressed for a no-tax sale (keys map to documentTemplateRenderer's settings):
+ *   - VAT % / VAT Amount columns (colVAT / colVATAmount / showVATPercent / showVATAmount)
+ *   - Taxable Amount column (colTaxableAmount / showTaxableAmount)
+ *   - Total VAT summary row (showVATTotal / showTaxTotal)
+ *   - Taxable Amount summary row (showTaxableTotal)
+ *   - Company TRN (showTRN / showCompanyTaxId) and Customer TRN (showCustomerTRN)
+ *
+ * Never mutates the original template object (the one held in React state / the
+ * designer's cache).
  */
 export const applyTaxAwareDisplayOptions = (template, hasTax) => {
   if (!template || hasTax) return template;
+  const TAX_OFF = {
+    // Item-table tax columns
+    colVAT: false,
+    colVATAmount: false,
+    showVATPercent: false,
+    showVATAmount: false,
+    colTaxableAmount: false,
+    showTaxableAmount: false,
+    // Totals-block tax rows
+    showVATTotal: false,
+    showTaxTotal: false,
+    showTaxableTotal: false,
+    // Tax registration numbers — a Sales Invoice (non-tax) carries no TRN
+    showTRN: false,
+    showCompanyTaxId: false,
+    showCustomerTRN: false,
+    showVendorTRN: false,
+  };
   try {
     const parsed = JSON.parse(template.displayOptions || '{}');
-    parsed.colVAT = false;
-    parsed.colVATAmount = false;
+    Object.assign(parsed, TAX_OFF);
     if (parsed.salesDesignerSettings) {
-      parsed.salesDesignerSettings = { ...parsed.salesDesignerSettings, colVAT: false, colVATAmount: false };
+      parsed.salesDesignerSettings = { ...parsed.salesDesignerSettings, ...TAX_OFF };
     }
     return { ...template, displayOptions: JSON.stringify(parsed) };
   } catch {

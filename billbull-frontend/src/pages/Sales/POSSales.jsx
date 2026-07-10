@@ -858,7 +858,10 @@ export default function POSSales() {
     if (USE_NEW_POS_PRINT_TEMPLATE && resolvedPosInvoiceTemplate) {
       return applyTaxAwareDisplayOptions(resolvedPosInvoiceTemplate, hasTax);
     }
-    return buildPosA4Template(footerNote, opts);
+    // Fallback path (flag off or DB template unresolved): the fabricated in-memory
+    // template must be tax-aware too, so a no-tax A4 never leaks VAT columns/rows
+    // or TRN regardless of which template source is in play.
+    return applyTaxAwareDisplayOptions(buildPosA4Template(footerNote, opts), hasTax);
   }, [resolvedPosInvoiceTemplate]);
 
   const resolveCreditNoteA4Template = useCallback((footerNote, opts) => {
@@ -1143,6 +1146,7 @@ export default function POSSales() {
       const previewShowCreditBalance = previewHasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails;
       const previewT2 = previewHasTax
         ? {
+            hasTax: true,
             showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
             showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
             showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
@@ -1151,6 +1155,8 @@ export default function POSSales() {
             showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
           }
         : {
+            // No-tax preview: drop all tax content (matches the real print path).
+            hasTax: false,
             showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
             showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
             showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
@@ -1225,7 +1231,7 @@ export default function POSSales() {
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
         showLogo: previewShowLogo, showCompanyDetails: previewShowCompanyDetails,
         outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner,
-        showVatSummary: previewShowVatSummary, showPaymentDetails: previewShowPaymentDetails, showQRCode: showQrInPreview,
+        showVatSummary: previewShowVatSummary, hasTax: previewHasTax, showPaymentDetails: previewShowPaymentDetails, showQRCode: showQrInPreview,
         showCustomerDetails: previewShowCustomerDetails, showLoyaltyPoints: previewShowLoyaltyPoints,
         showCreditBalance: previewShowCreditBalance, showFooterText: previewShowFooterText,
         creditPreviousBalance: checkoutPreviewCreditBalance,
@@ -2887,7 +2893,7 @@ export default function POSSales() {
       try {
         if (tplInvoicePaper === 'A4') {
           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
-          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions);
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
           printHtml(await generatePrintHtmlAsync(template, data, options));
         } else {
@@ -3482,7 +3488,13 @@ export default function POSSales() {
     // tab's own header/footer/TRN/VAT-summary config instead. Computed here
     // (not hoisted to the caller) because `full` — and therefore its tax
     // total — is only known once the customerName override above is applied.
-    const hasTax = Number(full.tax) > 0;
+    // Read BOTH field names: a round-tripped backend invoice carries `taxTotal`
+    // (SalesInvoice entity), while a live cart/draft object carries `tax`. Reading
+    // only `full.tax` yielded NaN>0=false on every posted invoice, so the real
+    // print/reprint always fell back to the POS Receipt tab config regardless of
+    // tax — diverging from the checkout preview (which reads currentInvoice.tax)
+    // and from buildPosPrintData/the A4 sites (which already read taxTotal).
+    const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
     // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
     // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
     // same rule as activeShowLogo etc. below. Previously this always read the
@@ -3509,6 +3521,7 @@ export default function POSSales() {
     const activeShowLoyaltyPoints = hasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
     const activeT2 = hasTax
       ? {
+          hasTax: true,
           showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
           showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
           showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
@@ -3517,8 +3530,11 @@ export default function POSSales() {
           showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
         }
       : {
-          // showTrn/showVatSummary forced off — see activeShowTrn note above,
-          // same rule applies to Template 2's no-tax path.
+          // hasTax:false drops ALL tax content (Taxable/VAT rows, per-line VAT
+          // label, Customer TRN, VAT summary) in both the canvas (ESC/POS) and
+          // HTML renderers. showTrn/showVatSummary also forced off — see
+          // activeShowTrn note above; same rule applies to Template 2's no-tax path.
+          hasTax: false,
           showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
           showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
           showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
@@ -3553,6 +3569,9 @@ export default function POSSales() {
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
       showVatSummary: activeShowVatSummary,
+      // No-tax sale ⇒ suppress ALL tax content on the ESC/POS (raw thermal) path
+      // too, matching the HTML preview and text fallback.
+      hasTax,
       showPaymentDetails: activeShowPaymentDetails,
       showQRCode: activeShowQRCode,
       qrContent: activeShowQRCode ? qrContent : null,
@@ -3685,6 +3704,9 @@ export default function POSSales() {
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
       showVatSummary: activeShowVatSummary,
+      // No-tax sale ⇒ suppress ALL tax content (per-line VAT%, Taxable Amount
+      // row, VAT summary row) so the receipt reads as a plain Sales Invoice.
+      hasTax,
       showPaymentDetails: activeShowPaymentDetails,
       showQRCode: activeShowQRCode,
       showCustomerDetails: activeShowCustomerDetails,
@@ -3729,6 +3751,8 @@ export default function POSSales() {
       customerPhone,
       customerEmail,
       showCustomerDetails: activeShowCustomerDetails,
+      // Match the HTML/ESC-POS path: no tax content on a no-tax sale.
+      hasTax,
       currency: activeCurrency,
     });
     return { html, text, escPosBase64 };
@@ -4038,7 +4062,7 @@ export default function POSSales() {
           try {
             if (printPaper === 'A4') {
               const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
-              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions);
+              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
               const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
               printHtml(await generatePrintHtmlAsync(template, data, options));
               openCashDrawer('RECEIPT_PRINT');
@@ -4193,7 +4217,7 @@ export default function POSSales() {
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions);
+          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
           const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
@@ -8442,7 +8466,7 @@ export default function POSSales() {
                         const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
                         if (tplInvoicePaper === 'A4') {
                           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions);
+                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
@@ -9679,7 +9703,7 @@ export default function POSSales() {
                 openCashDrawer('RECEIPT_PRINT');
                 if (tplInvoicePaper === 'A4') {
                   const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions);
+                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
@@ -13384,7 +13408,7 @@ export default function POSSales() {
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
               if (tplInvoicePaper === 'A4') {
                 const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(receiptInvoice?.taxTotal) > 0);
-                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions);
+                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, Number(receiptInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
                 const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {

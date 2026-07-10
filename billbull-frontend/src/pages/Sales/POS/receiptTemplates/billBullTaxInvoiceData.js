@@ -52,6 +52,11 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       showPaymentDetails: on(toggles.showPaymentDetails),
       showFooterText: on(toggles.showFooterText),
       showBarcode: on(toggles.showBarcode),
+      // Whether the sale carries tax. false ⇒ the receipt body drops ALL tax
+      // content (Taxable Amount, VAT rows, per-line VAT label, Customer TRN, VAT
+      // summary). Undefined ⇒ ON, so standalone/sample renders stay a full tax
+      // invoice.
+      hasTax: on(toggles.hasTax),
     },
     business: {
       nameEn: outlet.name || "Branch Name",

@@ -71,6 +71,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
+import { applyTaxAwareDisplayOptions } from './POS/posPrintUtils';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
@@ -390,7 +391,11 @@ const SalesInvoice = () => {
         qty: i.quantity ?? i.qty ?? 0,
         price: i.price || 0,
         disc: i.discount || i.disc || 0,
-        tax: i.taxRate || i.tax || 5,
+        // Nullish-coalesce, not ||: a genuinely tax-free line (taxRate 0, e.g. no
+        // active tax config) must stay 0 on reload, not collapse to the 5 fallback
+        // just because 0 is falsy. That fallback should only fire when the server
+        // sent no tax field at all (new/legacy rows).
+        tax: i.taxRate ?? i.tax ?? 5,
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
@@ -1362,7 +1367,7 @@ const SalesInvoice = () => {
                         if (soItem) {
                             price = Number(soItem.price) || 0;
                             disc = Number(soItem.discount) || 0;
-                            tax = Number(soItem.taxRate) || 5;
+                            tax = firstPresentNumber(soItem.taxRate, 5);
                             cost = Number(soItem.cost) || 0;
                         }
                     }
@@ -1455,7 +1460,7 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: Number(i.cost) || 0,
                     disc: Number(i.discount) || 0,
-                    tax: Number(i.taxRate) || 5,
+                    tax: firstPresentNumber(i.taxRate, 5),
                     taxAmt: Number(i.taxAmount) || 0,
                     gross: Number(i.quantity) * Number(i.price),
                     net: Number(i.lineTotal) || 0,
@@ -1565,7 +1570,7 @@ const SalesInvoice = () => {
                             const qty = Number(si.quantity) || 0;
                             const price = Number(si.price) || 0;
                             const disc = Number(si.discount) || 0;
-                            const tax = Number(si.taxRate) || 5;
+                            const tax = firstPresentNumber(si.taxRate, 5);
                             const cost = Number(si.cost) || 0;
                             const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
                             return {
@@ -1683,7 +1688,7 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: 0,
                     disc: 0,
-                    tax: Number(i.taxPercent) || 5,
+                    tax: firstPresentNumber(i.taxPercent, 5),
                     taxAmt: 0,
                     gross: Number(i.quantity) * Number(i.price),
                     net: Number(i.lineTotal) || 0,
@@ -2767,7 +2772,7 @@ const SalesInvoice = () => {
         }, vatMode);
 
         return {
-            title: 'SALES INVOICE',
+            title: Number(resolvedSummary.tax) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
             docNo: invoiceNo,
             date: invoiceDate,
             vatMode,
@@ -2917,8 +2922,12 @@ const SalesInvoice = () => {
                 const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
                 const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
 
+                // Tax-aware document title: a taxed invoice is a TAX INVOICE, a
+                // zero-rated/exempt one is a plain SALES INVOICE (matches the POS
+                // rule and the checkout preview). Explicit titleOverride still wins.
+                const invoiceHasTax = Number(resolvedSummary.tax) > 0;
                 const printData = {
-                    title: titleOverride || 'SALES INVOICE',
+                    title: titleOverride || (invoiceHasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
                     vatMode: resolvedVatMode,
@@ -3021,11 +3030,16 @@ const SalesInvoice = () => {
                     branches: availableBranches || [],
                     branchId: invoiceBranchId,
                 });
+                // Drop VAT columns (Tax % / Tax Amount) from the item table when the
+                // invoice carries no tax, so a no-tax SALES INVOICE doesn't print an
+                // empty tax-invoice grid. Overlay templates are fixed-position PDFs
+                // and aren't column-driven, so they're left untouched.
+                const taxAwareTemplate = applyTaxAwareDisplayOptions(defaultTemplate, invoiceHasTax);
                 const html = isOverlayInvoiceTemplate(defaultTemplate)
                     ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
                     : forPdf
-                    ? await generatePdfHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo })
-                    : await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                    ? await generatePdfHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo })
+                    : await generatePrintHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 return html;
             }
         }
@@ -3041,8 +3055,9 @@ const SalesInvoice = () => {
             || list.find(t => t.isDefault)
             || list[0];
         if (!defaultTemplate) return null;
+        // buildCurrentInvoicePrintData() already stamps the tax-aware title
+        // (TAX INVOICE when taxed, SALES INVOICE when not) — don't override it.
         const printData = buildCurrentInvoicePrintData();
-        printData.title = 'TAX INVOICE';
         const invoiceBranchId = activeBranch?.id;
         const branchProfile = buildDocumentHeaderProfile({
             company,
@@ -3056,9 +3071,10 @@ const SalesInvoice = () => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
         if (!dataToPrint.items || dataToPrint.items.length === 0) return;
-        // Always stamp the document title as TAX INVOICE — drafts and finalized
-        // invoices alike print/download with the VAT-compliant title.
-        const titleOverride = 'TAX INVOICE';
+        // Tax-aware title: a no-tax invoice downloads as SALES INVOICE, a taxed
+        // one as TAX INVOICE — matches the POS rule. List-row invoices carry
+        // `taxTotal` (backend field); the current-form source carries `totalTax`.
+        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
         setIsPrinting(true);
         try {
             // forPdf:false -> use the PRINT renderer (real @page / page-break CSS);
@@ -3079,9 +3095,10 @@ const SalesInvoice = () => {
             return;
         }
 
-        // Always stamp the document title as TAX INVOICE — drafts and finalized
-        // invoices alike print with the VAT-compliant title.
-        const titleOverride = 'TAX INVOICE';
+        // Tax-aware title: a no-tax invoice prints as SALES INVOICE, a taxed one
+        // as TAX INVOICE — matches the POS rule. List-row invoices carry
+        // `taxTotal` (backend field); the current-form source carries `totalTax`.
+        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
 
         setIsPrinting(true);
         try {
