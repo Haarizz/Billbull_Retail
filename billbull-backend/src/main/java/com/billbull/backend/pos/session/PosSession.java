@@ -145,6 +145,15 @@ public class PosSession extends BaseEntity {
     @Column(name = "card_settlement_verified")
     private Boolean cardSettlementVerified = false;
 
+    /** Counted/declared card terminal settlement amount entered by the cashier at close,
+     *  mirroring closingCash's role for cash. Null if the cashier never entered one. */
+    @Column(name = "card_closing_cash", precision = 15, scale = 2)
+    private BigDecimal cardClosingCash;
+
+    /** cardClosingCash - totalCardSales, mirroring cashDifference. Null until computed. */
+    @Column(name = "card_difference", precision = 15, scale = 2)
+    private BigDecimal cardDifference;
+
     @Column(name = "closing_cashier_name")
     private String closingCashierName;
 
@@ -270,6 +279,12 @@ public class PosSession extends BaseEntity {
 
     public Boolean getCardSettlementVerified() { return cardSettlementVerified; }
     public void setCardSettlementVerified(Boolean cardSettlementVerified) { this.cardSettlementVerified = cardSettlementVerified; }
+
+    public BigDecimal getCardClosingCash() { return cardClosingCash; }
+    public void setCardClosingCash(BigDecimal cardClosingCash) { this.cardClosingCash = cardClosingCash; }
+
+    public BigDecimal getCardDifference() { return cardDifference; }
+    public void setCardDifference(BigDecimal cardDifference) { this.cardDifference = cardDifference; }
 
     public String getClosingCashierName() { return closingCashierName; }
     public void setClosingCashierName(String closingCashierName) { this.closingCashierName = closingCashierName; }

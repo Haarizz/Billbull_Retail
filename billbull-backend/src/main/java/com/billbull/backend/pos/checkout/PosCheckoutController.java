@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -155,14 +156,19 @@ public class PosCheckoutController {
                 double cardPayment = Math.min(cardAmt, invoiceTotal);
                 double cashPayment = Math.max(0, Math.min(invoiceTotal - cardPayment, cashAmt));
                 String cardMode = resolveCardMode(request);
+                // Each recordPayment call below re-stamps invoice.paymentMode, so both legs
+                // must carry the same combined label (e.g. "Cash + Card") — otherwise the
+                // second (cash) call silently overwrites the first with just its own leg mode.
+                String splitCombinedMode = request.getCombinedPaymentMode() != null
+                        ? request.getCombinedPaymentMode() : creditStamp;
                 if (cardPayment > 0) {
                     invoiceService.recordPayment(saved.getId(), cardPayment, cardMode,
                             request.getCardReference(), LocalDate.now(),
-                            null, null, null, creditStamp);
+                            null, null, null, splitCombinedMode);
                 }
                 if (cashPayment > 0) {
                     invoiceService.recordPayment(saved.getId(), cashPayment, "Cash",
-                            null, LocalDate.now(), null, null, null, creditStamp);
+                            null, LocalDate.now(), null, null, null, splitCombinedMode);
                 }
             } else {
                 // Single-leg payment (pure Cash, pure Card, pure Online, Credit partial receipt, etc.)
@@ -440,6 +446,15 @@ public class PosCheckoutController {
                 sessionId, terminalId, branchId != null ? branchId : invoice.getBranchId(),
                 id, invoice.getInvoiceNumber());
 
+        // Bump the reprint counter / last-reprinted-by/at so the "Reprint Previous
+        // Invoices" screen shows real audit history instead of always 0/blank.
+        String reprintedBy = currentUser();
+        Instant reprintedAt = Instant.now();
+        invoiceService.recordReprint(id, reprintedBy);
+        invoice.setReprintCount((invoice.getReprintCount() == null ? 0 : invoice.getReprintCount()) + 1);
+        invoice.setLastReprintedBy(reprintedBy);
+        invoice.setLastReprintedAt(reprintedAt);
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("invoice", invoice);
         result.put("zatcaQr", qrCode);
@@ -483,8 +498,11 @@ public class PosCheckoutController {
             double cardPayment = Math.min(cardAmt, balanceDue);
             double cashPayment = Math.max(0, Math.min(balanceDue - cardPayment, cashAmt));
             String cardMode = (req.getCardType() != null && !req.getCardType().isBlank()) ? req.getCardType() : "Card";
-            if (cardPayment > 0) invoiceService.recordPayment(id, cardPayment, cardMode, req.getCardReference(), LocalDate.now(), null, null, null, null);
-            if (cashPayment > 0) invoiceService.recordPayment(id, cashPayment, "Cash", null, LocalDate.now(), null, null, null, null);
+            // Same combined label must be passed to both legs, or the second recordPayment
+            // call overwrites invoice.paymentMode with just its own leg mode.
+            String splitCombinedMode = "Cash + " + cardMode;
+            if (cardPayment > 0) invoiceService.recordPayment(id, cardPayment, cardMode, req.getCardReference(), LocalDate.now(), null, null, null, splitCombinedMode);
+            if (cashPayment > 0) invoiceService.recordPayment(id, cashPayment, "Cash", null, LocalDate.now(), null, null, null, splitCombinedMode);
         } else {
             String mode = hasSplit && cardAmt > 0.001
                     ? (req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card")
@@ -534,7 +552,7 @@ public class PosCheckoutController {
         Employee deliveryPerson = resolveDeliveryPerson(req);
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
-        inv.setSalesChannel("POS");
+        inv.setSalesChannel(isDeliveryCheckout(req) ? "Retail_Delivery" : "Retail_POS");
         inv.setInvoiceDate(LocalDate.now());
         inv.setCustomerCode(req.getCustomerCode() != null ? req.getCustomerCode() : "WALK-IN");
         inv.setCustomerName(req.getCustomerName() != null ? req.getCustomerName() : "Walk-in Customer");

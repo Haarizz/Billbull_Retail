@@ -73,6 +73,9 @@ export const mapPosCustomer = (customer = {}) => ({
   membershipId: customer.membershipId || customer.code || customer.customerCode || '',
   tier: customer.priceList || customer.groupType || customer.group || '',
   loyaltyPoints: toNumber(customer.loyaltyPoints ?? 0),
+  // Full list of saved shipping addresses, so the delivery dialog can offer a
+  // picker instead of just the single default address above.
+  savedAddresses: Array.isArray(customer.savedAddresses) ? customer.savedAddresses : [],
 });
 
 export const cachePosProduct = (cache, product) => {

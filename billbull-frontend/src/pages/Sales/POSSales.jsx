@@ -15,7 +15,7 @@ import { Switch } from '../../components/ui/switch';
 import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getUnits } from '../../api/unitsApi';
-import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields, addCustomerSavedAddress } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
@@ -33,6 +33,7 @@ import {
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
+  reprintPosReceipt,
 } from '../../api/posApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
@@ -445,6 +446,12 @@ export default function POSSales() {
   const [deliveryPersons, setDeliveryPersons] = useState([]);
   const [deliveryPersonsLoading, setDeliveryPersonsLoading] = useState(false);
   const [deliveryValidationErrors, setDeliveryValidationErrors] = useState({});
+  // Saved shipping-address picker for the delivery modal (QA-028 pattern reused from CustomerShippingPanel)
+  const [deliveryShowAddressPicker, setDeliveryShowAddressPicker] = useState(false);
+  const [deliveryShowAddAddressModal, setDeliveryShowAddAddressModal] = useState(false);
+  const [deliveryNewAddress, setDeliveryNewAddress] = useState({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+  const [deliveryAddressSaving, setDeliveryAddressSaving] = useState(false);
+  const [deliveryAddressError, setDeliveryAddressError] = useState('');
 
   // Quick Customer Creation Modal State
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
@@ -2193,6 +2200,7 @@ export default function POSSales() {
             notes: xReportVarianceRemarks,
             cardBatchNo: xReportCardBatchNo,
             cardSettlementVerified: xReportCardVerified,
+            cardClosingCash: cardSettlementAmount !== '' ? (parseFloat(cardSettlementAmount) || 0) : null,
             closingCashierName: xReportCashierName,
             closingSupervisorName: xReportSupervisorName,
             closingRemarks: xReportClosingRemarks,
@@ -2972,6 +2980,48 @@ export default function POSSales() {
     }
     setShowDeliveryModal(true);
   }, [selectedCustomerData]);
+
+  // Add a new saved shipping address for the customer selected in the delivery
+  // modal, then select it as the active delivery address. Mirrors
+  // CustomerShippingPanel.handleSaveNewAddress (QA-028) — same endpoint/shape,
+  // adapted to update posCustomers instead of a single selectedCustomer prop.
+  const handleSaveDeliveryNewAddress = useCallback(async () => {
+    if (!deliveryCustomerId) return;
+    if (!deliveryNewAddress.name.trim() || !deliveryNewAddress.address1.trim()) {
+      setDeliveryAddressError('Address label and address are required');
+      return;
+    }
+    setDeliveryAddressSaving(true);
+    setDeliveryAddressError('');
+    try {
+      const updatedAddresses = await addCustomerSavedAddress(deliveryCustomerId, {
+        name: deliveryNewAddress.name.trim(),
+        address1: deliveryNewAddress.address1.trim(),
+        city: deliveryNewAddress.city.trim(),
+        country: deliveryNewAddress.country.trim(),
+        // Stash contact details on address2 — entity has no dedicated contact fields.
+        address2: [deliveryNewAddress.contactName, deliveryNewAddress.contactPhone]
+          .filter(v => v && v.trim()).join(' · '),
+      });
+
+      setPosCustomers(prev => prev.map(c =>
+        String(c.id) === String(deliveryCustomerId) ? { ...c, savedAddresses: updatedAddresses } : c
+      ));
+
+      const added = updatedAddresses[updatedAddresses.length - 1];
+      if (added) {
+        setDeliveryAddress([added.address1, added.address2, added.city, added.country].filter(Boolean).join(', '));
+      }
+      setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
+      setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+      setDeliveryShowAddAddressModal(false);
+    } catch (err) {
+      console.error(err);
+      setDeliveryAddressError('Failed to save address. Please try again.');
+    } finally {
+      setDeliveryAddressSaving(false);
+    }
+  }, [deliveryCustomerId, deliveryNewAddress]);
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
   const sessionId = currentSession?.id && typeof currentSession.id === 'number' ? currentSession.id : null;
@@ -4189,7 +4239,18 @@ export default function POSSales() {
     try {
       const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
       if (inv?.id) {
-        const full = await getSalesInvoiceById(inv.id);
+        // reprintPosReceipt (not getSalesInvoiceById) both fetches the invoice AND
+        // logs a RECEIPT_REPRINTED audit entry + bumps reprintCount/lastReprintedBy/At
+        // server-side, so the Audit / Reprint History panel reflects reality.
+        const reprintResult = await reprintPosReceipt(inv.id, {
+          sessionId: currentSession?.id,
+          terminalId: currentTerminal?.terminalId,
+          branchId: currentTerminal?.branchId || currentSession?.branchId,
+        });
+        const full = reprintResult.invoice;
+        setReprintInvoices(prev => prev.map(i => i.id === inv.id
+          ? { ...i, reprintCount: full.reprintCount, lastReprintedBy: full.lastReprintedBy, lastReprintedAt: full.lastReprintedAt }
+          : i));
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
@@ -9675,7 +9736,12 @@ export default function POSSales() {
             <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" disabled={!lastPaidInvoice?.invoice?.id} onClick={async () => {
               if (!lastPaidInvoice?.invoice?.id) return;
               try {
-                const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
+                const reprintResult = await reprintPosReceipt(lastPaidInvoice.invoice.id, {
+                  sessionId: currentSession?.id,
+                  terminalId: currentTerminal?.terminalId,
+                  branchId: currentTerminal?.branchId || currentSession?.branchId,
+                });
+                const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
                 if (tplInvoicePaper === 'A4') {
                   const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
@@ -9923,7 +9989,11 @@ export default function POSSales() {
           items: (inv.items || []).filter(i => !i.voided).length,
           amount: inv.invoiceTotal || 0,
           status: toDisplayStatus(inv.status),
-          reprints: 0,
+          reprints: inv.reprintCount || 0,
+          lastReprintedBy: inv.lastReprintedBy || null,
+          lastReprintedTime: inv.lastReprintedAt
+            ? new Date(inv.lastReprintedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+            : null,
         }));
         const filtered = mapped.filter(inv => {
           if (reprintFilterInvoiceNo && !inv.id?.toLowerCase().includes(reprintFilterInvoiceNo.toLowerCase())) return false;
@@ -13166,7 +13236,7 @@ export default function POSSales() {
                   <p className="text-sm font-black text-[#1E293B]">{currentInvoice.items.length} items • {formatCurrency(currentInvoice.total)}</p>
                 </div>
               </div>
-              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryCustomerSearch(''); }} className="text-[#1E293B]/60 hover:text-[#1E293B]">
+              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }} className="text-[#1E293B]/60 hover:text-[#1E293B]">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -13187,7 +13257,7 @@ export default function POSSales() {
                           {c.tier ? <span className="ml-2 text-[#327F74] font-medium">· {c.tier}</span> : null}
                         </p>
                       </div>
-                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); }}
+                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); }}
                         className="text-xs text-[#327F74] hover:underline font-bold px-2 py-1 bg-white rounded-lg border border-[#327F74]/20 shadow-sm">
                         Change
                       </button>
@@ -13247,6 +13317,53 @@ export default function POSSales() {
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
+
+                {/* Saved shipping-address picker — only once a real customer is selected */}
+                {deliveryCustomerId && (() => {
+                  const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
+                  const savedAddresses = c?.savedAddresses || [];
+                  return (
+                    <div className="relative mb-2">
+                      <button type="button"
+                        onClick={() => setDeliveryShowAddressPicker(p => !p)}
+                        className="w-full flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-left hover:border-[#327F74] transition-colors bg-white">
+                        <MapPin className="h-4 w-4 text-[#327F74] shrink-0" />
+                        <span className="flex-1 text-gray-600 truncate">
+                          {savedAddresses.length > 0 ? 'Choose a saved shipping address…' : 'No saved addresses for this customer'}
+                        </span>
+                        <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                      </button>
+                      {deliveryShowAddressPicker && (
+                        <div className="absolute z-10 top-full left-0 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 overflow-hidden max-h-56 overflow-y-auto">
+                          {savedAddresses.map((addr, i) => (
+                            <button key={addr.id ?? i} type="button"
+                              onClick={() => {
+                                setDeliveryAddress([addr.address1, addr.address2, addr.city, addr.country].filter(Boolean).join(', '));
+                                setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
+                                setDeliveryShowAddressPicker(false);
+                              }}
+                              className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-gray-50 border-b border-gray-50 transition-colors">
+                              <MapPin className="h-3.5 w-3.5 text-[#327F74] mt-0.5 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-gray-700 flex items-center gap-1 truncate">
+                                  {addr.name}
+                                  {addr.isDefault && <Star className="h-2.5 w-2.5 text-[#F5C742] fill-[#F5C742] shrink-0" />}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">{[addr.address1, addr.city, addr.country].filter(Boolean).join(', ')}</p>
+                              </div>
+                            </button>
+                          ))}
+                          <button type="button"
+                            onClick={() => { setDeliveryShowAddressPicker(false); setDeliveryAddressError(''); setDeliveryShowAddAddressModal(true); }}
+                            className="w-full px-3 py-2.5 text-xs flex items-center justify-center gap-1.5 text-[#327F74] hover:bg-[#f0faf8] border-t border-dashed border-gray-200 font-bold">
+                            <Plus className="h-3.5 w-3.5" /> Add New Address
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <textarea rows={3} value={deliveryAddress} onChange={e => { setDeliveryAddress(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, address: '' })); }}
                   placeholder="Building, street, area, city..."
                   className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none ${deliveryValidationErrors.address ? 'border-red-300' : 'border-gray-200'}`} />
@@ -13325,7 +13442,7 @@ export default function POSSales() {
               </div>
             )}
             <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
-              <button type="button" onClick={() => setShowDeliveryModal(false)}
+              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }}
                 className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
@@ -13335,6 +13452,96 @@ export default function POSSales() {
                 className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
                 <Truck className="h-4 w-4" />
                 {deliveryOutLoading ? 'Saving…' : 'Out for Delivery'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Add New Shipping Address modal (nested within New Delivery Order) ══ */}
+      {showDeliveryModal && deliveryShowAddAddressModal && (
+        <div className="fixed inset-0 z-[210] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-base font-bold text-gray-800">Add Shipping Address</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Add a new shipping address for {customerOptions.find(x => String(x.id) === String(deliveryCustomerId))?.name || 'this customer'}
+                </p>
+              </div>
+              <button type="button"
+                onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address Label <span className="text-red-500">*</span></label>
+                <input type="text" value={deliveryNewAddress.name}
+                  onChange={e => setDeliveryNewAddress(p => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g., Home, Office, Warehouse..."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address <span className="text-red-500">*</span></label>
+                <textarea rows={3} value={deliveryNewAddress.address1}
+                  onChange={e => setDeliveryNewAddress(p => ({ ...p, address1: e.target.value }))}
+                  placeholder="Building, street, area..."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:border-[#327F74]" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">City</label>
+                  <input type="text" value={deliveryNewAddress.city}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, city: e.target.value }))}
+                    placeholder="e.g., Dubai"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Country</label>
+                  <input type="text" value={deliveryNewAddress.country}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, country: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Person</label>
+                  <input type="text" value={deliveryNewAddress.contactName}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactName: e.target.value }))}
+                    placeholder="Contact name"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Phone</label>
+                  <input type="text" value={deliveryNewAddress.contactPhone}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactPhone: e.target.value }))}
+                    placeholder="+971 XX XXX XXXX"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+              </div>
+              {deliveryAddressError && <p className="text-[11px] text-red-500">{deliveryAddressError}</p>}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button"
+                onClick={() => {
+                  setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+                  setDeliveryAddressError('');
+                  setDeliveryShowAddAddressModal(false);
+                }}
+                disabled={deliveryAddressSaving}
+                className="px-4 py-2 text-xs font-semibold text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button"
+                onClick={handleSaveDeliveryNewAddress}
+                disabled={deliveryAddressSaving}
+                className="px-4 py-2 text-xs font-bold text-white bg-[#327F74] hover:bg-[#2a6b61] rounded-xl disabled:opacity-60 flex items-center gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> {deliveryAddressSaving ? 'Saving…' : 'Add Address'}
               </button>
             </div>
           </div>

@@ -3666,11 +3666,15 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     {(() => {
                                                         const ch = inv.salesChannel || 'Retail';
-                                                        const color = ch === 'POS'       ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                        const color = (ch === 'POS' || ch === 'Retail_POS') ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                                    : ch === 'Retail_Delivery' ? 'bg-orange-50 text-orange-700 border-orange-200'
                                                                     : ch === 'Wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200'
                                                                     : ch === 'Online'    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
                                                                     :                      'bg-amber-50 text-amber-700 border-amber-200';
-                                                        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${color}`}>{ch}</span>;
+                                                        const label = ch === 'Retail_POS' ? 'Retail POS'
+                                                                    : ch === 'Retail_Delivery' ? 'Retail Delivery'
+                                                                    : ch;
+                                                        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${color}`}>{label}</span>;
                                                     })()}
                                                 </td>
                                                 <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -3894,6 +3898,8 @@ const SalesInvoice = () => {
                                                         <option value="Retail">Retail</option>
                                                         <option value="Wholesale">Wholesale</option>
                                                         <option value="POS">POS</option>
+                                                        <option value="Retail_POS">Retail POS</option>
+                                                        <option value="Retail_Delivery">Retail Delivery</option>
                                                         <option value="Online">Online</option>
                                                     </select>
                                                     <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />

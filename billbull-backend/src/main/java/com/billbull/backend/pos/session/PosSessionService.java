@@ -247,13 +247,13 @@ public class PosSessionService {
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
                                    boolean supervisorApproved, String closingDenominationsJson) {
         return closeSession(sessionId, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     @Transactional
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
                                    boolean supervisorApproved, String closingDenominationsJson,
-                                   String cardBatchNo, Boolean cardSettlementVerified,
+                                   String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks) {
         PosSession session = getById(sessionId);
@@ -303,7 +303,16 @@ public class PosSessionService {
             session.setClosingDenominationsJson(closingDenominationsJson);
         }
         if (cardBatchNo != null) session.setCardBatchNo(cardBatchNo);
-        if (cardSettlementVerified != null) session.setCardSettlementVerified(cardSettlementVerified);
+        if (cardClosingCash != null) {
+            // Server is authoritative on whether the card settlement actually matches —
+            // don't trust a client-computed boolean once we have the real counted amount.
+            session.setCardClosingCash(cardClosingCash);
+            BigDecimal cardVariance = cardClosingCash.subtract(nz(session.getTotalCardSales()));
+            session.setCardDifference(cardVariance);
+            session.setCardSettlementVerified(cardVariance.abs().compareTo(new BigDecimal("0.01")) <= 0);
+        } else if (cardSettlementVerified != null) {
+            session.setCardSettlementVerified(cardSettlementVerified);
+        }
         if (closingCashierName != null) session.setClosingCashierName(closingCashierName);
         if (closingSupervisorName != null) session.setClosingSupervisorName(closingSupervisorName);
         if (closingRemarks != null) session.setClosingRemarks(closingRemarks);
@@ -429,6 +438,8 @@ public class PosSessionService {
                 + ",\"expectedCash\":" + expectedCash
                 + ",\"closingCash\":" + closingCash
                 + ",\"cashVariance\":" + closingCash.subtract(expectedCash)
+                + ",\"cardClosingCash\":" + nz(s.getCardClosingCash())
+                + ",\"cardVariance\":" + nz(s.getCardDifference())
                 + "}";
     }
 
@@ -1036,6 +1047,8 @@ public class PosSessionService {
         info.put("closingDenominationsJson", s.getClosingDenominationsJson());
         info.put("cardBatchNo", s.getCardBatchNo());
         info.put("cardSettlementVerified", Boolean.TRUE.equals(s.getCardSettlementVerified()));
+        info.put("cardClosingCash", nz(s.getCardClosingCash()));
+        info.put("cardDifference", nz(s.getCardDifference()));
         info.put("closingCashierName", s.getClosingCashierName());
         info.put("closingSupervisorName", s.getClosingSupervisorName());
         info.put("closingRemarks", s.getClosingRemarks());

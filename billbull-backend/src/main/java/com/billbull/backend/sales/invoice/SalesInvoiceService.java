@@ -1113,6 +1113,18 @@ public class SalesInvoiceService {
     }
 
     // ----------------------------
+    // REPRINT TRACKING
+    // ----------------------------
+    /**
+     * Bump the reprint counter and stamp who/when (single-column UPDATE, same
+     * rationale as {@link #archiveReceiptQr}).
+     */
+    @Transactional
+    public void recordReprint(Long id, String reprintedBy) {
+        invoiceRepo.recordReprint(id, reprintedBy, java.time.Instant.now());
+    }
+
+    // ----------------------------
     // CREDIT-ONLY SETTLEMENT
     // ----------------------------
     @Transactional
