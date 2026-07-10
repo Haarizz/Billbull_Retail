@@ -43,8 +43,14 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
     }
 
     // Pass 1: compute per-item net-before-footer (taxable after item discount).
+    // Voided lines are NOT zeroed here — we compute their real values so the
+    // caller can disclose a "Voided Items" total. They are excluded from the
+    // financial accumulators (and footer-discount allocation) in Pass 2/3 via
+    // the `isVoided` flag instead. TOTAL is unchanged: a voided line still
+    // contributes nothing to grandTotal.
     const perItem = items.map((rawItem) => {
         const item = rawItem || {};
+        const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
         const qty = toNumber(item.qty ?? item.quantity);
         const price = toNumber(item.price);
         const discountPercent = toNumber(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent);
@@ -99,7 +105,16 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
         // raw gross) — under INCLUSIVE VAT, gross is tax-laden while taxableAmount
         // is ex-VAT, so a naive (gross - taxable) would misreport the extracted VAT
         // as a discount on an undiscounted line.
-        if (!hasValue(item.discountAmount) && preDiscountAmount > 0 && !taxableDerivedFromLineTotal) {
+        //
+        // Skip this back-solve entirely when the item already carries a reliable
+        // discPercent — the initial guess above (preDiscountAmount * discPercent/100)
+        // is already the correct, direct monetary discount on the entered price.
+        // Back-solving from taxableAmount here would instead compute the discount's
+        // ex-VAT-equivalent (dividing the true discount by (1+rate) under INCLUSIVE
+        // mode), silently deflating a legitimate discount (e.g. 700 -> 636.36 on a
+        // 3500 AED line at 20% off / 10% VAT inclusive).
+        if (!hasValue(item.discountAmount) && discountPercent === 0
+            && preDiscountAmount > 0 && !taxableDerivedFromLineTotal) {
             const undiscountedTaxable = computeLineTaxTotals({
                 netAfterDiscount: preDiscountAmount,
                 taxPercent,
@@ -108,12 +123,13 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
             discountAmount = Math.max(0, undiscountedTaxable - taxableAmount);
         }
 
-        return { grossAmount, discountAmount, taxableAmount, taxPercent, explicitTaxAmount, explicitLineTotal };
+        return { grossAmount, discountAmount, taxableAmount, taxPercent, explicitTaxAmount, explicitLineTotal, isVoided };
     });
 
     // Pass 2: determine total net-before-footer (= sum of taxableAmounts) to use as
-    // the denominator for proportional footer-discount allocation.
-    const totalNetBeforeFooter = perItem.reduce((s, r) => s + r.taxableAmount, 0);
+    // the denominator for proportional footer-discount allocation. Voided lines are
+    // excluded — they receive no footer-discount share.
+    const totalNetBeforeFooter = perItem.reduce((s, r) => (r.isVoided ? s : s + r.taxableAmount), 0);
 
     // Resolve total footer-discount amount.
     let billDiscountAmount = 0;
@@ -126,7 +142,9 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
 
     // Pass 3: accumulate totals using footer-allocated per-item values.
     const summary = perItem.reduce((acc, r) => {
-        const itemFooterDisc = r.taxableAmount * footerDiscountRatio;
+        // Voided lines never receive a footer-discount share (excluded from the
+        // denominator above), so their net-after-footer is just their taxable.
+        const itemFooterDisc = r.isVoided ? 0 : r.taxableAmount * footerDiscountRatio;
         const netAfterFooter = Math.max(0, r.taxableAmount - itemFooterDisc);
 
         // Tax is computed on net after ALL discounts (item + footer).
@@ -136,6 +154,15 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
             ? r.explicitTaxAmount
             : netAfterFooter * (r.taxPercent / 100);
         const lineTotal = netAfterFooter + taxAmount;
+
+        // Voided lines are disclosed separately and excluded from every financial
+        // accumulator so TOTAL is unchanged. We still tally what they would have
+        // been (net incl. tax) for the informational "Voided Items" row.
+        if (r.isVoided) {
+            acc.voidedTotal += lineTotal;
+            acc.voidedCount += 1;
+            return acc;
+        }
 
         acc.grossTotal += r.grossAmount;
         acc.itemDiscountTotal += r.discountAmount;
@@ -151,6 +178,8 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
         footerDiscountTotal: 0,
         tax: 0,
         grandTotal: 0,
+        voidedTotal: 0,
+        voidedCount: 0,
     });
 
     // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
@@ -163,10 +192,33 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
         deliveryCharge,
         roundOff,
         grandTotal: summary.subTotal - summary.footerDiscountTotal + summary.tax + deliveryCharge + roundOff,
+        // Informational disclosure of voided lines (net incl. tax). Does NOT
+        // feed into grandTotal — voided lines are already fully excluded above.
+        voidedTotal: summary.voidedTotal,
+        voidedCount: summary.voidedCount,
         // Expose the descriptor so callers can round-trip it.
         footerDiscType,
         footerDiscValue,
     };
+};
+
+// Net value (taxable + tax, after item discount) a single line contributes — or,
+// for a voided line, WOULD have contributed. Shared by every renderer so the
+// per-line "-AED x" display and the "Voided Items" total agree. VAT-mode aware.
+export const voidedLineNet = (item = {}, vatMode = VAT_MODES.EXCLUSIVE) => {
+    const explicitLineTotal = hasValue(item.total ?? item.lineTotal ?? item.netAmount ?? item.net)
+        ? toNumber(item.total ?? item.lineTotal ?? item.netAmount ?? item.net)
+        : null;
+    if (explicitLineTotal !== null && explicitLineTotal > 0) return explicitLineTotal;
+
+    const qty = toNumber(item.qty ?? item.quantity);
+    const price = toNumber(item.price);
+    const discPct = toNumber(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent);
+    const taxPercent = toNumber(item.tax ?? item.taxRate ?? item.taxPercent);
+    const gross = qty * price;
+    const netAfterDiscount = Math.max(0, gross - gross * (discPct / 100));
+    const { taxableAmount, taxAmount } = computeLineTaxTotals({ netAfterDiscount, taxPercent, vatMode });
+    return taxableAmount + taxAmount;
 };
 
 // Build the footer-discount descriptor expected by summarizeSalesItems.
@@ -185,6 +237,9 @@ export const allocateFooterDiscount = (items = [], billDiscount = 0, vatMode = V
     }
 
     const nets = items.map((item) => {
+        // Voided lines are excluded from the footer-discount denominator and
+        // receive no allocated share (they contribute nothing to totals).
+        if (Boolean(item.voided ?? item.isVoided ?? false)) return 0;
         // Always prefer taxableAmount (pre-footer, pre-tax) to avoid cascading discount calculation bugs.
         if (hasValue(item.taxableAmount) && toNumber(item.taxableAmount) > 0) return toNumber(item.taxableAmount);
         if (hasValue(item.net) && toNumber(item.net) > 0) return toNumber(item.net);

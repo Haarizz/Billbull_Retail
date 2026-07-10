@@ -2672,24 +2672,50 @@ export default function POSSales() {
     const taxInclusive = !!posSettings?.taxInclusive;
     const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
 
-    let subtotal = 0;       // net (ex-VAT) line value before line discount
-    let totalDiscount = 0;  // line discount on the same net basis
+    let subtotal = 0;       // gross line value (entered price x qty) before discount —
+                             // matches the backoffice invoice's "Sub Total" presentation
+    let totalDiscount = 0;  // line discount, as a straight % of the entered price
     let tax = 0;            // extracted/added VAT after line discount
 
     activeItems.forEach(item => {
       const rate = toNumber(item.taxRate, fallbackRate) / 100;
       const disc = (item.discount || 0) / 100;
       const lineValue = item.price * item.quantity;
-      // In inclusive mode the price carries VAT, so strip it to get the net base.
-      const net = taxInclusive ? lineValue / (1 + rate) : lineValue;
-      subtotal += net;
-      totalDiscount += net * disc;
-      tax += net * (1 - disc) * rate;
+      // Discount is a percentage OFF THE ENTERED PRICE (tax-inclusive when
+      // taxInclusive, ex-VAT otherwise) — e.g. "20% off AED 3,500" is AED 700,
+      // not AED 700 further reduced by the VAT divisor. Computing the discount
+      // on an already-VAT-stripped net (net/1+rate first, then *disc) silently
+      // deflates it by the same factor (700 -> 636.36 at 10% VAT), which
+      // desynced this cart-total preview from the backoffice/print totals that
+      // discount the entered price directly.
+      const discountAmount = lineValue * disc;
+      const netAfterDiscount = lineValue - discountAmount;
+      // In inclusive mode the discounted price still carries VAT, so strip it
+      // out now to get the net (ex-VAT) base; in exclusive mode it already is one.
+      const net = taxInclusive ? netAfterDiscount / (1 + rate) : netAfterDiscount;
+      const taxOnLine = taxInclusive ? (netAfterDiscount - net) : net * rate;
+      subtotal += lineValue;
+      totalDiscount += discountAmount;
+      tax += taxOnLine;
     });
 
-    const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + tax);
+    // Under INCLUSIVE VAT, netAfterDiscount (= subtotal - totalDiscount) already
+    // carries the tax, so `tax` must not be added again on top — only EXCLUSIVE
+    // mode adds it. Bill-level discount is subtracted flat either way (matches
+    // prior behavior).
+    const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + (taxInclusive ? 0 : tax));
 
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive };
+    // Voided lines are excluded from the total but disclosed separately in the
+    // cart summary. Value uses the same discounted line formula the cart's
+    // line-total cell shows, so the "Voided Items" figure matches the rows.
+    const voidedItems = items.filter(i => i.isVoided);
+    const voidedCount = voidedItems.length;
+    const voidedTotal = voidedItems.reduce(
+      (s, i) => s + (i.quantity * i.price * (1 - (i.discount || 0) / 100)),
+      0,
+    );
+
+    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive, voidedTotal, voidedCount };
   };
 
   const clearInvoice = () => {
@@ -3249,7 +3275,7 @@ export default function POSSales() {
       const storedBillDiscount = ly.billDiscountAmount || 0;
       // Prefer the stored billDiscountAmount; if the recalculated total still doesn't
       // match saleTotal (e.g. items were saved differently), derive the diff as extra discount.
-      const derivedBillDiscount = Math.max(0, tempInvoice.subtotal - tempInvoice.totalDiscount + tempInvoice.tax - storedTotal);
+      const derivedBillDiscount = Math.max(0, (tempInvoice.subtotal - tempInvoice.totalDiscount + (tempInvoice.taxInclusive ? 0 : tempInvoice.tax)) - storedTotal);
       const billDiscountAmount = storedBillDiscount > 0 ? storedBillDiscount : derivedBillDiscount;
       setCurrentInvoice(recalculateInvoice(items, billDiscountAmount));
       // Select the layaway's customer if we have it loaded.
@@ -11254,16 +11280,19 @@ export default function POSSales() {
                             {activeCartItems.length === 0 && currentInvoice.items.filter(i => i.isVoided).length === 0 ? (
                               <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No items in cart</td></tr>
                             ) : currentInvoice.items.map((item, i) => (
-                              <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60 opacity-70' : ''}`}>
+                              // Voided line: muted red + [VOID] tag + negative amounts (no
+                              // strike-through). Excluded from the total; disclosed in the
+                              // Voided Items summary row below.
+                              <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60' : ''}`}>
                                 <td className="px-3 py-1.5">
-                                  <span className={item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}>{item.name}</span>
-                                  {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">VOIDED</span>}
+                                  <span className={item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}>{item.name}</span>
+                                  {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
                                 </td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{item.quantity}</td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.price} /></td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-300' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
-                                <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.isVoided ? 0 : item.quantity * item.price * (1 - item.discount / 100)} /></td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.price} prefix={item.isVoided ? '- ' : ''} /></td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
+                                <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.quantity * item.price * (1 - item.discount / 100)} prefix={item.isVoided ? '- ' : ''} /></td>
                               </tr>
                             ))}
                           </tbody>

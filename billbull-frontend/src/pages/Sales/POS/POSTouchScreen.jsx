@@ -336,12 +336,15 @@ const POSTouchScreen = React.memo((props) => {
                   currentInvoice.items.map((item, idx) => {
                     return (
                       <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
-                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
+                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
                         <div className="col-span-6 min-w-0">
-                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                          {item.isVoided
-                            ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
-                            : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null}
+                          {/* Voided line: muted red + [VOID] tag + negative amounts (no
+                              strike-through). Excluded from the total; disclosed below. */}
+                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
+                            {item.name}
+                            {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
+                          </p>
+                          {!item.isVoided && (item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null)}
                           {!item.isVoided && (cartViewDetailed ? (
                             <div className="mt-0.5 space-y-px">
                               {cartLineDetails(item).map(d => (
@@ -362,12 +365,12 @@ const POSTouchScreen = React.memo((props) => {
                         <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
                           {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
                             className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
-                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
                           {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                             className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
                         </div>
-                        <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
-                        <span className={`col-span-1 text-xs font-bold text-right pt-1 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#F5C742]'}`}>{formatCurrency(item.total)}</span>
+                        <span className={`col-span-2 text-[10px] text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-gray-400'}`}>{item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}</span>
+                        <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                         <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
                           className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                           <XCircle className="h-3.5 w-3.5" />
@@ -957,11 +960,15 @@ const POSTouchScreen = React.memo((props) => {
                 ) : (
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
-                      className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
+                      className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
                       onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
                       <div className="col-span-5 min-w-0 pr-1">
-                        <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                        {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
+                        {/* Voided line: muted red + [VOID] tag + negative amounts (no
+                            strike-through). Excluded from the total; disclosed below. */}
+                        <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
+                          {item.name}
+                          {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
+                        </p>
                         {!item.isVoided && (cartViewDetailed ? (
                           cartLineDetails(item).map(d => (
                             <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
@@ -982,14 +989,14 @@ const POSTouchScreen = React.memo((props) => {
                             <Minus className="h-2.5 w-2.5" />
                           </button>
                         </>}
-                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
                         {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                           className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                           <Plus className="h-2.5 w-2.5" />
                         </button>}
                       </div>
-                      <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-500'}`}>{item.price.toFixed(0)}</span>
-                      <span className={`col-span-2 text-[11px] font-bold text-right pr-2 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{formatCurrency(item.total)}</span>
+                      <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>{item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}</span>
+                      <span className={`col-span-2 text-[11px] font-bold text-right pr-2 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                       <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
                         className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                         <XCircle className="h-3 w-3" />
@@ -1023,6 +1030,13 @@ const POSTouchScreen = React.memo((props) => {
                     return currentInvoice.taxInclusive ? `${base} incl.` : base;
                   })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
                 </div>
+                {/* Informational: voided lines excluded from TOTAL, shown only
+                    when at least one line was voided. */}
+                {currentInvoice.voidedCount > 0 && (
+                  <div className="flex justify-between text-xs text-red-500">
+                    <span>Voided Items ({currentInvoice.voidedCount})</span><span>− {formatCurrency(currentInvoice.voidedTotal)}</span>
+                  </div>
+                )}
                 {(Number(shippingCharge) || 0) > 0 && (
                   <div className="flex justify-between text-xs text-gray-500">
                     <span>Shipping</span><span>{formatCurrency(Number(shippingCharge) || 0)}</span>

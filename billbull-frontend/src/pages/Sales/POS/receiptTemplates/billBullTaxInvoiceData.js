@@ -110,15 +110,24 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       qty: Number(it.qty || 0),
       rate: Number(it.rate || 0),
       amount: Number(it.amount || 0),
+      voided: Boolean(it.voided || it.isVoided),
     })),
     totals: {
       subtotal: Number(txn.totals?.subtotal || 0),
       discount: Number(txn.totals?.discount || 0),
+      // Ex-VAT taxable base after discount. Falls back to subtotal - discount
+      // when the caller (e.g. an older txn shape) doesn't supply it explicitly.
+      taxableAmount: Number(
+        txn.totals?.taxableAmount ?? (Number(txn.totals?.subtotal || 0) - Number(txn.totals?.discount || 0))
+      ),
       vat5: Number(txn.totals?.vat5 || 0),
       vat0: Number(txn.totals?.vat0 || 0),
       deliveryCharge: Number(txn.totals?.deliveryCharge || 0),
       roundOff: Number(txn.totals?.roundOff || 0),
       totalToPay: Number(txn.totals?.totalToPay || 0),
+      // Informational voided-lines disclosure (excluded from totalToPay).
+      voidedCount: Number(txn.totals?.voidedCount || 0),
+      voidedTotal: Number(txn.totals?.voidedTotal || 0),
     },
     payment: on(toggles.showPaymentDetails) && txn.payment
       ? {
@@ -171,7 +180,11 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
 
   const isWalkIn = !invoice.customerName || invoice.customerName === "Walk-in Customer";
 
-  const items = (invoice.items || []).filter((it) => !it.voided && !it.isVoided);
+  // Voided lines are kept on the receipt (audit trail) with a [VOID] tag +
+  // negative amounts, but excluded from every financial reconstruction below.
+  const allItems = invoice.items || [];
+  const isVoid = (it) => Boolean(it.voided || it.isVoided);
+  const items = allItems.filter((it) => !isVoid(it));
 
   // ── Subtotal / Discount / Taxable reconstruction ───────────────────────────
   // Mirror buildThermalReceiptHtml's two invoice shapes: the checkout mock (has
@@ -183,7 +196,15 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
   if (invoice.discountTotal != null) {
     subtotal = Number(invoice.subTotal || 0);
     discount = Number(invoice.discountTotal) || 0;
-    taxable = subtotal - discount;
+    const netAfterDiscount = subtotal - discount;
+    // Under INCLUSIVE VAT, netAfterDiscount is still tax-laden — extract VAT
+    // via the already-computed taxTotal (exact, rate-agnostic) instead of
+    // treating it directly as the ex-VAT taxable base. See posPrintUtils.js's
+    // resolveInvoiceGrossTotals for the matching fix.
+    const taxTotalForExtraction = Number(invoice.taxTotal || 0) || 0;
+    taxable = invoice.taxInclusive
+      ? Math.max(0, netAfterDiscount - taxTotalForExtraction)
+      : netAfterDiscount;
   } else {
     taxable = Number(invoice.subTotal || 0);
     const grossSubtotal = items.reduce((sum, it) => {
@@ -270,8 +291,12 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
         },
     balance,
     delivery,
-    items: items.map((it) => {
-      const rate = Number(it.taxPercent ?? it.vatPercent ?? null);
+    items: allItems.map((it) => {
+      // Checkout mock items carry the rate as `taxPercent` (see mockInvoice
+      // mapping above); persisted/reloaded backend invoice items carry it as
+      // `taxRate` instead — without this fallback, the reprint path silently
+      // dropped the per-item "VAT X%" meta line (rate came back NaN -> "").
+      const rate = Number(it.taxPercent ?? it.taxRate ?? it.vatPercent ?? null);
       // Per-line discount — mirror the ESC/POS canvas renderer so the checkout
       // preview shows the same "Disc X%" meta + "Discount: -amount" line the
       // printed receipt does. discountAmount preferred; else gross × discount%.
@@ -294,16 +319,24 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
         qty,
         rate: Number(it.unitPrice || 0),
         amount: lineTotal,
+        voided: isVoid(it),
       };
     }),
     totals: {
       subtotal,
       discount,
+      taxableAmount: taxable,
       vat5: vatStandard,
       vat0: vatZero,
       deliveryCharge,
       roundOff: Number(invoice.roundOff || invoice.roundOffAmount || 0),
       totalToPay: Number(invoice.invoiceTotal || 0),
+      // Informational voided-lines disclosure (excluded from totalToPay).
+      voidedCount: allItems.filter(isVoid).length,
+      voidedTotal: allItems.filter(isVoid).reduce(
+        (s, it) => s + (Number(it.netAmount ?? it.lineTotal ?? (Number(it.quantity || 0) * Number(it.unitPrice ?? it.price ?? 0))) || 0),
+        0,
+      ),
     },
     payment: {
       mode: invoice.paymentMode || "",
@@ -367,6 +400,7 @@ export function buildSampleTxn() {
     totals: {
       subtotal: 89.0,
       discount: 0.0,
+      taxableAmount: 89.0,
       vat5: 4.9,
       vat0: 0.0,
       deliveryCharge: 8.9,
