@@ -1140,6 +1140,14 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
         ? itemDiscountAmount + footerDiscountAmount
         : combinedDiscountAmount;
 
+    // True ex-VAT taxable base. Prefer the explicit value from the summary (which
+    // correctly extracts VAT under inclusive pricing); only fall back to the
+    // (subTotal - discount) derivation for legacy callers that omit it. Under
+    // VAT-inclusive mode subTotal is tax-laden, so the derivation is wrong there.
+    const taxableAmountValue = layout.totals.taxableAmount !== undefined
+        ? layout.totals.taxableAmount
+        : layout.totals.subTotal - totalDiscountForTaxable;
+
     // Order: SubTotal → Item Discount → Footer Discount → Taxable → VAT → Delivery → RoundOff → Total → AmountPaid → BalanceDue
     const discountRows = visibility.discount
         ? hasSeparate
@@ -1152,7 +1160,7 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
     const rows = [
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
         discountRows,
-        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal - totalDiscountForTaxable) : '',
+        visibility.taxable ? row('Taxable Amount', taxableAmountValue) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
         visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
@@ -3614,6 +3622,10 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };
@@ -3750,6 +3762,10 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };
@@ -3926,6 +3942,10 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
         roundOff: asNumber(data.totals?.roundOff)
     };

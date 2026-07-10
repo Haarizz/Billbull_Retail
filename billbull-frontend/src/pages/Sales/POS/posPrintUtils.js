@@ -1,6 +1,7 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
+import { computeLineTaxTotals, VAT_MODES } from '../../../utils/vatMath';
 
 /**
  * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
@@ -10,6 +11,51 @@ import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../
  * DB toggle so rollback needs no redeploy of backend state, only a rebuild.
  */
 export const USE_NEW_POS_PRINT_TEMPLATE = String(import.meta.env.VITE_USE_NEW_POS_PRINT_TEMPLATE || '').toLowerCase() === 'true';
+
+/**
+ * Reconstructs gross (pre-discount) Subtotal / Discount / Taxable Amount from a
+ * persisted invoice the same way for every POS print surface. SalesInvoiceService
+ * #finalizeInvoiceTotals sums (netAmount − taxAmount) per line into invoice.subTotal,
+ * i.e. that field is already the TAXABLE base net of per-item discounts — the entity
+ * stores no top-level gross/discount aggregate at all — so Subtotal must be rebuilt
+ * from each line's own grossAmount, matching Back Office's summarizeSalesItems.
+ */
+export const resolveInvoiceGrossTotals = (invoice = {}) => {
+  const items = invoice.items || [];
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total (checkout preview's mock
+    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
+    // pre-discount amount, so derive the taxable base the old way.
+    const subTotal = invoice.subTotal || 0;
+    const discountTotal = parseFloat(invoice.discountTotal) || 0;
+    return { subTotal, discountTotal, taxableAmount: subTotal - discountTotal };
+  }
+  const taxableAmount = invoice.subTotal || 0;
+  const vatMode = invoice.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE;
+  let grossSubtotal = 0;
+  let undiscountedTaxableTotal = 0;
+  items.forEach((it) => {
+    if (it.voided || it.isVoided) return;
+    const qty = it.quantity || 0;
+    const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+    const gross = parseFloat(it.grossAmount ?? (qty * unit));
+    grossSubtotal += Number.isFinite(gross) ? gross : 0;
+    const taxPercent = parseFloat(it.taxPercent ?? it.taxRate ?? 0) || 0;
+    undiscountedTaxableTotal += computeLineTaxTotals({
+      netAfterDiscount: Number.isFinite(gross) ? gross : 0,
+      taxPercent,
+      vatMode,
+    }).taxableAmount;
+  });
+  // Compare against the VAT-mode-aware zero-discount taxable base, not raw gross —
+  // under INCLUSIVE VAT, gross is tax-laden while taxableAmount is ex-VAT, so a naive
+  // (gross - taxable) would misreport the extracted VAT as a line discount.
+  const lineDiscountTotal = Math.max(0, undiscountedTaxableTotal - taxableAmount);
+  const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+  const discountTotal = lineDiscountTotal + billDiscountTotal;
+  const subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
+  return { subTotal, discountTotal, taxableAmount };
+};
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -221,32 +267,7 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const items = invoice.items || [];
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
-  let subTotal, discountTotal, taxableAmount;
-  if (invoice.discountTotal != null) {
-    // Caller already computed an explicit discount total (checkout preview's mock
-    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
-    // pre-discount amount, so derive the taxable base the old way.
-    subTotal = invoice.subTotal || 0;
-    discountTotal = parseFloat(invoice.discountTotal) || 0;
-    taxableAmount = subTotal - discountTotal;
-  } else {
-    // Persisted invoice from the backend: SalesInvoiceService#finalizeInvoiceTotals sums
-    // (netAmount − taxAmount) per line into subTotal, i.e. it's already the TAXABLE base,
-    // net of per-item discounts — and the entity stores no top-level discount aggregate at
-    // all. Reconstruct Subtotal/Discount from each line's own grossAmount instead.
-    taxableAmount = invoice.subTotal || 0;
-    const grossSubtotal = items.reduce((sum, it) => {
-      if (it.voided || it.isVoided) return sum;
-      const qty = it.quantity || 0;
-      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
-      const gross = parseFloat(it.grossAmount ?? (qty * unit));
-      return sum + (Number.isFinite(gross) ? gross : 0);
-    }, 0);
-    const lineDiscountTotal = Math.max(0, grossSubtotal - taxableAmount);
-    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
-    discountTotal = lineDiscountTotal + billDiscountTotal;
-    subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
-  }
+  const { subTotal, discountTotal, taxableAmount } = resolveInvoiceGrossTotals(invoice);
   const payMode = invoice.paymentMode || '';
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -1445,45 +1466,63 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   return html;
 };
 
-export const buildPosPrintData = (full, footerNote = '') => ({
-  title: Number(full.taxTotal) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
-  docNo: full.invoiceNumber || '',
-  date: full.invoiceDate || '',
-  customer: {
-    name: full.customerName || 'Walk-in Customer',
-    address: full.customerAddress || '',
-    phone: full.customerPhone || '',
-    email: full.customerEmail || '',
-    trn: full.customerTrn || '',
-  },
-  items: (full.items || []).filter(it => !it.voided).map(it => ({
-    code: it.itemCode || '',
-    name: it.itemName || it.productName || '',
-    desc: it.description || '',
-    qty: it.quantity || 0,
-    price: it.unitPrice || it.price || 0,
-    disc: it.discountPercent || 0,
-    tax: it.taxPercent || it.taxRate || 5,
-    taxAmt: it.taxAmount || 0,
-    total: it.netAmount || it.lineTotal || 0,
-    batchNumber: it.batchNumber || '',
-    image: it.image || '',
-  })),
-  totals: {
-    subTotal: full.subTotal || 0,
-    tax: full.taxTotal || 0,
-    grandTotal: full.invoiceTotal || 0,
-    discountAmount: full.discountTotal || 0,
-    billDiscountAmount: full.billDiscountAmount || 0,
-    footerDiscountAmount: full.footerDiscountAmount || 0,
-  },
-  meta: {
-    notes: footerNote,
-    paymentMode: full.paymentMode || '',
-    location: full.branchName || '',
-    salesPerson: full.posCounterName || '',
-  },
-});
+/**
+ * @param customersList optional live customer directory (POSSales' customerOptions)
+ *   used to backfill address/phone/email/trn when the invoice's own snapshot fields
+ *   are blank — common for POS walk-in/quick sales that only persist customerName.
+ *   Mirrors the cross-reference Back Office's SalesInvoice print builder already does
+ *   against its own customersList.
+ */
+export const buildPosPrintData = (full, footerNote = '', customersList = []) => {
+  const custRec = full.customerCode
+    ? (customersList || []).find(c => c.code === full.customerCode || c.id === full.customerCode)
+    : null;
+  const { subTotal, discountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
+  return {
+    title: Number(full.taxTotal) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
+    docNo: full.invoiceNumber || '',
+    date: full.invoiceDate || '',
+    customer: {
+      name: full.customerName || 'Walk-in Customer',
+      code: full.customerCode || custRec?.code || '',
+      address: full.customerAddress || custRec?.address || custRec?.billingAddress || '',
+      phone: full.customerPhone || custRec?.phone || custRec?.mobile || '',
+      email: full.customerEmail || custRec?.email || '',
+      trn: full.customerTrn || custRec?.trn || '',
+    },
+    items: (full.items || []).filter(it => !it.voided).map(it => ({
+      code: it.itemCode || '',
+      name: it.itemName || it.productName || '',
+      desc: it.description || '',
+      unit: it.unit || it.uom || '',
+      qty: it.quantity || 0,
+      price: it.unitPrice || it.price || 0,
+      disc: it.discountPercent || 0,
+      tax: it.taxPercent || it.taxRate || 5,
+      taxAmt: it.taxAmount || 0,
+      total: it.netAmount || it.lineTotal || 0,
+      batchNumber: it.batchNumber || '',
+      image: it.image || '',
+    })),
+    totals: {
+      subTotal,
+      // True ex-VAT taxable base — passed explicitly so the renderer doesn't
+      // (mis)derive it as subTotal − discount under VAT-inclusive pricing.
+      taxableAmount,
+      tax: full.taxTotal || 0,
+      grandTotal: full.invoiceTotal || 0,
+      discountAmount: discountTotal,
+      billDiscountAmount: full.billDiscountAmount || 0,
+      footerDiscountAmount: full.footerDiscountAmount || 0,
+    },
+    meta: {
+      notes: footerNote,
+      paymentMode: full.paymentMode || '',
+      location: full.branchName || '',
+      salesPerson: full.posCounterName || '',
+    },
+  };
+};
 
 /**
  * Builds a POS cart/session-shaped "draft invoice" object from live, pre-payment
@@ -1536,6 +1575,7 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
       itemCode: it.itemCode || it.code || it.productId || it.id || '',
       itemName: it.itemName || it.name || '',
       description: it.description || '',
+      unit: it.unit || it.uom || '',
       quantity: it.quantity || 0,
       unitPrice: it.unitPrice || it.price || 0,
       netAmount: it.netAmount || it.total || 0,
@@ -1598,6 +1638,7 @@ export const buildPosA4Template = (footerNote = '', opts = {}, category = 'Sales
     colDiscount:          opts.colDiscount          !== false,
     colVAT:               opts.colVatPct            !== false,
     colVATAmount:         opts.colVatAmt            !== false,
+    colUOM:               opts.colUOM               !== false,
     primaryColor: '#F5C742',
     accentColor:  '#F5C742',
   };

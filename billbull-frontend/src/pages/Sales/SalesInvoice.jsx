@@ -2848,7 +2848,10 @@ const SalesInvoice = () => {
         totalTax,
         invoiceTotal: netTotal,
         amountPaid: amountCollected,
+        vatMode,
+        taxInclusive: vatMode === 'INCLUSIVE',
         billDiscount,
+        billDiscountType,
         billDiscountAmount,
         deliveryCharge,
         roundOff: effectiveRoundOff,
@@ -2954,6 +2957,10 @@ const SalesInvoice = () => {
                     })),
                     totals: {
                         subTotal: resolvedSummary.grossTotal,
+                        // True ex-VAT taxable base (after item + footer discount). Passed
+                        // explicitly so the renderer doesn't (mis)derive it as
+                        // subTotal − discount, which is wrong under VAT-inclusive pricing.
+                        taxableAmount: Math.max(0, (resolvedSummary.subTotal || 0) - (resolvedSummary.footerDiscountTotal || 0)),
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',

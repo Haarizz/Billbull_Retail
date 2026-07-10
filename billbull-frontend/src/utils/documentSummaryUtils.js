@@ -90,13 +90,22 @@ export const summarizeSalesItems = (items = [], billDiscount = 0, extras = {}, v
                 vatMode,
             }).taxableAmount;
         }
-        // Recalculate discountAmount from (grossAmount - taxableAmount) only
+        // Recalculate discountAmount from (undiscountedTaxable - taxableAmount) only
         // when taxableAmount came from an explicit item field (e.g. item.taxableAmount)
         // and NOT when it was derived from the line total. Line totals from saved
         // documents may include footer-discount allocation, which would cause
         // discountAmount to be inflated (item discount + footer discount).
+        // Compare against the VAT-mode-aware zero-discount taxable amount (not the
+        // raw gross) — under INCLUSIVE VAT, gross is tax-laden while taxableAmount
+        // is ex-VAT, so a naive (gross - taxable) would misreport the extracted VAT
+        // as a discount on an undiscounted line.
         if (!hasValue(item.discountAmount) && preDiscountAmount > 0 && !taxableDerivedFromLineTotal) {
-            discountAmount = Math.max(0, preDiscountAmount - taxableAmount);
+            const undiscountedTaxable = computeLineTaxTotals({
+                netAfterDiscount: preDiscountAmount,
+                taxPercent,
+                vatMode,
+            }).taxableAmount;
+            discountAmount = Math.max(0, undiscountedTaxable - taxableAmount);
         }
 
         return { grossAmount, discountAmount, taxableAmount, taxPercent, explicitTaxAmount, explicitLineTotal };
