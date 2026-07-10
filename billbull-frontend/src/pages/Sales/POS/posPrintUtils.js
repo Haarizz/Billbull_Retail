@@ -1,7 +1,6 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
-import { computeLineTaxTotals, VAT_MODES } from '../../../utils/vatMath';
 
 /**
  * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
@@ -28,33 +27,34 @@ export const resolveInvoiceGrossTotals = (invoice = {}) => {
     // pre-discount amount, so derive the taxable base the old way.
     const subTotal = invoice.subTotal || 0;
     const discountTotal = parseFloat(invoice.discountTotal) || 0;
-    return { subTotal, discountTotal, taxableAmount: subTotal - discountTotal };
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    return {
+      subTotal,
+      discountTotal,
+      lineDiscountTotal: Math.max(0, discountTotal - billDiscountTotal),
+      billDiscountTotal,
+      taxableAmount: subTotal - discountTotal,
+    };
   }
   const taxableAmount = invoice.subTotal || 0;
-  const vatMode = invoice.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE;
-  let grossSubtotal = 0;
-  let undiscountedTaxableTotal = 0;
-  items.forEach((it) => {
-    if (it.voided || it.isVoided) return;
+  const taxTotal = parseFloat(invoice.taxTotal || 0) || 0;
+  const grossSubtotal = items.reduce((sum, it) => {
+    if (it.voided || it.isVoided) return sum;
     const qty = it.quantity || 0;
     const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
     const gross = parseFloat(it.grossAmount ?? (qty * unit));
-    grossSubtotal += Number.isFinite(gross) ? gross : 0;
-    const taxPercent = parseFloat(it.taxPercent ?? it.taxRate ?? 0) || 0;
-    undiscountedTaxableTotal += computeLineTaxTotals({
-      netAfterDiscount: Number.isFinite(gross) ? gross : 0,
-      taxPercent,
-      vatMode,
-    }).taxableAmount;
-  });
-  // Compare against the VAT-mode-aware zero-discount taxable base, not raw gross —
-  // under INCLUSIVE VAT, gross is tax-laden while taxableAmount is ex-VAT, so a naive
-  // (gross - taxable) would misreport the extracted VAT as a line discount.
-  const lineDiscountTotal = Math.max(0, undiscountedTaxableTotal - taxableAmount);
+    return sum + (Number.isFinite(gross) ? gross : 0);
+  }, 0);
+  // Line discount, expressed on the same VAT basis as gross so it matches the
+  // Sales Invoice presentation (a "20% off 3,500" line reads as −700, not −636).
+  // INCLUSIVE: gross is VAT-laden, so compare against the VAT-laden net
+  // (taxable + tax). EXCLUSIVE: gross is ex-VAT, compare against taxable.
   const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+  const netAfterDiscount = invoice.taxInclusive ? (taxableAmount + taxTotal) : taxableAmount;
+  const lineDiscountTotal = Math.max(0, grossSubtotal - netAfterDiscount - billDiscountTotal);
   const discountTotal = lineDiscountTotal + billDiscountTotal;
   const subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
-  return { subTotal, discountTotal, taxableAmount };
+  return { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount };
 };
 
 export const stripForPreview = (html) => {
@@ -714,30 +714,14 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   });
 
   lines.push(hr);
-  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
-  if (invoice.discountTotal != null) {
-    // Caller already computed an explicit discount total — invoice.subTotal IS
-    // the gross pre-discount amount in that shape (see buildThermalReceiptHtml).
-    resolvedSubTotal = invoice.subTotal || 0;
-    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
-    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
-  } else {
-    // Persisted invoice from the backend: subTotal is already the TAXABLE base
-    // (net of per-item discounts) and there's no top-level discount aggregate at
-    // all. Reconstruct Subtotal/Discount from each line's own grossAmount.
-    resolvedTaxableAmount = invoice.subTotal || 0;
-    const resolvedGrossSubtotal = (invoice.items || []).reduce((sum, it) => {
-      if (it.voided || it.isVoided) return sum;
-      const qty = it.quantity || 0;
-      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
-      const gross = parseFloat(it.grossAmount ?? (qty * unit));
-      return sum + (Number.isFinite(gross) ? gross : 0);
-    }, 0);
-    const resolvedLineDiscountTotal = Math.max(0, resolvedGrossSubtotal - resolvedTaxableAmount);
-    const resolvedBillDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
-    resolvedDiscountTotal = resolvedLineDiscountTotal + resolvedBillDiscountTotal;
-    resolvedSubTotal = resolvedGrossSubtotal > 0 ? resolvedGrossSubtotal : resolvedTaxableAmount;
-  }
+  // Single source of truth for Subtotal / Discount / Taxable (gross-basis,
+  // VAT-mode aware) — same as the HTML thermal + A4 renderers so all three tie
+  // out identically to the Sales Invoice.
+  const {
+    subTotal: resolvedSubTotal,
+    discountTotal: resolvedDiscountTotal,
+    taxableAmount: resolvedTaxableAmount,
+  } = resolveInvoiceGrossTotals(invoice);
   lines.push(buildFixedWidthLine('Subtotal', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
@@ -1477,7 +1461,7 @@ export const buildPosPrintData = (full, footerNote = '', customersList = []) => 
   const custRec = full.customerCode
     ? (customersList || []).find(c => c.code === full.customerCode || c.id === full.customerCode)
     : null;
-  const { subTotal, discountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
+  const { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
   return {
     title: Number(full.taxTotal) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
     docNo: full.invoiceNumber || '',
@@ -1497,7 +1481,9 @@ export const buildPosPrintData = (full, footerNote = '', customersList = []) => 
       unit: it.unit || it.uom || '',
       qty: it.quantity || 0,
       price: it.unitPrice || it.price || 0,
-      disc: it.discountPercent || 0,
+      // Backend persists the line discount rate under `discount` (a percentage);
+      // fall back to discountPercent/disc for cart-shaped inputs.
+      disc: it.discountPercent ?? it.discount ?? it.disc ?? 0,
       tax: it.taxPercent || it.taxRate || 5,
       taxAmt: it.taxAmount || 0,
       total: it.netAmount || it.lineTotal || 0,
@@ -1512,8 +1498,12 @@ export const buildPosPrintData = (full, footerNote = '', customersList = []) => 
       tax: full.taxTotal || 0,
       grandTotal: full.invoiceTotal || 0,
       discountAmount: discountTotal,
-      billDiscountAmount: full.billDiscountAmount || 0,
-      footerDiscountAmount: full.footerDiscountAmount || 0,
+      // Split so the renderer shows distinct Discount (line) + Footer Discount
+      // rows. Line discount is derived VAT-mode-aware in resolveInvoiceGrossTotals;
+      // footer/bill discount comes from the persisted invoice aggregate.
+      itemDiscountAmount: lineDiscountTotal,
+      footerDiscountAmount: billDiscountTotal,
+      billDiscountAmount: billDiscountTotal,
     },
     meta: {
       notes: footerNote,
@@ -1551,6 +1541,13 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
     branchName = '',
   } = cart;
 
+  // Route the preview through resolveInvoiceGrossTotals' MAIN branch (not the
+  // explicit-discountTotal early-return) so the checkout preview presents the
+  // SAME gross-basis Subtotal/Discount as the posted invoice & Sales Invoice A4
+  // (e.g. a 20%-off 3,500 line reads Sub Total 3,500 / Discount −700, not the
+  // ex-VAT 3,181.82 / −636 the cart tracks internally). That needs: an ex-VAT
+  // taxable base AFTER discount as subTotal, and per-line grossAmount.
+  const taxableAfterDiscount = Math.max(0, (Number(subTotal) || 0) - (Number(discountTotal) || 0));
   const mockInvoice = {
     invoiceNumber,
     invoiceDate,
@@ -1565,11 +1562,10 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
     posTerminalId: terminalId,
     posCounterName: counterName,
     paymentMode,
-    subTotal,
+    subTotal: taxableAfterDiscount,
     taxTotal,
     taxInclusive,
     invoiceTotal,
-    discountTotal,
     branchName,
     items: items.map(it => ({
       itemCode: it.itemCode || it.code || it.productId || it.id || '',
@@ -1578,6 +1574,8 @@ export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
       unit: it.unit || it.uom || '',
       quantity: it.quantity || 0,
       unitPrice: it.unitPrice || it.price || 0,
+      // Pre-discount gross so the renderer/totals derive the gross-basis discount.
+      grossAmount: (Number(it.unitPrice || it.price || 0) * Number(it.quantity || 0)),
       netAmount: it.netAmount || it.total || 0,
       discountPercent: it.discountPercent || it.discount || 0,
       taxPercent: it.taxPercent != null ? it.taxPercent : it.taxRate,
