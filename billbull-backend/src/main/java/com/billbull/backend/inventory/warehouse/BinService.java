@@ -6,6 +6,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Branch-Level Inventory Phase 5 note: BinService needs NO branch-scoping change. Every list here
+ * is keyed by locatorId or warehouseId, and a locator/warehouse belongs to exactly one branch, so
+ * these reads are already branch-correct by inheritance (same reasoning as the warehouse-scoped
+ * balance reads in Phase 4). There is no cross-branch bin-list endpoint to scope. Branch access is
+ * enforced upstream at the warehouse level (WarehouseService).
+ */
 @Service
 public class BinService {
 

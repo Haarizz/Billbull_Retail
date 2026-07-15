@@ -61,6 +61,12 @@ public class StockTakeService {
     private final StockTakeUnitScanRepository unitScanRepo;
     private final BatchMasterRepository batchMasterRepo;
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+    // Branch-Level Inventory Phase 2: the single branch-stamping mechanism (stock-take adjustment
+    // movements are constructed here, not via StockMovementService, so stamp each before save).
+    private final com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService;
+    // Branch-Level Inventory Phase 7: session list/retrieval branch scoping (dormant while toggle off).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+    private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -76,7 +82,10 @@ public class StockTakeService {
             StockTakeExpectedUnitRepository expectedUnitRepo,
             StockTakeUnitScanRepository unitScanRepo,
             BatchMasterRepository batchMasterRepo,
-            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService) {
+            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
+            com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.batchRepo = batchRepo;
@@ -91,10 +100,21 @@ public class StockTakeService {
         this.unitScanRepo = unitScanRepo;
         this.batchMasterRepo = batchMasterRepo;
         this.postingEngineService = postingEngineService;
+        this.stockMovementService = stockMovementService;
+        this.branchScopeResolver = branchScopeResolver;
+        this.branchAccessService = branchAccessService;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
             String createdBy, Long categoryId, Long brandId) {
+        // Phase 7: when the toggle is on + a branch is active, a restricted user may only start a
+        // stock-take on a warehouse in their branch (or a global warehouse). The session's branch is
+        // derived from its warehouse; null (global) is always allowed. No-op when the toggle is off.
+        if (branchScopeResolver.shouldScope()) {
+            Long warehouseBranchId = stockMovementService.resolveBranchIdForWarehouse(warehouseId);
+            branchAccessService.assertTransactionBranchAccessible(warehouseBranchId, "Stock-take warehouse");
+        }
+
         // Validation for Opening Inventory
         if ("Opening Inventory".equalsIgnoreCase(type)) {
             boolean exists = sessionRepo.existsByWarehouseIdAndTypeAndIsActiveTrue(warehouseId, StockTakeSession.StockTakeType.OPENING_INVENTORY);
@@ -236,7 +256,13 @@ public class StockTakeService {
         // ARCHFIX §1.6/§1.9: items + batches are LAZY. JOIN FETCH items, then init each item's
         // batches (batched) in-session so the response — including the @Transient getLotGroups()
         // which iterates batches — serializes without a LazyInitializationException.
-        List<StockTakeSession> sessions = sessionRepo.findAllActiveWithItems();
+        //
+        // Phase 7: when the toggle is on + a branch is active, filter to sessions whose warehouse
+        // belongs to that branch (or is global); else the existing unscoped list (toggle-off / admin
+        // All-Branches → byte-identical). Session branch is derived from its warehouse.
+        List<StockTakeSession> sessions = branchScopeResolver.activeListScope()
+                .map(scope -> sessionRepo.findActiveWithItemsInBranchScope(scope.branchIds()))
+                .orElseGet(sessionRepo::findAllActiveWithItems);
         sessions.forEach(this::hydrateForSerialization);
         return sessions;
     }
@@ -276,6 +302,16 @@ public class StockTakeService {
 
         if (!session.isActive()) {
             throw new RuntimeException("Session not found: " + sessionId);
+        }
+
+        // Phase 7: single-session branch-access guard. When the toggle is on + a branch is active,
+        // a restricted user may not retrieve a session belonging to another branch. The session's
+        // branch is derived from its warehouse; a null (global / no-warehouse) session is always
+        // accessible, and admins pass (assertTransactionBranchAccessible is permissive for them).
+        // No-op when the toggle is off (byte-identical).
+        if (branchScopeResolver.shouldScope()) {
+            Long sessionBranchId = sessionRepo.findBranchIdBySessionId(session.getId());
+            branchAccessService.assertTransactionBranchAccessible(sessionBranchId, "Stock-take session");
         }
 
         if (isInventoryCounting(session)) {
@@ -634,6 +670,7 @@ public class StockTakeService {
                 sm.setZoneId(resolvedZoneId);
                 sm.setLocatorId(resolvedLocatorId);
 
+                stockMovementService.stampBranch(sm); // Phase 2: branch from session's warehouse
                 stockMovementRepo.save(sm);
             }
         }
@@ -1546,6 +1583,7 @@ public class StockTakeService {
                 movement.setUnitCost(adjustmentUnitCost);
             }
 
+            stockMovementService.stampBranch(movement); // Phase 2: branch from session's warehouse
             stockMovementRepo.save(movement);
 
             // Expiry write-off journal: when a negative adjustment removes stock for an
@@ -1783,6 +1821,7 @@ public class StockTakeService {
             movement.setUnitCost(unitCost != null ? unitCost : resolveAdjustmentUnitCost(productId));
         }
 
+        stockMovementService.stampBranch(movement); // Phase 2: branch from session's warehouse
         stockMovementRepo.save(movement);
     }
 

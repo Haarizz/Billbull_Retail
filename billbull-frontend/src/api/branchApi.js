@@ -44,6 +44,18 @@ export const switchBranchSession = async (branchId) => {
     return res.data;
 };
 
+// Branch-Level Inventory Phase 11 — read-only tenant flag so the UI only shows branch labels/
+// badges when inventory branch-scoping is actually active (avoids cosmetic drift). Fails soft to
+// disabled so the UI stays unchanged if the endpoint is unavailable.
+export const getInventoryBranchScopeStatus = async () => {
+    try {
+        const res = await api.get("/api/inventory/branch-scope/status");
+        return Boolean(res?.data?.enabled);
+    } catch {
+        return false;
+    }
+};
+
 export const uploadBranchLogo = async (id, file) => {
     const formData = new FormData();
     formData.append("file", file);

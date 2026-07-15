@@ -22,6 +22,11 @@ public class ProductBarcode extends BaseEntity {
 	@Column
 	private String barcode;
 
+	// Branch-Level Inventory Phase 6A: nullable branch (null = shared/global). Additive only —
+	// barcode branch-scoping/resolution is wired in Phase 9A. Column created by Flyway V36.
+	@Column(name = "branch_id")
+	private Long branchId;
+
 	private boolean perBranch;
 	private boolean includePrice;
 	private String labelLayout;
@@ -48,6 +53,14 @@ public class ProductBarcode extends BaseEntity {
 
 	public void setBarcode(String barcode) {
 		this.barcode = barcode;
+	}
+
+	public Long getBranchId() {
+		return branchId;
+	}
+
+	public void setBranchId(Long branchId) {
+		this.branchId = branchId;
 	}
 
 	public boolean isPerBranch() {

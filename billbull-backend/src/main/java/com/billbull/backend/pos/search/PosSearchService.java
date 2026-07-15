@@ -67,6 +67,7 @@ public class PosSearchService {
             if (p.getProduct() != null && !p.getProduct().isAvailableInPos()) {
                 return PosResolveResponse.blocked("This product is disabled for POS sales.");
             }
+            productService.applyBranchScopedPosStock(p); // Phase 9: branch-scoped POS availability
             return PosResolveResponse.product(p, null);
         }
 
@@ -150,7 +151,9 @@ public class PosSearchService {
             return null;
         }
         try {
-            return productService.getById(productId);
+            ProductAggregateResponse res = productService.getById(productId);
+            productService.applyBranchScopedPosStock(res); // Phase 9: branch-scoped POS availability
+            return res;
         } catch (RuntimeException ex) {
             // Product inactive or deleted — treat as no match.
             return null;

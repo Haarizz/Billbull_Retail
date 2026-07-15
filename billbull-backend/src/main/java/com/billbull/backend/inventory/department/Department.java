@@ -1,18 +1,31 @@
 package com.billbull.backend.inventory.department;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
+// Branch-Level Inventory Phase 6A: the global UNIQUE(code) constraint was removed here and replaced
+// by DB-level PARTIAL unique indexes (Flyway V37: ux_departments_code_global / _branch) so a code
+// is unique among global rows and once per branch. The JPA @UniqueConstraint is intentionally gone
+// so Hibernate (ddl-auto=update) does NOT recreate the global constraint. Uniqueness is now owned
+// by the database; per-branch enforcement/messaging is added in Phase 6B.
 @Entity
-@Table(name = "departments", uniqueConstraints = {
-		@UniqueConstraint(columnNames = "code")
-})
+@Table(name = "departments")
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class Department extends BaseEntity {
+
+	// Phase 6A: nullable branch (null = shared/global, visible to all branches). Read/write scoping
+	// wired in Phase 6B; inert for now.
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "branch_id")
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Branch branch;
 
 	// --------------------
 	// Section A: Basic Details
@@ -67,6 +80,14 @@ public class Department extends BaseEntity {
 
 	public void setCode(String code) {
 		this.code = code;
+	}
+
+	public Branch getBranch() {
+		return branch;
+	}
+
+	public void setBranch(Branch branch) {
+		this.branch = branch;
 	}
 
 	public String getDescription() {

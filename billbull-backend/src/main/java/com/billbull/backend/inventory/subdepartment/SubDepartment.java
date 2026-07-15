@@ -2,21 +2,30 @@ package com.billbull.backend.inventory.subdepartment;
 
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.inventory.department.Department;
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 
+// Branch-Level Inventory Phase 6A: the global UNIQUE(code) and UNIQUE(name, department_id)
+// constraints were removed here and replaced by DB-level PARTIAL unique indexes (Flyway V37) —
+// per-branch + global-null. Both the table-level @UniqueConstraint set AND the field-level
+// @Column(unique=true) on code are intentionally gone so Hibernate (ddl-auto=update) does not
+// recreate a global unique constraint. Uniqueness is now owned by the database.
 @Entity
-@Table(name = "sub_departments", uniqueConstraints = {
-		@UniqueConstraint(columnNames = { "code" }),
-		@UniqueConstraint(columnNames = { "name", "department_id" })
-})
+@Table(name = "sub_departments")
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SubDepartment extends BaseEntity {
 
 	@Column(nullable = false)
 	private String name;
 
-	@Column(nullable = false, unique = true)
+	@Column(nullable = false)
 	private String code;
+
+	// Phase 6A: nullable branch (null = shared/global). Scoping wired in Phase 6B; inert for now.
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "branch_id")
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Branch branch;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "department_id", nullable = false)
@@ -53,6 +62,14 @@ public class SubDepartment extends BaseEntity {
 
 	public void setCode(String code) {
 		this.code = code;
+	}
+
+	public Branch getBranch() {
+		return branch;
+	}
+
+	public void setBranch(Branch branch) {
+		this.branch = branch;
 	}
 
 	public Department getDepartment() {

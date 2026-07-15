@@ -16,7 +16,12 @@ import jakarta.persistence.Table;
 				@jakarta.persistence.Index(name = "idx_sm_warehouse_id", columnList = "warehouse_id"),
 				// Composite index for findLastMovementDates (GROUP BY product_id + filter on
 				// source_type + MAX on created_at)
-				@jakarta.persistence.Index(name = "idx_sm_product_source_created", columnList = "product_id, source_type, created_at")
+				@jakarta.persistence.Index(name = "idx_sm_product_source_created", columnList = "product_id, source_type, created_at"),
+				// Branch-Level Inventory Phase 1: composite indexes backing the branch-scoped
+				// on-hand aggregates added in Phase 3. Created by Flyway V34; declared here so the
+				// entity matches the schema (and Hibernate validate passes once tenants baseline).
+				@jakarta.persistence.Index(name = "idx_sm_branch_product", columnList = "branch_id, product_id"),
+				@jakarta.persistence.Index(name = "idx_sm_branch_warehouse", columnList = "branch_id, warehouse_id")
 		})
 public class StockMovement extends BaseEntity {
 
@@ -28,6 +33,13 @@ public class StockMovement extends BaseEntity {
 	private Long productId;
 
 	private Long warehouseId;
+
+	// Branch-Level Inventory Phase 1: denormalized branch, stamped from the warehouse's branch at
+	// write time (Phase 2). NULLABLE and unread for now — legacy/global rows stay null and remain
+	// visible under the "null = shared/global" rule. Kept as a plain scalar (like productId /
+	// warehouseId), not a @ManyToOne; the FK to branches is enforced at the DB level by Flyway V34.
+	@jakarta.persistence.Column(name = "branch_id")
+	private Long branchId;
 
 	private Long zoneId; // Optional zone within warehouse
 	private Long locatorId; // Optional locator (aisle/rack) within zone
@@ -137,6 +149,14 @@ public class StockMovement extends BaseEntity {
 
 	public void setWarehouseId(Long warehouseId) {
 		this.warehouseId = warehouseId;
+	}
+
+	public Long getBranchId() {
+		return branchId;
+	}
+
+	public void setBranchId(Long branchId) {
+		this.branchId = branchId;
 	}
 
 	public java.math.BigDecimal getQuantity() {

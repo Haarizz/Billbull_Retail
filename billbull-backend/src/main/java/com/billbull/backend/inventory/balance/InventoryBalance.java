@@ -21,7 +21,10 @@ import java.time.LocalDateTime;
     indexes = {
         @Index(name = "idx_inv_bal_product",   columnList = "product_id"),
         @Index(name = "idx_inv_bal_warehouse",  columnList = "warehouse_id"),
-        @Index(name = "idx_inv_bal_updated_at", columnList = "updated_at")
+        @Index(name = "idx_inv_bal_updated_at", columnList = "updated_at"),
+        // Branch-Level Inventory Phase 4: backs the branch-scoped balance aggregates.
+        // Created by Flyway V35; declared here so the entity matches the schema.
+        @Index(name = "idx_inv_bal_branch_product", columnList = "branch_id, product_id")
     }
 )
 public class InventoryBalance {
@@ -35,6 +38,12 @@ public class InventoryBalance {
 
     @Column(name = "warehouse_id", nullable = false)
     private Long warehouseId;
+
+    // Branch-Level Inventory Phase 4: denormalized branch, stamped from the warehouse's branch on
+    // refresh(). NULLABLE — a global/branchless warehouse's balances stay null (visible to all).
+    // Read paths consult it only when inventory.branch-scope.enabled is on (via the resolver).
+    @Column(name = "branch_id")
+    private Long branchId;
 
     @Column(name = "product_code", length = 50)
     private String productCode;
@@ -69,6 +78,9 @@ public class InventoryBalance {
 
     public Long getWarehouseId() { return warehouseId; }
     public void setWarehouseId(Long warehouseId) { this.warehouseId = warehouseId; }
+
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
 
     public String getProductCode() { return productCode; }
     public void setProductCode(String productCode) { this.productCode = productCode; }

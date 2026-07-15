@@ -44,6 +44,16 @@ public class StockTransferService {
     private final StockMovementRepository stockMovementRepository;
     private final WarehouseStockService warehouseStockService;
     private final PostingEngineService postingEngineService;
+    // Branch-Level Inventory Phase 2: the single branch-stamping mechanism. Transfer legs are
+    // constructed here (buildStockMovement) rather than via StockMovementService, so we stamp
+    // each leg through the shared stampBranch(...) — each leg's branch = its own warehouse's
+    // branch (OUT at source branch, IN at destination branch), keeping on-hand arithmetic correct.
+    private final com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService;
+    // Branch-Level Inventory Phase 8 — Option A "Split Authority" (design §17). Source access for
+    // create/edit/send; destination access for receive; either-endpoint visibility. Dormant while
+    // inventory.branch-scope.enabled=false (byte-identical to today's no-branch-auth behaviour).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+    private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     public StockTransferService(
             StockTransferRepository repository,
@@ -55,7 +65,10 @@ public class StockTransferService {
             BinRepository binRepository,
             StockMovementRepository stockMovementRepository,
             WarehouseStockService warehouseStockService,
-            PostingEngineService postingEngineService) {
+            PostingEngineService postingEngineService,
+            com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.productPricingRepository = productPricingRepository;
@@ -66,10 +79,60 @@ public class StockTransferService {
         this.stockMovementRepository = stockMovementRepository;
         this.warehouseStockService = warehouseStockService;
         this.postingEngineService = postingEngineService;
+        this.stockMovementService = stockMovementService;
+        this.branchScopeResolver = branchScopeResolver;
+        this.branchAccessService = branchAccessService;
+    }
+
+    // ===== Phase 8 — Option A authorization helpers (all toggle-gated; no-op when scoping off). =====
+
+    private static Long branchIdOf(com.billbull.backend.inventory.warehouse.Warehouse w) {
+        return (w != null && w.getBranch() != null) ? w.getBranch().getId() : null;
+    }
+
+    /** Source-side access (create/edit/request-approval/cancel/send). */
+    private void assertSourceAccess(StockTransfer st) {
+        if (!branchScopeResolver.shouldScope()) return;
+        branchAccessService.assertTransactionBranchAccessible(
+                branchIdOf(st.getFromWarehouse()), "Stock transfer source branch");
+    }
+
+    /** Destination-side access (receive). */
+    private void assertDestAccess(StockTransfer st) {
+        if (!branchScopeResolver.shouldScope()) return;
+        branchAccessService.assertTransactionBranchAccessible(
+                branchIdOf(st.getToWarehouse()), "Stock transfer destination branch");
+    }
+
+    /**
+     * Destination validation hook (design §17 refinement). A source-branch user must not
+     * automatically be able to send to EVERY branch. For now this is a permissive no-op that
+     * preserves today's behaviour (any destination allowed); it is the single documented extension
+     * point for a future allowed-destination policy / company rule — tightening it here requires NO
+     * change to the transfer lifecycle or the Option-A authorization matrix.
+     */
+    private void assertDestinationAllowed(Long sourceBranchId, Long destBranchId) {
+        // Intentionally permissive today. Future: enforce an allowed-destination policy here, e.g.
+        //   if (!destinationPolicy.allows(sourceBranchId, destBranchId)) throw 403.
+    }
+
+    /** Either-endpoint visibility (list/view): accessible if the user can reach source OR destination. */
+    private boolean canViewTransfer(StockTransfer st) {
+        Long src = branchIdOf(st.getFromWarehouse());
+        Long dst = branchIdOf(st.getToWarehouse());
+        return branchAccessService.canAccessTransactionBranch(src)
+                || branchAccessService.canAccessTransactionBranch(dst);
     }
 
     public List<StockTransferResponse> list() {
         List<StockTransfer> transfers = new ArrayList<>(repository.findAll());
+        // Phase 8: either-endpoint visibility — a transfer is visible if the user can access its
+        // source OR destination branch (admins/All-Branches see all; global/null endpoints always
+        // visible). Toggle off → no filtering (byte-identical). Small list → in-memory filter.
+        if (branchScopeResolver.shouldScope()) {
+            transfers = transfers.stream().filter(this::canViewTransfer)
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        }
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 transfers,
                 StockTransfer::getTransferDate,
@@ -79,7 +142,14 @@ public class StockTransferService {
     }
 
     public StockTransferResponse get(Long id) {
-        return toResponse(getEntity(id));
+        StockTransfer st = getEntity(id);
+        // Phase 8: single-record visibility guard — accessible via either endpoint (toggle-gated).
+        if (branchScopeResolver.shouldScope() && !canViewTransfer(st)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "This stock transfer belongs to branches you cannot access.");
+        }
+        return toResponse(st);
     }
 
     public StockTransferCostPreviewResponse getCostPreview(Long warehouseId, List<Long> productIds) {
@@ -109,6 +179,9 @@ public class StockTransferService {
     public StockTransferResponse create(StockTransferRequest req) {
         StockTransfer st = new StockTransfer();
         mapToEntity(req, st);
+        // Phase 8 (Option A): creating a transfer requires source-branch access; validate destination.
+        assertSourceAccess(st);
+        assertDestinationAllowed(branchIdOf(st.getFromWarehouse()), branchIdOf(st.getToWarehouse()));
         return toResponse(repository.save(st));
     }
 
@@ -117,8 +190,10 @@ public class StockTransferService {
         if (st.getStatus() != StockTransferStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT transfers can be modified");
         }
+        assertSourceAccess(st); // Phase 8: editing a DRAFT requires source-branch access.
         st.getItems().clear();
         mapToEntity(req, st);
+        assertDestinationAllowed(branchIdOf(st.getFromWarehouse()), branchIdOf(st.getToWarehouse()));
         return toResponse(repository.save(st));
     }
 
@@ -135,6 +210,7 @@ public class StockTransferService {
         if (st.getStatus() != StockTransferStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT transfers can be submitted for approval");
         }
+        assertSourceAccess(st); // Phase 8: source-branch access.
         st.setStatus(StockTransferStatus.PENDING_APPROVAL);
         return toResponse(repository.save(st));
     }
@@ -144,6 +220,7 @@ public class StockTransferService {
         if (st.getStatus() != StockTransferStatus.DRAFT && st.getStatus() != StockTransferStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Only DRAFT or PENDING_APPROVAL transfers can be cancelled");
         }
+        assertSourceAccess(st); // Phase 8: source-branch access.
         st.setStatus(StockTransferStatus.CANCELLED);
         return toResponse(repository.save(st));
     }
@@ -157,6 +234,9 @@ public class StockTransferService {
         if (st.getStatus() != StockTransferStatus.DRAFT && st.getStatus() != StockTransferStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Transfer is either already processed or cancelled");
         }
+        // Phase 8 (Option A): SEND is a source-side action → require source-branch access + validate destination.
+        assertSourceAccess(st);
+        assertDestinationAllowed(branchIdOf(st.getFromWarehouse()), branchIdOf(st.getToWarehouse()));
 
         freezeItemCostsForSend(st);
         updateTransferTotals(st);
@@ -198,6 +278,8 @@ public class StockTransferService {
         if (st.getStatus() != StockTransferStatus.SENT) {
             throw new IllegalStateException("Only SENT transfers can be received. Current status: " + st.getStatus());
         }
+        // Phase 8 (Option A): RECEIVE is a destination-side action → require destination-branch access.
+        assertDestAccess(st);
 
         if (st.getItems().stream().anyMatch(item -> item.getUnitCostAtSend() == null || item.getLineValue() == null)) {
             freezeItemCostsForSend(st);
@@ -445,6 +527,7 @@ public class StockTransferService {
         movement.setReferenceNo(transfer.getTransferNo());
         movement.setBatchNumber(item.getBatchNumber());
         movement.setUnitCost(unitCost != null ? unitCost.setScale(4, RoundingMode.HALF_UP) : null);
+        stockMovementService.stampBranch(movement); // Phase 2: branch = this leg's warehouse branch
         return movement;
     }
 

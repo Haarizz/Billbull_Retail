@@ -17,23 +17,36 @@ public class BrandService {
     private final BrandRepository repository;
     private final BrandLogoStorageService logoStorage;
     private final ProductRepository productRepo;
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver;
+    private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
 
     public BrandService(BrandRepository repository,
             BrandLogoStorageService logoStorage,
-            ProductRepository productRepo) {
+            ProductRepository productRepo,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver,
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
         this.repository = repository;
         this.logoStorage = logoStorage;
         this.productRepo = productRepo;
+        this.scopeResolver = scopeResolver;
+        this.masterBranch = masterBranch;
+    }
+
+    private java.util.Collection<Long> activeScope() {
+        return scopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
     }
 
     // ---------------------------
     // LIST (ONLY METHOD USED)
     // ---------------------------
     public List<BrandResponse> list() {
-        return repository.findByActiveTrue()
-                .stream()
-                .map(this::map)
-                .toList();
+        java.util.Collection<Long> scope = activeScope();
+        List<Brand> rows = scope != null
+                ? repository.findActiveInBranchScope(scope)
+                : repository.findByActiveTrue();
+        return rows.stream().map(this::map).toList();
     }
 
     // ---------------------------
@@ -41,12 +54,19 @@ public class BrandService {
     // ---------------------------
     public BrandResponse create(BrandRequest req, MultipartFile logo) {
 
-        if (repository.existsByCodeAndActiveTrue(req.code)) {
-            throw new RuntimeException("Brand code already exists");
+        java.util.Collection<Long> scope = activeScope();
+        boolean codeExists = scope != null
+                ? repository.existsActiveByCodeInBranchScope(req.code, scope)
+                : repository.existsByCodeAndActiveTrue(req.code);
+        if (codeExists) {
+            throw new RuntimeException(scope != null
+                    ? "Brand code already exists in this branch"
+                    : "Brand code already exists");
         }
 
         Brand brand = new Brand();
         setFields(brand, req, logo);
+        brand.setBranch(masterBranch.resolveBranchForCreate()); // Phase 6B stamp (null = global / toggle off)
 
         // Generate barcode if auto-generate is enabled
         if (req.auto != null && req.auto) {

@@ -13,16 +13,53 @@ public class StockMovementService {
     private final com.billbull.backend.inventory.product.ProductRepository productRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService;
+    private final com.billbull.backend.inventory.warehouse.WarehouseRepository warehouseRepository;
 
     public StockMovementService(
             StockMovementRepository repository,
             com.billbull.backend.inventory.product.ProductRepository productRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
-            com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService) {
+            com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService,
+            com.billbull.backend.inventory.warehouse.WarehouseRepository warehouseRepository) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.notifPublisher = notifPublisher;
         this.inventoryBalanceService = inventoryBalanceService;
+        this.warehouseRepository = warehouseRepository;
+    }
+
+    // =========================================================
+    // Branch-Level Inventory Phase 2 — centralized write-path branch stamping.
+    // Every StockMovement (created here OR by StockTakeService / StockTransferService)
+    // is stamped with the branch derived from its warehouse via stampBranch(...), the
+    // single stamping mechanism. Read paths are unchanged; nothing filters on branch_id
+    // yet. The column stays NULL for global/branchless warehouses (visible to all).
+    // =========================================================
+
+    /**
+     * Resolve the branch a warehouse belongs to. Returns null when the warehouse has no branch
+     * (global), does not exist (orphan), or the id is null — stamping is always null-safe and
+     * never throws, so no existing write path can be broken by this.
+     */
+    @Transactional(readOnly = true)
+    public Long resolveBranchIdForWarehouse(Long warehouseId) {
+        if (warehouseId == null) {
+            return null;
+        }
+        return warehouseRepository.findBranchIdByWarehouseId(warehouseId);
+    }
+
+    /**
+     * Stamp a movement's branch from its warehouse, unless a branch is already set (idempotent —
+     * a caller that already knows the branch, e.g. a cross-branch transfer leg, is preserved).
+     * This is THE single stamping mechanism for the whole codebase; call it immediately before
+     * persisting any StockMovement.
+     */
+    public void stampBranch(StockMovement sm) {
+        if (sm == null || sm.getBranchId() != null) {
+            return;
+        }
+        sm.setBranchId(resolveBranchIdForWarehouse(sm.getWarehouseId()));
     }
 
     public java.math.BigDecimal getAvailableStock(Long warehouseId, Long productId) {
@@ -95,6 +132,7 @@ public class StockMovementService {
         sm.setReferenceNo(ref);
         sm.setMovementDate(LocalDate.now());
 
+        stampBranch(sm);
         repository.save(sm);
         refreshBalance(productId, warehouseId);
     }
@@ -145,6 +183,7 @@ public class StockMovementService {
         sm.setExpiryDate(expiryDate);
         sm.setUnitCost(unitCost);
 
+        stampBranch(sm);
         repository.save(sm);
         refreshBalance(productId, warehouseId);
     }
@@ -200,6 +239,7 @@ public class StockMovementService {
         sm.setExpiryDate(expiryDate);
         sm.setUnitCost(unitCost);
 
+        stampBranch(sm);
         repository.save(sm);
         refreshBalance(productId, warehouseId);
     }
@@ -327,6 +367,7 @@ public class StockMovementService {
         sm.setExpiryDate(expiryDate);
         sm.setNegativeOverride(negativeOverride);
 
+        stampBranch(sm);
         repository.save(sm);
         refreshBalance(productId, warehouseId);
 
@@ -416,6 +457,7 @@ public class StockMovementService {
         sm.setBatchNumber(normalizeBatchNumber(batchNumber));
         sm.setExpiryDate(expiryDate);
 
+        stampBranch(sm);
         repository.save(sm);
         refreshBalance(productId, warehouseId);
     }
