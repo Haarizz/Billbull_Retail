@@ -12,19 +12,34 @@ public class UnitService {
 
     private final UnitRepository unitRepo;
     private final UnitUsageService unitUsageService; // explained below
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver;
+    private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
 
     public UnitService(UnitRepository unitRepo,
-            UnitUsageService unitUsageService) {
+            UnitUsageService unitUsageService,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver,
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
         this.unitRepo = unitRepo;
         this.unitUsageService = unitUsageService;
+        this.scopeResolver = scopeResolver;
+        this.masterBranch = masterBranch;
+    }
+
+    private java.util.Collection<Long> activeScope() {
+        return scopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
     }
 
     // ------------------------
     // LIST
     // ------------------------
     public List<UnitResponse> list() {
-        return unitRepo.findByIsActiveTrueOrderByNameAsc()
-                .stream()
+        java.util.Collection<Long> scope = activeScope();
+        List<Unit> rows = scope != null
+                ? unitRepo.findActiveInBranchScope(scope)
+                : unitRepo.findByIsActiveTrueOrderByNameAsc();
+        return rows.stream()
                 .map(unit -> new UnitResponse(
                         unit,
                         unitUsageService.countProductsUsingUnit(unit.getId())))
@@ -36,18 +51,28 @@ public class UnitService {
     // ------------------------
     public UnitResponse create(UnitRequest req) {
 
-        if (unitRepo.existsByNameIgnoreCaseAndIsActiveTrue(req.getName())) {
-            throw new IllegalArgumentException("Unit name already exists");
+        java.util.Collection<Long> scope = activeScope();
+        boolean nameExists = scope != null
+                ? unitRepo.existsActiveByNameInBranchScope(req.getName(), scope)
+                : unitRepo.existsByNameIgnoreCaseAndIsActiveTrue(req.getName());
+        if (nameExists) {
+            throw new IllegalArgumentException(scope != null
+                    ? "Unit name already exists in this branch" : "Unit name already exists");
         }
 
-        if (unitRepo.existsBySymbolIgnoreCaseAndIsActiveTrue(req.getSymbol())) {
-            throw new IllegalArgumentException("Unit symbol already exists");
+        boolean symbolExists = scope != null
+                ? unitRepo.existsActiveBySymbolInBranchScope(req.getSymbol(), scope)
+                : unitRepo.existsBySymbolIgnoreCaseAndIsActiveTrue(req.getSymbol());
+        if (symbolExists) {
+            throw new IllegalArgumentException(scope != null
+                    ? "Unit symbol already exists in this branch" : "Unit symbol already exists");
         }
 
         Unit unit = new Unit(
                 req.getName(),
                 req.getSymbol(),
                 req.getDescription());
+        unit.setBranch(masterBranch.resolveBranchForCreate()); // Phase 6B stamp (null = global / toggle off)
 
         if (req.getBaseUnitId() != null) {
             unit.setBaseUnit(unitRepo.findById((long) req.getBaseUnitId())

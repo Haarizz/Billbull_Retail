@@ -11,58 +11,89 @@ public class DepartmentService {
 
     private final DepartmentRepository repository;
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
+    // Branch-Level Inventory Phase 6B — branch scoping/governance (dormant while toggle off).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver;
+    private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
 
     public DepartmentService(DepartmentRepository repository,
-            com.billbull.backend.inventory.product.ProductRepository productRepo) {
+            com.billbull.backend.inventory.product.ProductRepository productRepo,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver,
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
         this.repository = repository;
         this.productRepo = productRepo;
+        this.scopeResolver = scopeResolver;
+        this.masterBranch = masterBranch;
     }
 
     // ================= READ =================
 
     public List<DepartmentResponse> getAll() {
-        return repository.findByIsActiveTrue()
-                .stream()
-                .map(this::toResponse)
-                .toList();
+        // Toggle on + active branch → own branch + global; else today's full active list.
+        List<Department> rows = scopeResolver.activeListScope()
+                .map(scope -> repository.findActiveInBranchScope(scope.branchIds()))
+                .orElseGet(repository::findByIsActiveTrue);
+        return rows.stream().map(this::toResponse).toList();
     }
 
     // ================= CREATE =================
 
     public DepartmentResponse create(DepartmentRequest request) {
 
-        // QA-001: auto-generate code from name when not provided by quick-add
+        // Phase 6B: resolve the branch for this new row (null = global; null when toggle off →
+        // unchanged behaviour). Governance is enforced inside resolveBranchForCreate.
+        com.billbull.backend.settings.branch.Branch branch = masterBranch.resolveBranchForCreate();
+        java.util.Collection<Long> scope = scopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
+
+        // QA-001: auto-generate code from name when not provided by quick-add. Uniqueness is checked
+        // within the active branch scope when scoping is on, else globally (today's behaviour).
         if (request.getCode() == null || request.getCode().isBlank()) {
             String raw = request.getName().toUpperCase().replaceAll("[^A-Z0-9]", "");
             String base = raw.isEmpty() ? "DEPT" : raw.substring(0, Math.min(raw.length(), 10));
-            // Ensure uniqueness by appending a counter if needed
             String candidate = base;
             int suffix = 1;
-            while (repository.existsByCode(candidate)) {
+            while (codeExists(candidate, scope)) {
                 String s = String.valueOf(suffix++);
                 candidate = base.substring(0, Math.min(base.length(), 10 - s.length())) + s;
             }
             request.setCode(candidate);
         }
 
-        java.util.Optional<Department> existingOpt = repository.findByCode(request.getCode());
+        // Inactive-restore: look up an existing row with this code WITHIN scope (branch + global).
+        java.util.Optional<Department> existingOpt = findByCodeInScope(request.getCode(), scope);
         if (existingOpt.isPresent()) {
             Department existing = existingOpt.get();
             if (existing.isActive()) {
                 throw new IllegalStateException("Department code already exists");
             } else {
-                // Restore the inactive department instead of inserting a new one
-                // to avoid the unique constraint violation on 'code'
                 existing.setActive(true);
                 mapRequestToEntity(request, existing);
+                // Preserve the restored row's existing branch (do not reassign on restore).
                 return toResponse(repository.save(existing));
             }
         }
 
         Department department = new Department();
         mapRequestToEntity(request, department);
+        department.setBranch(branch); // Phase 6B stamp (null = global / toggle off)
 
         return toResponse(repository.save(department));
+    }
+
+    /** Code-existence check: branch-scoped (active branch + global) when scoping on, else global. */
+    private boolean codeExists(String code, java.util.Collection<Long> scope) {
+        return scope != null
+                ? repository.existsByCodeInBranchScope(code, scope)
+                : repository.existsByCode(code);
+    }
+
+    /** Find-by-code within scope (branch + global) when scoping on, else global (first match). */
+    private java.util.Optional<Department> findByCodeInScope(String code, java.util.Collection<Long> scope) {
+        if (scope == null) {
+            return repository.findByCode(code);
+        }
+        return repository.findByCodeInBranchScope(code, scope).stream().findFirst();
     }
 
     // ================= UPDATE =================
@@ -72,9 +103,15 @@ public class DepartmentService {
         Department department = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Department not found"));
 
+        java.util.Collection<Long> scope = scopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
+
         if (!department.getCode().equals(request.getCode())
-                && repository.existsByCode(request.getCode())) {
-            throw new IllegalStateException("Department code already exists (globally unique)");
+                && codeExists(request.getCode(), scope)) {
+            throw new IllegalStateException(scope != null
+                    ? "Department code already exists in this branch"
+                    : "Department code already exists (globally unique)");
         }
 
         mapRequestToEntity(request, department);
