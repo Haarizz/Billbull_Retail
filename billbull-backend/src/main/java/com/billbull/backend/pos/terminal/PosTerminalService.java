@@ -104,6 +104,10 @@ public class PosTerminalService {
                 repo.save(t);
                 boolean pending = "PENDING".equals(t.getRegistrationStatus());
                 return Map.of("terminal", t, "isNew", false, "pending", pending);
+            } else {
+                // Device fingerprint belongs to another branch. Unlink it so the new branch can claim it.
+                t.setDeviceFingerprint(null);
+                repo.saveAndFlush(t);
             }
         }
 

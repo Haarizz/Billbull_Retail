@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers } from 'lucide-react';
+import { UAParser } from 'ua-parser-js';
+import { formatDistanceToNow, parseISO } from 'date-fns';
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '../../../components/ui/tooltip';
 import POSCounters from '../POSCounters';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
@@ -2224,25 +2227,36 @@ const POSConsole = React.memo((props) => {
 
             const formatLastSeen = (ts) => {
               if (!ts) return null;
-              const d = new Date(ts);
-              const now = new Date();
-              const diffMs = now - d;
-              const diffMin = Math.floor(diffMs / 60000);
+              let s = String(ts);
+              const tIdx = s.indexOf('T');
+              if (tIdx !== -1 && !s.endsWith('Z')) {
+                const timePart = s.slice(tIdx);
+                if (!timePart.includes('+') && !timePart.includes('-')) {
+                  s += 'Z';
+                }
+              }
+              const d = parseISO(s);
+              if (isNaN(d.getTime())) return null;
+              
+              const diffMin = (new Date() - d) / 60000;
               if (diffMin < 2) return 'Just now';
-              if (diffMin < 60) return `${diffMin}m ago`;
-              const diffH = Math.floor(diffMin / 60);
-              if (diffH < 24) return `${diffH}h ago`;
-              return d.toLocaleDateString();
+              return formatDistanceToNow(d, { addSuffix: true });
             };
 
             const parseDeviceInfo = (info) => {
               if (!info) return null;
-              // deviceInfo is typically a User-Agent string
-              if (info.includes('Chrome')) return 'Chrome';
-              if (info.includes('Firefox')) return 'Firefox';
-              if (info.includes('Safari') && !info.includes('Chrome')) return 'Safari';
-              if (info.includes('Edge')) return 'Edge';
-              return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              try {
+                const parser = new UAParser(info);
+                const result = parser.getResult();
+                const os = result.os.name;
+                const browser = result.browser.name;
+                if (os && browser) return `${os} - ${browser}`;
+                if (os) return os;
+                if (browser) return browser;
+                return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              } catch (e) {
+                return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              }
             };
 
             const statusConfig = {
@@ -2289,7 +2303,19 @@ const POSConsole = React.memo((props) => {
               {/* ── Slot usage bar ── */}
               <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#1E293B]">Terminal Slots</span>
+                  <span className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                    Terminal Slots
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 cursor-help" tabIndex={0} />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          Clearing browser data may remove this terminal's saved identity. When POS is opened again, the browser may register as a new terminal and consume another slot.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </span>
                   <span className={`text-xs font-bold ${slotNearFull ? 'text-red-500' : 'text-gray-500'}`}>
                     {slotUsed} / {maxSlots} used{slotNearFull && slotUsed < maxSlots ? ' — almost full' : slotUsed >= maxSlots ? ' — at capacity' : ''}
                   </span>
@@ -2416,6 +2442,11 @@ const POSConsole = React.memo((props) => {
                                   {isRecentlyActive && t.status === 'ACTIVE' && !isThisDevice && (
                                     <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" /> Online
+                                    </span>
+                                  )}
+                                  {t.currentOpenSessionId && (
+                                    <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50 flex items-center gap-1">
+                                      ● Shift Open
                                     </span>
                                   )}
                                 </div>

@@ -31,8 +31,15 @@ public class PosTerminalController {
         String os            = body.get("operatingSystem")   != null ? body.get("operatingSystem").toString()   : null;
         String browser       = body.get("browser")           != null ? body.get("browser").toString()           : null;
         String ip            = resolveClientIp(request);
-        return ResponseEntity.ok(service.registerOrRefresh(terminalId, fingerprint, deviceInfo,
-                terminalName, counterName, os, browser, ip));
+        try {
+            return ResponseEntity.ok(service.registerOrRefresh(terminalId, fingerprint, deviceInfo,
+                    terminalName, counterName, os, browser, ip));
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Handle concurrent registration race condition (e.g. React StrictMode double mount)
+            // by retrying once. The second attempt will find the successfully inserted record.
+            return ResponseEntity.ok(service.registerOrRefresh(terminalId, fingerprint, deviceInfo,
+                    terminalName, counterName, os, browser, ip));
+        }
     }
 
     // -------------------------------------------------------------------------
