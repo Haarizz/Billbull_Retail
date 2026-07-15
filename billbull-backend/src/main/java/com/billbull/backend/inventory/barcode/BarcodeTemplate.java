@@ -32,6 +32,11 @@ public class BarcodeTemplate extends BaseEntity {
     @Column(length = 30)
     private String barcodeFormat; // CODE128, EAN13, EAN8, UPC, CODE39, ITF14, etc.
 
+    // Branch-Level Inventory Phase 6A: nullable branch (null = shared/global). Additive only —
+    // template branch-scoping/resolution is wired in Phase 9A. Column created by Flyway V36.
+    @Column(name = "branch_id")
+    private Long branchId;
+
     public String getName() {
         return name;
     }
@@ -110,5 +115,13 @@ public class BarcodeTemplate extends BaseEntity {
 
     public void setBarcodeFormat(String barcodeFormat) {
         this.barcodeFormat = barcodeFormat;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
     }
 }

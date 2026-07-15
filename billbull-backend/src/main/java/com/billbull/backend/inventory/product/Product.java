@@ -20,12 +20,15 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
+// Branch-Level Inventory Phase 6A: the global UNIQUE(code) constraint was removed here and replaced
+// by DB-level PARTIAL unique indexes (Flyway V37: ux_products_code_global / _branch) — a code is
+// unique among global rows and once per branch. The JPA @UniqueConstraint is intentionally gone so
+// Hibernate (ddl-auto=update) does not recreate the global constraint. Uniqueness is now owned by
+// the database; per-branch enforcement/messaging is added in Phase 6 (products).
 @Entity
 @Table(
     name = "products",
-    uniqueConstraints = @UniqueConstraint(columnNames = "code"),
     indexes = {
         // Speeds up: WHERE is_active = true (used on every list/search query)
         @Index(name = "idx_product_active", columnList = "is_active"),
