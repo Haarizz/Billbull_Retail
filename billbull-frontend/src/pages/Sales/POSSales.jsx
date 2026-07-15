@@ -12,7 +12,7 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
+import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields, addCustomerSavedAddress } from '../../api/customerledgerApi';
@@ -7679,7 +7679,7 @@ export default function POSSales() {
       setQuickProductError(null);
 
       if (!overrideDuplicate) {
-        const duplicates = await validateDuplicateProduct({
+        const duplicates = await validateDuplicateProductFromPos({
           name: quickProductForm.name,
           code: quickProductForm.code,
           sku: quickProductForm.sku,
@@ -7705,25 +7705,25 @@ export default function POSSales() {
           code: quickProductForm.code || `PRD-${Date.now().toString().slice(-6)}`,
           sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
           category: quickProductForm.category || 'General',
-          status: quickProductForm.status === 'Active' ? 'ACTIVE' : 'DRAFT',
+          status: 'ACTIVE',
           productType: 'STOCK',
-          isBatch: quickProductForm.isBatch,
-          isSerial: quickProductForm.isSerial,
-          isDiscountAllowed: quickProductForm.isDiscountAllowed,
+          isBatch: false,
+          isSerial: false,
+          isDiscountAllowed: true,
           availableInPos: true,
           detailedDesc: quickProductForm.description,
           brand: { id: 1 }
         },
         pricing: {
-          retailPrice: parseFloat(quickProductForm.salesPrice) || 0,
-          cost: parseFloat(quickProductForm.costPrice) || 0,
+          retailPrice: parseFloat(quickProductForm.sellingPrice) || 0,
+          cost: parseFloat(quickProductForm.purchasePrice) || 0,
           purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
         },
         inventory: {
-          openingStock: parseFloat(quickProductForm.openingStock) || 0,
-          minStock: parseFloat(quickProductForm.lowStockAlert) || 0,
-          trackInventory: quickProductForm.trackInventory,
-          allowNegativeStock: quickProductForm.allowNegativeStock,
+          openingStock: parseFloat(quickProductForm.initialStock) || 0,
+          minStock: parseFloat(quickProductForm.alertQuantity) || 0,
+          trackInventory: quickProductForm.trackInventory || false,
+          allowNegativeStock: true,
           defaultUnit: { id: defaultUnit.id },
           packings: [
             {
@@ -7734,8 +7734,8 @@ export default function POSSales() {
               isSale: true,
               isPurchase: true,
               isLPO: false,
-              cost: parseFloat(quickProductForm.costPrice) || 0,
-              price: parseFloat(quickProductForm.salesPrice) || 0,
+              cost: parseFloat(quickProductForm.purchasePrice) || 0,
+              price: parseFloat(quickProductForm.sellingPrice) || 0,
               barcode: quickProductForm.barcode || ''
             }
           ]
@@ -7744,12 +7744,13 @@ export default function POSSales() {
 
       formData.append('data', JSON.stringify(productReq));
 
-      const newProdRes = await createProduct(formData);
+      const newProdRes = await createProductFromPos(formData);
       await loadPosProducts(0, false);
 
       if (newProdRes && newProdRes.product) {
-        addToInvoice(newProdRes.product);
-        showFeedback('success', `${newProdRes.product.name} created and added to cart!`);
+        const mappedProduct = mapPosProductAggregateItem(newProdRes);
+        addToInvoice(mappedProduct);
+        showFeedback('success', `${mappedProduct.name} created and added to cart!`);
       }
 
       setShowQuickProductModal(false);
