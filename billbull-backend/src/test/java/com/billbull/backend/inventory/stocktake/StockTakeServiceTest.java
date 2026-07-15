@@ -65,6 +65,9 @@ class StockTakeServiceTest {
     @Mock private StockTakeUnitScanRepository unitScanRepo;
     @Mock private BatchMasterRepository batchMasterRepo;
     @Mock private com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+    @Mock private com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService;
+    @Mock private com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+    @Mock private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     private StockTakeService service;
 
@@ -84,7 +87,10 @@ class StockTakeServiceTest {
                 expectedUnitRepo,
                 unitScanRepo,
                 batchMasterRepo,
-                postingEngineService);
+                postingEngineService,
+                stockMovementService,
+                branchScopeResolver,
+                branchAccessService);
     }
 
     @Test
@@ -467,5 +473,31 @@ class StockTakeServiceTest {
     private static void assertQty(long expected, BigDecimal actual) {
         assertEquals(0, BigDecimal.valueOf(expected).compareTo(actual),
                 () -> "expected quantity " + expected + " but was " + actual);
+    }
+
+    // ---------- Phase 7: session list branch scoping ----------
+
+    @Test
+    void getAllSessionsToggleOffUsesUnscopedQuery() {
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.empty());
+        when(sessionRepo.findAllActiveWithItems()).thenReturn(List.of());
+
+        service.getAllSessions();
+
+        verify(sessionRepo).findAllActiveWithItems();
+        verify(sessionRepo, org.mockito.Mockito.never()).findActiveWithItemsInBranchScope(any());
+    }
+
+    @Test
+    void getAllSessionsToggleOnUsesBranchScopedQuery() {
+        var scope = new com.billbull.backend.settings.branch.BranchAccessService.ListScope(
+                false, java.util.Set.of(5L));
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.of(scope));
+        when(sessionRepo.findActiveWithItemsInBranchScope(scope.branchIds())).thenReturn(List.of());
+
+        service.getAllSessions();
+
+        verify(sessionRepo).findActiveWithItemsInBranchScope(scope.branchIds());
+        verify(sessionRepo, org.mockito.Mockito.never()).findAllActiveWithItems();
     }
 }
