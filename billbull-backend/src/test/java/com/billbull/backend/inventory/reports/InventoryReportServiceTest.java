@@ -30,6 +30,7 @@ class InventoryReportServiceTest {
     @Mock private ProductInventoryPolicyRepository inventoryRepo;
     @Mock private StockMovementRepository stockRepo;
     @Mock private WarehouseRepository warehouseRepo;
+    @Mock private com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     private InventoryReportService service;
 
@@ -40,7 +41,8 @@ class InventoryReportServiceTest {
                 pricingRepo,
                 inventoryRepo,
                 stockRepo,
-                warehouseRepo);
+                warehouseRepo,
+                branchScopeResolver);
     }
 
     @Test
@@ -77,5 +79,46 @@ class InventoryReportServiceTest {
         assertEquals("BATCH-B", rows.get(1).getBatchNumber());
         assertEquals(new BigDecimal("3"), rows.get(1).getOnHand());
         assertEquals("Main Warehouse", rows.get(1).getWarehouse());
+    }
+
+    // ---------- Phase 10: all-warehouses report branch scoping ----------
+
+    @Test
+    void allWarehousesReportToggleOffUsesUnscopedQuery() {
+        when(branchScopeResolver.activeListScope()).thenReturn(java.util.Optional.empty());
+        when(stockRepo.findAllStockGroupedByProductWarehouseAndBatch()).thenReturn(List.of());
+
+        service.getStockOnHand(null); // no warehouse, default branchScope=active
+
+        org.mockito.Mockito.verify(stockRepo).findAllStockGroupedByProductWarehouseAndBatch();
+        org.mockito.Mockito.verify(stockRepo, org.mockito.Mockito.never())
+                .findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void allWarehousesReportToggleOnUsesBranchScopedQuery() {
+        var scope = new com.billbull.backend.settings.branch.BranchAccessService.ListScope(
+                false, java.util.Set.of(1L));
+        when(branchScopeResolver.activeListScope()).thenReturn(java.util.Optional.of(scope));
+        when(stockRepo.findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(scope.branchIds()))
+                .thenReturn(List.of());
+
+        service.getStockOnHand(null);
+
+        org.mockito.Mockito.verify(stockRepo)
+                .findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(scope.branchIds());
+        org.mockito.Mockito.verify(stockRepo, org.mockito.Mockito.never())
+                .findAllStockGroupedByProductWarehouseAndBatch();
+    }
+
+    @Test
+    void branchScopeAllForcesConsolidatedEvenWhenScopeActive() {
+        // branchScope=all (allBranches=true) must NOT consult the resolver — consolidated path.
+        when(stockRepo.findAllStockGroupedByProductWarehouseAndBatch()).thenReturn(List.of());
+
+        service.getStockOnHand(null, true);
+
+        org.mockito.Mockito.verify(stockRepo).findAllStockGroupedByProductWarehouseAndBatch();
+        org.mockito.Mockito.verifyNoInteractions(branchScopeResolver);
     }
 }
