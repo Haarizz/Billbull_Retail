@@ -63,6 +63,10 @@ public class ProductService {
     private final ModulePermissionService modulePermissionService;
     private final UserFavouriteProductRepository favouriteRepo;
     private final UserRepository userRepository;
+    // Branch-Level Inventory Phase 9A — branch-first, global-fallback barcode resolution
+    // (dormant while inventory.branch-scope.enabled=false). Scoped strictly to barcode resolution;
+    // no change to catalog/product-save logic in this phase.
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     public ProductService(
             ProductRepository productRepo,
@@ -87,7 +91,8 @@ public class ProductService {
             AuditLogService auditLogService,
             ModulePermissionService modulePermissionService,
             UserFavouriteProductRepository favouriteRepo,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -111,6 +116,30 @@ public class ProductService {
         this.modulePermissionService = modulePermissionService;
         this.favouriteRepo = favouriteRepo;
         this.userRepository = userRepository;
+        this.branchScopeResolver = branchScopeResolver;
+    }
+
+    /**
+     * Phase 9A — resolve a barcode value to a ProductBarcode with BRANCH-FIRST, GLOBAL-FALLBACK
+     * precedence. When the toggle is on + a branch is active: try the active branch's own barcodes
+     * first, then fall back to a global (branch_id IS NULL) barcode. Toggle off (or admin
+     * All-Branches) → the existing global findFirstByBarcode (byte-identical). Existing barcodes are
+     * all branch_id NULL today, so they resolve via the global tier — fully backward compatible.
+     */
+    private java.util.Optional<ProductBarcode> resolveBarcode(String barcode) {
+        return branchScopeResolver.activeListScope()
+                .map(scope -> {
+                    java.util.List<ProductBarcode> branchHits =
+                            barcodeRepo.findByBarcodeInBranches(barcode, scope.branchIds());
+                    if (!branchHits.isEmpty()) {
+                        return java.util.Optional.of(branchHits.get(0)); // branch-owned wins
+                    }
+                    java.util.List<ProductBarcode> globalHits = barcodeRepo.findGlobalByBarcode(barcode);
+                    return globalHits.isEmpty()
+                            ? java.util.Optional.<ProductBarcode>empty()
+                            : java.util.Optional.of(globalHits.get(0)); // global fallback
+                })
+                .orElseGet(() -> barcodeRepo.findFirstByBarcode(barcode)); // toggle off / All-Branches
     }
 
     private void auditProduct(String action, Product product, ProductAggregateRequest req) {
@@ -724,10 +753,41 @@ public class ProductService {
         return productRepo.findAllByIsActiveTrue().stream().map(this::buildResponse).collect(Collectors.toList());
     }
 
+    /**
+     * Phase 9 (POS availability) — branch-scoped available stock for one product, summed over the
+     * active branch's warehouses (+ global), using the Phase-3 branch-scoped aggregate. Returns the
+     * unscoped company-wide total when the toggle is off or no branch is active (byte-identical).
+     * RESERVED-allocation behaviour is unchanged (POS does not subtract RESERVED today, so neither
+     * does this). Used only by the POS resolve path — the general product-list stock attach in
+     * buildResponse() is intentionally left company-wide until Phase 6.
+     */
+    @Transactional(readOnly = true)
+    public int branchScopedStockForPos(Long productId) {
+        if (productId == null) return 0;
+        List<Object[]> rows = branchScopeResolver.activeListScope()
+                .map(scope -> stockMovementRepo.getTotalAvailableStockForProductsAndBranchIdIn(
+                        List.of(productId), scope.branchIds()))
+                .orElseGet(() -> stockMovementRepo.getTotalAvailableStockForProducts(List.of(productId)));
+        return rows.isEmpty() ? 0 : ((Number) rows.get(0)[1]).intValue();
+    }
+
+    /**
+     * Phase 9 — overlay the branch-scoped POS stock onto a resolved product response. No-op when
+     * scoping is off (the response already carries the company-wide total from buildResponse).
+     */
+    @Transactional(readOnly = true)
+    public void applyBranchScopedPosStock(ProductAggregateResponse res) {
+        if (res == null || res.getProduct() == null || !branchScopeResolver.shouldScope()) {
+            return;
+        }
+        res.setStock(branchScopedStockForPos(res.getProduct().getId()));
+    }
+
     @Transactional(readOnly = true)
     public List<ProductAggregateResponse> searchProductsByBarcode(String barcode) {
         if (barcode == null || barcode.isBlank()) return new ArrayList<>();
-        return barcodeRepo.findFirstByBarcode(barcode.trim())
+        // Phase 9A: branch-first, global-fallback resolution (byte-identical when toggle off).
+        return resolveBarcode(barcode.trim())
                 .filter(pb -> pb.getProduct() != null && pb.getProduct().isActive())
                 .map(pb -> java.util.List.of(buildResponse(pb.getProduct())))
                 .orElse(new ArrayList<>());
