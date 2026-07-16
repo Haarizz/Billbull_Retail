@@ -5,6 +5,14 @@ RUN mvn -B dependency:go-offline
 COPY src ./src
 RUN mvn -B clean package -DskipTests
 
+# A Spring Boot fat jar nests its dependencies under BOOT-INF/lib/*.jar, so
+# `java -cp app.jar com.microsoft.playwright.CLI` can't see the Playwright classes —
+# they're not on the top-level classpath. Resolve Playwright's own CLI jar (which has
+# its own Main-Class manifest) as a standalone dependency instead.
+RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy \
+    -Dartifact=com.microsoft.playwright:playwright:1.49.0 \
+    -DoutputDirectory=/app/playwright-cli
+
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
@@ -15,9 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/target/billbull-backend-*.jar app.jar
+COPY --from=build /app/playwright-cli/playwright-1.49.0.jar playwright-cli.jar
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN java -cp app.jar com.microsoft.playwright.CLI install --with-deps chromium
+RUN java -jar playwright-cli.jar install --with-deps chromium && rm playwright-cli.jar
 
-EXPOSE 8080
+EXPOSE 8082
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
