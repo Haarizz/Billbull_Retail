@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: max-backend-config
+  namespace: billbull
+data:
+  # server.port is NOT set here — application-client2.properties already sets it to
+  # 8082, and that profile file is the source of truth. Setting SERVER_PORT here would
+  # just be a second place to keep in sync (and a place to get it wrong).
+  SPRING_PROFILES_ACTIVE: "client2"

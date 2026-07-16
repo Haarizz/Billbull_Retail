@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: max-backend
+  namespace: billbull
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # matches today's single-instance systemctl restart; no split-brain on the uploads PVC
+  selector:
+    matchLabels: { app: max-backend }
+  template:
+    metadata:
+      labels: { app: max-backend }
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/billbull/backend:pilot
+          # 8082 comes from application-client2.properties (server.port=8082), which the
+          # SPRING_PROFILES_ACTIVE=client2 ConfigMap entry activates on top of the base
+          # application.properties (server.port=8080). Do NOT also set SERVER_PORT here —
+          # that would fight with the profile file. This value must just match whatever
+          # server.port ends up being for this client's profile.
+          ports: [{ containerPort: 8082 }]
+          envFrom:
+            - configMapRef: { name: max-backend-config }
+            - secretRef: { name: max-backend-secret }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+            - name: dshm
+              mountPath: /dev/shm
+          readinessProbe:
+            tcpSocket: { port: 8082 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8082 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+      volumes:
+        - name: uploads
+          persistentVolumeClaim: { claimName: max-uploads-pvc }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 512Mi } # Chromium/Playwright needs more than k8s's default 64MB /dev/shm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: max-backend
+  namespace: billbull
+spec:
+  selector: { app: max-backend }
+  ports: [{ port: 8080, targetPort: 8082 }]
