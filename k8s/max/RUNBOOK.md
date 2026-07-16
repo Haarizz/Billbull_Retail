@@ -107,27 +107,49 @@ kubectl apply -f k8s/max/secret.yaml
 
 `secret.yaml` is gitignored (see `.gitignore` — `k8s/**/secret.yaml`) — never commit it.
 
-**Remember the DB host:** `localhost` in the old systemd unit becomes unreachable from inside a pod. Find the server's real LAN/host IP:
+**Confirmed values for max (2026-07-16, pulled from the live systemd unit and DB):**
+- Host IP: `77.37.49.42` (eth0, confirmed via `ip addr show`)
+- DB name: `billbull_max`
+- DB username: `postgres`
+- DB password: whatever is actually live — the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so it's running on the literal value in `application-client2.properties` (`root`). Verify this is still correct before trusting it — a checked-in file is not proof of the live password if anyone rotated it out-of-band.
+- JWT secret: **also has no override** — `max` is currently running on the dev-fallback default hardcoded in the public repo (`application.properties`: `billbull-super-secret-key-32chars-minimum!!`). Carry this same value into `secret.yaml` for the pilot (don't silently rotate it — that's a separate decision for the PM, not something to change mid-migration). Flag this as a pre-existing security gap worth fixing later, unrelated to k8s.
+
+**Postgres is NOT yet reachable from a pod.** Confirmed `listen_addresses` is commented out in `postgresql.conf` (defaults to `localhost` only) — a pod's IP (in the `10.42.0.0/16` range) will be refused. Before applying the Secret:
 
 ```bash
-ip addr show | grep 'inet ' 
+# find the exact config file path in use
+sudo -u postgres psql -c "SHOW config_file;"
+
+# edit postgresql.conf: uncomment and set
+listen_addresses = '*'          # or the specific eth0 IP, '*' is simpler for a single-node pilot
+
+# edit pg_hba.conf (same directory) — add a line allowing the pod CIDR:
+host    billbull_max    postgres    10.42.0.0/16    md5
+
+sudo systemctl restart postgresql
 ```
 
-Use that IP (not `localhost` or `127.0.0.1`) in `SPRING_DATASOURCE_URL` inside `secret.yaml`. Also confirm Postgres accepts connections from the pod CIDR (`10.42.0.0/16` by default) — check `pg_hba.conf` and `listen_addresses` in `postgresql.conf`.
+**CHECK:** after restarting Postgres, confirm it didn't just break `max`'s *current* systemd service (which still connects via `localhost` — should be unaffected, but verify with `systemctl status billbull-max`). Then confirm the new listener works: `psql -h 77.37.49.42 -U postgres -d billbull_max` from the server itself should still connect over the network interface, not just the socket.
 
-**CHECK:** `psql -h <that-ip> -U <user> -d <max-db>` connects successfully from the server itself before proceeding — proves the IP/creds are right before k8s adds another layer.
+## 7. Uploads — SKIPPED for max
 
-## 7. Copy existing uploads into the new PVC
+Confirmed 2026-07-16: `billbull-max`, `billbull-nest`, `billbull-hilite`, `billbull-albadar`
+all share one `WorkingDirectory` (`/root/Billbull/Billbull_Retail/billbull-backend`), so
+`uploads/` is one commingled folder across all 4 clients (UUID-prefixed filenames, so no
+collisions, but no way to tell which file belongs to which client from the filesystem
+alone). `max` has never had a real upload done against it, so there's nothing to copy for
+this pilot — the PVC is created empty and ready for new uploads going forward.
 
 ```bash
-kubectl apply -f k8s/max/deployment.yaml   # creates the pod, which binds the PVC
-kubectl get pods -n billbull -l app=max-backend --watch   # wait for Running (readiness may fail until DB/uploads are right — that's OK for now)
-
-POD=$(kubectl get pods -n billbull -l app=max-backend -o jsonpath='{.items[0].metadata.name}')
-kubectl cp ~/Billbull/Billbull_Retail/billbull-backend/uploads/. billbull/$POD:/app/uploads/
+kubectl apply -f k8s/max/deployment.yaml   # creates the pod, which binds the (empty) PVC
+kubectl get pods -n billbull -l app=max-backend --watch   # wait for Running
 ```
 
-(Adjust the source path to wherever `billbull-max`'s working directory actually resolves `uploads/` — confirm with `systemctl show billbull-max -p WorkingDirectory` on the old service first.)
+**For nest/hilite/albadar later (not this pilot):** do NOT copy the shared uploads/
+folder wholesale into their PVCs — it contains other clients' files too. Instead, per
+client, query that client's DB for actually-referenced file paths first, then either
+copy just that subset or re-upload the (likely small) real set of files through the
+running app once it's live on k8s.
 
 ## 8. Frontend + Ingress
 
