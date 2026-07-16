@@ -59,6 +59,9 @@ public class PaymentService {
     @Autowired
     private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
+    @Autowired
+    private com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService invoiceHistoryService;
+
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
@@ -224,6 +227,20 @@ public class PaymentService {
                         String.format("AED %,.2f", savedPayment.getAmount() != null ? savedPayment.getAmount() : BigDecimal.ZERO),
                         savedPayment.getPaymentMode() != null ? savedPayment.getPaymentMode() : "CASH"
                 );
+
+                // Invoice history: hooked HERE rather than in SalesInvoiceService.recordPayment
+                // because this is the single choke point every payment passes through —
+                // including receipt vouchers raised directly against an invoice, which never
+                // touch the invoice service. Reuses the same only-when-new guard as the
+                // notification above so an edit doesn't re-log the payment.
+                if (receiptVoucher != null && receiptVoucher.getSalesInvoiceId() != null) {
+                    invoiceHistoryService.recordPaymentReceived(
+                            receiptVoucher.getSalesInvoiceId(),
+                            savedPayment.getBranch() != null ? savedPayment.getBranch().getId() : null,
+                            receiptVoucher.getVoucherId(),
+                            savedPayment.getAmount(),
+                            savedPayment.getPaymentMode());
+                }
             }
         }
 

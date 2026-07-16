@@ -130,6 +130,7 @@ import { useBranch } from '../../../context/BranchContext';
 // ==========================================
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import LocationSelector from '../../../components/common/LocationSelector';
+import DateFilter from '../../../components/common/DateFilter';
 import ProductSelector from '../../../components/ProductSelector';
 import VendorSelector from '../../../components/VendorSelector';
 import TableSkeleton from '../../../components/common/TableSkeleton';
@@ -341,6 +342,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
 
       {/* Search Bar - Full width on mobile */}
       <div className="flex flex-col md:flex-row gap-3 mb-6">
+        <DateFilter onChange={(range) => setDateRange({ from: range.fromDate, to: range.toDate })} />
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -364,25 +366,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
       {/* Collapsible Filter Panel */}
       {showFilterPanel && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">From Date</label>
-              <input
-                type="date"
-                value={dateRange.from}
-                onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
-                className="w-full text-xs border border-slate-200 rounded p-2 bg-white focus:outline-none focus:border-[#F5C742]"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">To Date</label>
-              <input
-                type="date"
-                value={dateRange.to}
-                onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
-                className="w-full text-xs border border-slate-200 rounded p-2 bg-white focus:outline-none focus:border-[#F5C742]"
-              />
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div>
               <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor</label>
               <div className="relative">
@@ -402,7 +386,6 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
             <div className="flex gap-2">
               <button
                 onClick={() => {
-                  setDateRange({ from: '', to: '' });
                   setSelectedVendor('');
                   setSearchQuery('');
                 }}
@@ -1527,98 +1510,92 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     <div className="flex-1 flex flex-col min-h-0">
       {/* Scrollable body: only this region scrolls; the action bar below stays pinned */}
       <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pb-4">
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 min-h-full content-start">
-        {/* Left Column (Vendor & Details) */}
-        <div className="xl:col-span-1 space-y-4">
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
+      {/* Vendor + PO Information — unified inline row/panel (Vendor picker on the left,
+          LPO Number/Date/Expected Delivery/Purchase Type/Reference inline on the right,
+          Delivery Location below) to match the Quotations reference layout.
+          Fields/handlers unchanged; only labels/containers restyled. */}
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,320px)_1fr] gap-4 lg:gap-6">
+          {/* Vendor picker */}
+          <div className="space-y-2 lg:border-r lg:border-slate-100 lg:pr-6">
+            <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-slate-400" />
-              <h3 className="font-semibold text-sm text-slate-700">Vendor Information</h3>
+              <h3 className="font-semibold text-sm text-slate-700">Vendor</h3>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor</label>
-                {formData.vendorName ? (
-                  <div className="bg-slate-50 border border-slate-200 rounded-md p-4 relative group">
-                    <button
-                      onClick={() => !isReadOnly && setIsVendorSearchOpen(true)}
-                      disabled={isReadOnly}
-                      className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
-                      title="Change Vendor"
-                    >
-                      <Search className="h-4 w-4" />
-                    </button>
-                    <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendorName}</div>
-                    <div className="text-xs text-slate-500">Code: {formData.vendorCode || 'N/A'}</div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => !isReadOnly && setIsVendorSearchOpen(true)}
-                    disabled={isReadOnly}
-                    className="w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
-                  >
-                    <span className="text-slate-400">Select Vendor...</span>
-                    <Search className="h-4 w-4 text-slate-400" />
-                  </button>
-                )}
-
-                {/* VENDOR SELECTOR MODAL */}
-                <VendorSelector
-                  isOpen={isVendorSearchOpen}
-                  onClose={() => setIsVendorSearchOpen(false)}
-                  onSelect={handleVendorSelect}
-                  vendors={vendors}
-                  selectedCode={formData.vendorCode || ''}
-                />
+            {formData.vendorName ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-4 relative group">
+                <button
+                  onClick={() => !isReadOnly && setIsVendorSearchOpen(true)}
+                  disabled={isReadOnly}
+                  className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
+                  title="Change Vendor"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+                <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendorName}</div>
+                <div className="text-xs text-slate-500">Code: {formData.vendorCode || 'N/A'}</div>
               </div>
-              {formData.vendorName && (
-                <div className="bg-slate-50 rounded p-3 text-xs space-y-2 border border-slate-100">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Vendor Rating</span>
-                    <div className="flex text-[#F5C742]">★★★★☆</div>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Payment Terms</span>
-                    <span className="font-medium text-slate-900">Net 30</span>
-                  </div>
+            ) : (
+              <button
+                onClick={() => !isReadOnly && setIsVendorSearchOpen(true)}
+                disabled={isReadOnly}
+                className="w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
+              >
+                <span className="text-slate-400">Select Vendor...</span>
+                <Search className="h-4 w-4 text-slate-400" />
+              </button>
+            )}
+
+            {/* VENDOR SELECTOR MODAL */}
+            <VendorSelector
+              isOpen={isVendorSearchOpen}
+              onClose={() => setIsVendorSearchOpen(false)}
+              onSelect={handleVendorSelect}
+              vendors={vendors}
+              selectedCode={formData.vendorCode || ''}
+            />
+
+            {formData.vendorName && (
+              <div className="bg-slate-50 rounded p-3 text-xs space-y-2 border border-slate-100">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Vendor Rating</span>
+                  <div className="flex text-[#F5C742]">★★★★☆</div>
                 </div>
-              )}
-            </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Payment Terms</span>
+                  <span className="font-medium text-slate-900">Net 30</span>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
+
+          {/* PO Information */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
               <ShoppingCart className="h-4 w-4 text-slate-400" />
               <h3 className="font-semibold text-sm text-slate-700">PO Information</h3>
             </div>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">
-                    LPO Number
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.lpoNumber || 'New LPO'}
-                    readOnly
-                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-500 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">
-                    Date
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.date}
-                    readOnly
-                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-500"
-                  />
-                </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 shrink-0">LPO Number</label>
+                <input
+                  type="text"
+                  value={formData.lpoNumber || 'New LPO'}
+                  readOnly
+                  className="w-32 text-sm bg-slate-50 border border-slate-200 rounded p-1.5 text-slate-500 font-mono"
+                />
               </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Expected Delivery Date
-                </label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 shrink-0">Date</label>
+                <input
+                  type="text"
+                  value={formData.date}
+                  readOnly
+                  className="w-28 text-sm bg-slate-50 border border-slate-200 rounded p-1.5 text-slate-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 shrink-0">Expected Delivery Date</label>
                 <input
                   type="date"
                   value={formData.expectedDeliveryDate}
@@ -1627,33 +1604,11 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                     expectedDeliveryDate: e.target.value
                   }))}
                   disabled={isReadOnly}
-                  className="w-full text-sm border border-slate-200 rounded-md py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+                  className="w-36 text-sm border border-slate-200 rounded-md py-1.5 px-2 focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
                 />
               </div>
-              <div ref={locationSectionRef}>
-                <label className="text-xs font-medium mb-1 flex items-center gap-1">
-                  <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
-                  {locationError && <span className="text-red-500">*</span>}
-                  {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
-                </label>
-                <LocationSelector
-                  value={{
-                    warehouseId: formData.warehouseId,
-                    warehouseName: formData.warehouseName,
-                    zoneId: formData.zoneId,
-                    locatorId: formData.locatorId,
-                    binId: formData.binId
-                  }}
-                  onChange={handleLocationChange}
-                  disabled={isReadOnly}
-                  className="w-full"
-                  error={locationError}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Purchase Type
-                </label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 shrink-0">Purchase Type</label>
                 <SearchableDropdown
                   options={[
                     { value: 'REGULAR', label: 'Regular' },
@@ -1666,13 +1621,11 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   }))}
                   placeholder="Select Type"
                   disabled={isReadOnly}
-                  className="w-full"
+                  className="w-36"
                 />
               </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Reference Document
-                </label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 shrink-0">Reference Document</label>
                 <input
                   type="text"
                   placeholder="GR-00019, Sales Order..."
@@ -1682,15 +1635,37 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                     referenceDocument: e.target.value
                   }))}
                   disabled={isReadOnly}
-                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+                  className="w-44 text-sm border border-slate-200 rounded-md py-1.5 px-2 focus:outline-none focus:ring-1 focus:ring-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
                 />
               </div>
             </div>
+            <div ref={locationSectionRef}>
+              <label className="text-xs font-medium mb-1 flex items-center gap-1">
+                <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                {locationError && <span className="text-red-500">*</span>}
+                {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+              </label>
+              <LocationSelector
+                value={{
+                  warehouseId: formData.warehouseId,
+                  warehouseName: formData.warehouseName,
+                  zoneId: formData.zoneId,
+                  locatorId: formData.locatorId,
+                  binId: formData.binId
+                }}
+                onChange={handleLocationChange}
+                disabled={isReadOnly}
+                className="w-full max-w-md"
+                error={locationError}
+              />
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Middle/Right Column (ITEM TABLE) */}
-        <div className="xl:col-span-2 space-y-4">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 min-h-full content-start">
+        {/* MAIN COLUMN (ITEM TABLE) */}
+        <div className="xl:col-span-3 space-y-4">
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col h-full min-h-[200px]">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -1885,8 +1860,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
           </div>
         </div>
 
-        {/* Right Column */}
-        <div className="xl:col-span-1 space-y-4">
+        {/* Right Column — sticky rail: keeps LPO Summary and Approval Workflow visible
+            while the main column scrolls. */}
+        <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
           <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-slate-400" />
@@ -2194,7 +2170,8 @@ const LPOList = () => {
 
   // Filter State
   const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  const _today = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ from: _today, to: _today });
   const [selectedVendor, setSelectedVendor] = useState('');
 
   const requestSort = (key) => {
@@ -2286,10 +2263,10 @@ const LPOList = () => {
     const completed = Number(lpoStatusCounts.COMPLETED || 0);
 
     return [
-      { label: 'Total LPOs', value: total, tone: 'text-slate-900 bg-slate-50 border-slate-200' },
-      { label: 'Pending Approval', value: pendingApproval, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
-      { label: 'Open Receiving', value: openReceiving, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
-      { label: 'Completed', value: completed, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+      { label: 'Total LPOs', value: total, accent: 'blue', filter: 'All LPOs', sub: null },
+      { label: 'Pending Approval', value: pendingApproval, accent: 'yellow', filter: 'Pending Approval', sub: null },
+      { label: 'Open Receiving', value: openReceiving, accent: 'blue', filter: 'All LPOs', sub: null },
+      { label: 'Completed', value: completed, accent: 'emerald', filter: 'Completed', sub: null },
     ];
   }, [lpoStatusCounts]);
 
@@ -2973,22 +2950,6 @@ const LPOList = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-4">
-            {lpoSummaryCards.map((card) => (
-              <div
-                key={card.label}
-                className={`rounded-xl border px-3 py-2 shadow-sm ${card.tone}`}
-              >
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">
-                  {card.label}
-                </div>
-                <div className="mt-1 text-2xl font-bold leading-none">
-                  {card.value}
-                </div>
-              </div>
-            ))}
-          </div>
-
           {/* Status Filters (Only for List View) */}
           {activeNavTab === 'list' && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4 -mx-4 px-4 md:mx-0 md:px-0">
@@ -3020,6 +2981,33 @@ const LPOList = () => {
           <>
             {/* View Content */}
             {activeNavTab === 'list' && (
+              <>
+              {/* Stats Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                {lpoSummaryCards.map((card) => {
+                  const accentClasses = {
+                    blue: { border: 'border-l-blue-500', ring: 'border-blue-300 ring-2 ring-blue-100', text: 'text-blue-600' },
+                    yellow: { border: 'border-l-yellow-500', ring: 'border-yellow-300 ring-2 ring-yellow-100', text: 'text-yellow-600' },
+                    emerald: { border: 'border-l-emerald-500', ring: 'border-emerald-300 ring-2 ring-emerald-100', text: 'text-emerald-600' },
+                  }[card.accent];
+                  const isActive = activeStatusTab === card.filter;
+                  return (
+                    <button
+                      key={card.label}
+                      type="button"
+                      onClick={() => setActiveStatusTab(card.filter)}
+                      className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 ${accentClasses.border} text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${isActive ? accentClasses.ring : 'border-slate-200'
+                        }`}
+                    >
+                      <div className="text-sm font-medium text-slate-500">{card.label}</div>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <span className={`text-2xl font-bold ${accentClasses.text}`}>{card.value}</span>
+                        {card.sub && <span className="text-xs text-slate-400">{card.sub}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
               <ListView
                 lpos={pageData.content}
                 processedData={visibleRows}
@@ -3052,6 +3040,7 @@ const LPOList = () => {
                 vendors={vendors}
                 currencyLabel={currencyLabel}
               />
+              </>
             )}
             {activeNavTab === 'list' && (
               <PaginationFooter

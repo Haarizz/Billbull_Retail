@@ -2883,38 +2883,45 @@ const Quotations = () => {
                             </div>
                             <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><FileText className="text-[#F5C742]" size={28} /> Quotations</h1>
                             <p className="text-sm text-slate-500">Manage and create quotations for your customers.</p>
+                            {activeTab === 'create' && isViewMode && (
+                                <div className="flex items-center gap-2 pt-1">
+                                    <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-bold text-blue-700">
+                                        View Only
+                                    </span>
+                                </div>
+                            )}
                         </div>
 
                         {/* Actions */}
-                        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+                        <div className="flex flex-wrap items-center gap-1.5 w-full xl:w-auto">
                             {activeTab !== 'list' && (
                                 <button
                                     onClick={() => setActiveTab('list')}
-                                    className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
+                                    className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
                                 >
                                     <ArrowLeft className="h-4 w-4" /> Back
                                 </button>
                             )}
                             {activeTab !== 'list' && (
                                 <>
-                                    <button onClick={handleOpenEmailModal} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    <button onClick={handleOpenEmailModal} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Mail className="h-4 w-4" /> Email
                                     </button>
                                     <button onClick={() => {
                                         const phone = (selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '').replace(/\D/g, '');
                                         if (phone) window.open(`https://wa.me/${phone}`, '_blank');
                                         else alert('No phone number found for this customer.');
-                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <MessageCircle className="h-4 w-4" /> WhatsApp
                                     </button>
                                     <button onClick={() => {
                                         const phone = selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '';
                                         if (phone) window.open(`sms:${phone}`, '_self');
                                         else alert('No phone number found for this customer.');
-                                    }} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                    }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <Smartphone className="h-4 w-4" /> SMS
                                     </button>
-                                    <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
+                                    <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
                                         <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
                                     </button>
                                 </>
@@ -2926,6 +2933,87 @@ const Quotations = () => {
                                 >
                                     <Plus className="h-4 w-4" /> Create New
                                 </button>
+                            )}
+
+                            {/* Primary workflow actions — same handlers as the fixed bottom bar,
+                                surfaced here on the title row per the redesign. */}
+                            {activeTab === 'create' && (
+                                <>
+                            {status === 'Pending Approval' && (
+                                <>
+                                    <button onClick={handleApprove} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-500 text-white rounded text-xs font-bold hover:bg-emerald-600 transition-colors shadow-sm">
+                                        <Check size={14} /> Approve
+                                    </button>
+                                    <button onClick={handleReject} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-500 text-white rounded text-xs font-bold hover:bg-red-600 transition-colors shadow-sm">
+                                        <X size={14} /> Reject
+                                    </button>
+                                </>
+                            )}
+
+                            {status === 'Converted to SO' && (
+                                <button
+                                    onClick={handleRevertToApproved}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
+                                >
+                                    <RotateCcw size={14} /> Revert to Approved
+                                </button>
+                            )}
+
+                            {status === 'Approved' && (
+                                <>
+                                    <button
+                                        onClick={handleConvertToOrder}
+                                        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                                    >
+                                        <Box size={14} /> Convert to Order
+                                    </button>
+                                    <button
+                                        onClick={handleProceedToInvoice}
+                                        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm"
+                                    >
+                                        Proceed to Invoice <ChevronRight size={14} />
+                                    </button>
+                                </>
+                            )}
+
+                            <button
+                                onClick={() => setIsRevisionsOpen(true)}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
+                            >
+                                <History size={14} /> Revisions
+                            </button>
+
+                            {isViewMode && canEditCurrentQuotation && (
+                                <button
+                                    onClick={handleSwitchToEditMode}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                                >
+                                    <Edit size={14} /> Edit Quotation
+                                </button>
+                            )}
+
+                            <button
+                                onClick={() => setIsReviseModalOpen(true)}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
+                            >
+                                <Edit size={14} /> Revise Quotation
+                            </button>
+
+                            {!isViewMode && (
+                                <button
+                                    onClick={handleSaveDraft}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                                >
+                                    <Save size={14} /> Save Draft
+                                </button>
+                            )}
+
+                            {!isViewMode && status === 'Draft' && (
+                                <button onClick={handleConfirm} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded text-xs font-bold hover:from-emerald-700 hover:to-emerald-600 transition-all shadow-md transform hover:-translate-y-0.5">
+                                    Confirm <ChevronRight size={14} />
+                                </button>
+                            )}
+                                </>
                             )}
                         </div>
                     </div>
@@ -3364,49 +3452,60 @@ const Quotations = () => {
                                 )}
                             </div>
                         )}
-                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
-
-                            {/* ======================= LEFT COLUMN ======================= */}
-                            <div className="xl:col-span-1 space-y-4">
-
-                                {/* 1. Quotation Details Card */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm">
-                                    <h3 className="text-sm font-bold text-slate-800 mb-4 border-b border-slate-100/50 pb-2">Quotation Details</h3>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="flex flex-col col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Quotation No.</label>
+                        {/* Quotation Details — single inline row (Status · No. · Date · Valid Until ·
+                            Revision · Branch · Currency) to match the reference layout.
+                            Fields/handlers unchanged; only labels/containers restyled inline. */}
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Status</label>
+                                            {renderStatusBadge()}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Quotation No.</label>
                                             <input
                                                 type="text"
                                                 value={getQuotationNo()}
                                                 onChange={(e) => setNextQtnNo(e.target.value)}
                                                 readOnly={isViewMode || editingId || quotationAutoNumbering}
                                                 placeholder={quotationAutoNumbering ? 'Auto generated' : 'Enter quotation number'}
-                                                className="text-sm p-1.5 border border-slate-200/50 rounded text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                                title="Quotation No."
+                                                className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
                                             />
                                         </div>
-                                        <div className="flex flex-col col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Revision</label>
-                                            <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-center text-slate-700" />
-                                        </div>
                                         {sourceInquiry?.inquiryNumber && (
-                                            <div className="flex flex-col col-span-2">
-                                                <label className="text-xs font-semibold text-slate-500 mb-1">Source Inquiry</label>
-                                                <input type="text" value={sourceInquiry.inquiryNumber} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                                            <div className="flex items-center gap-2">
+                                                <label className="text-xs font-semibold text-slate-500 shrink-0">Source Inquiry</label>
+                                                <input type="text" value={sourceInquiry.inquiryNumber} readOnly className="w-32 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-slate-700" />
                                             </div>
                                         )}
-                                        <div className="flex flex-col col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Date</label>
-                                            <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Date</label>
+                                            <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
                                         </div>
-                                        <div className="flex flex-col col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Valid Until</label>
-                                            <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Valid Until</label>
+                                            <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} disabled={isViewMode} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Revision</label>
+                                            <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="w-12 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-center text-slate-700" />
                                         </div>
 
-                                        <div className="flex flex-col relative col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Currency</label>
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Branch / Location</label>
+                                            <input
+                                                type="text"
+                                                value={branchLocationDisplay}
+                                                readOnly
+                                                title={branchLocationDisplay}
+                                                className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 bg-slate-50"
+                                            />
+                                        </div>
+
+                                        <div className="flex items-center gap-2 relative">
+                                            <label className="text-xs font-semibold text-slate-500 shrink-0">Currency</label>
                                             <div
-                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                                className={`w-48 text-sm p-1.5 border border-slate-200 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
                                                 onClick={(e) => {
                                                     if (isViewMode) return;
                                                     e.stopPropagation();
@@ -3424,7 +3523,7 @@ const Quotations = () => {
                                             </div>
                                             {isCurrencyOpen && !isViewMode && (
                                                 <div
-                                                    className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden"
+                                                    className="absolute top-full right-0 w-64 bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden"
                                                     onClick={(e) => e.stopPropagation()}
                                                 >
                                                     <div className="p-2 border-b border-slate-100 bg-white">
@@ -3474,46 +3573,19 @@ const Quotations = () => {
                                                 </div>
                                             )}
                                         </div>
+                        </div>
 
-                                        <div className="flex flex-col col-span-2 sm:col-span-1">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Branch / Location</label>
-                                            <input
-                                                type="text"
-                                                value={branchLocationDisplay}
-                                                readOnly
-                                                title={branchLocationDisplay}
-                                                className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-slate-50"
-                                            />
-                                        </div>
+                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
 
-                                        {/* Payment Terms */}
-                                        <div className="flex flex-col relative col-span-2">
-                                            <label className="text-xs font-semibold text-slate-500 mb-1">Payment Terms</label>
-                                            <div
-                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-[#F5C742]'}`}
-                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
-                                            >
-                                                {paymentTerm} <ChevronDown size={14} className="text-slate-400" />
-                                            </div>
-                                            {isPaymentTermOpen && !isViewMode && (
-                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden">
-                                                    {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
-                                                        <div
-                                                            key={opt}
-                                                            onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
-                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
-                                                        >
-                                                            {opt} {paymentTerm === opt && <Check size={12} />}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
+                            {/* ======================= MAIN COLUMN =======================
+                                Customer card, then Quotation Items, then the bottom sections —
+                                stacked full-width, with the summary rail alongside. */}
+                            <div className="xl:col-span-3 space-y-4">
 
-                                {/* 2. Customer + Shipping — unified panel */}
+                                {/* 2. Customer + Shipping — unified panel, side-by-side in a wide card */}
+                                <div className="bg-white rounded-lg border border-slate-200">
                                 <CustomerShippingPanel
+                                    layout="horizontal"
                                     selectedCustomer={activeCustomerData}
                                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
                                     onCustomerUpdated={(updated) => {
@@ -3559,6 +3631,7 @@ const Quotations = () => {
                                             : null
                                     }
                                 />
+                                </div>
 
                                 {/* CustomerSelector modal (unchanged) */}
                                 <CustomerSelector
@@ -3570,15 +3643,9 @@ const Quotations = () => {
                                     onCustomerCreated={refreshData}
                                 />
 
-
-
-                            </div> {/* End Left Column */}
-
-                            {/* ======================= MIDDLE COLUMN (ITEMS TABLE) ======================= */}
-                            <div className="xl:col-span-2 space-y-4">
                                 {/* 3. Quotation Items (TABLE) */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm min-h-[460px]">
-                                    <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
+                                <div className="bg-white rounded-lg border border-slate-200 p-4">
+                                    <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
                                         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                             <ShoppingCart size={16} className="text-yellow-500" /> Quotation Items
                                             <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
@@ -3815,14 +3882,16 @@ const Quotations = () => {
                                     </div>
                                 </div>
 
-                                {/* 4. Combined Attachments & Notes */}
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                {/* 4. Attachments (full width), then Payment Terms | Internal Notes,
+                                    then Customer Notes — matching the reference layout.
+                                    Fields/handlers unchanged. */}
+                                <div className="space-y-4">
                                     {/* Attachments */}
-                                    <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-full">
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4">
                                         <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
                                             <Paperclip size={14} className="text-slate-400" /> Attachments
                                         </h3>
-                                        <div className="border-2 border-dashed border-slate-200/50 rounded-lg p-4 flex flex-col items-center justify-center text-center h-[calc(100%-2rem)]">
+                                        <div className="border-2 border-dashed border-slate-200/50 rounded-lg p-6 flex flex-col items-center justify-center text-center">
                                             <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
 
                                             {!isViewMode && (
@@ -3853,45 +3922,85 @@ const Quotations = () => {
                                         </div>
                                     </div>
 
-                                    {/* Notes */}
-                                    <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-full">
+                                    {/* Payment Terms | Internal Notes — side by side */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
                                         <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
-                                            <FileText size={14} className="text-slate-400" /> Notes
+                                            <FileText size={14} className="text-slate-400" /> Payment Terms
                                         </h3>
-                                        <div className="space-y-3">
-                                            <div className="flex flex-col">
-                                                <label className="text-[10px] font-semibold text-slate-500 mb-1">Notes to Customer</label>
-                                                <textarea
-                                                    rows="3"
-                                                    value={notesToCustomer}
-                                                    onChange={(e) => setNotesToCustomer(e.target.value)}
-                                                    readOnly={isViewMode}
-                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
-                                                    placeholder="Visible on quotation..."
-                                                ></textarea>
+                                        <div className="flex flex-col relative">
+                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
+                                            <div
+                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-[#F5C742]'}`}
+                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
+                                            >
+                                                {paymentTerm} <ChevronDown size={14} className="text-slate-400" />
                                             </div>
-                                            <div className="flex flex-col">
-                                                <label className="text-[10px] font-semibold text-slate-500 mb-1">Internal Notes</label>
-                                                <textarea
-                                                    rows="3"
-                                                    value={internalNotes}
-                                                    onChange={(e) => setInternalNotes(e.target.value)}
-                                                    readOnly={isViewMode}
-                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
-                                                    placeholder="Internal use only..."
-                                                ></textarea>
-                                            </div>
+                                            {isPaymentTermOpen && !isViewMode && (
+                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden">
+                                                    {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
+                                                        <div
+                                                            key={opt}
+                                                            onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
+                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
+                                                        >
+                                                            {opt} {paymentTerm === opt && <Check size={12} />}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Internal Notes */}
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
+                                        <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                            <FileText size={14} className="text-slate-400" /> Internal Notes
+                                        </h3>
+                                        <div className="flex flex-col">
+                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Internal Notes (only visible to staff)</label>
+                                            <textarea
+                                                rows="3"
+                                                value={internalNotes}
+                                                onChange={(e) => setInternalNotes(e.target.value)}
+                                                readOnly={isViewMode}
+                                                className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
+                                                placeholder="Internal use only..."
+                                            ></textarea>
+                                        </div>
+                                    </div>
+                                    </div>
+
+                                    {/* Customer Notes */}
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4">
+                                        <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                            <FileText size={14} className="text-slate-400" /> Customer Notes
+                                        </h3>
+                                        <div className="flex flex-col">
+                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Notes to Customer (prints on quotation)</label>
+                                            <textarea
+                                                rows="3"
+                                                value={notesToCustomer}
+                                                onChange={(e) => setNotesToCustomer(e.target.value)}
+                                                readOnly={isViewMode}
+                                                className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
+                                                placeholder="Visible on quotation..."
+                                            ></textarea>
                                         </div>
                                     </div>
                                 </div>
-                            </div> {/* End Middle Column */}
+                            </div> {/* End Main Column */}
 
 
-                            {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) ======================= */}
-                            <div className="xl:col-span-1 space-y-4">
+                            {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) =======================
+                                Sticky rail: keeps Quotation Summary, Item Availability, Price History
+                                and Profitability visible while the main column scrolls. No internal
+                                scroll container — the rail grows with its content and the page scrolls
+                                as a single document. */}
+                            <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
                                 {/* 5. Summary & Footer */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm mb-4 md:mb-6">
-                                    <h3 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100/50 pb-2">Quotation Summary</h3>
+                                <div className="bg-white rounded-lg border border-slate-200 p-4">
+                                    <h3 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100 pb-2">Quotation Summary</h3>
                                     <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
                                         <div className="flex justify-between text-slate-600">
                                             <span>Gross Amount</span>
@@ -3948,7 +4057,7 @@ const Quotations = () => {
 
                                 {/* 6. Item Availability & Price History */}
                                 {/* 1. Item Availability */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm flex-1 p-4 overflow-y-auto max-h-[50vh]">
+                                <div className="bg-white rounded-lg border border-slate-200 p-4">
                                     <h3 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2">
                                         <Box size={14} className="text-yellow-600" /> Item Availability
                                     </h3>
@@ -3994,7 +4103,7 @@ const Quotations = () => {
                                 </div>
 
                                 {/* 2. Customer Price History */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm flex-1 p-4 overflow-y-auto max-h-[50vh]">
+                                <div className="bg-white rounded-lg border border-slate-200 p-4">
                                     <h3 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2">
                                         <History size={14} className="text-blue-500" /> Price History
                                     </h3>
@@ -4031,7 +4140,7 @@ const Quotations = () => {
                                 </div>
 
                                 {/* 3. Profitability Analysis */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm flex-1 p-4">
+                                <div className="bg-white rounded-lg border border-slate-200 p-4 flex-1">
                                     <h3 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2">
                                         <Info size={14} className="text-yellow-600" /> Profitability Analysis
                                     </h3>

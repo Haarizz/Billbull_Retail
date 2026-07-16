@@ -1680,185 +1680,179 @@ const ProformaInvoice = () => {
         {/* ======================= VIEW: CREATE / EDIT ======================= */}
         {activeTab === 'create' && (
           <div className="space-y-6 flex-1 flex flex-col pb-24">
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 xl:gap-6 items-start">
-              {/* --- LEFT COLUMN: DETAILS --- */}
-              <div className="xl:col-span-1 space-y-4">
+            {/* Document Details — single inline row (PI Number · PI Date · Valid Till ·
+                Branch · Source Type · [linked doc]) to match the Quotations reference layout.
+                Fields/handlers unchanged; only labels/containers restyled inline. */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
+                <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-500 shrink-0">PI Number</label>
+                    <input
+                        type="text"
+                        value={piNumber}
+                        onChange={(e) => setPiNumber(e.target.value)}
+                        readOnly={isReadOnly || proformaAutoNumbering}
+                        title="PI Number"
+                        className="w-36 text-sm p-1.5 bg-white border border-slate-200 rounded text-slate-700 focus:border-yellow-400 outline-none read-only:bg-slate-50 read-only:text-slate-500"
+                        placeholder={proformaAutoNumbering ? 'Auto generated' : 'Enter PI number'}
+                    />
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-500 shrink-0">PI Date <span className="text-red-500">*</span></label>
+                    <input type="date" value={piDate} onChange={(e) => setPiDate(e.target.value)} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700" />
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-500 shrink-0">Valid Till <span className="text-red-500">*</span></label>
+                    <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700" />
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-500 shrink-0">Branch</label>
+                    <div className="w-40 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-slate-700 truncate" title={activeBranch?.name || defaultBranchName || '—'}>
+                        {activeBranch?.name || defaultBranchName || '—'}
+                    </div>
+                </div>
 
-                {/* 1. Document Details Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      Document Details
-                    </h3>
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="flex flex-col col-span-2 sm:col-span-1">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">PI Number</label>
-                        <input
-                          type="text"
-                          value={piNumber}
-                          onChange={(e) => setPiNumber(e.target.value)}
-                          readOnly={isReadOnly || proformaAutoNumbering}
-                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none read-only:bg-slate-50 read-only:text-slate-500"
-                          placeholder={proformaAutoNumbering ? 'Auto generated' : 'Enter PI number'}
-                        />
-                      </div>
-                      <div className="flex flex-col col-span-2 sm:col-span-1">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">PI Date <span className="text-red-500">*</span></label>
-                        <input type="date" value={piDate} onChange={(e) => setPiDate(e.target.value)} className="text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
-                      </div>
-                      <div className="flex flex-col col-span-2 sm:col-span-1">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Valid Till <span className="text-red-500">*</span></label>
-                        <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
-                      </div>
-                      <div className="flex flex-col col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Branch</label>
-                        <div className="text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-slate-700 truncate">
-                          {activeBranch?.name || defaultBranchName || '—'}
-                        </div>
-                      </div>
-                      {/* Source Type Selector */}
-                      <div className="flex flex-col col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Source Type</label>
-                        <div className="flex gap-2">
-                          {['None', 'Quotation', 'Sales Order'].map(type => (
+                {/* Source Type Selector */}
+                <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-500 shrink-0">Source Type</label>
+                    <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-semibold">
+                        {['None', 'Quotation', 'Sales Order'].map(type => (
                             <button
-                              key={type}
-                              type="button"
-                              onClick={() => {
-                                setSourceType(type);
-                                setLinkedQuote('');
-                                setLinkedSO('');
-                                setSourceSearch('');
-                                setIsQuotationOpen(false);
-                                setIsSalesOrderOpen(false);
-                              }}
-                              className={`flex-1 text-xs py-1.5 px-2 rounded border font-semibold transition-colors ${
-                                sourceType === type
-                                  ? 'bg-[#F5C742] border-[#F5C742] text-slate-900'
-                                  : 'bg-white border-slate-300/50 text-slate-500 hover:border-[#F5C742]'
-                              }`}
+                                key={type}
+                                type="button"
+                                onClick={() => {
+                                    setSourceType(type);
+                                    setLinkedQuote('');
+                                    setLinkedSO('');
+                                    setSourceSearch('');
+                                    setIsQuotationOpen(false);
+                                    setIsSalesOrderOpen(false);
+                                }}
+                                className={`py-1.5 px-2.5 transition-colors ${sourceType === type ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} border-l border-slate-200 first:border-l-0`}
                             >
-                              {type === 'None' ? 'None' : `Link ${type}`}
+                                {type === 'None' ? 'None' : `Link ${type}`}
                             </button>
-                          ))}
-                        </div>
-                      </div>
+                        ))}
+                    </div>
+                </div>
 
-                      {/* Searchable Source Picker */}
-                      {sourceType !== 'None' && (
-                        <div className="flex flex-col relative col-span-2">
-                          <label className="text-xs font-semibold text-slate-500 mb-1">
+                {/* Searchable Source Picker */}
+                {sourceType !== 'None' && (
+                    <div className="flex items-center gap-2 relative">
+                        <label className="text-xs font-semibold text-slate-500 shrink-0">
                             {sourceType === 'Quotation' ? 'Select Quotation' : 'Select Sales Order'}
-                          </label>
-                          <div className="relative">
+                        </label>
+                        <div className="relative">
                             <div
-                              className="w-full text-sm p-1.5 border border-slate-300/50 rounded flex items-center gap-2 cursor-pointer hover:border-[#F5C742] transition-colors bg-white pr-8"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (sourceType === 'Quotation') { setIsQuotationOpen(true); setIsSalesOrderOpen(false); }
-                                else { setIsSalesOrderOpen(true); setIsQuotationOpen(false); }
-                                setSourceSearch('');
-                              }}
+                                className="w-48 text-sm p-1.5 border border-slate-200 rounded flex items-center gap-2 cursor-pointer hover:border-[#F5C742] transition-colors bg-white pr-8"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (sourceType === 'Quotation') { setIsQuotationOpen(true); setIsSalesOrderOpen(false); }
+                                    else { setIsSalesOrderOpen(true); setIsQuotationOpen(false); }
+                                    setSourceSearch('');
+                                }}
                             >
-                              <Search size={13} className="text-slate-400 shrink-0" />
-                              <span className={`flex-1 truncate ${(sourceType === 'Quotation' ? linkedQuote : linkedSO) ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
-                                {sourceType === 'Quotation'
-                                  ? (linkedQuote || 'Search quotation...')
-                                  : (linkedSO || 'Search sales order...')}
-                              </span>
-                              {(sourceType === 'Quotation' ? linkedQuote : linkedSO) && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); sourceType === 'Quotation' ? setLinkedQuote('') : setLinkedSO(''); }}
-                                  className="text-slate-400 hover:text-slate-600"
-                                >
-                                  <X size={12} />
-                                </button>
-                              )}
+                                <Search size={13} className="text-slate-400 shrink-0" />
+                                <span className={`flex-1 truncate ${(sourceType === 'Quotation' ? linkedQuote : linkedSO) ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                                    {sourceType === 'Quotation'
+                                        ? (linkedQuote || 'Search quotation...')
+                                        : (linkedSO || 'Search sales order...')}
+                                </span>
+                                {(sourceType === 'Quotation' ? linkedQuote : linkedSO) && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); sourceType === 'Quotation' ? setLinkedQuote('') : setLinkedSO(''); }}
+                                        className="text-slate-400 hover:text-slate-600"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                )}
                             </div>
                             <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
 
                             {/* Quotation dropdown */}
                             {isQuotationOpen && sourceType === 'Quotation' && (
-                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
-                                <div className="p-2 border-b border-slate-100">
-                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
-                                    <Search size={12} className="text-slate-400 shrink-0" />
-                                    <input
-                                      autoFocus
-                                      type="text"
-                                      value={sourceSearch}
-                                      onChange={e => setSourceSearch(e.target.value)}
-                                      onClick={e => e.stopPropagation()}
-                                      placeholder="Search by number or customer..."
-                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
-                                    />
-                                  </div>
+                                <div className="absolute top-full right-0 w-64 bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                    <div className="p-2 border-b border-slate-100">
+                                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                            <Search size={12} className="text-slate-400 shrink-0" />
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                value={sourceSearch}
+                                                onChange={e => setSourceSearch(e.target.value)}
+                                                onClick={e => e.stopPropagation()}
+                                                placeholder="Search by number or customer..."
+                                                className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                        {quotationsList
+                                            .filter(q => {
+                                                const s = sourceSearch.toLowerCase();
+                                                return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s);
+                                            })
+                                            .map(q => (
+                                                <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectQuotation(q)}>
+                                                    <span className="font-bold text-slate-800">{q.qtnNo}</span>
+                                                    <span className="text-slate-400 truncate ml-2">{q.customer || q.customerName}</span>
+                                                </div>
+                                            ))}
+                                        {quotationsList.filter(q => { const s = sourceSearch.toLowerCase(); return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                            <div className="px-3 py-4 text-xs text-slate-400 text-center">No quotations found</div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="max-h-48 overflow-y-auto">
-                                  {quotationsList
-                                    .filter(q => {
-                                      const s = sourceSearch.toLowerCase();
-                                      return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s);
-                                    })
-                                    .map(q => (
-                                      <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectQuotation(q)}>
-                                        <span className="font-bold text-slate-800">{q.qtnNo}</span>
-                                        <span className="text-slate-400 truncate ml-2">{q.customer || q.customerName}</span>
-                                      </div>
-                                    ))}
-                                  {quotationsList.filter(q => { const s = sourceSearch.toLowerCase(); return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s); }).length === 0 && (
-                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No quotations found</div>
-                                  )}
-                                </div>
-                              </div>
                             )}
 
                             {/* Sales Order dropdown */}
                             {isSalesOrderOpen && sourceType === 'Sales Order' && (
-                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
-                                <div className="p-2 border-b border-slate-100">
-                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
-                                    <Search size={12} className="text-slate-400 shrink-0" />
-                                    <input
-                                      autoFocus
-                                      type="text"
-                                      value={sourceSearch}
-                                      onChange={e => setSourceSearch(e.target.value)}
-                                      onClick={e => e.stopPropagation()}
-                                      placeholder="Search by number or customer..."
-                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
-                                    />
-                                  </div>
+                                <div className="absolute top-full right-0 w-64 bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                    <div className="p-2 border-b border-slate-100">
+                                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                            <Search size={12} className="text-slate-400 shrink-0" />
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                value={sourceSearch}
+                                                onChange={e => setSourceSearch(e.target.value)}
+                                                onClick={e => e.stopPropagation()}
+                                                placeholder="Search by number or customer..."
+                                                className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                        {salesOrdersList
+                                            .filter(so => {
+                                                const s = sourceSearch.toLowerCase();
+                                                return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s);
+                                            })
+                                            .map(so => (
+                                                <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectSalesOrder(so)}>
+                                                    <span className="font-bold text-slate-800">{so.soNumber}</span>
+                                                    <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
+                                                </div>
+                                            ))}
+                                        {salesOrdersList.filter(so => { const s = sourceSearch.toLowerCase(); return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                            <div className="px-3 py-4 text-xs text-slate-400 text-center">No sales orders found</div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="max-h-48 overflow-y-auto">
-                                  {salesOrdersList
-                                    .filter(so => {
-                                      const s = sourceSearch.toLowerCase();
-                                      return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s);
-                                    })
-                                    .map(so => (
-                                      <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectSalesOrder(so)}>
-                                        <span className="font-bold text-slate-800">{so.soNumber}</span>
-                                        <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
-                                      </div>
-                                    ))}
-                                  {salesOrdersList.filter(so => { const s = sourceSearch.toLowerCase(); return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s); }).length === 0 && (
-                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No sales orders found</div>
-                                  )}
-                                </div>
-                              </div>
                             )}
-                          </div>
                         </div>
-                      )}
                     </div>
-                  </div>
-                </div>
+                )}
+            </div>
 
+            <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 xl:gap-6 items-start">
+              {/* MAIN COLUMN */}
+              <div className="xl:col-span-3 space-y-4">
+
+                {/* Customer + Shipping — unified panel, side-by-side in a wide card */}
+                <div className="bg-white rounded-lg border border-slate-200">
                 <CustomerShippingPanel
+                    layout="horizontal"
                     selectedCustomer={selectedCustomer}
                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
                     onCustomerUpdated={setSelectedCustomer}
@@ -1896,6 +1890,7 @@ const ProformaInvoice = () => {
                             : null
                     }
                 />
+                </div>
 
                 <CustomerSelector
                     isOpen={isCustomerSearchOpen}
@@ -1915,11 +1910,8 @@ const ProformaInvoice = () => {
                       setCustomersList(Array.isArray(data) ? data : []);
                     }}
                 />
-              </div> {/* End Left Column */}
 
-              {/* --- MIDDLE COLUMN: ITEMS & NOTES --- */}
-              <div className="xl:col-span-2 space-y-4">
-                {/* Items Table */}
+                {/* Items Table — full width in main column */}
                 <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm min-h-[460px]">
                   <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                     <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -2143,58 +2135,63 @@ const ProformaInvoice = () => {
                     <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
                   </div>
                 </div>
-                {/* 4. Combined Attachments & Notes */}
+                {/* Attachments (full width), then Notes to Customer | Internal Notes —
+                    matching the Quotations reference layout. Fields/handlers unchanged. */}
+                <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm">
+                  <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    <Paperclip size={14} className="text-slate-400" /> Attachments
+                  </h3>
+                  <div className="border-2 border-dashed border-slate-200/50 rounded-lg p-6 flex flex-col items-center justify-center text-center">
+                    <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
+                    <label className="cursor-pointer mb-2">
+                      <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
+                      <input type="file" className="hidden" multiple />
+                    </label>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Attachments */}
                   <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm h-full">
                     <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
-                      <Paperclip size={14} className="text-slate-400" /> Attachments
+                      <Info size={14} className="text-slate-400" /> Customer Notes
                     </h3>
-                    <div className="border-2 border-dashed border-slate-200/50 rounded-lg p-4 flex flex-col items-center justify-center text-center">
-                      <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
-                      <label className="cursor-pointer mb-2">
-                        <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
-                        <input type="file" className="hidden" multiple />
-                      </label>
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-500 mb-1">Notes to Customer (prints on proforma)</label>
+                      <textarea
+                        rows="3"
+                        value={notesToCustomer}
+                        onChange={(e) => setNotesToCustomer(e.target.value)}
+                        className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
+                        placeholder="Visible on proforma..."
+                      ></textarea>
                     </div>
                   </div>
 
-                  {/* Notes */}
                   <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm h-full">
                     <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
-                      <Info size={14} className="text-slate-400" /> Notes
+                      <Info size={14} className="text-slate-400" /> Internal Notes
                     </h3>
-                    <div className="space-y-3">
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Notes to Customer</label>
-                        <textarea
-                          rows="3"
-                          value={notesToCustomer}
-                          onChange={(e) => setNotesToCustomer(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
-                          placeholder="Visible on proforma..."
-                        ></textarea>
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Internal Notes</label>
-                        <textarea
-                          rows="3"
-                          value={internalNotes}
-                          onChange={(e) => setInternalNotes(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
-                          placeholder="Internal use only..."
-                        ></textarea>
-                      </div>
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-500 mb-1">Internal Notes (only visible to staff)</label>
+                      <textarea
+                        rows="3"
+                        value={internalNotes}
+                        onChange={(e) => setInternalNotes(e.target.value)}
+                        className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
+                        placeholder="Internal use only..."
+                      ></textarea>
                     </div>
                   </div>
                 </div>
 
-              </div>
+              </div> {/* End Main Column */}
 
-              {/* --- RIGHT COLUMN: SUMMARY & SIDEBAR --- */}
-              <div className="xl:col-span-1 space-y-4">
+              {/* --- RIGHT COLUMN: SUMMARY & SIDEBAR ---
+                  Sticky rail: keeps Proforma Summary, Stock Check and the guide panel visible
+                  while the main column scrolls. */}
+              <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
                 {/* 3. Summary Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm overflow-hidden sticky top-24">
+                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm overflow-hidden">
                   <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                     <h3 className="text-sm font-bold text-slate-800">Proforma Summary</h3>
                   </div>

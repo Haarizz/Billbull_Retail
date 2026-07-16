@@ -58,6 +58,9 @@ class PaymentServiceTest {
     @Mock
     private com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
 
+    @Mock
+    private com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService invoiceHistoryService;
+
     private PaymentService paymentService;
 
     @BeforeEach
@@ -72,6 +75,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "branchAccessService", branchAccessService);
         ReflectionTestUtils.setField(paymentService, "notifPublisher", notifPublisher);
         ReflectionTestUtils.setField(paymentService, "advanceApplicationService", advanceApplicationService);
+        ReflectionTestUtils.setField(paymentService, "invoiceHistoryService", invoiceHistoryService);
     }
 
     @Test
