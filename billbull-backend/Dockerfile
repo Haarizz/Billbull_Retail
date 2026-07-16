@@ -10,10 +10,17 @@ RUN mvn -B clean package -DskipTests
 # they're not on the top-level classpath. The playwright.jar itself has no Main-Class
 # manifest either (confirmed: `unzip -p playwright-1.49.0.jar META-INF/MANIFEST.MF` has
 # no Main-Class line), so `java -jar` on it alone doesn't work. Instead, assemble
-# Playwright + its transitive deps (jackson, gson, etc.) into a lib/ folder and run the
-# CLI class directly against that classpath — the officially supported invocation shape.
+# Playwright's own dependency tree (confirmed via `mvn dependency:tree
+# -Dincludes=com.microsoft.playwright`: exactly playwright + driver + driver-bundle, 3
+# jars) into a lib/ folder and run the CLI class directly against that classpath — the
+# officially supported invocation shape.
+# NOTE: -DincludeArtifactIds=playwright on copy-dependencies only grabs the named
+# artifact itself, not its transitive deps (verified — driver/driver-bundle were missing
+# with that filter). -Dincludes (the *dependency:tree* style groupId:artifactId filter,
+# applied here to copy-dependencies via -DincludeGroupIds) resolves the whole subtree
+# instead, so all 3 jars land in the same place.
 RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies \
-    -DincludeArtifactIds=playwright \
+    -DincludeGroupIds=com.microsoft.playwright \
     -DoutputDirectory=/app/playwright-lib \
     -DincludeScope=runtime && \
     mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy \
