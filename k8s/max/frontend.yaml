@@ -1,0 +1,26 @@
+# Shared frontend, deployed once (not per client) — every client's Ingress on this
+# server points at this same Service, same as today's shared /var/www/billbull/dist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billbull-frontend
+  namespace: billbull
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: billbull-frontend } }
+  template:
+    metadata: { labels: { app: billbull-frontend } }
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/billbull/frontend:pilot
+          ports: [{ containerPort: 80 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billbull-frontend
+  namespace: billbull
+spec:
+  selector: { app: billbull-frontend }
+  ports: [{ port: 80, targetPort: 80 }]

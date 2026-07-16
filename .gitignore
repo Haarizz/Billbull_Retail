@@ -62,3 +62,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .parked/
+
+# ===========================
+# Kubernetes secrets (never commit real creds)
+# ===========================
+k8s/**/secret.yaml
+k8s/**/values-*.secret.yaml
