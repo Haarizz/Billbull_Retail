@@ -131,12 +131,23 @@ kubectl apply -f k8s/max/secret.yaml
 
 `secret.yaml` is gitignored (see `.gitignore` — `k8s/**/secret.yaml`) — never commit it.
 
-**Confirmed values for max (2026-07-16, pulled from the live systemd unit and DB):**
+**Confirmed structural facts for max (2026-07-16, pulled from the live systemd unit and DB) —
+see your private notes / password manager for the actual credential values, do not add
+them to this file:**
 - Host IP: `77.37.49.42` (eth0, confirmed via `ip addr show`)
 - DB name: `billbull_max`
 - DB username: `postgres`
-- DB password: whatever is actually live — the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so it's running on the literal value in `application-client2.properties` (`root`). Verify this is still correct before trusting it — a checked-in file is not proof of the live password if anyone rotated it out-of-band.
-- JWT secret: **also has no override** — `max` is currently running on the dev-fallback default hardcoded in the public repo (`application.properties`: `billbull-super-secret-key-32chars-minimum!!`). Carry this same value into `secret.yaml` for the pilot (don't silently rotate it — that's a separate decision for the PM, not something to change mid-migration). Flag this as a pre-existing security gap worth fixing later, unrelated to k8s.
+- DB password: the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so
+  `max` is running on whatever literal value is in `application-client2.properties`.
+  Verify that value is still the live one before trusting it (a checked-in file is not
+  proof of the current password if anyone rotated it out-of-band) — do not paste the
+  actual password into this doc; put it straight into `secret.yaml` (gitignored).
+- JWT secret: **also has no override** — `max` is currently running on the dev-fallback
+  default hardcoded in `application.properties`. This means the JWT signing key for a
+  live production client is sitting in a public repo — flag this to the PM as a
+  pre-existing security gap to fix (rotate to a real per-client secret) separately from
+  this migration; for the pilot, carry the same value forward into `secret.yaml` so
+  behavior doesn't change mid-migration, don't silently rotate it here.
 
 **Postgres is NOT yet reachable from a pod.** Confirmed `listen_addresses` is commented out in `postgresql.conf` (defaults to `localhost` only) — a pod's IP (in the `10.42.0.0/16` range) will be refused. Before applying the Secret:
 
