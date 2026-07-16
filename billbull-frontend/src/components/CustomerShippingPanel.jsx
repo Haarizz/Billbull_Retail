@@ -29,7 +29,12 @@ const CustomerShippingPanel = ({
     onAddCustomer,
     onCustomerUpdated,
     creditAlert = null,
+    // 'vertical' (default) keeps the original stacked Customer-over-Shipping layout used by
+    // Sales Order/Invoice/Proforma/Delivery Note/POS. 'horizontal' puts the two side by side
+    // for wide containers (Quotations redesign).
+    layout = 'vertical',
 }) => {
+    const isHorizontal = layout === 'horizontal';
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
     const [selectedAddressIdx, setSelectedAddressIdx] = useState(null);
     const [showAddressPicker, setShowAddressPicker] = useState(false);
@@ -130,7 +135,14 @@ const CustomerShippingPanel = ({
     const ActiveIcon = deliveryOptions.find(d => d.label === deliveryType)?.icon || Truck;
 
     return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible" style={{ fontFamily: "'Inter', sans-serif" }}>
+        <div
+            className={`overflow-visible ${isHorizontal
+                // Horizontal mode is used inside a container that supplies its own card chrome
+                // (Quotations), so the panel stays borderless there to avoid a double border.
+                ? 'grid grid-cols-1 lg:grid-cols-2'
+                : 'bg-white rounded-xl border border-slate-200 shadow-sm'}`}
+            style={{ fontFamily: "'Inter', sans-serif" }}
+        >
 
             {/* ══ CUSTOMER ══ */}
             <div className="p-5 space-y-3">
@@ -229,11 +241,12 @@ const CustomerShippingPanel = ({
                 {creditAlert}
             </div>
 
-            {/* Divider */}
-            <div className="h-px bg-slate-100 mx-5" />
+            {/* Divider — only needed when sections are stacked; in horizontal mode the
+                shipping column carries a left border instead so it sits between the columns. */}
+            {!isHorizontal && <div className="h-px bg-slate-100 mx-5" />}
 
             {/* ══ SHIPPING ══ */}
-            <div className="p-5 space-y-3">
+            <div className={`space-y-3 p-5 ${isHorizontal ? 'lg:border-l lg:border-slate-100' : ''}`}>
 
                 {/* Section header — same visual weight as CUSTOMER for parity */}
                 <div className="flex items-center gap-2">

@@ -31,7 +31,9 @@ import {
     Eye,
     TrendingUp,
     ShoppingCart,
-    Zap
+    Zap,
+    ChevronRight,
+    ArrowLeft
 } from 'lucide-react';
 
 // ==========================================
@@ -2035,68 +2037,110 @@ const DeliveryNote = () => {
 
                 <div className="p-4 md:p-6 space-y-6">
 
-                    {/* HEADER */}
-                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-                        <div>
-                            <div className="text-xs text-slate-500 mb-1">Customers & Sales &gt; Delivery Note</div>
-                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                                <Truck className="text-[#F5C742]" size={28} />
-                                Delivery Note & Picking
-                            </h1>
-                            <p className="text-sm text-slate-500 mt-1">Manage dispatches between Sales Orders / Pro-forma Invoices and final Sales Invoices.</p>
+                    {/* --- Sticky Header (match Quotation editor style) --- */}
+                    <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-5 sticky top-0 z-40 shadow-sm -mx-4 md:-mx-6 mt-[-16px] md:mt-[-24px]">
+                        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-5">
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-sm text-slate-500">
+                                    <span>Customers & Sales</span>
+                                    <ChevronRight size={12} />
+                                    <span className="font-medium text-slate-900">Delivery Note</span>
+                                </div>
+                                <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Truck className="text-[#F5C742]" size={28} /> Delivery Note & Picking</h1>
+                                <p className="text-sm text-slate-500">Manage dispatches between Sales Orders / Pro-forma Invoices and final Sales Invoices.</p>
+
+                                {activeTab === 'create' && (
+                                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                                        {renderStatusBadge(status)}
+                                        <span className="text-xs text-slate-500 font-medium">
+                                            DN No: <span className="text-slate-800 font-bold">{dnNumber || '-'}</span>
+                                        </span>
+                                        {isLockedForEdit && (
+                                            <span className="flex items-center gap-1.5 text-[10px] text-red-600 font-bold bg-red-50 border border-red-100 px-2.5 py-1 rounded shadow-sm">
+                                                <Lock size={12} /> {isViewOnly ? 'READ ONLY' : 'LOCKED FOR EDIT'}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+                                {activeTab !== 'list' && (
+                                    <button
+                                        onClick={() => setActiveTab('list')}
+                                        className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
+                                    >
+                                        <ArrowLeft className="h-4 w-4" /> Back
+                                    </button>
+                                )}
+
+                                {activeTab === 'create' && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                if (!currentDnId) { alert('Please save the Delivery Note before sending an email.'); return; }
+                                                setIsEmailModalOpen(true);
+                                            }}
+                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
+                                        >
+                                            <Mail className="h-4 w-4" /> Email
+                                        </button>
+                                        <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                            <MessageCircle className="h-4 w-4" /> WhatsApp
+                                        </button>
+                                        <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                            <Smartphone className="h-4 w-4" /> SMS
+                                        </button>
+                                        <button
+                                            onClick={handlePrint}
+                                            disabled={isPrinting}
+                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+                                        >
+                                            <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+                                        </button>
+                                        <button
+                                            onClick={handlePrintPickList}
+                                            disabled={isPrinting}
+                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+                                        >
+                                            <Printer className="h-4 w-4" /> Print Pick List
+                                        </button>
+                                        {!isViewOnly && normalizedStatus !== 'DRAFT' && (
+                                            <button
+                                                onClick={handleCancel}
+                                                className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-red-600 flex items-center justify-center gap-1.5 text-sm font-bold transition-colors"
+                                            >
+                                                <X className="h-4 w-4" /> Cancel Note
+                                            </button>
+                                        )}
+                                        {!isLockedForEdit && (
+                                            <button
+                                                onClick={handleSave}
+                                                className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
+                                            >
+                                                <Save className="h-4 w-4" /> Save Draft
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                         </div>
 
-                        {/* âœ… TOP ACTION BUTTONS */}
-                        {activeTab === 'create' && (
-                            <div className="flex gap-2 mt-2 md:mt-0">
-                                {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-                                    <button
-                                        key={label}
-                                        onClick={
-                                            label === 'Print' ? handlePrint
-                                                : label === 'Email' ? () => {
-                                                    if (!currentDnId) { alert('Please save the Delivery Note before sending an email.'); return; }
-                                                    setIsEmailModalOpen(true);
-                                                }
-                                                : undefined
-                                        }
-                                        disabled={label === 'Print' && isPrinting}
-                                        className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
-                                    >
-                                        {label === 'Email' && <Mail size={14} />}
-                                        {label === 'WhatsApp' && <MessageCircle size={14} />}
-                                        {label === 'SMS' && <Smartphone size={14} />}
-                                        {label === 'Print' && <Printer size={14} />}
-                                        {label === 'Print' && isPrinting ? 'Printing...' : label}
-                                    </button>
-                                ))}
+                        <div className="flex overflow-x-auto no-scrollbar gap-2">
+                            {[
+                                { id: 'list', label: 'Delivery Notes' },
+                                { id: 'create', label: 'Create / Edit Delivery Note' },
+                                { id: 'picking', label: 'Picking List' }
+                            ].map(tab => (
                                 <button
-                                    onClick={handlePrintPickList}
-                                    disabled={isPrinting}
-                                    className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`h-8 px-3 rounded-md border text-sm font-medium flex items-center gap-2 whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-[#F5C742] text-slate-900 border-[#F5C742] shadow-sm font-bold' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
                                 >
-                                    <Printer size={14} />
-                                    {isPrinting ? 'Printing...' : 'Print Pick List'}
+                                    {tab.label}
                                 </button>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* TABS */}
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm w-full md:w-fit overflow-x-auto whitespace-nowrap">
-                        {[
-                            { id: 'list', label: 'Delivery Notes' },
-                            { id: 'create', label: 'Create / Edit Delivery Note' },
-                            { id: 'picking', label: 'Picking List' }
-                        ].map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`px-4 py-2 rounded-md text-xs font-bold transition-all flex-1 md:flex-none ${activeTab === tab.id ? 'bg-[#F5C742] text-slate-900 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
+                            ))}
+                        </div>
                     </div>
 
                     {/* ================= VIEW: LIST ================= */}
@@ -2300,58 +2344,52 @@ const DeliveryNote = () => {
                                 }}
                             />
 
-                            <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 xl:gap-6 items-start">
-                                {/* --- LEFT COLUMN: DETAILS --- */}
-                                <div className="xl:col-span-1 space-y-4">
+                            {/* Shipment Details — single inline row (DN Number · Dispatch Date ·
+                                From Warehouse) to match the Quotations reference layout.
+                                Fields/handlers unchanged; only labels/containers restyled inline. */}
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
+                                <div className="flex items-center gap-2">
+                                    <label className="text-xs font-semibold text-slate-500 shrink-0">DN Number</label>
+                                    <input
+                                        type="text"
+                                        value={dnNumber}
+                                        onChange={(e) => setDnNumber(e.target.value)}
+                                        readOnly={isLockedForEdit || deliveryAutoNumbering}
+                                        placeholder={deliveryAutoNumbering ? 'Auto generated' : 'Enter delivery note number'}
+                                        title="DN Number"
+                                        className="w-40 text-sm p-1.5 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                    />
+                                </div>
 
-                                    {/* 1. Document Details Card */}
-                                    <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                                        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                                <Truck size={16} className="text-yellow-600" /> Shipment Details
-                                            </h3>
-                                        </div>
-                                        <div className="p-5">
-                                            <div className="flex flex-col space-y-3">
-                                                <div>
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1">DN Number</label>
-                                                    <input
-                                                        type="text"
-                                                        value={dnNumber}
-                                                        onChange={(e) => setDnNumber(e.target.value)}
-                                                        readOnly={isLockedForEdit || deliveryAutoNumbering}
-                                                        placeholder={deliveryAutoNumbering ? 'Auto generated' : 'Enter delivery note number'}
-                                                        className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
-                                                    />
-                                                </div>
+                                <div className="flex items-center gap-2">
+                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Dispatch Date <span className="text-red-500">*</span></label>
+                                    <input disabled={isLockedForEdit} type="date" value={dnDate} onChange={e => setDnDate(e.target.value)} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed" />
+                                </div>
 
-                                                <div>
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1">Dispatch Date <span className="text-red-500">*</span></label>
-                                                    <input disabled={isLockedForEdit} type="date" value={dnDate} onChange={e => setDnDate(e.target.value)} className="w-full text-xs p-1.5 border border-slate-300/50 rounded focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-400" />
-                                                </div>
-
-
-                                                <div>
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1">From Warehouse</label>
-                                                    <div className="relative">
-                                                        <select
-                                                            disabled={isLockedForEdit}
-                                                            value={warehouse}
-                                                            onChange={e => setWarehouse(e.target.value)}
-                                                            className="w-full text-xs p-1.5 border border-slate-300/50 rounded focus:outline-none focus:border-yellow-400 bg-white appearance-none disabled:bg-slate-50 disabled:text-slate-400"
-                                                        >
-                                                            {warehousesList.map(wh => <option key={wh.id} value={wh.name}>{wh.name}</option>)}
-                                                        </select>
-                                                        <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                    </div>
-                                                </div>
-
-                                            </div>
-                                        </div>
+                                <div className="flex items-center gap-2">
+                                    <label className="text-xs font-semibold text-slate-500 shrink-0">From Warehouse</label>
+                                    <div className="relative">
+                                        <select
+                                            disabled={isLockedForEdit}
+                                            value={warehouse}
+                                            onChange={e => setWarehouse(e.target.value)}
+                                            className="w-48 text-sm p-1.5 pr-6 border border-slate-200 rounded text-slate-700 bg-white appearance-none disabled:bg-slate-50 disabled:text-slate-400"
+                                        >
+                                            {warehousesList.map(wh => <option key={wh.id} value={wh.name}>{wh.name}</option>)}
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                     </div>
+                                </div>
+                            </div>
 
-                                    {/* 2. Customer + Shipping unified panel */}
+                            <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 xl:gap-6 items-start">
+                                {/* MAIN COLUMN */}
+                                <div className="xl:col-span-3 space-y-4">
+
+                                    {/* Customer + Shipping — unified panel, side-by-side in a wide card */}
+                                    <div className="bg-white rounded-lg border border-slate-200">
                                     <CustomerShippingPanel
+                                        layout="horizontal"
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isLockedForEdit) setIsCustomerSearchOpen(true); }}
                                         onCustomerUpdated={setSelectedCustomer}
@@ -2360,6 +2398,7 @@ const DeliveryNote = () => {
                                         isReadOnly={isLockedForEdit}
                                         currency={currency}
                                     />
+                                    </div>
 
                                     {/* CustomerSelector modal */}
                                     <CustomerSelector
@@ -2374,7 +2413,8 @@ const DeliveryNote = () => {
                                         }}
                                     />
 
-                                    {/* Source Document */}
+                                    {/* Source Document | Logistics Info — side by side */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
                                         <h3 className="text-xs font-bold text-slate-700">Source Document</h3>
                                         <div>
@@ -2569,11 +2609,9 @@ const DeliveryNote = () => {
                                             </div>
                                         </div>
                                     </div>
+                                    </div>
 
-                                </div>
-
-                                {/* --- MIDDLE COLUMN: ITEMS --- */}
-                                <div className="xl:col-span-2 space-y-4">
+                                    {/* Delivery Note Items — full width in main column */}
                                     <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm min-h-[460px]">
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                                             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -2907,10 +2945,12 @@ const DeliveryNote = () => {
                                             </div>
                                         );
                                     })()}
-                                </div>
+                                </div> {/* End Main Column */}
 
-                                {/* --- RIGHT COLUMN: SUMMARY & STOCK --- */}
-                                <div className="xl:col-span-1 space-y-4">
+                                {/* --- RIGHT COLUMN: SUMMARY & STOCK ---
+                                    Sticky rail: keeps Delivery Summary, Item Availability and Price
+                                    History visible while the main column scrolls. */}
+                                <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
 
                                     {/* Delivery Summary */}
                                     <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">

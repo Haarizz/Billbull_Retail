@@ -97,6 +97,14 @@ public class SalesInvoiceController {
         return service.getById(id);
     }
 
+    /** Activity timeline for the Transaction Preview's Invoice History modal. */
+    @GetMapping("/{id}/history")
+    @PreAuthorize("isAuthenticated()")
+    public List<com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryResponse> getHistory(@PathVariable Long id) {
+        modulePermissionService.requireCanView("sales");
+        return service.getHistory(id);
+    }
+
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice save(@RequestBody SalesInvoice invoice) {

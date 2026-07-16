@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull Server Deployment Notes</title>
+<style>
+  :root { --bg:#f4f7fb; --card:#fff; --text:#182230; --muted:#667085; --accent:#175cd3; --code:#101828; --codeText:#e6edf3; --border:#d0d5dd; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.55; }
+  .container { max-width:1100px; margin:40px auto; padding:0 20px 60px; }
+  h1 { margin-bottom:6px; }
+  h2 { margin-top:0; color:var(--accent); }
+  .subtitle { color:var(--muted); margin-bottom:28px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px; margin:18px 0; box-shadow:0 4px 14px rgba(16,24,40,.05); }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:11px 12px; border-bottom:1px solid #eaecf0; }
+  th { background:#f9fafb; }
+  code { font-family:Consolas,Monaco,monospace; }
+  pre { background:var(--code); color:var(--codeText); padding:18px; border-radius:10px; overflow:auto; line-height:1.65; }
+  .note { border-left:4px solid var(--accent); padding:12px 16px; background:#eff8ff; border-radius:6px; }
+  .warning { color:#b42318; font-weight:600; }
+  @media print { body{background:#fff}.container{margin:0;max-width:none}.card{box-shadow:none;break-inside:avoid} }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>BillBull Server Deployment Notes</h1>
+  <p class="subtitle">Cleaned and formatted from the handwritten server notes.</p>
+
+  <section class="card">
+    <h2>Running Clients — Server 62.72.59.119</h2>
+    <table>
+      <thead><tr><th>Port</th><th>Domain / Client</th></tr></thead>
+      <tbody>
+        <tr><td>8080</td><td>royaltools.billbull.app</td></tr>
+        <tr><td>8081</td><td>leroyalflowers.billbull.app</td></tr>
+        <tr><td>8082</td><td>leroyalgifts.billbull.app</td></tr>
+        <tr><td>8083</td><td>demo.billbull.app</td></tr>
+        <tr><td>8085</td><td>agi.billbull.app</td></tr>
+        <tr><td>8086</td><td>helenz.billbull.app</td></tr>
+        <tr><td>8087</td><td>qa.billbull.app</td></tr>
+        <tr><td>8088</td><td>geebu.billbull.app</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Running Clients — Server 77.37.49.42</h2>
+    <table>
+      <thead><tr><th>Port</th><th>Domain</th><th>Spring Profile</th><th>Systemd Service</th></tr></thead>
+      <tbody>
+        <tr><td>8081</td><td>nest.billbull.app</td><td>client1</td><td>billbull-nest</td></tr>
+        <tr><td>8082</td><td>max.billbull.app</td><td>client2</td><td>billbull-max</td></tr>
+        <tr><td>8083</td><td>hilite.billbull.app</td><td>hilite</td><td>billbull-hilite</td></tr>
+        <tr><td>8084</td><td>albadar.billbull.app</td><td>client4</td><td>billbull-albadar</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Deployment — Server 62.72.59.119</h2>
+    <h3>Connect</h3>
+    <pre><code>ssh root@62.72.59.119</code></pre>
+
+    <h3>Pull Latest Code</h3>
+    <pre><code>cd Billbull
+git pull origin main</code></pre>
+
+    <h3>Backend</h3>
+    <pre><code>cd billbull-backend
+mvn clean package -DskipTests
+systemctl restart billbull-royaltools</code></pre>
+    <p class="note">Restart the appropriate BillBull systemd service according to the client.</p>
+
+    <h3>Frontend</h3>
+    <pre><code>cd billbull-frontend
+npm ci
+npm run build
+rm -rf /var/www/billbull/*
+cp -r dist/* /var/www/billbull/
+nginx -t
+systemctl reload nginx</code></pre>
+  </section>
+
+  <section class="card">
+    <h2>Deployment — Server 77.37.49.42</h2>
+    <h3>Connect and Pull</h3>
+    <pre><code>ssh root@77.37.49.42
+
+cd Billbull/Billbull_Retail
+git pull origin main</code></pre>
+
+    <h3>Backend</h3>
+    <pre><code>cd billbull-backend
+mvn clean package -DskipTests
+
+systemctl restart billbull-nest
+systemctl restart billbull-max
+systemctl restart billbull-hilite
+systemctl restart billbull-albadar
+
+# Verify
+systemctl status billbull-nest
+systemctl status billbull-max
+systemctl status billbull-hilite
+systemctl status billbull-albadar</code></pre>
+
+    <h3>Frontend</h3>
+    <pre><code>cd billbull-frontend
+npm install
+npm run build
+cp -r dist/* /var/www/billbull/
+nginx -t
+systemctl reload nginx</code></pre>
+  </section>
+
+  <section class="card">
+    <h2>Playwright / PDF Engine Note</h2>
+    <p>PDF engine: Chromium via Playwright.</p>
+    <pre><code>PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+mvn exec:java \
+-Dexec.mainClass=com.microsoft.playwright.CLI \
+-Dexec.args="install --with-deps chromium"</code></pre>
+  </section>
+
+  <p class="warning">Security note: SSH passwords should not be stored in this HTML file. Use SSH keys or a password manager.</p>
+
+<section class="card">
+<h2>Hilite Startup Issue (Resolved)</h2>
+<p>During migration to systemd, the Hilite service failed because Flyway migration
+V6__security_unique_email.sql attempted to create a unique index on active user emails.
+The database contained two active users with the same email address.</p>
+
+<pre><code>UPDATE users
+SET is_active = false
+WHERE id = 1;
+
+systemctl restart billbull-hilite
+</code></pre>
+
+<p><strong>Root Cause:</strong> Duplicate active email in the users table, not a systemd or Playwright issue.</p>
+</section>
+
+<section class="card">
+<h2>Production Deployment Flow</h2>
+<pre><code>git pull origin main
+
+cd billbull-backend
+mvn clean package -DskipTests
+
+# Restart required services
+
+Server 62:
+systemctl restart billbull-royaltools
+systemctl restart billbull-leroyalflowers
+systemctl restart billbull-leroyalgifts
+systemctl restart billbull-demo
+systemctl restart billbull-agi
+systemctl restart billbull-helenz
+systemctl restart billbull-qa
+systemctl restart billbull-geebu
+
+Server 77:
+systemctl restart billbull-nest
+systemctl restart billbull-max
+systemctl restart billbull-hilite
+systemctl restart billbull-albadar
+
+cd ../billbull-frontend
+npm ci
+npm run build
+rm -rf /var/www/billbull/*
+cp -r dist/* /var/www/billbull/
+nginx -t
+systemctl reload nginx
+</code></pre>
+</section>
+
+</div></body>
+</html>
