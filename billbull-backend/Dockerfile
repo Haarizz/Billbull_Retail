@@ -7,11 +7,18 @@ RUN mvn -B clean package -DskipTests
 
 # A Spring Boot fat jar nests its dependencies under BOOT-INF/lib/*.jar, so
 # `java -cp app.jar com.microsoft.playwright.CLI` can't see the Playwright classes —
-# they're not on the top-level classpath. Resolve Playwright's own CLI jar (which has
-# its own Main-Class manifest) as a standalone dependency instead.
-RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy \
+# they're not on the top-level classpath. The playwright.jar itself has no Main-Class
+# manifest either (confirmed: `unzip -p playwright-1.49.0.jar META-INF/MANIFEST.MF` has
+# no Main-Class line), so `java -jar` on it alone doesn't work. Instead, assemble
+# Playwright + its transitive deps (jackson, gson, etc.) into a lib/ folder and run the
+# CLI class directly against that classpath — the officially supported invocation shape.
+RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies \
+    -DincludeArtifactIds=playwright \
+    -DoutputDirectory=/app/playwright-lib \
+    -DincludeScope=runtime && \
+    mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy \
     -Dartifact=com.microsoft.playwright:playwright:1.49.0 \
-    -DoutputDirectory=/app/playwright-cli
+    -DoutputDirectory=/app/playwright-lib
 
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
@@ -23,10 +30,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/target/billbull-backend-*.jar app.jar
-COPY --from=build /app/playwright-cli/playwright-1.49.0.jar playwright-cli.jar
+COPY --from=build /app/playwright-lib playwright-lib
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN java -jar playwright-cli.jar install --with-deps chromium && rm playwright-cli.jar
+RUN java -cp "playwright-lib/*" com.microsoft.playwright.CLI install --with-deps chromium && rm -rf playwright-lib
 
 EXPOSE 8082
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
