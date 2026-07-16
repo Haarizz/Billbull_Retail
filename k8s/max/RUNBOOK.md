@@ -12,21 +12,45 @@ Do these steps in order. Stop and report back at any `CHECK` line before continu
 - [ ] Confirm the DB name backing `max` (likely `client2_db` or similar — check the actual `SPRING_DATASOURCE_URL` value, don't assume).
 - [ ] Note current `/uploads` path size: `du -sh ~/Billbull/Billbull_Retail/billbull-backend/uploads` (or wherever it resolves relative to `upload.path=uploads/` and the working dir of the systemd unit).
 
-## 1. Build & push images (run from your dev machine, not the server)
+## 1. Build images directly on 77.37.49.42 (pilot only — no registry needed)
+
+Decision for this pilot: build on the server itself and load straight into k3s's
+containerd via `k3s ctr images import`, skipping GHCR entirely. Revisit this once
+`max` is verified and you're templating the rest via Helm (Section 7 of the main
+guide) — at that point a real registry is worth setting up so you're not rebuilding
+on every server by hand.
 
 ```bash
-cd billbull-backend
-docker build -t ghcr.io/billbull/backend:pilot .
-docker push ghcr.io/billbull/backend:pilot
+# on 77.37.49.42, repo already pulled to ~/Billbull/Billbull_Retail
+docker --version || (curl -fsSL https://get.docker.com | sh)   # install Docker if not present
 
-cd ../billbull-frontend
-docker build -t ghcr.io/billbull/frontend:pilot .
-docker push ghcr.io/billbull/frontend:pilot
+cd ~/Billbull/Billbull_Retail/billbull-backend
+docker build -t billbull-backend:pilot .
+
+cd ~/Billbull/Billbull_Retail/billbull-frontend
+docker build -t billbull-frontend:pilot .
 ```
 
-You'll need to `docker login ghcr.io` first (a GitHub PAT with `write:packages` scope) if not already authenticated. If GHCR isn't set up yet, tell me and we'll either set up the registry or fall back to `k3s ctr images import` for this pilot only.
+The backend build's Chromium install step (`RUN java -cp app.jar ... install --with-deps chromium`)
+downloads ~300MB and can take a few minutes — that's expected, not a hang.
 
-**CHECK:** confirm both images pushed successfully before continuing.
+**CHECK:** `docker images | grep billbull` shows both `billbull-backend:pilot` and
+`billbull-frontend:pilot` before continuing.
+
+Once k3s is installed (step 2), import both images into its containerd so pods can
+use them without a registry:
+
+```bash
+docker save billbull-backend:pilot | sudo k3s ctr images import -
+docker save billbull-frontend:pilot | sudo k3s ctr images import -
+```
+
+**Manifest change needed:** `k8s/max/deployment.yaml` and `k8s/max/frontend.yaml`
+currently reference `ghcr.io/billbull/backend:pilot` / `ghcr.io/billbull/frontend:pilot`.
+For this pilot, change both to `billbull-backend:pilot` / `billbull-frontend:pilot`
+(no registry prefix) and add `imagePullPolicy: Never` to each container spec, so
+kubelet uses the locally-imported image instead of trying to pull from a registry
+that doesn't have it.
 
 ## 2. Install k3s on 77.37.49.42
 
