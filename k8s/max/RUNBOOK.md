@@ -1,232 +1,232 @@
-# Pilot migration: max.billbull.app → k3s on 77.37.49.42
+# max.billbull.app → k3s on 77.37.49.42 — DONE (2026-07-16)
 
-Manifests referenced below live in `k8s/max/` in this repo. Server also runs
-`nest`, `hilite`, `albadar` on nginx/systemd — those are untouched by this runbook
-until `max` is verified and you deliberately migrate them later.
+**Status: complete and verified.** `max.billbull.app` is live on k3s. Login, existing
+data, PDF generation (Playwright), and image upload all confirmed working by hand in
+the browser. `billbull-max.service` is stopped and disabled.
 
-Do these steps in order. Stop and report back at any `CHECK` line before continuing.
+This file is now both a record of what was actually done for `max` and a corrected
+template for migrating `nest`, `hilite`, `albadar` next — the steps below reflect what
+really worked, not the original plan (several assumptions from the first draft were
+wrong; each is called out so the same mistakes aren't repeated).
 
-## 0. Before touching the server
+## What actually happened, vs. the original plan
 
-- [ ] Confirm current `max` config: `cat /etc/systemd/system/billbull-max.service` on 77.37.49.42 — copy the `Environment=` lines (DB URL/user/password, JWT_SECRET). You'll need them for step 4.
-- [ ] Confirm the DB name backing `max` (likely `client2_db` or similar — check the actual `SPRING_DATASOURCE_URL` value, don't assume).
-- [ ] Note current `/uploads` path size: `du -sh ~/Billbull/Billbull_Retail/billbull-backend/uploads` (or wherever it resolves relative to `upload.path=uploads/` and the working dir of the systemd unit).
+- **Traefik took over ports 80/443 entirely — no alt-port workaround was used.**
+  The original Section 3 (disable Traefik, run it on alt ports so nginx could keep
+  serving `nest`/`hilite`/`albadar`) was written, but at execution time the decision was
+  made to just stop nginx and let Traefik own 80/443 immediately, taking `nest`/`hilite`/
+  `albadar` offline deliberately (their JVMs stopped, not migrated). If a future
+  migration needs to keep other nginx-served clients alive during a pilot, the alt-port
+  approach is still valid and untested — otherwise, skip straight to `systemctl stop
+  nginx && systemctl disable nginx` once you're ready to commit this server to k8s.
+- **The pod CIDR is `10.42.0.0/24`, not `/16`.** Confirmed via `ip route | grep 10.42`
+  showing `10.42.0.0/24 dev cni0`. Use `/24` in `pg_hba.conf`, not the generic `/16`
+  guess from k3s's docs.
+- **`listen_addresses` was commented out** (`#listen_addresses = 'localhost'` on line 60
+  of `/etc/postgresql/16/main/postgresql.conf`), not set to a value — `sed` needs to
+  target the exact commented line, a naive `s/localhost/*/` substitution silently
+  matches nothing. Always `grep -n listen_addresses` first to see the real line before
+  editing.
+- **`postgresql.service` reports `active (exited)` even when Postgres is healthy** — on
+  Debian/Ubuntu it's a meta-unit (`ExecStart=/bin/true`); check the real per-version
+  unit instead: `systemctl status postgresql@16-main`.
+- **The Playwright/Chromium Dockerfile step needed two real fixes, not the one
+  originally written:**
+  1. `java -cp app.jar com.microsoft.playwright.CLI` fails — a Spring Boot fat jar nests
+     dependencies under `BOOT-INF/lib/*.jar`, invisible to a plain `-cp`.
+  2. `java -jar playwright-1.49.0.jar` also fails — that jar has no `Main-Class` in its
+     manifest (verified: `unzip -p playwright-1.49.0.jar META-INF/MANIFEST.MF`).
+  3. The fix: `mvn dependency:copy-dependencies -DincludeGroupIds=com.microsoft.playwright`
+     to assemble all 3 jars Playwright actually needs (`playwright`, `driver`,
+     `driver-bundle` — confirmed via `mvn dependency:tree -Dincludes=com.microsoft.playwright`,
+     no jackson/gson involved) into one folder, then `java -cp "playwright-lib/*"
+     com.microsoft.playwright.CLI install --with-deps chromium`.
+  4. **Trap to avoid:** `-DincludeArtifactIds=playwright` looks like it should work but
+     only copies the named artifact itself, not its transitive deps — verified by
+     inspecting the copied folder inside the build stage (`docker build --target build`
+     + `docker run --rm <tag> ls /app/playwright-lib`) before wasting a full build+
+     Chromium-download cycle on a guess. Use `-DincludeGroupIds` instead.
+- **`/uploads` was skipped entirely for `max`** — it had zero real uploads (confirmed
+  before assuming otherwise). See "Uploads" section below for what to do differently
+  for `nest`/`hilite`/`albadar`, which likely do have real data.
+- **DNS was already pointing at 77.37.49.42** — no DNS change was needed; the
+  Let's Encrypt HTTP-01 challenge resolved immediately once Traefik owned port 80.
 
-## 1. Build images directly on 77.37.49.42 (pilot only — no registry needed)
+## 0. Before touching the server (still valid, do this per client)
 
-Decision for this pilot: build on the server itself and load straight into k3s's
-containerd via `k3s ctr images import`, skipping GHCR entirely. Revisit this once
-`max` is verified and you're templating the rest via Helm (Section 7 of the main
-guide) — at that point a real registry is worth setting up so you're not rebuilding
-on every server by hand.
+- [ ] `sudo systemctl cat billbull-<client>` — get the real `Environment=` lines. For
+      `max`, there were none beyond `PLAYWRIGHT_BROWSERS_PATH` — meaning DB creds and
+      JWT secret were coming from the checked-in `application-<profile>.properties` /
+      base `application.properties` fallback, not a systemd override. Don't assume an
+      override exists; check.
+- [ ] `systemctl show billbull-<client> -p WorkingDirectory` — confirms where relative
+      `uploads/` resolves. For all 4 clients on this server it was the same shared path
+      (`/root/Billbull/Billbull_Retail/billbull-backend`) — confirm this is still true
+      per client before assuming.
+- [ ] Confirm the DB name from `application-<profile>.properties`
+      (`spring.datasource.url`), and independently verify the password against the live
+      systemd unit — the checked-in file's value is not proof of what's actually live if
+      anyone rotated it.
+
+## 1. Build images on the server (pilot approach — no registry)
 
 ```bash
-# on 77.37.49.42, repo already pulled to ~/Billbull/Billbull_Retail
-docker --version || (curl -fsSL https://get.docker.com | sh)   # install Docker if not present
+docker --version || (curl -fsSL https://get.docker.com | sh)
 
-cd ~/Billbull/Billbull_Retail/billbull-backend
-docker build -t billbull-backend:pilot .
+cd ~/Billbull/Billbull_Retail
+git pull origin main   # make sure you're on the latest Dockerfile — see fixes above
 
-cd ~/Billbull/Billbull_Retail/billbull-frontend
+cd billbull-backend
+docker build -t billbull-backend:pilot .   # ~2 min first time, seconds after (layer cache)
+
+cd ../billbull-frontend
 docker build -t billbull-frontend:pilot .
 ```
 
-The backend build's Chromium install step (`RUN java -cp app.jar ... install --with-deps chromium`)
-downloads ~300MB and can take a few minutes — that's expected, not a hang.
+If the backend build fails at the Chromium install step, don't guess at another Maven
+flag — verify what actually landed in the intermediate stage first:
 
-**CHECK:** `docker images | grep billbull` shows both `billbull-backend:pilot` and
-`billbull-frontend:pilot` before continuing.
+```bash
+docker build --target build -t debug-build-stage .
+docker run --rm debug-build-stage ls -la /app/playwright-lib
+```
 
-Once k3s is installed (step 2), import both images into its containerd so pods can
-use them without a registry:
+Should show exactly 3 jars: `playwright-1.49.0.jar`, `driver-1.49.0.jar`,
+`driver-bundle-1.49.0.jar`.
+
+Import into k3s's containerd (skips needing a registry):
 
 ```bash
 docker save billbull-backend:pilot | sudo k3s ctr images import -
 docker save billbull-frontend:pilot | sudo k3s ctr images import -
+sudo k3s ctr images ls | grep billbull
 ```
 
-**Manifest change needed:** `k8s/max/deployment.yaml` and `k8s/max/frontend.yaml`
-currently reference `ghcr.io/billbull/backend:pilot` / `ghcr.io/billbull/frontend:pilot`.
-For this pilot, change both to `billbull-backend:pilot` / `billbull-frontend:pilot`
-(no registry prefix) and add `imagePullPolicy: Never` to each container spec, so
-kubelet uses the locally-imported image instead of trying to pull from a registry
-that doesn't have it.
+The manifests already reference `billbull-backend:pilot` / `billbull-frontend:pilot`
+(no registry prefix) with `imagePullPolicy: Never` — this only works because the image
+was imported locally on this exact node.
 
-## 2. Install k3s on 77.37.49.42
+## 2. Install k3s (skip if already installed on this server)
 
 ```bash
-ssh root@77.37.49.42
-
 curl -sfL https://get.k3s.io | sh -
 sudo systemctl status k3s
-
 mkdir -p ~/.kube
 sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
 sudo chown $(id -u):$(id -g) ~/.kube/config
 kubectl get nodes
 ```
 
-**CHECK:** `kubectl get nodes` shows one node, `Ready`.
+## 3. Hand ports 80/443 to Traefik (skip if already done)
 
-> Traefik (k3s's built-in Ingress) binds ports 80/443. This server's nginx currently
-> also wants 80/443 for `nest`/`hilite`/`albadar`. They will conflict.
-> **Do not let Traefik take over 80/443 while those 3 clients are still live on nginx.**
-> See step 3.
-
-## 3. Keep nginx and Traefik from fighting over ports
-
-Since this is a pilot for `max` only, the other three clients must keep working on nginx during the test. Two options — pick one:
-
-- **Option A (recommended for pilot):** disable Traefik's default port binding and instead expose it on alternate ports (e.g. 8443/8080) just for testing, then do a real cutover (stop nginx entirely, let Traefik take 80/443) only once you're ready to migrate all 4 clients on this server together.
-- **Option B:** just accept a brief window where nginx is stopped, test `max` end-to-end quickly, then restart nginx. Riskier — nest/hilite/albadar go down during the window.
-
-Recommend Option A. Disable Traefik's default service and re-expose on alt ports:
+Only do this once you're ready to take any remaining nginx-served clients on this
+server offline (or have already migrated them to k8s Ingress) — this is a hard cutover,
+not incremental:
 
 ```bash
-sudo systemctl stop k3s
-sudo mkdir -p /etc/rancher/k3s
-cat <<'EOF' | sudo tee /etc/rancher/k3s/config.yaml
-disable:
-  - traefik
-EOF
-sudo systemctl start k3s
-
-kubectl apply -f https://raw.githubusercontent.com/traefik/traefik-helm-chart/master/traefik/values.yaml 2>/dev/null || true
+sudo systemctl stop nginx
+sudo systemctl disable nginx
+curl -sI http://127.0.0.1:80   # confirm Traefik answers (its own 404 page, not nginx's)
 ```
 
-Then install Traefik via Helm with alt ports (simplest path — ask me to generate the exact `values.yaml` when you're at this step, since the right approach depends on which k3s version lands and whether Helm is available on the box).
+`ss -tlnp | grep :80` will NOT show Traefik — klipper-lb (k3s's ServiceLB) does
+port-forwarding via iptables/nftables inside its own pod netns, not a host-visible
+`bind()`. Use `curl` against `127.0.0.1`, not `ss`, to check whether it's live.
 
-**CHECK:** tell me the k3s version (`k3s --version`) and whether `helm` is installed (`helm version`) before we lock in the exact Traefik config — I'll hand you the precise values file.
-
-## 4. cert-manager + ClusterIssuer
+## 4. cert-manager + ClusterIssuer (skip if already installed cluster-wide)
 
 ```bash
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-kubectl get pods -n cert-manager --watch
+kubectl get pods -n cert-manager --watch   # wait for all 3 Running, Ctrl+C
+
+kubectl apply -f k8s/max/cluster-issuer.yaml   # cluster-wide, only needed once total
+kubectl get clusterissuer letsencrypt-prod     # wait for READY=True
 ```
 
-Wait for all 3 cert-manager pods `Running`, then Ctrl+C and:
+## 5. Postgres — open to the pod network (once per server, not per client)
 
 ```bash
-kubectl apply -f k8s/max/cluster-issuer.yaml
+sudo -u postgres psql -c "SHOW config_file;"      # confirm exact path
+grep -n listen_addresses /etc/postgresql/16/main/postgresql.conf   # find the real line number/format first
+
+# uncomment + widen (adjust line number to match what grep found):
+sudo sed -i "60s/^#listen_addresses = 'localhost'/listen_addresses = '*'/" /etc/postgresql/16/main/postgresql.conf
+
+sudo systemctl restart postgresql
+sudo systemctl status postgresql@16-main --no-pager   # NOT `postgresql` — that's a meta-unit, always shows "exited"
+sudo ss -tlnp | grep 5432   # should show 0.0.0.0:5432, not just 127.0.0.1
 ```
 
-(Copy `k8s/max/cluster-issuer.yaml` from this repo to the server first, e.g. via `scp` or `git pull` if the repo is cloned there.)
-
-## 5. Namespace, ConfigMap, PVC
-
-```bash
-kubectl apply -f k8s/max/namespace.yaml
-kubectl apply -f k8s/max/configmap.yaml
-kubectl apply -f k8s/max/pvc.yaml
-```
-
-## 6. Secret — fill in real values
+Add one `pg_hba.conf` line **per client DB** (repeat this part for nest/hilite/albadar,
+substituting the DB name):
 
 ```bash
-cp k8s/max/secret.template.yaml k8s/max/secret.yaml
-# edit secret.yaml with the real DB URL/user/password + JWT_SECRET from step 0
-kubectl apply -f k8s/max/secret.yaml
-```
-
-`secret.yaml` is gitignored (see `.gitignore` — `k8s/**/secret.yaml`) — never commit it.
-
-**Confirmed structural facts for max (2026-07-16, pulled from the live systemd unit and DB) —
-see your private notes / password manager for the actual credential values, do not add
-them to this file:**
-- Host IP: `77.37.49.42` (eth0, confirmed via `ip addr show`)
-- DB name: `billbull_max`
-- DB username: `postgres`
-- DB password: the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so
-  `max` is running on whatever literal value is in `application-client2.properties`.
-  Verify that value is still the live one before trusting it (a checked-in file is not
-  proof of the current password if anyone rotated it out-of-band) — do not paste the
-  actual password into this doc; put it straight into `secret.yaml` (gitignored).
-- JWT secret: **also has no override** — `max` is currently running on the dev-fallback
-  default hardcoded in `application.properties`. This means the JWT signing key for a
-  live production client is sitting in a public repo — flag this to the PM as a
-  pre-existing security gap to fix (rotate to a real per-client secret) separately from
-  this migration; for the pilot, carry the same value forward into `secret.yaml` so
-  behavior doesn't change mid-migration, don't silently rotate it here.
-
-**Postgres is NOT yet reachable from a pod.** Confirmed `listen_addresses` is commented out in `postgresql.conf` (defaults to `localhost` only) — a pod's IP (in the `10.42.0.0/16` range) will be refused. Before applying the Secret:
-
-```bash
-# find the exact config file path in use
-sudo -u postgres psql -c "SHOW config_file;"
-
-# edit postgresql.conf: uncomment and set
-listen_addresses = '*'          # or the specific eth0 IP, '*' is simpler for a single-node pilot
-
-# edit pg_hba.conf (same directory) — add a line allowing the pod CIDR:
-host    billbull_max    postgres    10.42.0.0/16    md5
-
+echo "host    billbull_max    postgres    10.42.0.0/24    md5" | sudo tee -a /etc/postgresql/16/main/pg_hba.conf
 sudo systemctl restart postgresql
 ```
 
-**CHECK:** after restarting Postgres, confirm it didn't just break `max`'s *current* systemd service (which still connects via `localhost` — should be unaffected, but verify with `systemctl status billbull-max`). Then confirm the new listener works: `psql -h 77.37.49.42 -U postgres -d billbull_max` from the server itself should still connect over the network interface, not just the socket.
+## 6. Per-client: namespace, ConfigMap, PVC, Secret
 
-## 7. Uploads — SKIPPED for max
-
-Confirmed 2026-07-16: `billbull-max`, `billbull-nest`, `billbull-hilite`, `billbull-albadar`
-all share one `WorkingDirectory` (`/root/Billbull/Billbull_Retail/billbull-backend`), so
-`uploads/` is one commingled folder across all 4 clients (UUID-prefixed filenames, so no
-collisions, but no way to tell which file belongs to which client from the filesystem
-alone). `max` has never had a real upload done against it, so there's nothing to copy for
-this pilot — the PVC is created empty and ready for new uploads going forward.
+(Namespace only needs creating once — `billbull` is shared across all clients on this
+server, same as today's shared nginx/server model.)
 
 ```bash
-kubectl apply -f k8s/max/deployment.yaml   # creates the pod, which binds the (empty) PVC
-kubectl get pods -n billbull -l app=max-backend --watch   # wait for Running
+cd ~/Billbull/Billbull_Retail
+kubectl apply -f k8s/max/namespace.yaml
+kubectl apply -f k8s/max/configmap.yaml
+kubectl apply -f k8s/max/pvc.yaml
+
+cp k8s/max/secret.template.yaml k8s/max/secret.yaml
+nano k8s/max/secret.yaml   # fill in real DB URL/user/password + JWT_SECRET — see step 0
+kubectl apply -f k8s/max/secret.yaml
+git status --short k8s/max/   # MUST show nothing — secret.yaml is gitignored, confirm before moving on
 ```
 
-**For nest/hilite/albadar later (not this pilot):** do NOT copy the shared uploads/
-folder wholesale into their PVCs — it contains other clients' files too. Instead, per
-client, query that client's DB for actually-referenced file paths first, then either
-copy just that subset or re-upload the (likely small) real set of files through the
-running app once it's live on k8s.
+## 7. Uploads
 
-## 8. Frontend + Ingress
+For `max`: skipped, zero real uploads existed. **For nest/hilite/albadar, do not
+assume the same** — check each client's actual upload count/size first
+(`du -sh` won't tell you which files are whose since they're commingled in one shared
+folder; query each client's DB for referenced file paths instead, or just re-upload the
+real files by hand through the app once it's live on k8s if the count is small).
+
+## 8. Deploy backend, then frontend + Ingress
 
 ```bash
-kubectl apply -f k8s/max/frontend.yaml
+kubectl apply -f k8s/max/deployment.yaml
+kubectl get pods -n billbull -l app=max-backend --watch   # Ctrl+C once Running
+
+kubectl logs -n billbull deploy/max-backend --tail=200 | grep -iE "error|exception|failed"
+# should return nothing
+
+kubectl apply -f k8s/max/frontend.yaml   # only needed once — shared across all clients
 kubectl apply -f k8s/max/ingress.yaml
+kubectl get certificate -n billbull max-tls   # wait for READY=True
 ```
 
-**CHECK:** `kubectl get certificate -n billbull max-tls` shows `READY=True` (may take a minute or two for Let's Encrypt HTTP-01 to resolve — requires DNS pointing at this server, see step 9).
+## 9. Verify — visit the real domain directly
 
-## 9. DNS cutover (test first, then real)
+DNS was already pointing at this server for `max`, so no `/etc/hosts` trick was needed
+— just visit `https://<client>.billbull.app` directly once the certificate is `READY`.
 
-Before touching real DNS, verify locally:
-
-```bash
-# on your own machine, temporarily:
-echo "77.37.49.42 max.billbull.app" | sudo tee -a /etc/hosts
-```
-
-Visit `https://max.billbull.app` in a browser — expect a cert warning (self-signed until Let's Encrypt validates against real DNS) but the app should load. Remove that `/etc/hosts` line after testing.
-
-Once satisfied with the pod logs and a manual smoke test via a temporary override, update the **real** `max.billbull.app` DNS A record to point at 77.37.49.42 (it's likely already pointing there, since `max` already lives on this server — confirm with `dig max.billbull.app` first; if so, no DNS change is even needed, just the port/Traefik cutover in step 3).
-
-## 10. Verification checklist (functional, do all of these)
-
-- [ ] App loads at `https://max.billbull.app`, valid cert
+- [ ] Page loads, valid padlock
 - [ ] Login works
-- [ ] Existing customer/product data visible (confirms DB connectivity)
-- [ ] Generate an invoice/report PDF (confirms Playwright + `/dev/shm`)
-- [ ] Upload a new product image, confirm it displays (confirms PVC mount)
-- [ ] Old images (copied in step 7) still display
-- [ ] `kubectl logs -n billbull deploy/max-backend` shows clean Flyway migration on boot, no errors
+- [ ] Existing data visible
+- [ ] PDF generation works (invoice/report)
+- [ ] Image upload works
 
-## 11. Only after all checks pass
+## 10. Retire the old systemd service
 
 ```bash
-systemctl stop billbull-max
-systemctl disable billbull-max
+sudo systemctl stop billbull-<client>     # already stopped if you took it offline in step 3
+sudo systemctl disable billbull-<client>
 ```
-
-Do **not** touch `billbull-nest`, `billbull-hilite`, `billbull-albadar` — they stay on nginx/systemd until migrated separately, following this same runbook per client.
 
 ## Rollback
 
-If anything fails after DNS cutover: revert the DNS A record (or the alt-port Traefik config) and `systemctl start billbull-max` — the old systemd unit and its local `uploads/` directory are untouched by everything above.
+Nothing in steps 1–8 touches the old systemd unit or its local `uploads/` directory —
+if verification fails, the fastest rollback is `sudo systemctl enable --now
+billbull-<client>` and, if nginx was already stopped for this migration,
+`sudo systemctl enable --now nginx` (note: this only restores clients whose nginx
+`server{}` blocks are unchanged — it does not undo any DNS changes, but none were made
+for `max`).
