@@ -12,21 +12,45 @@ Do these steps in order. Stop and report back at any `CHECK` line before continu
 - [ ] Confirm the DB name backing `max` (likely `client2_db` or similar — check the actual `SPRING_DATASOURCE_URL` value, don't assume).
 - [ ] Note current `/uploads` path size: `du -sh ~/Billbull/Billbull_Retail/billbull-backend/uploads` (or wherever it resolves relative to `upload.path=uploads/` and the working dir of the systemd unit).
 
-## 1. Build & push images (run from your dev machine, not the server)
+## 1. Build images directly on 77.37.49.42 (pilot only — no registry needed)
+
+Decision for this pilot: build on the server itself and load straight into k3s's
+containerd via `k3s ctr images import`, skipping GHCR entirely. Revisit this once
+`max` is verified and you're templating the rest via Helm (Section 7 of the main
+guide) — at that point a real registry is worth setting up so you're not rebuilding
+on every server by hand.
 
 ```bash
-cd billbull-backend
-docker build -t ghcr.io/billbull/backend:pilot .
-docker push ghcr.io/billbull/backend:pilot
+# on 77.37.49.42, repo already pulled to ~/Billbull/Billbull_Retail
+docker --version || (curl -fsSL https://get.docker.com | sh)   # install Docker if not present
 
-cd ../billbull-frontend
-docker build -t ghcr.io/billbull/frontend:pilot .
-docker push ghcr.io/billbull/frontend:pilot
+cd ~/Billbull/Billbull_Retail/billbull-backend
+docker build -t billbull-backend:pilot .
+
+cd ~/Billbull/Billbull_Retail/billbull-frontend
+docker build -t billbull-frontend:pilot .
 ```
 
-You'll need to `docker login ghcr.io` first (a GitHub PAT with `write:packages` scope) if not already authenticated. If GHCR isn't set up yet, tell me and we'll either set up the registry or fall back to `k3s ctr images import` for this pilot only.
+The backend build's Chromium install step (`RUN java -cp app.jar ... install --with-deps chromium`)
+downloads ~300MB and can take a few minutes — that's expected, not a hang.
 
-**CHECK:** confirm both images pushed successfully before continuing.
+**CHECK:** `docker images | grep billbull` shows both `billbull-backend:pilot` and
+`billbull-frontend:pilot` before continuing.
+
+Once k3s is installed (step 2), import both images into its containerd so pods can
+use them without a registry:
+
+```bash
+docker save billbull-backend:pilot | sudo k3s ctr images import -
+docker save billbull-frontend:pilot | sudo k3s ctr images import -
+```
+
+**Manifest change needed:** `k8s/max/deployment.yaml` and `k8s/max/frontend.yaml`
+currently reference `ghcr.io/billbull/backend:pilot` / `ghcr.io/billbull/frontend:pilot`.
+For this pilot, change both to `billbull-backend:pilot` / `billbull-frontend:pilot`
+(no registry prefix) and add `imagePullPolicy: Never` to each container spec, so
+kubelet uses the locally-imported image instead of trying to pull from a registry
+that doesn't have it.
 
 ## 2. Install k3s on 77.37.49.42
 
@@ -107,12 +131,23 @@ kubectl apply -f k8s/max/secret.yaml
 
 `secret.yaml` is gitignored (see `.gitignore` — `k8s/**/secret.yaml`) — never commit it.
 
-**Confirmed values for max (2026-07-16, pulled from the live systemd unit and DB):**
+**Confirmed structural facts for max (2026-07-16, pulled from the live systemd unit and DB) —
+see your private notes / password manager for the actual credential values, do not add
+them to this file:**
 - Host IP: `77.37.49.42` (eth0, confirmed via `ip addr show`)
 - DB name: `billbull_max`
 - DB username: `postgres`
-- DB password: whatever is actually live — the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so it's running on the literal value in `application-client2.properties` (`root`). Verify this is still correct before trusting it — a checked-in file is not proof of the live password if anyone rotated it out-of-band.
-- JWT secret: **also has no override** — `max` is currently running on the dev-fallback default hardcoded in the public repo (`application.properties`: `billbull-super-secret-key-32chars-minimum!!`). Carry this same value into `secret.yaml` for the pilot (don't silently rotate it — that's a separate decision for the PM, not something to change mid-migration). Flag this as a pre-existing security gap worth fixing later, unrelated to k8s.
+- DB password: the systemd unit has **no** `SPRING_DATASOURCE_PASSWORD` override, so
+  `max` is running on whatever literal value is in `application-client2.properties`.
+  Verify that value is still the live one before trusting it (a checked-in file is not
+  proof of the current password if anyone rotated it out-of-band) — do not paste the
+  actual password into this doc; put it straight into `secret.yaml` (gitignored).
+- JWT secret: **also has no override** — `max` is currently running on the dev-fallback
+  default hardcoded in `application.properties`. This means the JWT signing key for a
+  live production client is sitting in a public repo — flag this to the PM as a
+  pre-existing security gap to fix (rotate to a real per-client secret) separately from
+  this migration; for the pilot, carry the same value forward into `secret.yaml` so
+  behavior doesn't change mid-migration, don't silently rotate it here.
 
 **Postgres is NOT yet reachable from a pod.** Confirmed `listen_addresses` is commented out in `postgresql.conf` (defaults to `localhost` only) — a pod's IP (in the `10.42.0.0/16` range) will be refused. Before applying the Secret:
 

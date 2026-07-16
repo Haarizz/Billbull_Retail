@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/billbull/backend:pilot
+          image: billbull-backend:pilot
+          imagePullPolicy: Never # pilot: image is loaded locally via `k3s ctr images import`, not pulled from a registry
           # 8082 comes from application-client2.properties (server.port=8082), which the
           # SPRING_PROFILES_ACTIVE=client2 ConfigMap entry activates on top of the base
           # application.properties (server.port=8080). Do NOT also set SERVER_PORT here —

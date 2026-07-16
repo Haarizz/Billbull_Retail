@@ -13,7 +13,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/billbull/frontend:pilot
+          image: billbull-frontend:pilot
+          imagePullPolicy: Never # pilot: image is loaded locally via `k3s ctr images import`, not pulled from a registry
           ports: [{ containerPort: 80 }]
 ---
 apiVersion: v1
