@@ -249,10 +249,10 @@ const POSTouchScreen = React.memo((props) => {
 
       {/* Cart Focus: three-equal-column layout — saffron gradient + white theme */}
       {posTemplate === 'focus' ? (
-        <div className="flex-1 flex overflow-hidden bg-white">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-white">
 
           {/* ══ COL 1: Cart / Bill ══════════════════════════════ */}
-          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
+          <div className="flex-1 flex flex-col lg:border-r-2 border-b-2 lg:border-b-0 border-[#327F74]/30 min-w-0 min-h-0 bg-white">
 
             {/* Customer bar */}
             <div className="bg-[#F5C742] px-3 py-2.5 flex-shrink-0 relative border-b border-[#327F74]/30">
@@ -413,7 +413,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
-          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white overflow-hidden">
+          <div className="flex-1 flex flex-col lg:border-r-2 border-b-2 lg:border-b-0 border-[#327F74]/30 min-w-0 min-h-0 bg-white overflow-hidden">
 
             {/* Last scanned item panel */}
             <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[30vh] flex flex-col justify-center bg-white overflow-y-auto">
@@ -702,7 +702,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 3: Tabbed Panel ════════════════════════════ */}
-          <div className="flex-1 flex flex-col min-w-0 bg-white border-l-2 border-[#327F74]/30">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-white lg:border-l-2 border-[#327F74]/30">
 
             {/* Tab bar */}
             <div className="flex flex-shrink-0 border-b-2 border-[#327F74]/20 bg-white">
@@ -735,10 +735,10 @@ const POSTouchScreen = React.memo((props) => {
                   // Held bills are managed from the Layaways list (Save Layaway /
                   // Layaways action) — not duplicated here as a separate notifier.
                   return (
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
                       {visible.map(btn => (
                         <button key={btn.id} type="button" onClick={btn.action}
-                          className={`flex flex-col items-center justify-center gap-1.5 h-[72px] rounded-xl border transition-colors ${btn.color}`}>
+                          className={`flex flex-col items-center justify-center gap-1.5 min-h-[72px] py-2 rounded-xl border transition-colors ${btn.color}`}>
                           {btn.icon}
                           <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
                         </button>
@@ -857,10 +857,10 @@ const POSTouchScreen = React.memo((props) => {
         /* ═══════════════════════════════════════════════════════════
            CLASSIC LAYOUT  —  3-column: Cart | Categories+Items | Functions
            ═══════════════════════════════════════════════════════════ */
-        <div className="flex-1 flex overflow-hidden bg-[#F7F7FA]">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#F7F7FA]">
 
           {/* ══ COL 1: CART ════════════════════════════════════════ */}
-          <div className="w-[260px] lg:w-[340px] xl:w-[440px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
+          <div className="w-full lg:w-[260px] xl:w-[340px] 2xl:w-[440px] shrink-0 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 lg:border-r-2 border-b-2 lg:border-b-0 border-[#F5C742]/30 bg-white">
 
             {/* Customer bar — gold, matches Cart Focus */}
             <div className="bg-[#F5C742] px-3 py-2.5 shrink-0 relative border-b border-[#e6b838]">
@@ -1080,14 +1080,14 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 2: CATEGORIES + ITEMS ══════════════════════════ */}
-          <div className="flex-1 flex overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-w-0 min-h-0">
 
             {/* Category sidebar */}
             {!hideCategoriesPanel && (
-              <div className="w-[110px] lg:w-[130px] xl:w-[148px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+              <div className="w-full md:w-[110px] lg:w-[130px] xl:w-[148px] shrink-0 max-h-[30vh] md:max-h-none bg-white border-b md:border-b-0 md:border-r border-gray-200 overflow-y-auto">
                 <div className="p-2.5">
                   <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pb-1.5">Categories</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-2 gap-2">
                     {productCategories.map(cat => (
                       <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
                         className={`w-full min-h-[84px] flex flex-col items-center justify-center gap-1.5 px-1.5 py-2 rounded-2xl border transition-all text-center ${selectedCategory === cat.id ? 'border-[#F5C742] bg-[#F5C742]/10 shadow-[0_4px_12px_rgba(245,199,66,0.18)]' : 'border-gray-100 hover:bg-gray-50 hover:border-gray-200'}`}>
@@ -1107,12 +1107,12 @@ const POSTouchScreen = React.memo((props) => {
 
             {/* Items area */}
             {!hideItemsPanel && (
-              <div className="flex-1 flex flex-col overflow-hidden bg-[#F7F7FA]">
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#F7F7FA]">
                 {/* Search bar */}
                 <div className="bg-white border-b border-gray-200 px-3 py-2 shrink-0">
                   {/* Unified search + scan: type to filter the grid, Enter / scan to add */}
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative flex-1 min-w-[140px]">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       <input
                         placeholder="Scan or search — item, barcode, batch, customer…"
@@ -1137,7 +1137,7 @@ const POSTouchScreen = React.memo((props) => {
                     </div>
                   )}
                   {/* Horizontal category pill strip — All Items | Favourites | Recently Sold | Top Sold */}
-                  <div className="flex gap-1.5 mt-2 pb-0.5">
+                  <div className="flex gap-1.5 mt-2 pb-0.5 overflow-x-auto">
                     {(horizontalCategories || []).map(cat => (
                       <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
                         className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${selectedCategory === cat.id ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/50 bg-white'}`}>
@@ -1279,7 +1279,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 3: FUNCTIONS (Cart Focus style) ════════════════ */}
-          <div className="w-[180px] lg:w-[210px] xl:w-[250px] shrink-0 bg-white border-l-2 border-[#F5C742]/30 flex flex-col overflow-hidden">
+          <div className="w-full lg:w-[180px] xl:w-[210px] 2xl:w-[250px] shrink-0 bg-white lg:border-l-2 border-t-2 lg:border-t-0 border-[#F5C742]/30 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 overflow-hidden">
 
             {/* Tab bar */}
             <div className="flex border-b border-gray-100 shrink-0">
@@ -1424,10 +1424,10 @@ const POSTouchScreen = React.memo((props) => {
                     const allBtns = [...interactive, ...commonActionButtons('h-4 w-4')];
                     const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                     return (
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-2 gap-1.5">
                         {visible.map(btn => (
                           <button key={btn.id} type="button" onClick={btn.action}
-                            className={`flex flex-col items-center justify-center gap-1 h-[60px] rounded-xl border transition-colors ${btn.color}`}>
+                            className={`flex flex-col items-center justify-center gap-1 min-h-[60px] py-1.5 rounded-xl border transition-colors ${btn.color}`}>
                             {btn.icon}
                             <span className="text-[9px] font-bold leading-tight text-center px-0.5">{btn.label}</span>
                           </button>
@@ -1594,8 +1594,8 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Form Fields */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="col-span-1 sm:col-span-2">
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Full Name <span className="text-red-500">*</span></label>
                   <input type="text" value={quickCustomerForm.name || ''}
                     onChange={e => setQuickCustomerForm({ ...quickCustomerForm, name: e.target.value })}
@@ -1778,8 +1778,8 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Form Fields */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="col-span-1 sm:col-span-2">
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Product Name <span className="text-red-500">*</span></label>
                   <input type="text" value={quickProductForm.name || ''}
                     onChange={e => setQuickProductForm({ ...quickProductForm, name: e.target.value })}
