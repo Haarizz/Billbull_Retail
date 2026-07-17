@@ -26,11 +26,15 @@ export default function TaxInvoiceLayout({ invoice, customer, currency, companyN
     const status = getInvoiceStatusBadge(invoice.status, invoice);
     const items = invoice.items || [];
     const balanceDue = Number(invoice.balance ?? Math.max(0, (invoice.invoiceTotal || 0) - (invoice.amountPaid || 0)));
+    // Tax-aware document title: a taxed invoice is a TAX INVOICE, a zero-rated/
+    // exempt one is a plain SALES INVOICE — matches the print engine's rule
+    // (see SalesInvoice.jsx `invoiceHasTax`).
+    const hasTax = Number(invoice.taxTotal ?? invoice.totalTax ?? invoice.taxAmount ?? 0) > 0;
 
     return (
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="text-center py-6 px-4 border-b border-slate-100">
-                <h2 className="text-2xl font-bold tracking-wide text-slate-900">TAX INVOICE</h2>
+                <h2 className="text-2xl font-bold tracking-wide text-slate-900">{hasTax ? 'TAX INVOICE' : 'SALES INVOICE'}</h2>
                 {companyName && <p className="text-sm text-slate-500 mt-0.5">{companyName}</p>}
             </div>
 

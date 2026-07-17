@@ -30,7 +30,7 @@ export default function RecordPreviewShell({
 
     if (loadState === 'loading') {
         return (
-            <div className="p-4 md:p-6 space-y-4 animate-pulse" aria-busy="true" aria-live="polite">
+            <div className="space-y-4 animate-pulse" aria-busy="true" aria-live="polite">
                 <div className="h-20 bg-slate-100 rounded-xl border border-slate-200" />
                 <div className="h-32 bg-slate-100 rounded-xl border border-slate-200" />
                 <div className="h-40 bg-slate-100 rounded-xl border border-slate-200" />
@@ -92,7 +92,7 @@ export default function RecordPreviewShell({
     // summary card (net/paid/balance + quick actions), then each main
     // section in the order the caller supplied.
     return (
-        <div className="p-4 md:p-6 space-y-4 pb-24 md:pb-6 animate-in fade-in duration-200">
+        <div className="space-y-4 pb-24 md:pb-6 animate-in fade-in duration-200">
             <h1 ref={headingRef} tabIndex={-1} className="sr-only">Transaction Preview</h1>
             {headerContent}
             {summaryContent}
