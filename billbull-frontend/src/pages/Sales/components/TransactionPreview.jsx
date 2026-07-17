@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
     X, Edit, Printer, Download, Mail, DollarSign, Copy, Clock, History,
-    User, Package, MessageSquare, Paperclip, Link2, ChevronDown, ChevronUp
+    User, Package, MessageSquare, Paperclip, Link2, ChevronDown, ChevronUp, Box,
+    Wallet, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import RecordPreviewShell from './RecordPreviewShell';
 import PaymentHistorySection from './PaymentHistorySection';
@@ -15,6 +16,7 @@ import { getInvoiceStatusBadge, resolveInvoiceSourceType, getInvoiceTypeBadge } 
 import { getAvailableInvoiceActions } from '../utils/invoiceActionRules';
 import { buildInvoiceTimeline } from '../utils/buildInvoiceTimeline';
 import { resolveCustomer } from '../../../utils/customerResolution';
+import { getImageUrl } from '../../../utils/urlUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
 import CurrencyAmount from '../../../components/CurrencyAmount';
@@ -52,18 +54,20 @@ function CopyField({ label, value }) {
 function CollapsibleSection({ id, title, icon: Icon, children, defaultOpen = true }) {
     const [open, setOpen] = useState(defaultOpen);
     return (
-        <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <button
                 type="button"
                 aria-expanded={open}
                 aria-controls={id}
                 onClick={() => setOpen((v) => !v)}
-                className="w-full px-4 md:px-5 py-3.5 border-b border-slate-100 flex items-center justify-between text-left"
+                className="w-full px-4 md:px-5 py-3.5 border-b border-slate-100 flex items-center justify-between text-left hover:bg-slate-50/70 transition-colors"
             >
                 <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                     <Icon size={15} className="text-[#D99A00]" /> {title}
                 </h2>
-                {open ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                <span className="w-6 h-6 rounded-full flex items-center justify-center text-slate-400">
+                    {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
             </button>
             {open && <div id={id}>{children}</div>}
         </section>
@@ -156,44 +160,57 @@ export default function TransactionPreview({
     ].filter(Boolean) : [];
 
     const headerContent = invoice && (
-        <div className="bg-white border border-slate-200 rounded-xl px-4 md:px-6 py-4">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 md:px-6 py-4">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1.5 min-w-0">
                     <div className="text-xs font-medium text-slate-400 uppercase tracking-wide">Invoice Preview</div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                         {statusBadge && <span className={statusBadge.colorClasses}>{statusBadge.label}</span>}
-                        {typeBadge && <span className={`${typeBadge.colorClasses} px-2 py-0.5 rounded text-[10px] font-bold`}>{typeBadge.label}</span>}
-                        {sourceType && <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${sourceType.color}`}>{sourceType.label}</span>}
+                        {typeBadge && <span className={`${typeBadge.colorClasses} px-2 py-0.5 rounded-full text-[10px] font-bold`}>{typeBadge.label}</span>}
+                        {sourceType && <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sourceType.color}`}>{sourceType.label}</span>}
                     </div>
                     <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                         <CopyField label="Invoice Number" value={invoice.invoiceNumber} />
                     </h1>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                        <span className="flex items-center gap-1"><User size={12} /> {invoice.customerName}</span>
+                        <span className="flex items-center gap-1"><User size={12} className="text-slate-400" /> {invoice.customerName}</span>
+                        <span className="text-slate-300">•</span>
                         <span>{formatDisplayDate(invoice.invoiceDate)}</span>
-                        {invoice.branch && <span>Branch: {invoice.branch}</span>}
-                        {invoice.salesperson && <span>Sales: {invoice.salesperson}</span>}
+                        {invoice.branch && <><span className="text-slate-300">•</span><span>Branch: {invoice.branch}</span></>}
+                        {invoice.salesperson && <><span className="text-slate-300">•</span><span>Sales: {invoice.salesperson}</span></>}
                         {invoice.createdAt && (
                             <span className="flex items-center gap-1 text-slate-400"><Clock size={11} /> Created {relativeAge(invoice.createdAt)}</span>
                         )}
                     </div>
                 </div>
 
-                <button onClick={onBack} aria-label="Close preview" className="shrink-0 h-8 w-8 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 flex items-center justify-center">
-                    <X size={16} />
+                <button onClick={onBack} aria-label="Close preview" className="group shrink-0 h-8 w-8 rounded-md border border-slate-200 bg-white hover:bg-red-50 hover:border-red-200 text-slate-500 hover:text-red-500 flex items-center justify-center transition-colors">
+                    <X size={16} className="transition-transform group-hover:scale-110" />
                 </button>
             </div>
         </div>
     );
 
     const summaryContent = invoice && (
-        <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 space-y-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 space-y-4 shadow-sm">
             <div>
                 <div className="text-[11px] uppercase tracking-wide text-slate-400 font-bold mb-2">Totals & Payment</div>
                 <div className="space-y-1.5 text-sm">
-                    <div className="flex justify-between"><span className="text-slate-500">Net Amount</span><CurrencyAmount value={invoice.invoiceTotal} currency={currency} className="font-bold text-slate-800" /></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Paid Amount</span><CurrencyAmount value={invoice.amountPaid} currency={currency} className="font-medium text-emerald-600" /></div>
-                    <div className="flex justify-between pt-1.5 border-t border-slate-100"><span className="text-slate-600 font-medium">Balance Due</span><CurrencyAmount value={balanceDue} currency={currency} className="font-bold text-red-500" /></div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-500 flex items-center gap-1.5"><Wallet size={13} className="text-slate-400" /> Net Amount</span>
+                        <CurrencyAmount value={invoice.invoiceTotal} currency={currency} className="font-bold text-slate-800" />
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-500 flex items-center gap-1.5"><CheckCircle2 size={13} className="text-emerald-400" /> Paid Amount</span>
+                        <CurrencyAmount value={invoice.amountPaid} currency={currency} className="font-medium text-emerald-600" />
+                    </div>
+                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
+                        <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                            {balanceDue > 0 ? <AlertCircle size={13} className="text-red-400" /> : <CheckCircle2 size={13} className="text-emerald-400" />}
+                            Balance Due
+                        </span>
+                        <CurrencyAmount value={balanceDue} currency={currency} className={`font-bold ${balanceDue > 0 ? 'text-red-500' : 'text-emerald-600'}`} />
+                    </div>
                 </div>
             </div>
 
@@ -203,35 +220,37 @@ export default function TransactionPreview({
                 </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+            <div className="space-y-2 pt-2 border-t border-slate-100">
                 {canEditInvoice && (
-                    <button onClick={() => onEdit?.(invoice)} className="h-9 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-xs font-bold col-span-2">
+                    <button onClick={() => onEdit?.(invoice)} className="w-full h-9 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-xs font-bold transition-colors shadow-sm">
                         <Edit size={13} /> Edit Invoice
                     </button>
                 )}
-                {canPrint && (
-                    <button onClick={() => onPrint?.(invoice)} disabled={isPrinting} className="h-9 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50">
-                        <Printer size={13} /> Print
-                    </button>
-                )}
-                {canPdf && (
-                    <button onClick={() => onDownload?.(invoice)} disabled={isPrinting} className="h-9 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50">
-                        <Download size={13} /> PDF
-                    </button>
-                )}
-                {canEmail && (
-                    <button onClick={() => onOpenEmailModal?.(invoice)} className="h-9 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-xs font-medium">
-                        <Mail size={13} /> Email
-                    </button>
-                )}
                 {canRecordPayment && (
-                    <button onClick={() => onRecordPayment?.(invoice)} className="h-9 border border-emerald-300 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 flex items-center justify-center gap-1.5 text-xs font-bold col-span-2">
+                    <button onClick={() => onRecordPayment?.(invoice)} className="w-full h-9 border border-emerald-300 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 flex items-center justify-center gap-1.5 text-xs font-bold transition-colors">
                         <DollarSign size={13} /> Record Payment
                     </button>
                 )}
-                <button onClick={() => setHistoryOpen(true)} className="h-9 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-xs font-medium col-span-2">
-                    <History size={13} /> History
-                </button>
+                <div className="grid grid-cols-4 gap-2">
+                    {canPrint && (
+                        <button onClick={() => onPrint?.(invoice)} disabled={isPrinting} title="Print" className="group h-14 border border-slate-200 rounded-lg bg-white hover:bg-[#FFF8E7] hover:border-[#F5C742] text-slate-600 hover:text-[#8A6200] flex flex-col items-center justify-center gap-1 text-[10px] font-semibold disabled:opacity-50 transition-all hover:shadow-sm active:scale-[0.97]">
+                            <Printer size={15} className="text-slate-400 group-hover:text-[#D99A00] transition-colors" /> Print
+                        </button>
+                    )}
+                    {canPdf && (
+                        <button onClick={() => onDownload?.(invoice)} disabled={isPrinting} title="PDF" className="group h-14 border border-slate-200 rounded-lg bg-white hover:bg-[#FFF8E7] hover:border-[#F5C742] text-slate-600 hover:text-[#8A6200] flex flex-col items-center justify-center gap-1 text-[10px] font-semibold disabled:opacity-50 transition-all hover:shadow-sm active:scale-[0.97]">
+                            <Download size={15} className="text-slate-400 group-hover:text-[#D99A00] transition-colors" /> PDF
+                        </button>
+                    )}
+                    {canEmail && (
+                        <button onClick={() => onOpenEmailModal?.(invoice)} title="Email" className="group h-14 border border-slate-200 rounded-lg bg-white hover:bg-[#FFF8E7] hover:border-[#F5C742] text-slate-600 hover:text-[#8A6200] flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-all hover:shadow-sm active:scale-[0.97]">
+                            <Mail size={15} className="text-slate-400 group-hover:text-[#D99A00] transition-colors" /> Email
+                        </button>
+                    )}
+                    <button onClick={() => setHistoryOpen(true)} title="History" className="group h-14 border border-slate-200 rounded-lg bg-white hover:bg-[#FFF8E7] hover:border-[#F5C742] text-slate-600 hover:text-[#8A6200] flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-all hover:shadow-sm active:scale-[0.97]">
+                        <History size={15} className="text-slate-400 group-hover:text-[#D99A00] transition-colors" /> History
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -239,7 +258,7 @@ export default function TransactionPreview({
     // Action row above the printed document — mirrors the reference layout's
     // History / Edit / PDF / Email / Print cluster next to the template picker.
     const documentActionsBar = invoice && (
-        <div className="bg-white border border-slate-200 rounded-xl px-4 md:px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 md:px-5 py-3 flex flex-wrap items-center justify-between gap-2">
             <PrintTemplateMenu
                 invoice={invoice}
                 disabled={isPrinting || !canPrint}
@@ -283,37 +302,37 @@ export default function TransactionPreview({
         {
             key: 'customer',
             content: (
-                <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                     <div className="px-4 md:px-5 py-3.5 border-b border-slate-100">
                         <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2"><User size={15} className="text-[#D99A00]" /> Customer & Invoice Details</h2>
                     </div>
-                    <div className="p-4 md:p-5 grid sm:grid-cols-2 gap-x-6 gap-y-3 text-xs">
-                        <div>
+                    <div className="p-4 md:p-5 grid sm:grid-cols-2 gap-3 text-xs">
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Customer</div>
                             <div className="font-medium text-slate-800">{invoice.customerName}</div>
                             {invoice.customerCode && <div className="text-slate-500 mt-0.5"><CopyField label="Customer Code" value={invoice.customerCode} /></div>}
                         </div>
-                        <div>
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">TRN / VAT No.</div>
                             <div className="text-slate-700"><CopyField label="TRN" value={customer?.trn} /> {!customer?.trn && '—'}</div>
                         </div>
-                        <div>
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Phone</div>
                             <div className="text-slate-700">{customer?.phone || '—'}</div>
                         </div>
-                        <div>
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Email</div>
                             <div className="text-slate-700">{customer?.email || '—'}</div>
                         </div>
-                        <div>
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Reference No.</div>
                             <div className="text-slate-700">{invoice.reference ? <CopyField label="Reference" value={invoice.reference} /> : '—'}</div>
                         </div>
-                        <div>
+                        <div className="bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Payment Terms</div>
                             <div className="text-slate-700">{invoice.paymentTerms || '—'}</div>
                         </div>
-                        <div className="sm:col-span-2">
+                        <div className="sm:col-span-2 bg-slate-50/60 rounded-lg px-3 py-2">
                             <div className="text-slate-400 mb-0.5">Shipping Address</div>
                             <div className="text-slate-700">{invoice.shippingAddress || '—'}</div>
                         </div>
@@ -324,7 +343,7 @@ export default function TransactionPreview({
         {
             key: 'items',
             content: (
-                <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                     <div className="px-4 md:px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
                         <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2"><Package size={15} className="text-[#D99A00]" /> Items</h2>
                         <span className="text-[11px] text-slate-400">{(invoice.items || []).length} items · {(invoice.items || []).reduce((s, i) => s + Number(i.quantity ?? i.qty ?? 0), 0)} qty</span>
@@ -334,7 +353,8 @@ export default function TransactionPreview({
                             <thead className="bg-slate-50 text-slate-500 uppercase tracking-wide text-[10px]">
                                 <tr>
                                     <th className="px-4 py-2 text-left">#</th>
-                                    <th className="px-4 py-2 text-left">Product</th>
+                                    <th className="px-3 py-2 text-left"></th>
+                                    <th className="px-2 py-2 text-left">Product</th>
                                     <th className="px-4 py-2 text-left">Unit</th>
                                     <th className="px-4 py-2 text-right">Qty</th>
                                     <th className="px-4 py-2 text-right">Rate</th>
@@ -345,9 +365,22 @@ export default function TransactionPreview({
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {(invoice.items || []).map((it, idx) => (
-                                    <tr key={it.id || idx}>
+                                    <tr key={it.id || idx} className="hover:bg-slate-50/70 transition-colors">
                                         <td className="px-4 py-2.5 text-slate-400">{idx + 1}</td>
-                                        <td className="px-4 py-2.5">
+                                        <td className="px-3 py-2.5">
+                                            <div className="w-9 h-9 rounded-lg border border-slate-200 bg-[#F8F9FA] shrink-0 overflow-hidden flex items-center justify-center">
+                                                {it.image ? (
+                                                    <img
+                                                        src={getImageUrl(it.image)}
+                                                        alt={it.itemName || it.name}
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <Box size={16} className="text-slate-300" />
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-2 py-2.5">
                                             <div className="font-medium text-slate-700">{it.itemName || it.name}</div>
                                             <div className="text-[10px] text-slate-400">{it.itemCode || it.code}{it.barcode ? ` · ${it.barcode}` : ''}</div>
                                         </td>
@@ -360,16 +393,16 @@ export default function TransactionPreview({
                                     </tr>
                                 ))}
                                 {(!invoice.items || invoice.items.length === 0) && (
-                                    <tr><td colSpan={8} className="text-center py-8 text-slate-400">No items on this invoice.</td></tr>
+                                    <tr><td colSpan={9} className="text-center py-8 text-slate-400">No items on this invoice.</td></tr>
                                 )}
                             </tbody>
                         </table>
                     </div>
-                    <div className="px-4 md:px-5 py-4 border-t border-slate-100 flex justify-end">
+                    <div className="px-4 md:px-5 py-4 border-t border-slate-100 bg-slate-50/40 flex justify-end">
                         <div className="w-full sm:w-72 space-y-1.5 text-xs">
                             <div className="flex justify-between text-slate-500"><span>Subtotal</span><CurrencyAmount value={invoice.subTotal ?? invoice.grossTotal} currency={currency} /></div>
                             <div className="flex justify-between text-slate-500"><span>Discount</span><CurrencyAmount value={invoice.billDiscountAmount} currency={currency} className="text-red-500" /></div>
-                            <div className="flex justify-between text-slate-500"><span>Tax (VAT)</span><CurrencyAmount value={invoice.totalTax ?? invoice.taxAmount} currency={currency} /></div>
+                            <div className="flex justify-between text-slate-500"><span>Tax (VAT)</span><CurrencyAmount value={invoice.taxTotal ?? invoice.totalTax ?? invoice.taxAmount} currency={currency} /></div>
                             {Number(invoice.deliveryCharge) > 0 && <div className="flex justify-between text-slate-500"><span>Delivery Charges</span><CurrencyAmount value={invoice.deliveryCharge} currency={currency} /></div>}
                             {Number(invoice.roundOff) !== 0 && <div className="flex justify-between text-slate-500"><span>Round Off</span><CurrencyAmount value={invoice.roundOff} currency={currency} /></div>}
                             <div className="flex justify-between pt-1.5 border-t border-slate-200 font-bold text-slate-800 text-sm"><span>Net Total</span><CurrencyAmount value={invoice.invoiceTotal} currency={currency} /></div>
@@ -462,7 +495,7 @@ export default function TransactionPreview({
         {
             key: 'attachments',
             content: (
-                <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                     <div className="px-4 md:px-5 py-3.5 border-b border-slate-100">
                         <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2"><Paperclip size={15} className="text-[#D99A00]" /> Attachments</h2>
                     </div>
@@ -475,7 +508,7 @@ export default function TransactionPreview({
         {
             key: 'notes',
             content: (
-                <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                     <div className="px-4 md:px-5 py-3.5 border-b border-slate-100">
                         <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2"><MessageSquare size={15} className="text-[#D99A00]" /> Notes</h2>
                     </div>
