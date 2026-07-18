@@ -114,10 +114,9 @@ public class PosSearchService {
             }
         }
 
-        // 4. Exact product code / SKU.
-        Product byCode = productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue(q)
-                .or(() -> productRepository.findFirstBySkuIgnoreCaseAndIsActiveTrue(q))
-                .orElse(null);
+        // 4. Exact product code / SKU — Phase 6: branch-first, global-fallback (byte-identical
+        // when scoping is off).
+        Product byCode = productService.resolveActiveByCodeOrSku(q).orElse(null);
         if (byCode != null) {
             ProductAggregateResponse product = loadActiveProduct(byCode.getId());
             if (product != null) {
@@ -141,7 +140,8 @@ public class PosSearchService {
 
     private ProductAggregateResponse loadActiveProductByCode(String productCode) {
         if (productCode == null || productCode.isBlank()) return null;
-        return productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue(productCode)
+        // Phase 6: branch-first, global-fallback code resolution (byte-identical when scoping off).
+        return productService.resolveActiveByCodeOrSku(productCode)
                 .map(p -> loadActiveProduct(p.getId()))
                 .orElse(null);
     }

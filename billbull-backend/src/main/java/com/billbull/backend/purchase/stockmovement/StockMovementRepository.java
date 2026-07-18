@@ -635,4 +635,13 @@ public interface StockMovementRepository
                         """)
         List<Object[]> findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(
                         @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /**
+         * Branch-scoped full movement fetch (Phase 10 follow-up — secondary report data paths).
+         * Own-branch + legacy/global null-branch rows, caller-supplied ordering.
+         */
+        @Query("SELECT sm FROM StockMovement sm WHERE sm.branchId IN :branchIds OR sm.branchId IS NULL")
+        List<StockMovement> findAllInBranchScope(
+                        @Param("branchIds") java.util.Collection<Long> branchIds,
+                        org.springframework.data.domain.Sort sort);
 }

@@ -21,4 +21,8 @@ public class SubDepartmentResponse {
     public boolean allowOverride;
     public boolean autoCreateGroups;
     public boolean restrictTerminals;
+
+    // Branch-Level Inventory Phase 11 — owning branch (null = shared/global) for the SPA badges.
+    public Long branchId;
+    public String branchName;
 }

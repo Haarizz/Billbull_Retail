@@ -71,6 +71,9 @@ public class InventoryReportDataService {
     private final PurchaseInvoiceRepository purchaseInvoiceRepo;
     private final GrnRepository grnRepo;
     private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo;
+    // Branch-Level Inventory Phase 10 follow-up — branch-scopes the /data/{reportId} report family
+    // (the primary SOH/low/out/valuation reports were already scoped via InventoryReportService).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     public InventoryReportDataService(
             InventoryReportService stockReportService,
@@ -85,7 +88,8 @@ public class InventoryReportDataService {
             SalesInvoiceRepository salesInvoiceRepo,
             PurchaseInvoiceRepository purchaseInvoiceRepo,
             GrnRepository grnRepo,
-            com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo) {
+            com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.stockReportService = stockReportService;
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
@@ -99,6 +103,7 @@ public class InventoryReportDataService {
         this.purchaseInvoiceRepo = purchaseInvoiceRepo;
         this.grnRepo = grnRepo;
         this.glBalanceRepo = glBalanceRepo;
+        this.branchScopeResolver = branchScopeResolver;
     }
 
     public InventoryReportDataResponse getReport(String reportId, Long warehouseId) {
@@ -114,36 +119,71 @@ public class InventoryReportDataService {
             String brand,
             String search,
             String stockCondition) {
+        return getReport(reportId, warehouseId, dateFrom, dateTo, department, brand, search, stockCondition, false);
+    }
+
+    public InventoryReportDataResponse getReport(
+            String reportId,
+            Long warehouseId,
+            LocalDate dateFrom,
+            LocalDate dateTo,
+            String department,
+            String brand,
+            String search,
+            String stockCondition,
+            boolean allBranches) {
         String id = reportId == null ? "stock-on-hand" : reportId.trim().toLowerCase();
+        // Phase 10 follow-up: same contract as the primary report endpoints — branchScope=active
+        // (default) scopes to the active branch + global when the toggle is on; branchScope=all
+        // forces the consolidated view. scope == null → unscoped (today's behaviour).
+        java.util.Collection<Long> scope = allBranches ? null
+                : branchScopeResolver.activeListScope()
+                        .<java.util.Collection<Long>>map(
+                                com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                        .orElse(null);
         InventoryReportDataResponse report = switch (id) {
-            case "soh", "stock-on-hand" -> stockOnHand(warehouseId);
-            case "low_stock", "low-stock", "low-stock-reorder" -> lowStock(warehouseId);
-            case "out_of_stock", "out-of-stock" -> outOfStock(warehouseId);
-            case "negative_stock", "negative-stock", "negative-stock-mismatch" -> negativeStock(warehouseId);
-            case "valuation", "stock-valuation" -> stockValuation(warehouseId);
-            case "expiry", "expiry-batch-ageing", "expiry-batch-aging" -> expiryBatchAgeing(warehouseId);
-            case "movement_ledger", "stock-movement-ledger" -> stockMovementLedger(warehouseId);
-            case "transfer", "stock-transfer-report" -> stockTransferReport(warehouseId);
-            case "reconciliation", "stock-reconciliation-report" -> stockReconciliationReport(warehouseId);
-            case "wastage", "wastage-internal-consumption" -> wastageInternalConsumption(warehouseId);
-            case "in_out_summary", "inflow-outflow-summary" -> inflowOutflowSummary(warehouseId);
-            case "price_audit", "price-level-audit" -> priceLevelAudit();
-            case "cost_variance", "grn-invoice-cost-variance" -> grnInvoiceCostVariance();
-            case "margin", "item-margin-report" -> itemMarginReport();
-            case "master_completeness", "item-master-completeness" -> itemMasterCompleteness();
-            case "barcode_audit", "barcode-label-audit" -> barcodeLabelAudit();
-            case "scale_export", "weighing-scale-export" -> weighingScaleExport();
-            case "dead_stock", "dead-slow-moving-stock" -> deadSlowMovingStock(warehouseId);
-            case "fast_moving", "fast-moving-items" -> fastMovingItems();
-            case "bin_stock", "warehouse-bin-stock" -> warehouseBinStock(warehouseId);
+            case "soh", "stock-on-hand" -> stockOnHand(warehouseId, allBranches);
+            case "low_stock", "low-stock", "low-stock-reorder" -> lowStock(warehouseId, allBranches);
+            case "out_of_stock", "out-of-stock" -> outOfStock(warehouseId, allBranches);
+            case "negative_stock", "negative-stock", "negative-stock-mismatch" -> negativeStock(warehouseId, allBranches, scope);
+            case "valuation", "stock-valuation" -> stockValuation(warehouseId, allBranches);
+            case "expiry", "expiry-batch-ageing", "expiry-batch-aging" -> expiryBatchAgeing(warehouseId, allBranches);
+            case "movement_ledger", "stock-movement-ledger" -> stockMovementLedger(warehouseId, scope);
+            case "transfer", "stock-transfer-report" -> stockTransferReport(warehouseId, scope);
+            case "reconciliation", "stock-reconciliation-report" -> stockReconciliationReport(warehouseId, scope);
+            case "wastage", "wastage-internal-consumption" -> wastageInternalConsumption(warehouseId, scope);
+            case "in_out_summary", "inflow-outflow-summary" -> inflowOutflowSummary(warehouseId, scope);
+            case "price_audit", "price-level-audit" -> priceLevelAudit(scope);
+            case "cost_variance", "grn-invoice-cost-variance" -> grnInvoiceCostVariance(scope);
+            case "margin", "item-margin-report" -> itemMarginReport(scope);
+            case "master_completeness", "item-master-completeness" -> itemMasterCompleteness(scope);
+            case "barcode_audit", "barcode-label-audit" -> barcodeLabelAudit(scope);
+            case "scale_export", "weighing-scale-export" -> weighingScaleExport(scope);
+            case "dead_stock", "dead-slow-moving-stock" -> deadSlowMovingStock(warehouseId, allBranches);
+            case "fast_moving", "fast-moving-items" -> fastMovingItems(scope);
+            case "bin_stock", "warehouse-bin-stock" -> warehouseBinStock(warehouseId, scope);
             default -> throw new IllegalArgumentException("Unknown inventory report: " + reportId);
         };
         applyFilters(report, dateFrom, dateTo, department, brand, search, stockCondition);
         return report;
     }
 
-    private InventoryReportDataResponse stockOnHand(Long warehouseId) {
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId);
+    /** Movement fetch honouring the branch scope (own branch + legacy/global null rows). */
+    private List<StockMovement> movements(java.util.Collection<Long> scope, Sort sort) {
+        return scope != null ? stockRepo.findAllInBranchScope(scope, sort) : stockRepo.findAll(sort);
+    }
+
+    private List<StockMovement> movements(java.util.Collection<Long> scope) {
+        return movements(scope, Sort.unsorted());
+    }
+
+    /** True when the row's branch (null = global) is visible in the given scope. */
+    private static boolean inScope(java.util.Collection<Long> scope, Long branchId) {
+        return scope == null || branchId == null || scope.contains(branchId);
+    }
+
+    private InventoryReportDataResponse stockOnHand(Long warehouseId, boolean allBranches) {
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches);
         List<Map<String, Object>> rows = source.stream().map(this::stockRow).toList();
         BigDecimal totalQty = source.stream().map(StockReportResponse::getOnHand).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalValue = source.stream().map(StockReportResponse::getValue).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -163,8 +203,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse lowStock(Long warehouseId) {
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId).stream()
+    private InventoryReportDataResponse lowStock(Long warehouseId, boolean allBranches) {
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
                 .filter(r -> bd(r.getMinStock()).compareTo(BigDecimal.ZERO) > 0)
                 .filter(r -> bd(r.getOnHand()).compareTo(bd(r.getMinStock())) <= 0)
                 .sorted(Comparator.comparing(r -> ratio(bd(r.getOnHand()), bd(r.getMinStock()))))
@@ -214,8 +254,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse outOfStock(Long warehouseId) {
-        List<StockReportResponse> source = stockReportService.getOutOfStock(warehouseId);
+    private InventoryReportDataResponse outOfStock(Long warehouseId, boolean allBranches) {
+        List<StockReportResponse> source = stockReportService.getOutOfStock(warehouseId, allBranches);
         List<Map<String, Object>> rows = source.stream()
                 .map(r -> row(
                         "sku", r.getSku(),
@@ -249,15 +289,15 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse negativeStock(Long warehouseId) {
+    private InventoryReportDataResponse negativeStock(Long warehouseId, boolean allBranches, java.util.Collection<Long> scope) {
         // Build a map of productId -> override count so we can flag intentional negatives
-        Map<Long, Long> overrideCountByProduct = stockRepo.findAll().stream()
+        Map<Long, Long> overrideCountByProduct = movements(scope).stream()
                 .filter(m -> m.isNegativeOverride())
                 .collect(Collectors.groupingBy(
                         com.billbull.backend.purchase.stockmovement.StockMovement::getProductId,
                         Collectors.counting()));
 
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId).stream()
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) < 0)
                 .sorted(Comparator.comparing(StockReportResponse::getValue))
                 .toList();
@@ -309,8 +349,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockValuation(Long warehouseId) {
-        List<StockReportResponse> source = stockReportService.getStockValuation(warehouseId);
+    private InventoryReportDataResponse stockValuation(Long warehouseId, boolean allBranches) {
+        List<StockReportResponse> source = stockReportService.getStockValuation(warehouseId, allBranches);
         List<Map<String, Object>> rows = source.stream().map(r -> {
             BigDecimal qty = bd(r.getOnHand());
             BigDecimal unitCost = bd(r.getUnitCost());
@@ -369,9 +409,9 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse expiryBatchAgeing(Long warehouseId) {
+    private InventoryReportDataResponse expiryBatchAgeing(Long warehouseId, boolean allBranches) {
         LocalDate today = LocalDate.now();
-        List<Map<String, Object>> rows = stockReportService.getStockOnHand(warehouseId).stream()
+        List<Map<String, Object>> rows = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
                 .filter(r -> r.getExpiryDate() != null)
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) > 0)
                 .map(r -> {
@@ -413,17 +453,20 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockMovementLedger(Long warehouseId) {
-        Map<Long, Product> products = productMapFromMovements();
+    private InventoryReportDataResponse stockMovementLedger(Long warehouseId, java.util.Collection<Long> scope) {
+        Map<Long, Product> products = productMapFromMovements(scope);
         Map<Long, String> warehouses = warehouseNameMap();
-        Map<String, BigDecimal> currentBalance = stockRepo.findAllStockGroupedByProductAndWarehouse().stream()
+        List<Object[]> balanceRows = scope != null
+                ? stockRepo.findAllStockGroupedByProductAndWarehouseAndBranchIdIn(scope)
+                : stockRepo.findAllStockGroupedByProductAndWarehouse();
+        Map<String, BigDecimal> currentBalance = balanceRows.stream()
                 .collect(Collectors.toMap(
                         r -> key(r[0], r[1]),
                         r -> bd(r[2]),
                         BigDecimal::add,
                         LinkedHashMap::new));
 
-        List<Map<String, Object>> rows = stockRepo.findAll(Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
+        List<Map<String, Object>> rows = movements(scope, Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
                 .filter(m -> warehouseId == null || Objects.equals(m.getWarehouseId(), warehouseId))
                 .limit(500)
                 .map(m -> {
@@ -471,11 +514,15 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockTransferReport(Long warehouseId) {
+    private InventoryReportDataResponse stockTransferReport(Long warehouseId, java.util.Collection<Long> scope) {
         List<Map<String, Object>> rows = stockTransferRepo.findAll(Sort.by(Sort.Order.desc("transferDate"), Sort.Order.desc("id"))).stream()
                 .filter(t -> warehouseId == null
                         || (t.getFromWarehouse() != null && Objects.equals(t.getFromWarehouse().getId(), warehouseId))
                         || (t.getToWarehouse() != null && Objects.equals(t.getToWarehouse().getId(), warehouseId)))
+                // Phase 8/10: either-endpoint visibility — a transfer stays visible to both the
+                // source and destination branch (global/null endpoints visible everywhere).
+                .filter(t -> inScope(scope, branchIdOf(t.getFromWarehouse()))
+                        || inScope(scope, branchIdOf(t.getToWarehouse())))
                 .flatMap(t -> t.getItems().stream().map(i -> transferRow(t, i)))
                 .toList();
 
@@ -502,10 +549,10 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockReconciliationReport(Long warehouseId) {
-        Map<Long, Product> products = productMapFromMovements();
+    private InventoryReportDataResponse stockReconciliationReport(Long warehouseId, java.util.Collection<Long> scope) {
+        Map<Long, Product> products = productMapFromMovements(scope);
         Map<Long, String> warehouses = warehouseNameMap();
-        List<Map<String, Object>> rows = stockRepo.findAll(Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
+        List<Map<String, Object>> rows = movements(scope, Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
                 .filter(m -> m.getSourceType() == StockSourceType.STOCK_TAKE_ADJUSTMENT)
                 .filter(m -> warehouseId == null || Objects.equals(m.getWarehouseId(), warehouseId))
                 .map(m -> {
@@ -548,10 +595,10 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse wastageInternalConsumption(Long warehouseId) {
-        Map<Long, Product> products = productMapFromMovements();
+    private InventoryReportDataResponse wastageInternalConsumption(Long warehouseId, java.util.Collection<Long> scope) {
+        Map<Long, Product> products = productMapFromMovements(scope);
         Map<Long, String> warehouses = warehouseNameMap();
-        List<Map<String, Object>> rows = stockRepo.findAll(Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
+        List<Map<String, Object>> rows = movements(scope, Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
                 .filter(m -> warehouseId == null || Objects.equals(m.getWarehouseId(), warehouseId))
                 .filter(this::isWastageMovement)
                 .map(m -> {
@@ -593,9 +640,9 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse inflowOutflowSummary(Long warehouseId) {
-        Map<Long, Product> products = productMapFromMovements();
-        List<StockMovement> movements = stockRepo.findAll(Sort.by(Sort.Order.asc("movementDate")));
+    private InventoryReportDataResponse inflowOutflowSummary(Long warehouseId, java.util.Collection<Long> scope) {
+        Map<Long, Product> products = productMapFromMovements(scope);
+        List<StockMovement> movements = movements(scope, Sort.by(Sort.Order.asc("movementDate")));
         if (warehouseId != null) {
             movements = movements.stream().filter(m -> Objects.equals(m.getWarehouseId(), warehouseId)).toList();
         }
@@ -641,8 +688,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse priceLevelAudit() {
-        List<Product> products = activeStockProducts();
+    private InventoryReportDataResponse priceLevelAudit(java.util.Collection<Long> scope) {
+        List<Product> products = activeStockProducts(scope);
         List<Long> productIds = products.stream().map(Product::getId).toList();
         Map<Long, ProductPricing> pricing = pricingMap(productIds);
         List<Map<String, Object>> rows = products.stream().map(p -> {
@@ -685,9 +732,10 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse grnInvoiceCostVariance() {
+    private InventoryReportDataResponse grnInvoiceCostVariance(java.util.Collection<Long> scope) {
         Map<String, GrnItemEntity> grnItems = new HashMap<>();
         for (GrnEntity grn : grnRepo.findAll()) {
+            if (!inScope(scope, grn.getBranchId())) continue;
             for (GrnItemEntity item : grn.getItems()) {
                 grnItems.put(key(grn.getGrnNo(), item.getProductCode()), item);
             }
@@ -696,6 +744,7 @@ public class InventoryReportDataService {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (PurchaseInvoice invoice : purchaseInvoiceRepo.findAll()) {
             if (blank(invoice.getGrnNo())) continue;
+            if (!inScope(scope, invoice.getBranchId())) continue;
             for (PurchaseInvoiceItem item : invoice.getItems()) {
                 GrnItemEntity grnItem = grnItems.get(key(invoice.getGrnNo(), item.getItemCode()));
                 if (grnItem == null) continue;
@@ -742,12 +791,13 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse itemMarginReport() {
+    private InventoryReportDataResponse itemMarginReport(java.util.Collection<Long> scope) {
         Map<String, MarginAccumulator> acc = new LinkedHashMap<>();
         for (SalesInvoice invoice : salesInvoiceRepo.findAll()) {
             if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED || invoice.getStatus() == SalesInvoiceStatus.DRAFT) {
                 continue;
             }
+            if (!inScope(scope, invoice.getBranchId())) continue;
             for (SalesInvoiceItem item : invoice.getItems()) {
                 String key = firstNonBlank(item.getSku(), item.getItemCode(), item.getItemName());
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
@@ -796,8 +846,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse itemMasterCompleteness() {
-        List<Product> products = activeStockProducts();
+    private InventoryReportDataResponse itemMasterCompleteness(java.util.Collection<Long> scope) {
+        List<Product> products = activeStockProducts(scope);
         List<Long> productIds = products.stream().map(Product::getId).toList();
         Map<Long, ProductPricing> pricing = pricingMap(productIds);
         Map<Long, ProductInventoryPolicy> inventory = inventoryMap(productIds);
@@ -848,8 +898,9 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse barcodeLabelAudit() {
+    private InventoryReportDataResponse barcodeLabelAudit(java.util.Collection<Long> scope) {
         List<Map<String, Object>> rows = barcodeRepo.findAll().stream()
+                .filter(b -> inScope(scope, b.getBranchId()))
                 .map(b -> row(
                         "barcode", b.getBarcode(),
                         "sku", b.getProduct() != null ? firstNonBlank(b.getProduct().getSku(), b.getProduct().getCode()) : null,
@@ -880,8 +931,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse weighingScaleExport() {
-        List<Product> products = activeStockProducts().stream().filter(Product::isWeighing).toList();
+    private InventoryReportDataResponse weighingScaleExport(java.util.Collection<Long> scope) {
+        List<Product> products = activeStockProducts(scope).stream().filter(Product::isWeighing).toList();
         List<Long> productIds = products.stream().map(Product::getId).toList();
         Map<Long, ProductPricing> pricing = pricingMap(productIds);
         Map<Long, String> barcode = primaryBarcodeMap(productIds);
@@ -916,8 +967,8 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse deadSlowMovingStock(Long warehouseId) {
-        List<StockReportResponse> stock = stockReportService.getStockOnHand(warehouseId).stream()
+    private InventoryReportDataResponse deadSlowMovingStock(Long warehouseId, boolean allBranches) {
+        List<StockReportResponse> stock = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) > 0)
                 .toList();
         Map<Long, Timestamp> lastSold = lastSoldMap(stock.stream().map(StockReportResponse::getProductId).filter(Objects::nonNull).toList());
@@ -961,13 +1012,14 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse fastMovingItems() {
+    private InventoryReportDataResponse fastMovingItems(java.util.Collection<Long> scope) {
         LocalDate cutoff = LocalDate.now().minusDays(30);
         Map<String, MarginAccumulator> acc = new LinkedHashMap<>();
         for (SalesInvoice invoice : salesInvoiceRepo.findAll()) {
             if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED || invoice.getInvoiceDate() == null || invoice.getInvoiceDate().isBefore(cutoff)) {
                 continue;
             }
+            if (!inScope(scope, invoice.getBranchId())) continue;
             for (SalesInvoiceItem item : invoice.getItems()) {
                 String key = firstNonBlank(item.getSku(), item.getItemCode(), item.getItemName());
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
@@ -1003,12 +1055,12 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse warehouseBinStock(Long warehouseId) {
-        Map<Long, Product> products = productMapFromMovements();
+    private InventoryReportDataResponse warehouseBinStock(Long warehouseId, java.util.Collection<Long> scope) {
+        Map<Long, Product> products = productMapFromMovements(scope);
         Map<Long, String> warehouses = warehouseNameMap();
         Map<Long, Bin> bins = binRepo.findAll().stream().collect(Collectors.toMap(Bin::getId, Function.identity(), (a, b) -> a));
         Map<String, BigDecimal> grouped = new LinkedHashMap<>();
-        for (StockMovement movement : stockRepo.findAll()) {
+        for (StockMovement movement : movements(scope)) {
             if (warehouseId != null && !Objects.equals(movement.getWarehouseId(), warehouseId)) continue;
             String key = movement.getProductId() + "|" + movement.getWarehouseId() + "|" + movement.getBinId();
             grouped.merge(key, bd(movement.getQuantity()), BigDecimal::add);
@@ -1402,13 +1454,18 @@ public class InventoryReportDataService {
         };
     }
 
-    private Map<Long, Product> productMapFromMovements() {
-        Set<Long> ids = stockRepo.findAll().stream()
+    private Map<Long, Product> productMapFromMovements(java.util.Collection<Long> scope) {
+        Set<Long> ids = movements(scope).stream()
                 .map(StockMovement::getProductId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (ids.isEmpty()) return Map.of();
         return productRepo.findAllById(ids).stream().collect(Collectors.toMap(Product::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /** Branch id of a warehouse (null = global / no branch), for either-endpoint transfer scoping. */
+    private static Long branchIdOf(Warehouse warehouse) {
+        return warehouse != null && warehouse.getBranch() != null ? warehouse.getBranch().getId() : null;
     }
 
     private Map<Long, String> warehouseNameMap() {
@@ -1438,8 +1495,11 @@ public class InventoryReportDataService {
         return map;
     }
 
-    private List<Product> activeStockProducts() {
-        return productRepo.findAllByIsActiveTrue().stream()
+    private List<Product> activeStockProducts(java.util.Collection<Long> scope) {
+        List<Product> products = scope != null
+                ? productRepo.findAllActiveInBranchScope(scope)
+                : productRepo.findAllByIsActiveTrue();
+        return products.stream()
                 .filter(p -> p.getProductType() == null || p.getProductType() != ProductType.SERVICE)
                 .toList();
     }

@@ -38,6 +38,7 @@ import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { GlobalBadge, BranchStockLabel } from '../../../components/inventory/BranchScopeIndicators';
 import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
 import { useBranch } from '../../../context/BranchContext';
 import { getCompanyProfile } from '../../../api/companyProfileApi';
@@ -80,6 +81,9 @@ const mapProductListItem = (d) => ({
   packings: d.packings || [],
   barcode: d.packings?.find(p => p.barcode)?.barcode || '',
   availableInPos: d.availableInPos ?? true,
+  // Branch-Level Inventory Phase 11 — owning branch (null = shared/global) for the Global badge.
+  branchId: d.branchId ?? null,
+  branchName: d.branchName ?? null,
 });
 
 const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
@@ -1916,7 +1920,7 @@ const ScannedDetailsModal = ({ product, onClose, onPrint }) => {
             </div>
             <div className="p-3 rounded-xl border bg-white border-slate-100 text-center">
               <Package className="h-4 w-4 text-purple-600 mx-auto mb-1" />
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Stock</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase"><BranchStockLabel base="Stock" /></p>
               <p className="font-bold text-slate-800 text-base">{product.quantity || 'N/A'}</p>
             </div>
           </div>
@@ -2858,7 +2862,10 @@ const Products = () => {
                             {product.image ? <img src={product.image} className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}
                           </div>
                           <div className="flex flex-col">
-                            <span className="font-medium text-slate-900 line-clamp-1">{product.name}</span>
+                            <span className="font-medium text-slate-900 line-clamp-1 inline-flex items-center gap-1.5">
+                              {product.name}
+                              <GlobalBadge branchId={product.branchId} />
+                            </span>
                             {product.localName && <span className="text-[10px] text-slate-400 line-clamp-1">{product.localName}</span>}
                           </div>
                         </div>

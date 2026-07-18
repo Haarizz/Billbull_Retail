@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { GlobalBadge } from '../../../components/inventory/BranchScopeIndicators';
 import {
   Tag, ChevronRight, Plus, Upload, Download, Search,
   ChevronDown, RefreshCw, SquarePen, Trash2, Eye,
@@ -461,7 +462,12 @@ const Brand = () => {
                         )}
                       </div>
                     </td>
-                    <td className="p-3"><p className="font-medium text-slate-900">{brand.name}</p></td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-slate-900">{brand.name}</p>
+                        <GlobalBadge branchId={brand.branchId} />
+                      </div>
+                    </td>
                     <td className="p-3">
                       <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium border border-slate-200 rounded font-mono">{brand.code}</span>
                     </td>

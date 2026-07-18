@@ -172,6 +172,9 @@ public class SubDepartmentService {
         r.brands = (int) productRepo.countDistinctBrandBySubDepartmentIdAndIsActiveTrue(sd.getId());
         r.noBarcode = sd.getNoBarcodeCount();
         r.active = sd.isActive();
+        // Phase 11: owning branch (null = shared/global) for the SPA's Global badge.
+        r.branchId = sd.getBranch() != null ? sd.getBranch().getId() : null;
+        r.branchName = sd.getBranch() != null ? sd.getBranch().getName() : null;
         return r;
     }
 }

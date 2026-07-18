@@ -169,6 +169,9 @@ public class BrandService {
         res.ruleGlobalUnique = brand.getRuleGlobalUnique();
         res.ruleBrandUnique = brand.getRuleBrandUnique();
         res.ruleManualOverride = brand.getRuleManualOverride();
+        // Phase 11: owning branch (null = shared/global) for the SPA's Global badge.
+        res.branchId = brand.getBranch() != null ? brand.getBranch().getId() : null;
+        res.branchName = brand.getBranch() != null ? brand.getBranch().getName() : null;
         return res;
     }
 

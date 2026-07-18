@@ -13,6 +13,11 @@ public class ProductAggregateResponse {
     private ProductBranchPricing activeBranchPrice;
     private String primaryImage;
     private Integer stock;
+    // Branch-Level Inventory Phase 11 — the owning branch (null = shared/global) so the SPA can
+    // render Global/branch badges without exposing the whole Branch entity (Product.branch is
+    // @JsonIgnore).
+    private Long branchId;
+    private String branchName;
 
     public Product getProduct() {
         return product;
@@ -52,6 +57,22 @@ public class ProductAggregateResponse {
 
     public void setInventory(ProductInventoryPolicy inventory) {
         this.inventory = inventory;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
     }
 
     public List<ProductBranchPricing> getBranchPrices() {
