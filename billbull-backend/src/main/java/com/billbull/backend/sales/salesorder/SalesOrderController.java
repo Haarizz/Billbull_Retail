@@ -21,7 +21,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class SalesOrderController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.order";
 
     private final SalesOrderService service;
     private final SalesOrderAttachmentRepository attachmentRepo;

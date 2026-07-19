@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @PreAuthorize("isAuthenticated()")
 public class AccountingPeriodController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.config";
 
     private final AccountingPeriodService service;
     private final ModulePermissionService modulePermissionService;

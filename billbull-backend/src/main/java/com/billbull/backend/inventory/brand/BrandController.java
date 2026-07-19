@@ -16,7 +16,7 @@ import java.util.List;
 @RequestMapping("/api/brands")
 public class BrandController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.category";
 
     private final BrandService service;
     private final BrandExportService exportService;

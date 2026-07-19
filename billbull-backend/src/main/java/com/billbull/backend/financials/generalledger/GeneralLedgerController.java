@@ -49,7 +49,7 @@ public class GeneralLedgerController {
     @GetMapping("/accounts")
     @PreAuthorize("isAuthenticated()")
     public List<Account> getAccounts() {
-        modulePermissionService.requireCanView("finance");
+        modulePermissionService.requireCanView("finance.ledger");
         return ledgerService.getAllAccounts();
     }
 
@@ -62,14 +62,14 @@ public class GeneralLedgerController {
     @GetMapping("/accounts/tree")
     @PreAuthorize("isAuthenticated()")
     public List<Map<String, Object>> getAccountTree() {
-        modulePermissionService.requireCanView("finance");
+        modulePermissionService.requireCanView("finance.ledger");
         return ledgerService.getAccountTree();
     }
 
     @PostMapping("/accounts")
     @PreAuthorize("isAuthenticated()")
     public Account createOrUpdateAccount(@RequestBody Account account) {
-        modulePermissionService.requireCanEdit("finance");
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.saveAccount(account);
     }
 
@@ -110,14 +110,14 @@ public class GeneralLedgerController {
     @GetMapping("/transactions")
     @PreAuthorize("isAuthenticated()")
     public List<LedgerEntry> getTransactions() {
-        modulePermissionService.requireCanView("finance");
+        modulePermissionService.requireCanView("finance.ledger");
         return ledgerService.getTransactionHistory();
     }
 
     @PostMapping("/transactions")
     @PreAuthorize("isAuthenticated()")
     public LedgerEntry recordTransaction(@RequestBody LedgerEntry entry) {
-        modulePermissionService.requireCanCreate("finance");
+        modulePermissionService.requireCanCreate("finance.ledger");
         return ledgerService.recordTransaction(entry);
     }
 
@@ -159,7 +159,7 @@ public class GeneralLedgerController {
     @PostMapping("/vat-settlement")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<JournalEntry> postVatSettlement(@RequestBody VatSettlementRequest req) {
-        modulePermissionService.requireCanEdit("finance");
+        modulePermissionService.requireCanEdit("finance.ledger");
         LocalDate date = req.settlementDate != null ? LocalDate.parse(req.settlementDate) : LocalDate.now();
         com.billbull.backend.settings.branch.Branch branch =
                 req.branchId != null ? branchRepository.findById(req.branchId).orElse(null) : null;
@@ -183,7 +183,7 @@ public class GeneralLedgerController {
     @PostMapping("/vat-payment")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<JournalEntry> postVatPayment(@RequestBody VatPaymentRequest req) {
-        modulePermissionService.requireCanEdit("finance");
+        modulePermissionService.requireCanEdit("finance.ledger");
         LocalDate date = req.paymentDate != null ? LocalDate.parse(req.paymentDate) : LocalDate.now();
         com.billbull.backend.settings.branch.Branch branch =
                 req.branchId != null ? branchRepository.findById(req.branchId).orElse(null) : null;
@@ -211,7 +211,7 @@ public class GeneralLedgerController {
     @PostMapping("/contra-voucher")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<JournalEntry> postContraVoucher(@RequestBody ContraVoucherRequest req) {
-        modulePermissionService.requireCanEdit("finance");
+        modulePermissionService.requireCanEdit("finance.ledger");
         LocalDate date = req.date != null ? LocalDate.parse(req.date) : LocalDate.now();
         com.billbull.backend.settings.branch.Branch branch =
                 req.branchId != null ? branchRepository.findById(req.branchId).orElse(null) : null;
@@ -239,7 +239,7 @@ public class GeneralLedgerController {
     @PostMapping("/equity-injection")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<JournalEntry> postEquityInjection(@RequestBody EquityInjectionRequest req) {
-        modulePermissionService.requireCanEdit("finance");
+        modulePermissionService.requireCanEdit("finance.ledger");
         LocalDate date = req.date != null ? LocalDate.parse(req.date) : LocalDate.now();
         com.billbull.backend.settings.branch.Branch branch =
                 req.branchId != null ? branchRepository.findById(req.branchId).orElse(null) : null;

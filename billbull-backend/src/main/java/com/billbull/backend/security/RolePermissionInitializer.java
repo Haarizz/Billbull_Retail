@@ -40,9 +40,12 @@ public class RolePermissionInitializer implements ApplicationRunner {
             }
         });
 
-        // BRANCH_ADMIN: same full module access as ADMIN but branch-scoped (not in ALL_BRANCH_ROLES).
+        // BRANCH_ADMIN: full module access like ADMIN but branch-scoped (not in ALL_BRANCH_ROLES).
+        // userManagement is deliberately excluded: role/user administration endpoints are
+        // hasRole('ADMIN') only, so granting the module would only show a dead page.
         roleRepository.findByName("BRANCH_ADMIN").ifPresent(role -> {
             for (String module : allModules) {
+                if ("userManagement".equals(module)) continue;
                 seedIfAbsent(role, module, true, true, true, true, true);
             }
         });

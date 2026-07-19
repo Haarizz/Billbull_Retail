@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/purchase/reports")
 public class PurchaseReportController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.reports";
 
     private final PurchaseReportDataService reportDataService;
     private final ModulePermissionService modulePermissionService;

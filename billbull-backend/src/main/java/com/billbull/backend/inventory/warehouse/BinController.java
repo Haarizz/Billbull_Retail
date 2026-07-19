@@ -12,7 +12,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class BinController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.warehouse";
 
     private final BinService binService;
     private final ModulePermissionService modulePermissionService;

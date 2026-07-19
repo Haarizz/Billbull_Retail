@@ -15,7 +15,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class ExpenseController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.expense";
 
     @Autowired
     private ExpenseService expenseService;

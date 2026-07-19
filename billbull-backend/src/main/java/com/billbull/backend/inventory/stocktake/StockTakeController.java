@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/inventory/stock-take")
 public class StockTakeController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.stock";
 
     private final StockTakeService service;
     private final ModulePermissionService modulePermissionService;
@@ -149,7 +149,10 @@ public class StockTakeController {
     public ResponseEntity<StockTakeSession> approveSession(
             @PathVariable String sessionId,
             @RequestParam String approvedBy) {
-        modulePermissionService.requireCanEdit(MODULE);
+        // Approving posts stock adjustments — governed by the APPROVE vertical.
+        // Roles that should approve stock takes need Approve granted on inventory
+        // in the role matrix (ADMIN has it by default).
+        modulePermissionService.requireCanApprove(MODULE);
         return ResponseEntity.ok(service.approveSession(sessionId, approvedBy));
     }
 

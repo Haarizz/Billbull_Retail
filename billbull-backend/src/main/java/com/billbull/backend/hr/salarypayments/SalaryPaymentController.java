@@ -14,7 +14,7 @@ import java.util.List;
 @RequestMapping("/api/payroll")
 public class SalaryPaymentController {
 
-    private static final String MODULE = "hr";
+    private static final String MODULE = "hr.payroll";
 
     @Autowired
     private SalaryPaymentService service;

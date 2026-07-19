@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @PreAuthorize("isAuthenticated()")
 public class PostingRuleController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.config";
 
     private final PostingRuleService postingRuleService;
     private final ModulePermissionService modulePermissionService;

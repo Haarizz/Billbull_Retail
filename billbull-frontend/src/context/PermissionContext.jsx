@@ -29,19 +29,12 @@ export const PermissionProvider = ({ children }) => {
 
   const pollIntervalRef = useRef(null);
 
-  useEffect(() => {
-    refreshPermissions();
-
-    // Poll every 5 minutes so permission changes take effect without requiring logout
-    pollIntervalRef.current = setInterval(() => {
-      if (isAuthenticated()) refreshPermissions();
-    }, 5 * 60 * 1000);
-
-    return () => clearInterval(pollIntervalRef.current);
-  }, []);
-
   const refreshPermissions = async () => {
     if (!isAuthenticated()) return;
+
+    // Roles come straight from the JWT — needed by hasAnyRole() for the few
+    // role-gated (rather than permission-gated) UI branches.
+    setUserRoles(getRoles());
 
     try {
       const merged = await rolePermissionsApi.getMyPermissions();
@@ -61,24 +54,37 @@ export const PermissionProvider = ({ children }) => {
     }
   };
 
+  useEffect(() => {
+    refreshPermissions();
+
+    // Poll every 5 minutes so permission changes take effect without requiring logout
+    pollIntervalRef.current = setInterval(() => {
+      if (isAuthenticated()) refreshPermissions();
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(pollIntervalRef.current);
+  }, []);
+
     /**
-     * CORE PERMISSION LOGIC:
-     * Check if user can perform an ACTION in a MODULE.
-     * 1. If exact match exists (e.g. sales.quotation) -> use it (true or false).
-     * 2. If no exact match AND it is a sub-key -> fallback to parent key (e.g. sales).
-     * 3. Default to false.
+     * CORE PERMISSION LOGIC — mirrors backend ModulePermissionService exactly:
+     * 1. If an explicit row exists for the key (e.g. sales.quotation), that row is
+     *    AUTHORITATIVE — its value is returned even when false. An explicit deny
+     *    must not be overridden by a broader parent grant.
+     * 2. Only when NO explicit row exists does a sub-key fall back to its parent
+     *    (e.g. sales.quotation -> sales).
+     * 3. Default to DENY.
      */
     const canAction = (module, action) => {
         const modKey = module?.toLowerCase();
         const actionKey = action?.replace('can', '').toLowerCase(); // match 'view', 'create', etc.
 
-        // 1. Check Exact Match
+        // 1. Explicit row — authoritative (merged ALLOW-wins union across roles)
         const exact = granularPermissions[modKey];
-        if (exact && exact[actionKey] === true) {
-            return true;
+        if (exact !== undefined) {
+            return exact[actionKey] === true;
         }
 
-        // 2. Check Parent Fallback (if it's a sub-key like sales.quotation)
+        // 2. Parent fallback only when no explicit row exists
         if (modKey?.includes('.')) {
             const parentKey = modKey.split('.')[0];
             const parent = granularPermissions[parentKey];
@@ -87,9 +93,7 @@ export const PermissionProvider = ({ children }) => {
             }
         }
 
-        // 3. Explicit check for EXACT false (if exact exists and is false, it means NO role granted it)
-        // But since we are doing "ALLOW wins", we only return true if WE FOUND an allow.
-        // If we reach here, neither exact nor parent was explicitly true.
+        // 3. Default DENY
         return false;
     };
 
@@ -119,6 +123,7 @@ export const PermissionProvider = ({ children }) => {
                 exactPermission.view ||
                 exactPermission.create ||
                 exactPermission.edit ||
+                exactPermission.delete ||
                 exactPermission.approve ||
                 exactPermission.export
             );

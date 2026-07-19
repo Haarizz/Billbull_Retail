@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("isAuthenticated()")
 public class CurrencyController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.config";
 
     private final CurrencyService service;
     private final ModulePermissionService modulePermissionService;

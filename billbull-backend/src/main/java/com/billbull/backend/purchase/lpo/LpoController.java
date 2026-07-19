@@ -17,7 +17,7 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/lpos")
 public class LpoController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.lpo";
 
     private final LpoService service;
     private final AuditLogService auditLogService;

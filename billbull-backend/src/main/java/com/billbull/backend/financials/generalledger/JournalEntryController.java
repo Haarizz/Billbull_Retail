@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 @PreAuthorize("isAuthenticated()")
 public class JournalEntryController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.voucher";
 
     private final JournalEntryService journalEntryService;
     private final ModulePermissionService modulePermissionService;
@@ -80,7 +80,10 @@ public class JournalEntryController {
     public ResponseEntity<JournalVoucher> approveEntry(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, String> payload) {
-        modulePermissionService.requireCanEdit(MODULE);
+        // Maker-checker: approval is governed by the APPROVE vertical, not EDIT —
+        // a user who can draft/edit vouchers must not be able to approve them
+        // unless the role matrix explicitly grants Approve on finance.
+        modulePermissionService.requireCanApprove(MODULE);
         String approvedBy = payload != null ? payload.getOrDefault("approvedBy", "System") : "System";
         return ResponseEntity.ok(journalEntryService.approveJournalVoucher(id, approvedBy));
     }
@@ -89,7 +92,7 @@ public class JournalEntryController {
     public ResponseEntity<JournalVoucher> rejectEntry(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, String> payload) {
-        modulePermissionService.requireCanEdit(MODULE);
+        modulePermissionService.requireCanApprove(MODULE);
         String rejectedBy = payload != null ? payload.getOrDefault("rejectedBy", "System") : "System";
         String reason = payload != null ? payload.getOrDefault("reason", "") : "";
         return ResponseEntity.ok(journalEntryService.rejectJournalVoucher(id, rejectedBy, reason));

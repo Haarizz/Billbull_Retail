@@ -19,7 +19,7 @@ import java.util.List;
 @RequestMapping("/api/sales/customer-ledger")
 public class CustomerController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.customer";
     private static final String CUSTOMER_MODULE = "sales.customer";
 
     @Autowired

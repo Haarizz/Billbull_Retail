@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("isAuthenticated()")
 public class FiscalYearController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.config";
 
     private final FiscalYearService service;
     private final ModulePermissionService modulePermissionService;

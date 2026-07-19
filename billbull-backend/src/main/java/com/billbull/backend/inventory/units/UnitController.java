@@ -19,7 +19,7 @@ import java.util.List;
 @RequestMapping("/api/units")
 public class UnitController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.units";
 
     private final UnitService service;
     private final UnitExportService exportService;

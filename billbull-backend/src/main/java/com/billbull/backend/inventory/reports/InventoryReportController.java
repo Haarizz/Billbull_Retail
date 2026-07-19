@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/inventory/reports")
 public class InventoryReportController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.reports";
 
     private final InventoryReportService reportService;
     private final InventoryReportDataService reportDataService;
