@@ -139,6 +139,18 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
         });
+
+        // ── User-Based Data Visibility / Ownership Filtering (Topic 2) ────────────────────────────
+        // permissions.records.view-all (canView=true) is the ownership override: holders bypass
+        // ownership filtering and see every user's records (still subject to branch scope). ADMIN /
+        // BRANCH_ADMIN / SUPER_ADMIN bypass in code regardless (OwnershipAccessService.rolesGrantViewAll)
+        // — seeding an explicit row here surfaces the toggle in Roles & Permissions and grants it to
+        // the oversight roles by default. Everyone NOT holding it is ownership-restricted (own records
+        // only) once ownership.filtering.enabled is turned on for the tenant.
+        for (String overrideRole : new String[]{"ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR"}) {
+            roleRepository.findByName(overrideRole).ifPresent(role ->
+                    seedIfAbsent(role, "permissions.records.view-all", true, false, false, false, false));
+        }
     }
 
     private void seedIfAbsent(

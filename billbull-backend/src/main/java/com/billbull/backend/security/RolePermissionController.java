@@ -21,11 +21,14 @@ public class RolePermissionController {
 
     private final RolePermissionService rolePermissionService;
     private final AuditLogService auditLogService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     public RolePermissionController(RolePermissionService rolePermissionService,
-                                    AuditLogService auditLogService) {
+                                    AuditLogService auditLogService,
+                                    com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
         this.rolePermissionService = rolePermissionService;
         this.auditLogService = auditLogService;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     /**
@@ -64,7 +67,16 @@ public class RolePermissionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getMyPermissions() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
-        return ResponseEntity.ok(rolePermissionService.getMergedPermissionsForUser(username));
+        Map<String, Object> merged = new java.util.HashMap<>(
+                rolePermissionService.getMergedPermissionsForUser(username));
+        // User-based data visibility signal for the frontend: whether the tenant toggle is on and
+        // whether THIS user is ownership-restricted (so lists show the "only your records" indicator
+        // and override-holders get the My/All switch). Derived server-side from the resolved
+        // per-request ownership context — never a client-trusted flag.
+        merged.put("_ownership", Map.of(
+                "filteringEnabled", ownershipAccessService.filteringEnabled(),
+                "restricted", ownershipAccessService.restrictionApplies()));
+        return ResponseEntity.ok(merged);
     }
 
     /**

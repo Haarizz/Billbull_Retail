@@ -26,6 +26,9 @@ export const PermissionProvider = ({ children }) => {
         dashboard: false,
         tally: false,
     });
+    // User-based data visibility (ownership filtering) signal from /me's `_ownership` block.
+    // filteringEnabled = tenant toggle state; restricted = THIS user sees only their own records.
+    const [ownership, setOwnership] = useState({ filteringEnabled: false, restricted: false });
 
   const pollIntervalRef = useRef(null);
 
@@ -38,12 +41,20 @@ export const PermissionProvider = ({ children }) => {
 
     try {
       const merged = await rolePermissionsApi.getMyPermissions();
+
+      // Pull the ownership signal out before it's treated as a permission module.
+      if (merged._ownership) {
+        setOwnership({
+          filteringEnabled: Boolean(merged._ownership.filteringEnabled),
+          restricted: Boolean(merged._ownership.restricted),
+        });
+      }
       setGranularPermissions(merged);
 
       // Feature toggles fallback to top-level view permissions
       const toggles = {};
       Object.keys(merged).forEach((mod) => {
-        if (!mod.includes('.')) {
+        if (!mod.includes('.') && mod !== '_ownership' && merged[mod] && typeof merged[mod] === 'object') {
           toggles[mod] = merged[mod].view;
         }
       });
@@ -140,11 +151,25 @@ export const PermissionProvider = ({ children }) => {
         return false;
     };
 
+    /**
+     * User-based data visibility (ownership filtering) state:
+     *  - ownershipFilteringEnabled: tenant toggle is on.
+     *  - isOwnershipRestricted: this user sees only records they created (no VIEW_ALL_RECORDS
+     *    override). Drives the "Showing only records you created" indicator on transaction lists.
+     *  - canViewAllRecords: this user holds the override (My/All switch is offered to them).
+     */
+    const ownershipFilteringEnabled = ownership.filteringEnabled;
+    const isOwnershipRestricted = ownership.restricted;
+    const canViewAllRecords = ownership.filteringEnabled && !ownership.restricted;
+
     const value = {
         userRoles,
         granularPermissions,
         featureToggles,
         permissionsLoaded,
+        ownershipFilteringEnabled,
+        isOwnershipRestricted,
+        canViewAllRecords,
         refreshPermissions,
         hasPermission,
         hasAnyRole,

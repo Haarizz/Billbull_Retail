@@ -16,11 +16,17 @@ import com.billbull.backend.settings.branch.Branch;
 @Table(name = "proforma_invoices", indexes = {
     @Index(name = "idx_proforma_branch", columnList = "branch_id")
 })
-public class ProformaInvoice {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class ProformaInvoice  implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "branch_id")
@@ -302,4 +308,14 @@ public class ProformaInvoice {
 	
 
     // getters & setters
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
+    }
 }

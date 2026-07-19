@@ -67,6 +67,7 @@ public class StockTakeService {
     // Branch-Level Inventory Phase 7: session list/retrieval branch scoping (dormant while toggle off).
     private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
     private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -85,7 +86,8 @@ public class StockTakeService {
             com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
             com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService,
             com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
-            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.batchRepo = batchRepo;
@@ -103,6 +105,7 @@ public class StockTakeService {
         this.stockMovementService = stockMovementService;
         this.branchScopeResolver = branchScopeResolver;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -263,6 +266,10 @@ public class StockTakeService {
         List<StockTakeSession> sessions = branchScopeResolver.activeListScope()
                 .map(scope -> sessionRepo.findActiveWithItemsInBranchScope(scope.branchIds()))
                 .orElseGet(sessionRepo::findAllActiveWithItems);
+        // Ownership (user-based data visibility) — AND on top of branch. Stock-take is multi-actor
+        // (counter vs. approver); approver roles hold VIEW_ALL_RECORDS so they are never scoped out.
+        // No-op when the toggle is off (byte-identical).
+        sessions = ownershipAccessService.filterOwned(sessions, StockTakeSession::getCreatedByUserId);
         sessions.forEach(this::hydrateForSerialization);
         return sessions;
     }
@@ -313,6 +320,8 @@ public class StockTakeService {
             Long sessionBranchId = sessionRepo.findBranchIdBySessionId(session.getId());
             branchAccessService.assertTransactionBranchAccessible(sessionBranchId, "Stock-take session");
         }
+        // Ownership guard — AND on top of branch. No-op when the toggle is off / override held.
+        ownershipAccessService.assertCanAccessRecord(session.getCreatedByUserId(), "Stock-take session");
 
         if (isInventoryCounting(session)) {
             if (!hasExpectedSnapshot(session)

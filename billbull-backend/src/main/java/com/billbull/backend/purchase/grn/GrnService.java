@@ -57,6 +57,7 @@ public class GrnService {
     private final ProductMediaRepository productMediaRepo;
     private final ProductBarcodeRepository productBarcodeRepo;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
     private final PurchaseSerialService purchaseSerialService;
@@ -78,6 +79,7 @@ public class GrnService {
             ProductMediaRepository productMediaRepo,
             ProductBarcodeRepository productBarcodeRepo,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
             PurchaseSerialService purchaseSerialService,
@@ -98,6 +100,7 @@ public class GrnService {
         this.productMediaRepo = productMediaRepo;
         this.productBarcodeRepo = productBarcodeRepo;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
         this.purchaseSerialService = purchaseSerialService;
@@ -142,6 +145,7 @@ public class GrnService {
 
         if (id != null) {
             branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+            ownershipAccessService.assertCanAccessRecord(grn.getCreatedByUserId(), "GRN");
         }
 
         if (id != null && grn.isStockPosted()) {
@@ -348,7 +352,9 @@ public class GrnService {
     @Transactional(readOnly = true)
     public List<GrnListResponse> list() {
         List<GrnEntity> grns = new ArrayList<>(
-                branchAccessService.filterBranchScoped(grnRepo.findAll(), GrnEntity::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(grnRepo.findAll(), GrnEntity::getBranchId),
+                        GrnEntity::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 grns,
                 GrnEntity::getGrnDate,
@@ -381,6 +387,7 @@ public class GrnService {
     public GrnDetailResponse get(Long id) {
         GrnEntity grn = getScopedGrn(id);
         branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+        ownershipAccessService.assertCanAccessRecord(grn.getCreatedByUserId(), "GRN");
         return mapDetail(grn);
     }
 
@@ -723,6 +730,7 @@ public class GrnService {
         GrnEntity grn = grnRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("GRN not found"));
         branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+        ownershipAccessService.assertCanAccessRecord(grn.getCreatedByUserId(), "GRN");
         return grn;
     }
 

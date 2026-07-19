@@ -22,7 +22,9 @@ import java.util.List;
     @Index(name = "idx_sales_invoice_number",        columnList = "invoice_number")
 })
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
-public class SalesInvoice {
+@EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class SalesInvoice implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -31,6 +33,11 @@ public class SalesInvoice {
     @Column(name = "created_at", updatable = false)
     @org.hibernate.annotations.CreationTimestamp
     private LocalDateTime createdAt;
+
+    /** Stable owner id for user-based data visibility (ownership filtering). Stamped on persist by
+     *  {@link com.billbull.backend.common.ownership.OwnershipAuditListener}. Nullable forever. */
+    @Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     @Column(unique = true)
     private String invoiceNumber;
@@ -212,6 +219,16 @@ public class SalesInvoice {
 
     public LocalDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
     }
 
     public void setCreatedAt(LocalDateTime createdAt) {

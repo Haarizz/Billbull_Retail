@@ -164,6 +164,8 @@ class SalesInvoiceAdvanceAutoApplyTest {
                 mock(com.billbull.backend.inventory.warehouse.WarehouseRepository.class),
                 mock(com.billbull.backend.settings.branch.BranchRepository.class),
                 mock(com.billbull.backend.settings.branch.BranchAccessService.class),
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        mock(com.billbull.backend.security.RolePermissionRepository.class), false),
                 mock(com.billbull.backend.purchase.stockmovement.StockMovementRepository.class),
                 mock(com.billbull.backend.inventory.warehouse.BinRepository.class),
                 mock(com.billbull.backend.inventory.batch.BatchSelectionService.class),

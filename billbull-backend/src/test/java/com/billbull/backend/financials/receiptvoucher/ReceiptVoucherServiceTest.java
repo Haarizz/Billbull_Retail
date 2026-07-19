@@ -65,6 +65,8 @@ class ReceiptVoucherServiceTest {
                 openingInvoiceRepository,
                 customerRepository,
                 branchAccessService,
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false),
                 advanceApplicationRepository,
                 "target/test-receipts");
     }

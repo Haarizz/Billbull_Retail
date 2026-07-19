@@ -12,11 +12,17 @@ import java.time.LocalDate;
     @Index(name = "idx_sales_payment_branch", columnList = "branch_id")
 })
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
-public class Payment {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class Payment  implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "branch_id")
@@ -225,5 +231,15 @@ public class Payment {
 
     public void setSplitGroupId(String splitGroupId) {
         this.splitGroupId = splitGroupId;
+    }
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
     }
 }

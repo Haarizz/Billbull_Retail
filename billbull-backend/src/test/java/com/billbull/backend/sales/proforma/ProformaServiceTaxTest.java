@@ -37,6 +37,8 @@ class ProformaServiceTaxTest {
                 mock(ProductBarcodeRepository.class),
                 mock(ProductMediaRepository.class),
                 mock(BranchAccessService.class),
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        mock(com.billbull.backend.security.RolePermissionRepository.class), false),
                 mock(WarehouseStockService.class),
                 mock(SalesDocumentNumberingService.class));
 

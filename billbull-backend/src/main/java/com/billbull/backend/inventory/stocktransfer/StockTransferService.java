@@ -54,6 +54,7 @@ public class StockTransferService {
     // inventory.branch-scope.enabled=false (byte-identical to today's no-branch-auth behaviour).
     private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
     private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     public StockTransferService(
             StockTransferRepository repository,
@@ -68,7 +69,8 @@ public class StockTransferService {
             PostingEngineService postingEngineService,
             com.billbull.backend.purchase.stockmovement.StockMovementService stockMovementService,
             com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
-            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.productPricingRepository = productPricingRepository;
@@ -82,6 +84,7 @@ public class StockTransferService {
         this.stockMovementService = stockMovementService;
         this.branchScopeResolver = branchScopeResolver;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     // ===== Phase 8 — Option A authorization helpers (all toggle-gated; no-op when scoping off). =====
@@ -133,6 +136,8 @@ public class StockTransferService {
             transfers = transfers.stream().filter(this::canViewTransfer)
                     .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         }
+        // Ownership (user-based data visibility) — AND on top of branch. No-op when toggle off.
+        transfers = new ArrayList<>(ownershipAccessService.filterOwned(transfers, StockTransfer::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 transfers,
                 StockTransfer::getTransferDate,
@@ -315,7 +320,9 @@ public class StockTransferService {
     }
 
     private StockTransfer getEntity(Long id) {
-        return repository.findById(id).orElseThrow(() -> new RuntimeException("Stock Transfer not found"));
+        StockTransfer st = repository.findById(id).orElseThrow(() -> new RuntimeException("Stock Transfer not found"));
+        ownershipAccessService.assertCanAccessRecord(st.getCreatedByUserId(), "Stock Transfer");
+        return st;
     }
 
     private void mapToEntity(StockTransferRequest req, StockTransfer st) {
