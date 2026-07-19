@@ -12,6 +12,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingException;
 import com.billbull.backend.logging.RequestLoggingFilter;
+import com.billbull.backend.ratelimit.RateLimitExceededException;
+
+import org.springframework.http.HttpHeaders;
 
 import java.util.Map;
 
@@ -62,6 +65,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(ex.getStatusCode())
                 .body(errorBody(ex.getReason() != null ? ex.getReason() : ex.getMessage()));
+    }
+
+    /**
+     * Rate-limit / brute-force rejections → uniform 429 with {@code Retry-After} + {@code X-RateLimit-*}
+     * headers (design §8). More specific than the RuntimeException handler below, so it wins. Body is
+     * generic (never leaks the raw key or whether a username exists).
+     */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Map<String, String>> handleRateLimit(RateLimitExceededException ex) {
+        log.warn("RateLimitExceeded policy={} retryAfter={}s requestId={}",
+                ex.getPolicy(), ex.getRetryAfterSeconds(), requestId());
+        Map<String, String> body = new java.util.LinkedHashMap<>();
+        body.put("code", "RATE_LIMITED");
+        body.put("policy", ex.getPolicy());
+        body.put("message", ex.getMessage() != null ? ex.getMessage() : "Too many requests");
+        body.put("retryAfterSeconds", String.valueOf(ex.getRetryAfterSeconds()));
+        body.put("requestId", requestId());
+        return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .header("X-RateLimit-Policy", ex.getPolicy())
+                .body(body);
     }
 
     @ExceptionHandler(RuntimeException.class)

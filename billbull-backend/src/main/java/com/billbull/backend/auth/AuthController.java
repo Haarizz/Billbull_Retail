@@ -11,6 +11,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.config.JwtUtil;
+import com.billbull.backend.ratelimit.AuthBruteForceLimiter;
+import com.billbull.backend.ratelimit.ClientIpResolver;
+import com.billbull.backend.ratelimit.RateLimitExceededException;
+import com.billbull.backend.ratelimit.RateLimitProperties;
 import com.billbull.backend.security.LoginRateLimiter;
 import com.billbull.backend.user.User;
 import com.billbull.backend.user.UserRepository;
@@ -24,40 +28,71 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final LoginRateLimiter loginRateLimiter;
+    private final AuthBruteForceLimiter bruteForceLimiter;
+    private final ClientIpResolver clientIpResolver;
+    private final RateLimitProperties rateLimitProperties;
 
     public AuthController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             JwtUtil jwtUtil,
-            LoginRateLimiter loginRateLimiter) {
+            LoginRateLimiter loginRateLimiter,
+            AuthBruteForceLimiter bruteForceLimiter,
+            ClientIpResolver clientIpResolver,
+            RateLimitProperties rateLimitProperties) {
 
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.loginRateLimiter = loginRateLimiter;
+        this.bruteForceLimiter = bruteForceLimiter;
+        this.clientIpResolver = clientIpResolver;
+        this.rateLimitProperties = rateLimitProperties;
     }
 
     @Transactional
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
 
-        String clientIp = resolveClientIp(httpRequest);
-        if (!loginRateLimiter.isAllowed(clientIp)) {
+        String clientIp = clientIpResolver.resolve(httpRequest);
+        String submittedUsername = request.getUsername();
+        boolean rateLimitOn = rateLimitProperties.isEnabled();
+
+        // Layer 2 (username+IP) when the feature is enabled; legacy per-IP limiter otherwise so that
+        // ratelimit.enabled=false is byte-identical to pre-feature behaviour.
+        if (rateLimitOn) {
+            AuthBruteForceLimiter.Decision decision = bruteForceLimiter.check(clientIp, submittedUsername);
+            if (!decision.allowed()) {
+                throw tooManyLoginAttempts(decision.retryAfterSeconds());
+            }
+        } else if (!loginRateLimiter.isAllowed(clientIp)) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
                 "Too many login attempts. Please wait 5 minutes before trying again.");
         }
 
         // Accept username OR email in the "username" field — backward compatible
         User user = userRepository
-                .findByUsernameAndIsActiveTrue(request.getUsername())
-                .or(() -> userRepository.findByEmailAndIsActiveTrue(request.getUsername()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password"));
+                .findByUsernameAndIsActiveTrue(submittedUsername)
+                .or(() -> userRepository.findByEmailAndIsActiveTrue(submittedUsername))
+                .orElseThrow(() -> {
+                    if (rateLimitOn) {
+                        bruteForceLimiter.recordFailure(clientIp, submittedUsername);
+                    }
+                    return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
+                });
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            if (rateLimitOn) {
+                bruteForceLimiter.recordFailure(clientIp, submittedUsername);
+            }
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
         }
 
-        loginRateLimiter.recordSuccess(clientIp);
+        if (rateLimitOn) {
+            bruteForceLimiter.recordSuccess(clientIp, submittedUsername);
+        } else {
+            loginRateLimiter.recordSuccess(clientIp);
+        }
         String token = jwtUtil.generateToken(user);
 
         // Primary role is the canonical role for sidebar fallback and login redirect.
@@ -145,11 +180,15 @@ public class AuthController {
         userRepository.save(user);
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+    /**
+     * Uniform 429 for auth brute-force lockout. Uses a coded {@link RateLimitExceededException} so
+     * {@link com.billbull.backend.exception.GlobalExceptionHandler} attaches {@code Retry-After}.
+     * Message stays generic (no username enumeration).
+     */
+    private RateLimitExceededException tooManyLoginAttempts(long retryAfterSeconds) {
+        return new RateLimitExceededException(
+                "auth-login",
+                retryAfterSeconds,
+                "Too many login attempts. Please wait before trying again.");
     }
 }
