@@ -2318,6 +2318,9 @@ export default function POSSales() {
           code: product.code || '',
           image: product.image || null,
           price: unitPrice,
+          minPrice: product.minPrice != null && product.minPrice !== '' ? toNumber(product.minPrice) : null,
+          maxPrice: product.maxPrice != null && product.maxPrice !== '' ? toNumber(product.maxPrice) : null,
+          retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
           taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
@@ -8666,12 +8669,12 @@ export default function POSSales() {
         const alphaRows = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'], ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫']];
 
         return (
-          <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
+          <div className="fixed inset-0 z-[60] flex flex-col lg:flex-row bg-[#1a1f2e]">
 
             {/* ══ LEFT: Invoice Preview ════════════════════════════════ */}
-            <div className={`shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742] transition-all duration-300 ${
-              showA4CheckoutPreview ? 'w-[400px] lg:w-[500px] xl:w-[600px]' : 
-              'w-[280px] lg:w-[340px] xl:w-[400px]'
+            <div className={`w-full shrink-0 flex flex-col max-h-[40vh] lg:max-h-none min-h-0 bg-white border-b-4 lg:border-b-0 lg:border-r-4 border-[#F5C742] transition-all duration-300 ${
+              showA4CheckoutPreview ? 'lg:w-[400px] xl:w-[500px] 2xl:w-[600px]' :
+              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'
             }`}>
               {showA4CheckoutPreview ? (
                 checkoutA4Html ? (
@@ -8694,10 +8697,10 @@ export default function POSSales() {
             </div>
 
             {/* ══ RIGHT: Payment & Settlement ═══════════════════════ */}
-            <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden">
+            <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden min-h-0">
 
               {/* Right header */}
-              <div className="bg-[#1E293B] px-6 py-3.5 flex items-center justify-between shrink-0">
+              <div className="bg-[#1E293B] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-[#F5C742] flex items-center justify-center">
                     <CreditCard className="h-5 w-5 text-[#1E293B]" />
@@ -8946,7 +8949,7 @@ export default function POSSales() {
                       {creditCustomerData && (
                         <div className="space-y-3 border-t border-gray-100 pt-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Received Now (optional)</p>
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                             {['Cash', 'Card', 'Online', 'Bank'].map(m => (
                               <button key={m} type="button"
                                 onClick={() => setCheckoutCreditReceivedMode(prev => prev === m ? '' : m)}
@@ -9285,7 +9288,7 @@ export default function POSSales() {
               </div>
 
               {/* ── Settlement footer ── */}
-              <div className="bg-white border-t-2 border-[#F5C742]/30 px-5 py-4 shrink-0">
+              <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">
                 {/* Summary row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                   <div className="bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl p-3 text-center">
@@ -9323,16 +9326,16 @@ export default function POSSales() {
                   </div>
                 )}
                 {/* Action buttons */}
-                <div className="flex gap-3">
+                <div className="flex gap-2 sm:gap-3">
                   <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
-                    className="flex-none px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
+                    className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
                   <button type="button" onClick={processPayment} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
-                    className={`flex-1 py-3.5 rounded-xl font-black text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                    className={`flex-1 min-w-0 py-3.5 rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                     {checkoutLoading
-                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />Processing...</>
-                      : <><CheckCircle className="h-5 w-5" />Settle Payment · <DirhamSymbol /> {effectiveDue.toFixed(2)}</>
+                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" />Processing...</>
+                      : <><CheckCircle className="h-5 w-5 shrink-0" /><span className="truncate">Settle Payment · <DirhamSymbol /> {effectiveDue.toFixed(2)}</span></>
                     }
                   </button>
                 </div>
@@ -10073,9 +10076,9 @@ export default function POSSales() {
               </div>
 
               {/* Main body: list + preview */}
-              <div className="flex flex-1 min-h-0">
+              <div className="flex flex-col lg:flex-row flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
                     <span className="text-xs text-[#327F74]">Latest first</span>
@@ -10092,7 +10095,8 @@ export default function POSSales() {
                         <p className="text-xs text-gray-400 mt-1">Try adjusting the filters above.</p>
                       </div>
                     ) : (
-                      <table className="w-full text-xs">
+                      <div className="overflow-x-auto">
+                      <table className="w-full min-w-[820px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10">
                           <tr className="text-gray-500 border-b border-[#327F74]/10">
                             {['Invoice No.', 'Date & Time', 'Customer', 'Cashier', 'Terminal', 'Pay Mode', 'Items', 'Amount', 'Status', 'Action'].map((h, i) => (
@@ -10130,13 +10134,14 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 </div>
 
                 {/* Receipt Preview Panel */}
                 {selected && (
-                  <div className="w-1/2 lg:w-[45%] flex flex-col overflow-hidden bg-white">
+                  <div className="w-full lg:w-[45%] flex flex-col overflow-hidden min-h-0 bg-white">
                     <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -10570,9 +10575,9 @@ export default function POSSales() {
               </div>
 
               {/* Body — split layout */}
-              <div className="flex flex-1 min-h-0">
+              <div className="flex flex-col md:flex-row flex-1 min-h-0">
                 {/* Left: list */}
-                <div className="w-64 border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
+                <div className="w-full md:w-64 max-h-[35vh] md:max-h-none min-h-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
                   <div className="p-3 border-b border-gray-100">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -10629,7 +10634,7 @@ export default function POSSales() {
                 </div>
 
                 {/* Right: detail */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 flex flex-col min-w-0 min-h-0">
                   {!selOrder ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-300 gap-2">
                       <Package className="h-12 w-12" />
@@ -10653,8 +10658,8 @@ export default function POSSales() {
                           </div>
                         </div>
                         {/* Items table */}
-                        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
-                          <table className="w-full text-xs">
+                        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4 overflow-x-auto">
+                          <table className="w-full min-w-[420px] text-xs">
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Item</th>
@@ -10702,7 +10707,7 @@ export default function POSSales() {
                         </div>
                       </div>
                       {/* Actions */}
-                      <div className="border-t border-gray-100 px-5 py-3 flex gap-2 bg-gray-50 shrink-0">
+                      <div className="border-t border-gray-100 px-5 py-3 flex flex-wrap gap-2 bg-gray-50 shrink-0">
                         <button
                           type="button"
                           onClick={handleCancelOrder}
@@ -10779,7 +10784,7 @@ export default function POSSales() {
           } catch { setPriceCheckResult('notfound'); }
         };
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
             <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
@@ -10864,7 +10869,7 @@ export default function POSSales() {
                   <div className="space-y-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-2xl p-5 flex flex-col md:flex-row gap-6 shadow-sm">
                       {/* Left: Image & Details */}
-                      <div className="flex flex-1 gap-5">
+                      <div className="flex flex-col sm:flex-row flex-1 gap-5">
                         <div className="w-28 h-28 shrink-0 rounded-xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
                           {foundProduct.image
                             ? <img src={foundProduct.image} className="w-full h-full object-cover" alt={foundProduct.name} />
@@ -10875,7 +10880,7 @@ export default function POSSales() {
                             <h3 className="text-lg font-bold text-[#1E293B] leading-tight">{foundProduct.name}</h3>
                             <p className="text-sm text-gray-500 mt-1">{foundProduct.departmentName || 'General Department'}</p>
                           </div>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
                             <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Item Code</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.code}</span></div>
                             <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Barcode</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.barcode}</span></div>
                           </div>
@@ -10915,7 +10920,7 @@ export default function POSSales() {
                   </div>
                 )}
               </div>
-              <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end gap-3 shrink-0">
+              <div className="bg-gray-50 border-t border-gray-200 px-3 sm:px-6 py-4 flex flex-wrap justify-end gap-3 shrink-0">
                 <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
                 {foundProduct && (
                   <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
@@ -10931,7 +10936,7 @@ export default function POSSales() {
 
       {/* ─── SEARCH PRODUCTS MODAL ─── */}
       {showProductSearch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowProductSearch(false)} />
           <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
             <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
@@ -11030,7 +11035,7 @@ export default function POSSales() {
           } catch { setCreditBalanceResult('notfound'); }
         };
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowCreditBalance(false)} />
             <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
@@ -11118,7 +11123,7 @@ export default function POSSales() {
                   </div>
                 )}
               </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                 <button onClick={() => setShowCreditBalance(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
@@ -11176,8 +11181,8 @@ export default function POSSales() {
                 <button onClick={() => { setLayawaysFilterStatus('All'); setLayawaysFilterCustomer(''); setLayawaysFilterNo(''); setTimeout(loadLayaways, 0); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
                 <button onClick={() => { setShowLayawaysList(false); setShowSaveLayaway(true); }} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
               </div>
-              <div className="flex flex-1 min-h-0">
-                <div className={`flex flex-col overflow-hidden ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10`}>
+              <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+                <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10`}>
                   <div className="overflow-auto flex-1">
                     {layawaysLoading ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
@@ -11186,7 +11191,8 @@ export default function POSSales() {
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><Archive className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">No layaways found.</p></div>
                     ) : (
-                      <table className="w-full text-xs">
+                      <div className="overflow-x-auto">
+                      <table className="w-full min-w-[900px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10 border-b border-[#327F74]/10">
                           <tr className="text-gray-500">{['Layaway No.', 'Date & Time', 'Customer', 'Cashier', 'Items', 'Sale Amt', 'Deposit', 'Balance', 'Due Date', 'Status', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2 text-left font-medium ${i >= 4 && i <= 7 ? 'text-right' : ''} ${i === 10 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                         </thead>
@@ -11218,11 +11224,12 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 </div>
                 {selected && (
-                  <div className="w-1/2 lg:w-[45%] flex flex-col bg-white overflow-hidden">
+                  <div className="w-full lg:w-[45%] flex flex-col bg-white overflow-hidden min-h-0">
                     <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
                       <button onClick={() => setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -11320,7 +11327,7 @@ export default function POSSales() {
         // Can't create a new layaway while converting an existing one.
         if (activeLayawayId) {
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
               <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
               <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
                 <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto" />
@@ -11338,7 +11345,7 @@ export default function POSSales() {
         const activeCartItems = currentInvoice.items.filter(i => !i.isVoided);
         const canSave = hasCustomer && activeCartItems.length > 0 && !saveLayawayBusy;
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
             <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
@@ -11369,7 +11376,7 @@ export default function POSSales() {
                     <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Cart Items</div>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
+                        <table className="w-full min-w-[480px] text-xs">
                           <thead><tr className="text-gray-400 border-b border-gray-100">{['Item', 'Qty', 'Rate', 'Disc', 'VAT', 'Total'].map(h => <th key={h} className={`px-3 py-1.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
                           <tbody>
                             {activeCartItems.length === 0 && currentInvoice.items.filter(i => i.isVoided).length === 0 ? (
@@ -11468,7 +11475,7 @@ export default function POSSales() {
               {saveLayawayError && (
                 <div className="bg-red-50 border-t border-red-200 px-5 py-2 text-xs text-red-600 shrink-0">{saveLayawayError}</div>
               )}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                 <button onClick={() => setShowSaveLayaway(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                 <button disabled={!canSave} onClick={() => saveCurrentLayaway(false)} className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Archive className="h-3.5 w-3.5" />{saveLayawayBusy ? 'Saving…' : 'Save Layaway'}</button>
                 <button disabled={!canSave} onClick={() => saveCurrentLayaway(true)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Printer className="h-3.5 w-3.5" />Save &amp; Print Receipt</button>
@@ -11773,14 +11780,14 @@ export default function POSSales() {
                 <button onClick={() => setShowReturn(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               {/* Step Progress */}
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex items-center gap-0 shrink-0">
+              <div className="bg-white border-b border-gray-100 px-3 sm:px-5 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
                 {steps.map((s, i) => (
                   <React.Fragment key={s}>
-                    <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
-                      <span className={`text-xs ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
+                      <span className={`hidden sm:inline text-xs whitespace-nowrap ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                     </div>
-                    {i < steps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
+                    {i < steps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
                   </React.Fragment>
                 ))}
               </div>
@@ -11892,7 +11899,8 @@ export default function POSSales() {
                           {returnableItems.length === 0 ? (
                             <div className="p-6 text-center text-sm text-gray-400">No returnable items found for this invoice.</div>
                           ) : (
-                            <table className="w-full text-xs">
+                            <div className="overflow-x-auto">
+                            <table className="w-full min-w-[920px] text-xs">
                               <thead>
                                 <tr className="text-gray-500 border-b border-[#327F74]/10">
                                   {['Code', 'Item', 'Sold', 'Returned', 'Returnable', 'Return Qty', 'Rate', 'VAT', 'Return Amt', 'Condition', 'Reason'].map(h => (
@@ -11946,6 +11954,7 @@ export default function POSSales() {
                                 })}
                               </tbody>
                             </table>
+                            </div>
                           )}
                         </div>
                         <div className="bg-[#FFF8DC] border border-[#F5C742]/40 rounded-lg p-3 flex items-center justify-between text-sm">
@@ -12072,12 +12081,12 @@ export default function POSSales() {
                 )}
               </div>
               {/* Footer */}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex items-center justify-between shrink-0">
-                <div className="flex gap-2">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div className="flex flex-wrap gap-2">
                   {returnStep > 1 && !returnSaving && <button onClick={() => setReturnStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
                   <button onClick={() => setShowReturn(false)} disabled={returnSaving} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50">Cancel</button>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {returnStep === 1 && (
                     <button onClick={doAdvanceToItems} disabled={!returnInvoiceFound || returnInvoiceFound === false || returnInvoiceLoading}
                       className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-5 py-2 rounded">Next →</button>
@@ -12381,9 +12390,9 @@ export default function POSSales() {
                       <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1 shrink-0"><RotateCcw className="h-3 w-3" />Reset</button>
                     </div>
                   </div>
-                  <div className="flex flex-1 min-h-0 overflow-hidden">
+                  <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
                     {/* Results list */}
-                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-1/2 lg:w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
+                    <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selectedItem ? 'lg:w-[45%] max-h-[50vh] lg:max-h-none border-b lg:border-b-0 lg:border-r border-[#327F74]/10' : 'lg:w-full'}`}>
                       <div className="overflow-auto flex-1 p-5">
                         {serialBatchResult === null && (
                           <div className="flex flex-col items-center justify-center h-48 text-center"><Hash className="h-12 w-12 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan or enter a batch number or invoice to search sold items.</p></div>
@@ -12420,7 +12429,7 @@ export default function POSSales() {
                     </div>
                     {/* Detail panel */}
                     {selectedItem && (
-                      <div className="flex-1 flex flex-col bg-white overflow-hidden">
+                      <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
                         <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                           <span className="text-xs font-semibold text-[#1E293B]">{selectedItem.itemName}</span>
                           <button onClick={() => setSerialBatchSelectedItem(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -12451,7 +12460,7 @@ export default function POSSales() {
                     )}
                   </div>
                   {!selectedItem && (
-                    <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                    <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                       <button onClick={() => setShowSerialBatch(false)} className="border border-gray-300 text-gray-500 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
                     </div>
                   )}
@@ -12517,7 +12526,7 @@ export default function POSSales() {
                       <span className="font-bold text-[#1E293B]"><CurrencyAmount amount={((selectedItem?.itemNetAmount || 0) / (selectedItem?.soldQty || 1)) * serialBatchReturnQty} /></span>
                     </div>
                   </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                     <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><RotateCcw className="h-3.5 w-3.5" />Confirm Return</button>
                     <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Confirm &amp; Print</button>
@@ -12578,7 +12587,7 @@ export default function POSSales() {
                       Item is Under Warranty. This repair may be eligible for free service. Warranty coverage will be verified by the technician.
                     </div>
                   </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                     <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                     <button onClick={() => { setShowSerialBatch(false); setShowServiceRepair(true); setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Wrench className="h-3.5 w-3.5" />Create Service Job</button>
                   </div>
@@ -12624,13 +12633,13 @@ export default function POSSales() {
         return (
           <div className="fixed inset-0 z-50 flex flex-col bg-[#F7F7FA]">
             {/* Top Bar */}
-            <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-6 py-3 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
-                <span className="text-gray-600">/</span>
-                <span className="text-white flex items-center gap-2"><Wrench className="h-4 w-4 text-[#F5C742]" />Service &amp; Repair Management</span>
+            <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm shrink-0"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
+                <span className="text-gray-600 hidden sm:inline">/</span>
+                <span className="text-white flex items-center gap-2 min-w-0"><Wrench className="h-4 w-4 text-[#F5C742] shrink-0" /><span className="truncate">Service &amp; Repair Management</span></span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {serviceView !== 'new-job' && <button onClick={() => { setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-1.5 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />New Service Job</button>}
                 {serviceView !== 'settings' && <button onClick={() => setServiceView('settings')} className="border border-gray-600 text-gray-300 text-sm px-3 py-1.5 rounded hover:border-gray-400 flex items-center gap-1"><Settings className="h-3.5 w-3.5" />Settings</button>}
                 <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white"><X className="h-5 w-5" /></button>
@@ -12681,7 +12690,8 @@ export default function POSSales() {
                 </div>
                 {/* Table */}
                 <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                  <table className="w-full text-xs">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1000px] text-xs">
                     <thead className="bg-[#F7F7FA] border-b border-[#327F74]/10">
                       <tr className="text-gray-500">{['Job No.', 'Job Date', 'Customer', 'Item Name', 'Serial/Batch', 'Warranty', 'Problem', 'Technician', 'Est. Amt', 'Status', 'Delivery Date', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2.5 text-left font-medium ${i === 11 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                     </thead>
@@ -12710,6 +12720,7 @@ export default function POSSales() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -12718,14 +12729,14 @@ export default function POSSales() {
             {serviceView === 'new-job' && (
               <div className="flex-1 overflow-auto">
                 {/* Step bar */}
-                <div className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-0 shrink-0">
+                <div className="bg-white border-b border-gray-100 px-3 sm:px-6 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
                   {serviceSteps.map((s, i) => (
                     <React.Fragment key={s}>
-                      <div className="flex items-center gap-2 cursor-pointer" onClick={() => setServiceJobStep(i + 1)}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
-                        <span className={`text-xs ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
+                      <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer shrink-0" onClick={() => setServiceJobStep(i + 1)}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
+                        <span className={`hidden md:inline text-xs whitespace-nowrap ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                       </div>
-                      {i < serviceSteps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
+                      {i < serviceSteps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
                     </React.Fragment>
                   ))}
                 </div>
@@ -12848,7 +12859,8 @@ export default function POSSales() {
                           <div className="flex items-center gap-2"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">F. Parts / Spare Items</p></div>
                           <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />Add Part</button>
                         </div>
-                        <table className="w-full text-xs">
+                        <div className="overflow-x-auto">
+                        <table className="w-full min-w-[640px] text-xs">
                           <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Part Code', 'Part Name', 'Stock Avail.', 'Qty', 'Unit Price', 'Disc.', 'VAT', 'Net Amt', ''].map(h => <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>)}</tr></thead>
                           <tbody>
                             <tr className="border-b border-gray-50">
@@ -12864,6 +12876,7 @@ export default function POSSales() {
                             </tr>
                           </tbody>
                         </table>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -12939,12 +12952,12 @@ export default function POSSales() {
                   )}
                 </div>
                 {/* Step nav footer */}
-                <div className="bg-white border-t border-gray-100 px-6 py-3 flex justify-between items-center shrink-0 sticky bottom-0">
-                  <div className="flex gap-2">
+                <div className="bg-white border-t border-gray-100 px-3 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 shrink-0 sticky bottom-0">
+                  <div className="flex flex-wrap gap-2">
                     {serviceJobStep > 1 && <button onClick={() => setServiceJobStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
                     <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5">Save Draft</button>
                     {serviceJobStep < serviceSteps.length ? <button onClick={() => setServiceJobStep(s => s + 1)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
                       : <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Complete Job</button>}
@@ -12956,20 +12969,20 @@ export default function POSSales() {
             {/* ─ DETAIL VIEW ─ */}
             {serviceView === 'detail' && (
               <div className="flex-1 overflow-auto p-6">
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
                   <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back to List</button>
                   <span className="text-[#1E293B] font-semibold">Service Job</span>
                   <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5">—</span>
-                  <div className="ml-auto flex gap-2">
+                  <div className="sm:ml-auto flex flex-wrap gap-2">
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Print Job Card</button>
                     <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-3 py-1.5 rounded flex items-center gap-1"><FileText className="h-3.5 w-3.5" />Create Invoice</button>
                   </div>
                 </div>
                 {/* Tabs */}
-                <div className="flex gap-0 border-b border-[#327F74]/20 mb-4">
+                <div className="flex gap-0 border-b border-[#327F74]/20 mb-4 overflow-x-auto">
                   {detailTabs.map(t => (
                     <button key={t} onClick={() => setServiceDetailTab(t)}
-                      className={`px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                      className={`shrink-0 px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                       {t === 'activity' ? 'Activity Log' : t}
                     </button>
                   ))}
@@ -13051,7 +13064,7 @@ export default function POSSales() {
                     </div>
                   ))}
                 </div>
-                <div className="mt-4 flex justify-end gap-2">
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
                   <button className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                   <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Save Settings</button>
                 </div>
@@ -13065,7 +13078,7 @@ export default function POSSales() {
       {showPOSConfig && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/30" onClick={() => setShowPOSConfig(false)} />
-          <div className="relative bg-white w-80 h-full shadow-2xl flex flex-col overflow-hidden">
+          <div className="relative bg-white w-full sm:w-80 h-full shadow-2xl flex flex-col overflow-hidden">
             {/* Header */}
             <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-[#1E293B] to-[#334155] flex items-center justify-between">
               <div>
@@ -13517,7 +13530,7 @@ export default function POSSales() {
                   placeholder="Building, street, area..."
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:border-[#327F74]" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">City</label>
                   <input type="text" value={deliveryNewAddress.city}
@@ -13532,7 +13545,7 @@ export default function POSSales() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Person</label>
                   <input type="text" value={deliveryNewAddress.contactName}
@@ -13701,8 +13714,8 @@ export default function POSSales() {
               </div>
 
               {/* Search + filter */}
-              <div className="px-4 py-3 border-b border-gray-100 flex gap-3">
-                <div className="flex-1 relative">
+              <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-3">
+                <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input type="text" value={deliverySettleSearch} onChange={e => setDeliverySettleSearch(e.target.value)}
                     placeholder="Search by invoice, customer, or mobile..."
@@ -13721,7 +13734,8 @@ export default function POSSales() {
                 ) : filtered.length === 0 ? (
                   <div className="flex items-center justify-center py-12 text-gray-400 text-sm">No pending delivery orders</div>
                 ) : (
-                  <>
+                  <div className="overflow-x-auto">
+                  <div className="min-w-[560px]">
                     <div className="grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
                       <div>Customer / Invoice</div>
                       <div>Person</div>
@@ -13829,7 +13843,8 @@ export default function POSSales() {
                         </div>
                       );
                     })}
-                  </>
+                  </div>
+                  </div>
                 )}
               </div>
             </div>
