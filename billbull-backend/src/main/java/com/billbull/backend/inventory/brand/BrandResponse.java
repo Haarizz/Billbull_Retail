@@ -28,4 +28,8 @@ public class BrandResponse {
     public Boolean ruleGlobalUnique;
     public Boolean ruleBrandUnique;
     public Boolean ruleManualOverride;
+
+    // Branch-Level Inventory Phase 11 — owning branch (null = shared/global) for the SPA badges.
+    public Long branchId;
+    public String branchName;
 }

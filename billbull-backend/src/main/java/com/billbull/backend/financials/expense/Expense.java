@@ -25,11 +25,17 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Expense {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class Expense  implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "branch_id")
@@ -69,4 +75,14 @@ public class Expense {
 
     @Column(columnDefinition = "TEXT")
     private String notes;
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
+    }
 }

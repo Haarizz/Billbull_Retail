@@ -60,7 +60,11 @@ public class LpoService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final PaymentVoucherRepository paymentVoucherRepository;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
@@ -79,6 +83,7 @@ public class LpoService {
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             PaymentVoucherRepository paymentVoucherRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
@@ -96,6 +101,7 @@ public class LpoService {
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.paymentVoucherRepository = paymentVoucherRepository;
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
@@ -123,9 +129,11 @@ public class LpoService {
     /* ================= LIST ================= */
 
     public List<LpoListResponse> list(LpoStatus status) {
-        List<Lpo> lpos = new ArrayList<>(branchAccessService.filterBranchScoped((status == null)
-                ? repository.findAll()
-                : repository.findByStatus(status), Lpo::getBranchId));
+        List<Lpo> lpos = new ArrayList<>(ownershipAccessService.filterOwned(
+                branchAccessService.filterBranchScoped((status == null)
+                        ? repository.findAll()
+                        : repository.findByStatus(status), Lpo::getBranchId),
+                Lpo::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 lpos,
                 Lpo::getLpoDate,
@@ -150,6 +158,9 @@ public class LpoService {
         String normalizedVendor = vendor == null ? "" : vendor.trim();
 
         BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        // Ownership net (AND on top of branch): the Hibernate ownerFilter narrows the DB-pushed
+        // searchPage query to created_by_user_id = me for restricted users. No-op when toggle off.
+        ownershipAccessService.enableOwnerFilter(entityManager);
 
         org.springframework.data.domain.Page<Lpo> pg = repository.searchPage(
                 scope.allBranches(), scope.branchIds(), status, normalizedSearch,
@@ -164,6 +175,7 @@ public class LpoService {
     /** Per-status counts (branch-scoped) for the LPO tab badges. */
     public Map<String, Long> statusCounts() {
         BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        ownershipAccessService.enableOwnerFilter(entityManager); // AND ownership onto the scoped count
         Map<String, Long> counts = new HashMap<>();
         long total = 0;
         for (Object[] row : repository.countByStatusScoped(scope.allBranches(), scope.branchIds())) {
@@ -185,6 +197,7 @@ public class LpoService {
         Lpo lpo = repository.findByLpoNumber(lpoNumber)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        ownershipAccessService.assertCanAccessRecord(lpo.getCreatedByUserId(), "LPO");
 
         return toDetailDto(lpo);
     }
@@ -309,6 +322,7 @@ public class LpoService {
         Lpo lpo = repository.findByLpoNumber(lpoNumber)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        ownershipAccessService.assertCanAccessRecord(lpo.getCreatedByUserId(), "LPO");
         return lpo;
     }
 
@@ -624,6 +638,7 @@ public class LpoService {
         Lpo lpo = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        ownershipAccessService.assertCanAccessRecord(lpo.getCreatedByUserId(), "LPO");
         return lpo;
     }
 
@@ -689,6 +704,7 @@ public class LpoService {
         Lpo lpo = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        ownershipAccessService.assertCanAccessRecord(lpo.getCreatedByUserId(), "LPO");
         return lpo;
     }
 

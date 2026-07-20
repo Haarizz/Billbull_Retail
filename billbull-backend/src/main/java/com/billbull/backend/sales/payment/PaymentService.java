@@ -57,6 +57,9 @@ public class PaymentService {
     private BranchAccessService branchAccessService;
 
     @Autowired
+    private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+
+    @Autowired
     private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     @Autowired
@@ -64,7 +67,9 @@ public class PaymentService {
 
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch),
+                        Payment::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
@@ -76,7 +81,9 @@ public class PaymentService {
 
     public List<Payment> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<Payment> payments = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(paymentRepository.findByPaymentDateBetween(from, to), Payment::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(paymentRepository.findByPaymentDateBetween(from, to), Payment::getBranch),
+                        Payment::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 payments,
                 Payment::getPaymentDate,
@@ -89,6 +96,7 @@ public class PaymentService {
     public Payment getPaymentById(Long id) {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Payment not found with ID: " + id));
+        ownershipAccessService.assertCanAccessRecord(payment.getCreatedByUserId(), "Payment");
         if (payment.getLinkedInvoice() != null && !payment.getLinkedInvoice().isBlank()) {
             recomputeInvoiceBalances(new ArrayList<>(paymentRepository.findByLinkedInvoice(payment.getLinkedInvoice())))
                     .stream().filter(p -> p.getId().equals(id)).findFirst()
@@ -189,6 +197,7 @@ public class PaymentService {
         if (existingPayment != null) {
             Long existingBranchId = existingPayment.getBranch() != null ? existingPayment.getBranch().getId() : null;
             branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Payment");
+            ownershipAccessService.assertCanAccessRecord(existingPayment.getCreatedByUserId(), "Payment");
             payment.setBranch(existingPayment.getBranch());
         } else {
             payment.setBranch(branchAccessService.getRequiredCurrentUserBranch());
@@ -263,9 +272,11 @@ public class PaymentService {
         YearMonth currentMonth = YearMonth.now();
         LocalDate monthStart = currentMonth.atDay(1);
         LocalDate monthEnd = currentMonth.atEndOfMonth();
-        List<Payment> scopedPayments = branchAccessService.filterExactBranchScopedByBranch(
-                paymentRepository.findAll(),
-                Payment::getBranch);
+        List<Payment> scopedPayments = ownershipAccessService.filterOwned(
+                branchAccessService.filterExactBranchScopedByBranch(
+                        paymentRepository.findAll(),
+                        Payment::getBranch),
+                Payment::getCreatedByUserId);
 
         double todayReceived = scopedPayments.stream()
                 .filter(payment -> payment.getPaymentType() == PaymentType.RECEIVED)

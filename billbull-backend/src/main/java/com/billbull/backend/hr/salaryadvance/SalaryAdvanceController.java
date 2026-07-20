@@ -17,7 +17,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class SalaryAdvanceController {
 
-    private static final String MODULE = "hr";
+    private static final String MODULE = "hr.payroll";
 
     @Autowired
     private SalaryAdvanceService service;

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { GlobalBadge } from '../../../components/inventory/BranchScopeIndicators';
 import {
   Scale, ChevronRight, Plus, Upload, Download, Search,
   ChevronDown, RefreshCw, SquarePen, Trash2, Eye,
@@ -292,7 +293,10 @@ const Units = () => {
                 pagedUnits.map((unit) => (
                   <tr key={unit.id} className="hover:bg-slate-50 hover:border-l-4 hover:border-l-[#F5C742] transition-all border-l-4 border-transparent group">
                     <td className="p-3">
-                      <p className="font-medium text-slate-900">{unit.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-slate-900">{unit.name}</p>
+                        <GlobalBadge branchId={unit.branchId} />
+                      </div>
                       <p className="text-xs text-slate-500 line-clamp-1 max-w-xs" title={unit.description}>
                         {unit.baseUnitId ? `Level ${unit.baseUnitName} • ` : 'Foundation Unit • '}
                         {unit.description}

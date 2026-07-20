@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("isAuthenticated()")
 public class ReconciliationController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.reconcile";
 
     private final ReconciliationService reconciliationService;
     private final AuditLogService auditLogService;

@@ -47,6 +47,9 @@ export const getInventoryReportData = async (reportId, filters = {}, abortSignal
         if (filters.searchQuery) params.search = filters.searchQuery;
         if (filters.stockCondition && filters.stockCondition !== 'All') params.stockCondition = filters.stockCondition;
         if (filters.costingMethod && filters.costingMethod !== 'avg') params.costingMethod = filters.costingMethod;
+        // Branch-Level Inventory Phase 10/11 — 'all' forces the consolidated company-wide view;
+        // omitted/'active' scopes to the active branch when the tenant toggle is on.
+        if (filters.branchScope === 'all') params.branchScope = 'all';
 
         const res = await api.get(`/api/inventory/reports/data/${reportEndpointId(reportId)}`, {
             params,

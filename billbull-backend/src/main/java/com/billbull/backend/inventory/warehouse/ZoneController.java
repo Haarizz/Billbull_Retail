@@ -12,7 +12,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class ZoneController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.warehouse";
 
     private final ZoneService zoneService;
     private final ModulePermissionService modulePermissionService;

@@ -18,7 +18,7 @@ import java.io.ByteArrayInputStream;
 @RequestMapping("/api/sub-departments")
 public class SubDepartmentController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.category";
 
     private final SubDepartmentService service;
     private final SubDepartmentExportService exportService;

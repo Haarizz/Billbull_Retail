@@ -16,7 +16,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class ProformaController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.proforma";
 
     private final ProformaService service;
     private final AuditLogService auditLogService;

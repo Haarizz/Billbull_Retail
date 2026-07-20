@@ -16,7 +16,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class TaxController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.tax";
 
     private final TaxService taxService;
     private final AuditLogService auditLogService;

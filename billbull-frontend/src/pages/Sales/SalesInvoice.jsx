@@ -189,6 +189,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
 import { usePermissions } from '../../context/PermissionContext';
+import { OwnershipIndicator } from '../../components/common/OwnershipIndicator';
 
 // ==========================================
 // COMPONENT
@@ -3493,6 +3494,7 @@ const SalesInvoice = () => {
                             ]}
                         />
                         <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                            <OwnershipIndicator className="mb-3" label="invoices you created" />
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
                                 <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">

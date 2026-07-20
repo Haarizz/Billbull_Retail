@@ -11,6 +11,9 @@ public class UnitResponse {
 	private Long baseUnitId;
 	private String baseUnitName;
 	private java.math.BigDecimal conversionRate;
+	// Branch-Level Inventory Phase 11 — owning branch (null = shared/global) for the SPA badges.
+	private Long branchId;
+	private String branchName;
 
 	public UnitResponse(Unit unit, long usedIn) {
 		this.id = unit.getId();
@@ -24,6 +27,10 @@ public class UnitResponse {
 			this.baseUnitName = unit.getBaseUnit().getName();
 		}
 		this.conversionRate = unit.getConversionRate();
+		if (unit.getBranch() != null) {
+			this.branchId = unit.getBranch().getId();
+			this.branchName = unit.getBranch().getName();
+		}
 	}
 
 	public Long getId() {
@@ -96,5 +103,21 @@ public class UnitResponse {
 
 	public void setConversionRate(java.math.BigDecimal conversionRate) {
 		this.conversionRate = conversionRate;
+	}
+
+	public Long getBranchId() {
+		return branchId;
+	}
+
+	public void setBranchId(Long branchId) {
+		this.branchId = branchId;
+	}
+
+	public String getBranchName() {
+		return branchName;
+	}
+
+	public void setBranchName(String branchName) {
+		this.branchName = branchName;
 	}
 }

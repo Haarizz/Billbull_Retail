@@ -30,15 +30,24 @@ public class ExpenseService {
     private BranchAccessService branchAccessService;
 
     @Autowired
+    private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+
+    @Autowired
     private BranchRepository branchRepository;
 
     public List<Expense> getAllExpenses() {
-        return branchAccessService.filterBranchScopedByBranch(
-                expenseRepository.findAllByOrderByDateDesc(), Expense::getBranch);
+        return ownershipAccessService.filterOwned(
+                branchAccessService.filterBranchScopedByBranch(
+                        expenseRepository.findAllByOrderByDateDesc(), Expense::getBranch),
+                Expense::getCreatedByUserId);
     }
 
     public Expense getExpenseById(Long id) {
-        return expenseRepository.findById(id).orElse(null);
+        Expense expense = expenseRepository.findById(id).orElse(null);
+        if (expense != null) {
+            ownershipAccessService.assertCanAccessRecord(expense.getCreatedByUserId(), "Expense");
+        }
+        return expense;
     }
 
     public Expense createExpense(Expense expense) {
@@ -88,6 +97,7 @@ public class ExpenseService {
 
             Long existingBranchId = existingExpense.getBranch() != null ? existingExpense.getBranch().getId() : null;
             branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Expense");
+            ownershipAccessService.assertCanAccessRecord(existingExpense.getCreatedByUserId(), "Expense");
             // Branch is immutable on update — never copy from expenseDetails.
 
             existingExpense.setDate(expenseDetails.getDate());

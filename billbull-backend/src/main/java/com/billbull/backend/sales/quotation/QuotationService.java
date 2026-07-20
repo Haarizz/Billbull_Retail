@@ -74,6 +74,7 @@ public class QuotationService {
     private final SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     public QuotationService(
             QuotationRepository quotationRepo,
@@ -92,7 +93,8 @@ public class QuotationService {
             InquiryFollowUpRepository inquiryFollowUpRepo,
             SalesSettingsService salesSettingsService,
             SalesDocumentNumberingService numberingService,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
         this.quotationRepo = quotationRepo;
         this.objectMapper = objectMapper;
         this.productRepo = productRepo;
@@ -110,6 +112,7 @@ public class QuotationService {
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     // -------------------------------------------------
@@ -157,9 +160,11 @@ public class QuotationService {
         java.time.YearMonth month = java.time.YearMonth.now();
         LocalDate monthStart = month.atDay(1);
         LocalDate monthEnd = month.atEndOfMonth();
-        List<Quotation> scopedQuotations = branchAccessService.filterExactBranchScoped(
-                quotationRepo.findAll(),
-                Quotation::getBranchId);
+        List<Quotation> scopedQuotations = ownershipAccessService.filterOwned(
+                branchAccessService.filterExactBranchScoped(
+                        quotationRepo.findAll(),
+                        Quotation::getBranchId),
+                Quotation::getCreatedByUserId);
         long totalThisMonth = scopedQuotations.stream()
                 .filter(quotation -> quotation.getDate() != null
                         && !quotation.getDate().isBefore(monthStart)
@@ -201,7 +206,9 @@ public class QuotationService {
     @Transactional(readOnly = true)
     public List<Quotation> getAllQuotations() {
         List<Quotation> quotations = new ArrayList<>(
-                branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId),
+                        Quotation::getCreatedByUserId));
         quotations.sort((a, b) -> Long.compare(
                 b.getId() == null ? 0 : b.getId(),
                 a.getId() == null ? 0 : a.getId()));
@@ -213,7 +220,9 @@ public class QuotationService {
     @Transactional(readOnly = true)
     public List<Quotation> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<Quotation> quotations = new ArrayList<>(
-                branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId),
+                        Quotation::getCreatedByUserId));
         quotations.sort((a, b) -> Long.compare(
                 b.getId() == null ? 0 : b.getId(),
                 a.getId() == null ? 0 : a.getId()));
@@ -237,6 +246,9 @@ public class QuotationService {
     public Quotation getQuotationById(Long id) {
         Quotation quotation = quotationRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Quotation not found with id: " + id));
+        // Ownership guard (user-based data visibility) — restricted users may only open their own
+        // quotations; 404 to avoid id-enumeration. No-op when the toggle is off / override held.
+        ownershipAccessService.assertCanAccessRecord(quotation.getCreatedByUserId(), "Quotation");
         initialize(quotation);
         enrichQuotationImages(List.of(quotation));
         return quotation;
@@ -253,6 +265,8 @@ public class QuotationService {
         // Guard: restricted users can't edit a quotation belonging to another branch.
         if (existingQuotation != null) {
             branchAccessService.assertTransactionBranchAccessible(existingQuotation.getBranchId(), "Quotation");
+            // ...nor one owned by another user (ownership AND branch). No-op when toggle off.
+            ownershipAccessService.assertCanAccessRecord(existingQuotation.getCreatedByUserId(), "Quotation");
         }
 
         // Stamp branch (create) or carry forward existing branch (update — immutable).

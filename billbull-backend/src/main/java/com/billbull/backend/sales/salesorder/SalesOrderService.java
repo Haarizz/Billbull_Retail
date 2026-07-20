@@ -40,6 +40,7 @@ public class SalesOrderService {
     private final ProductMediaRepository productMediaRepository;
     private final com.billbull.backend.inventory.product.ProductPackingRepository packingRepo;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
@@ -57,6 +58,7 @@ public class SalesOrderService {
             ProductMediaRepository productMediaRepository,
             com.billbull.backend.inventory.product.ProductPackingRepository packingRepo,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
@@ -72,6 +74,7 @@ public class SalesOrderService {
         this.productMediaRepository = productMediaRepository;
         this.packingRepo = packingRepo;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
@@ -108,6 +111,7 @@ public class SalesOrderService {
         if (existingOrder != null) {
             Long existingBranchId = existingOrder.getBranch() != null ? existingOrder.getBranch().getId() : null;
             branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Sales Order");
+            ownershipAccessService.assertCanAccessRecord(existingOrder.getCreatedByUserId(), "Sales Order");
             order.setBranch(existingOrder.getBranch());
         } else {
             order.setBranch(branchAccessService.getRequiredCurrentUserBranch());
@@ -366,6 +370,7 @@ public class SalesOrderService {
     public SalesOrder getById(Long id) {
         SalesOrder order = orderRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Sales Order not found: " + id));
+        ownershipAccessService.assertCanAccessRecord(order.getCreatedByUserId(), "Sales Order");
 
         Hibernate.initialize(order.getItems());
         Hibernate.initialize(order.getWarehouse());
@@ -382,9 +387,11 @@ public class SalesOrderService {
         java.time.YearMonth month = java.time.YearMonth.now();
         java.time.LocalDate monthStart = month.atDay(1);
         java.time.LocalDate monthEnd = month.atEndOfMonth();
-        List<SalesOrder> scopedOrders = branchAccessService.filterExactBranchScopedByBranch(
-                orderRepo.findAll(),
-                SalesOrder::getBranch);
+        List<SalesOrder> scopedOrders = ownershipAccessService.filterOwned(
+                branchAccessService.filterExactBranchScopedByBranch(
+                        orderRepo.findAll(),
+                        SalesOrder::getBranch),
+                SalesOrder::getCreatedByUserId);
 
         long todayOrders = scopedOrders.stream()
                 .filter(order -> order.getOrderDate() != null && order.getOrderDate().isEqual(today))
@@ -437,7 +444,9 @@ public class SalesOrderService {
     public List<SalesOrder> getAll() {
 
         List<SalesOrder> orders = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch),
+                        SalesOrder::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 orders,
                 SalesOrder::getOrderDate,
@@ -457,7 +466,9 @@ public class SalesOrderService {
     @Transactional(readOnly = true)
     public List<SalesOrder> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<SalesOrder> orders = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(orderRepo.findByOrderDateBetween(from, to), SalesOrder::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(orderRepo.findByOrderDateBetween(from, to), SalesOrder::getBranch),
+                        SalesOrder::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 orders,
                 SalesOrder::getOrderDate,

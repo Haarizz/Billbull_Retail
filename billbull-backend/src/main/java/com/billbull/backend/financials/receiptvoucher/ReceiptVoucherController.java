@@ -19,7 +19,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class ReceiptVoucherController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.voucher";
 
     private final ReceiptVoucherService service;
     private final ObjectMapper objectMapper;

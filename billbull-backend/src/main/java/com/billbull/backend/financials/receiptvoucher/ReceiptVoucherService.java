@@ -47,6 +47,7 @@ public class ReceiptVoucherService {
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
 
     public ReceiptVoucherService(
@@ -57,6 +58,7 @@ public class ReceiptVoucherService {
             OpeningInvoiceRepository openingInvoiceRepository,
             CustomerRepository customerRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
         this.repository = repository;
@@ -66,6 +68,7 @@ public class ReceiptVoucherService {
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.advanceApplicationRepository = advanceApplicationRepository;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
@@ -78,8 +81,10 @@ public class ReceiptVoucherService {
 
     @Transactional(readOnly = true)
     public List<ReceiptVoucher> getAllReceipts() {
-        List<ReceiptVoucher> receipts = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
-                repository.findAll(), ReceiptVoucher::getBranchEntity));
+        List<ReceiptVoucher> receipts = new ArrayList<>(ownershipAccessService.filterOwned(
+                branchAccessService.filterBranchScopedByBranch(
+                        repository.findAll(), ReceiptVoucher::getBranchEntity),
+                ReceiptVoucher::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 receipts,
                 ReceiptVoucher::getDate,
@@ -93,6 +98,7 @@ public class ReceiptVoucherService {
     public ReceiptVoucher getReceiptById(Long id) {
         ReceiptVoucher rv = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
+        ownershipAccessService.assertCanAccessRecord(rv.getCreatedByUserId(), "Receipt Voucher");
         rv.snapshotBranchFields();
         return rv;
     }

@@ -54,6 +54,30 @@
 			<version>1.49.0</version>
 		</dependency>
 
+		<!-- Rate limiting (future-enhancements Topic 3, Phase 0). Bucket4j supplies the
+		     token-bucket algorithm; Caffeine backs the in-memory bucket store with TTL
+		     eviction (fixes the unbounded-map growth of the old LoginRateLimiter). Both are
+		     inert until ratelimit.enabled=true. Redis backend (bucket4j-redis + Lettuce) is
+		     intentionally NOT added yet — deferred to Phase 7 (horizontal scale). -->
+		<dependency>
+			<groupId>com.bucket4j</groupId>
+			<artifactId>bucket4j-core</artifactId>
+			<version>8.7.0</version>
+		</dependency>
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
+			<version>3.1.8</version>
+		</dependency>
+
+		<!-- Actuator + Micrometer for rate-limit metrics (Topic 3 Phase 6). Actuator
+		     endpoints are locked down in application.properties (health/info only,
+		     never public). Prometheus registry is optional and not wired by default. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+
 		 <!-- Excel Export (Apache POI) -->
         <dependency>
             <groupId>org.apache.poi</groupId>

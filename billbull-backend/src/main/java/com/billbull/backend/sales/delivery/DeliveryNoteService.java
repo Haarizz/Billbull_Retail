@@ -72,6 +72,7 @@ public class DeliveryNoteService {
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final ProductPackingRepository packingRepo;
     private final BatchSelectionService batchSelectionService;
     private final SalesSettingsService salesSettingsService;
@@ -94,6 +95,7 @@ public class DeliveryNoteService {
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             ProductPackingRepository packingRepo,
             BatchSelectionService batchSelectionService,
             SalesSettingsService salesSettingsService,
@@ -114,6 +116,7 @@ public class DeliveryNoteService {
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.packingRepo = packingRepo;
         this.batchSelectionService = batchSelectionService;
         this.salesSettingsService = salesSettingsService;
@@ -287,7 +290,9 @@ public class DeliveryNoteService {
     @Transactional(readOnly = true)
     public List<DeliveryNoteResponse> list() {
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
-                branchAccessService.filterBranchScoped(repo.findAll(), DeliveryNote::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(repo.findAll(), DeliveryNote::getBranchId),
+                        DeliveryNote::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
@@ -299,7 +304,9 @@ public class DeliveryNoteService {
     @Transactional(readOnly = true)
     public List<DeliveryNoteResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
-                branchAccessService.filterBranchScoped(repo.findByDnDateBetween(from, to), DeliveryNote::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(repo.findByDnDateBetween(from, to), DeliveryNote::getBranchId),
+                        DeliveryNote::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
@@ -1182,6 +1189,7 @@ public class DeliveryNoteService {
         DeliveryNote note = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Delivery Note not found"));
         branchAccessService.assertTransactionBranchAccessible(note.getBranchId(), "Delivery Note");
+        ownershipAccessService.assertCanAccessRecord(note.getCreatedByUserId(), "Delivery Note");
         return note;
     }
 

@@ -32,6 +32,7 @@ public class JournalEntryService {
     private final FinancialAuditService auditService;
     private final AccountingPeriodService periodService;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     // Protected Control Accounts (cannot be used in manual JVs)
     private static final Set<String> PROTECTED_ACCOUNT_ROLES = Set.of(
@@ -43,7 +44,8 @@ public class JournalEntryService {
             AccountRepository accountRepository,
             FinancialAuditService auditService,
             AccountingPeriodService periodService,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
         this.journalEntryRepository = journalEntryRepository;
         this.journalVoucherRepository = journalVoucherRepository;
         this.ledgerService = ledgerService;
@@ -51,14 +53,17 @@ public class JournalEntryService {
         this.auditService = auditService;
         this.periodService = periodService;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     public List<JournalEntry> getAllEntries() {
         // ARCHFIX §1.6: lines + branch are LAZY — JOIN FETCH them so the response serializes without
         // a LazyInitializationException (these methods are not @Transactional). @BatchSize on lines
         // keeps the fetch efficient. DISTINCT collapses the lines-join row duplication.
-        List<JournalEntry> entries = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
-                journalEntryRepository.findAllWithLinesAndBranch(), JournalEntry::getBranch));
+        List<JournalEntry> entries = new ArrayList<>(ownershipAccessService.filterOwned(
+                branchAccessService.filterBranchScopedByBranch(
+                        journalEntryRepository.findAllWithLinesAndBranch(), JournalEntry::getBranch),
+                JournalEntry::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 entries,
                 JournalEntry::getDate,
@@ -70,8 +75,14 @@ public class JournalEntryService {
     public JournalEntry getEntryById(Long id) {
         // ARCHFIX §1.6: fetch lines + branch eagerly via JOIN FETCH so both the serialized response
         // and the in-transaction write callers (postEntry/update/approve/...) see a fully-loaded graph.
-        return journalEntryRepository.findByIdWithLinesAndBranch(id != null ? id : -1L)
+        JournalEntry entry = journalEntryRepository.findByIdWithLinesAndBranch(id != null ? id : -1L)
                 .orElseThrow(() -> new RuntimeException("Journal Entry not found with id: " + id));
+        // Ownership (maker-checker note): JVs are multi-actor — a maker (ACCOUNTANT) creates, a
+        // checker (MANAGER/ADMIN) approves. The checker roles hold VIEW_ALL_RECORDS, so this guard
+        // never locks an approver out of a pending JV; it only hides one accountant's JVs from
+        // another restricted accountant. No-op when the toggle is off.
+        ownershipAccessService.assertCanAccessRecord(entry.getCreatedByUserId(), "Journal Entry");
+        return entry;
     }
 
     @Transactional

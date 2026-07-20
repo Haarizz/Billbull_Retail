@@ -35,7 +35,7 @@ public class SalesInvoiceController {
     @SuppressWarnings("unchecked")
     public ResponseEntity<?> sendEmail(@PathVariable Long id,
                                        @RequestBody(required = false) Map<String, Object> body) {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         try {
             String toEmail = body != null ? (String) body.get("toEmail") : null;
             String subject = body != null ? (String) body.get("subject") : null;
@@ -62,7 +62,7 @@ public class SalesInvoiceController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public List<SalesInvoice> getAll() {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         return service.getAll();
     }
 
@@ -81,7 +81,7 @@ public class SalesInvoiceController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         java.util.List<SalesInvoice> all = (fromDate != null || toDate != null)
                 ? service.getAllByDateRange(
                         fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
@@ -93,7 +93,7 @@ public class SalesInvoiceController {
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice getById(@PathVariable Long id) {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         return service.getById(id);
     }
 
@@ -101,21 +101,21 @@ public class SalesInvoiceController {
     @GetMapping("/{id}/history")
     @PreAuthorize("isAuthenticated()")
     public List<com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryResponse> getHistory(@PathVariable Long id) {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         return service.getHistory(id);
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice save(@RequestBody SalesInvoice invoice) {
-        modulePermissionService.requireCanCreate("sales");
+        modulePermissionService.requireCanCreate("sales.invoice");
         return service.save(invoice);
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit("sales");
+        modulePermissionService.requireCanEdit("sales.invoice");
         service.delete(id);
         return ResponseEntity.noContent().build();
     }
@@ -126,7 +126,7 @@ public class SalesInvoiceController {
             @PathVariable Long invoiceId,
             @PathVariable Long itemId,
             @RequestBody BatchSelectionRequest request) {
-        modulePermissionService.requireCanEdit("sales");
+        modulePermissionService.requireCanEdit("sales.invoice");
         return service.saveBatchSelection(invoiceId, itemId, request);
     }
 
@@ -135,7 +135,7 @@ public class SalesInvoiceController {
     public SalesInvoice deleteBatchSelection(
             @PathVariable Long invoiceId,
             @PathVariable Long itemId) {
-        modulePermissionService.requireCanEdit("sales");
+        modulePermissionService.requireCanEdit("sales.invoice");
         return service.deleteBatchSelection(invoiceId, itemId);
     }
 
@@ -164,7 +164,7 @@ public class SalesInvoiceController {
     @GetMapping("/open")
     @PreAuthorize("isAuthenticated()")
     public List<OpenInvoiceSummary> getOpenInvoices(@RequestParam String customerCode) {
-        modulePermissionService.requireCanView("sales");
+        modulePermissionService.requireCanView("sales.invoice");
         return service.getOpenInvoicesForCustomer(customerCode).stream()
                 .map(OpenInvoiceSummary::from)
                 .toList();

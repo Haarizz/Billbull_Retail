@@ -12,7 +12,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class LocatorController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.warehouse";
 
     private final LocatorService locatorService;
     private final ModulePermissionService modulePermissionService;

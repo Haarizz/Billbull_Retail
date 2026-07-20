@@ -77,26 +77,26 @@ public class EmployeeController {
 
     @GetMapping
     public List<Employee> getAll() {
-        modulePermissionService.requireCanView("hr");
+        modulePermissionService.requireCanView("hr.employee");
         return service.getAll();
     }
 
     @GetMapping("/{id}")
     public Employee getById(@PathVariable Long id, HttpServletRequest request) {
-        modulePermissionService.requireCanView("hr");
+        modulePermissionService.requireCanView("hr.employee");
         auditLogService.logAllowedAccess("/api/employees/" + id, "GET", request);
         return service.getById(id);
     }
 
     @GetMapping("/active")
     public List<Employee> activeEmployees() {
-        modulePermissionService.requireCanView("hr");
+        modulePermissionService.requireCanView("hr.employee");
         return service.getActiveEmployees();
     }
 
     @GetMapping("/pending")
     public List<Employee> pendingEmployees() {
-        modulePermissionService.requireCanView("hr");
+        modulePermissionService.requireCanView("hr.employee");
         return service.getPendingEmployees();
     }
 
@@ -107,7 +107,7 @@ public class EmployeeController {
             @RequestPart("employee") String employeeJson,
             @RequestPart(value = "avatar", required = false) MultipartFile avatar,
             Authentication authentication) throws Exception {
-        modulePermissionService.requireCanCreate("hr");
+        modulePermissionService.requireCanCreate("hr.employee");
         EmployeeUpsertRequest request = mapper.readValue(employeeJson, EmployeeUpsertRequest.class);
         validateAdminLoginProvisioning(request, authentication);
         return ResponseEntity.ok(service.createEmployee(request, avatar));
@@ -120,7 +120,7 @@ public class EmployeeController {
             @PathVariable Long id,
             @RequestPart("employee") String employeeJson,
             @RequestPart(value = "avatar", required = false) MultipartFile avatar) throws Exception {
-        modulePermissionService.requireCanEdit("hr");
+        modulePermissionService.requireCanEdit("hr.employee");
         EmployeeUpsertRequest request = mapper.readValue(employeeJson, EmployeeUpsertRequest.class);
         rejectLoginProvisioningOnUpdate(request);
         return ResponseEntity.ok(service.updateEmployee(id, request, avatar));
@@ -128,13 +128,13 @@ public class EmployeeController {
 
     @PutMapping("/{id}/deactivate")
     public ResponseEntity<Employee> deactivate(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit("hr");
+        modulePermissionService.requireCanEdit("hr.employee");
         return ResponseEntity.ok(service.deactivateEmployee(id));
     }
 
     @PutMapping("/{id}/activate")
     public ResponseEntity<Employee> activate(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit("hr");
+        modulePermissionService.requireCanEdit("hr.employee");
         return ResponseEntity.ok(service.activateEmployee(id));
     }
 
@@ -142,13 +142,13 @@ public class EmployeeController {
 
     @PostMapping("/{id}/approve")
     public ResponseEntity<Employee> approve(@PathVariable Long id) {
-        modulePermissionService.requireCanApprove("hr");
+        modulePermissionService.requireCanApprove("hr.employee");
         return ResponseEntity.ok(service.approve(id));
     }
 
     @PostMapping("/{id}/reject")
     public ResponseEntity<Employee> reject(@PathVariable Long id) {
-        modulePermissionService.requireCanApprove("hr");
+        modulePermissionService.requireCanApprove("hr.employee");
         return ResponseEntity.ok(service.reject(id));
     }
 

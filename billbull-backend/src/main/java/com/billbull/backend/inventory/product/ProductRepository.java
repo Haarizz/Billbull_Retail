@@ -243,6 +243,106 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         /** Batch lookup by code list — used by POS price override check. */
         List<Product> findByCodeIn(List<String> codes);
 
+        // ─────────────────────────────────────────────────────────────────────
+        // Branch-Level Inventory Phase 6 — branch-scoped catalog identity.
+        // Same predicate family as DepartmentRepository.findActiveInBranchScope:
+        // own-branch rows + global (branch IS NULL) rows; branchIds never empty
+        // (sentinel). Every existing unscoped method above stays untouched for
+        // the toggle-off / admin All-Branches path.
+        // ─────────────────────────────────────────────────────────────────────
+
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL)")
+        List<Product> findAllActiveInBranchScope(
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) " +
+                        "ORDER BY p.name ASC")
+        Page<Product> findAllActiveForListInBranchScope(
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
+                        Pageable pageable);
+
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) AND (" +
+                        "  LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
+                        ") ORDER BY p.name ASC")
+        Page<Product> findAllActiveBySearchInBranchScope(
+                        @org.springframework.data.repository.query.Param("search") String search,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
+                        Pageable pageable);
+
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) " +
+                        "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+                        "  OR EXISTS (SELECT 1 FROM BatchMaster bm WHERE bm.productId = p.id AND LOWER(bm.batchNumber) LIKE LOWER(CONCAT('%', :search, '%')))) " +
+                        "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
+                        "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
+                        "ORDER BY p.name ASC")
+        Page<Product> findAllActiveFilteredInBranchScope(
+                        @org.springframework.data.repository.query.Param("search") String search,
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId,
+                        @org.springframework.data.repository.query.Param("availableInPos") Boolean availableInPos,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
+                        Pageable pageable);
+
+        @Query("SELECT p.status, COUNT(p) FROM Product p " +
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) " +
+                        "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
+                        "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
+                        "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
+                        "GROUP BY p.status")
+        List<Object[]> countByStatusFilteredInBranchScope(
+                        @org.springframework.data.repository.query.Param("search") String search,
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId,
+                        @org.springframework.data.repository.query.Param("availableInPos") Boolean availableInPos,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Per-branch code uniqueness (Phase 6A partial-index model): own branch + global tier. */
+        @Query("SELECT (COUNT(p) > 0) FROM Product p WHERE p.isActive = true AND LOWER(p.code) = LOWER(:code) " +
+                        "AND (p.branch.id IN :branchIds OR p.branch IS NULL)")
+        boolean existsActiveByCodeInBranchScope(
+                        @org.springframework.data.repository.query.Param("code") String code,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Branch-first exact code/SKU resolution (global fallback handled by the service). */
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND LOWER(p.code) = LOWER(:code) " +
+                        "AND p.branch.id IN :branchIds ORDER BY p.id ASC")
+        List<Product> findActiveByCodeInBranches(
+                        @org.springframework.data.repository.query.Param("code") String code,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND LOWER(p.code) = LOWER(:code) " +
+                        "AND p.branch IS NULL ORDER BY p.id ASC")
+        List<Product> findActiveGlobalByCode(
+                        @org.springframework.data.repository.query.Param("code") String code);
+
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND LOWER(p.sku) = LOWER(:sku) " +
+                        "AND p.branch.id IN :branchIds ORDER BY p.id ASC")
+        List<Product> findActiveBySkuInBranches(
+                        @org.springframework.data.repository.query.Param("sku") String sku,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+        @Query("SELECT p FROM Product p WHERE p.isActive = true AND LOWER(p.sku) = LOWER(:sku) " +
+                        "AND p.branch IS NULL ORDER BY p.id ASC")
+        List<Product> findActiveGlobalBySku(
+                        @org.springframework.data.repository.query.Param("sku") String sku);
+
         /**
          * Fetches only basic fields for active products to avoid loading full entities
          */

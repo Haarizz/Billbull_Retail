@@ -12,11 +12,17 @@ import java.util.List;
 @Table(name = "sales_quotations", indexes = {
     @Index(name = "idx_quotation_branch", columnList = "branch_id")
 })
-public class Quotation {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class Quotation  implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     @Column(unique = true, nullable = false)
     private String qtnNo;
@@ -198,4 +204,14 @@ public class Quotation {
 
     public List<QuotationRevision> getRevisions() { return revisions; }
     public void setRevisions(List<QuotationRevision> revisions) { this.revisions = revisions; }
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
+    }
 }

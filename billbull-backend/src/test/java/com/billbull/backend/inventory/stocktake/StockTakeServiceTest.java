@@ -90,7 +90,9 @@ class StockTakeServiceTest {
                 postingEngineService,
                 stockMovementService,
                 branchScopeResolver,
-                branchAccessService);
+                branchAccessService,
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false));
     }
 
     @Test

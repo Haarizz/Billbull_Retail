@@ -85,6 +85,7 @@ public class SalesInvoiceService {
     private final WarehouseRepository warehouseRepository;
     private final BranchRepository branchRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
@@ -114,6 +115,7 @@ public class SalesInvoiceService {
             WarehouseRepository warehouseRepository,
             BranchRepository branchRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
@@ -143,6 +145,7 @@ public class SalesInvoiceService {
         this.warehouseRepository = warehouseRepository;
         this.branchRepository = branchRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
@@ -810,6 +813,10 @@ public class SalesInvoiceService {
         SalesInvoice invoice = invoiceRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Sales Invoice not found: " + id));
         branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Sales Invoice");
+        // Ownership (user-based data visibility) — AND on top of branch scope. Restricted users may
+        // only open their own invoices; 404 (not 403) avoids id-enumeration leakage. No-op when the
+        // toggle is off or the principal holds VIEW_ALL_RECORDS.
+        ownershipAccessService.assertCanAccessRecord(invoice.getCreatedByUserId(), "Sales Invoice");
 
         Hibernate.initialize(invoice.getItems());
         enrichItems(invoice.getItems());
@@ -827,9 +834,11 @@ public class SalesInvoiceService {
         java.time.YearMonth month = java.time.YearMonth.now();
         LocalDate monthStart = month.atDay(1);
         LocalDate monthEnd = month.atEndOfMonth();
-        List<SalesInvoice> scopedInvoices = branchAccessService.filterExactBranchScoped(
-                invoiceRepo.findAll(),
-                SalesInvoice::getBranchId);
+        List<SalesInvoice> scopedInvoices = ownershipAccessService.filterOwned(
+                branchAccessService.filterExactBranchScoped(
+                        invoiceRepo.findAll(),
+                        SalesInvoice::getBranchId),
+                SalesInvoice::getCreatedByUserId);
 
         double todayRevenue = scopedInvoices.stream()
                 .filter(invoice -> invoice.getInvoiceDate() != null && invoice.getInvoiceDate().isEqual(today))
@@ -881,7 +890,9 @@ public class SalesInvoiceService {
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAll() {
         List<SalesInvoice> invoices = new ArrayList<>(
-                branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId),
+                        SalesInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 SalesInvoice::getInvoiceDate,
@@ -900,7 +911,9 @@ public class SalesInvoiceService {
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<SalesInvoice> invoices = new ArrayList<>(
-                branchAccessService.filterBranchScoped(invoiceRepo.findByInvoiceDateBetween(from, to), SalesInvoice::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(invoiceRepo.findByInvoiceDateBetween(from, to), SalesInvoice::getBranchId),
+                        SalesInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 SalesInvoice::getInvoiceDate,

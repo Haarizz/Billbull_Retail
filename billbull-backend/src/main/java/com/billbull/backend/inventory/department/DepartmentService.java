@@ -166,6 +166,9 @@ public class DepartmentService {
         res.setDesc(d.getDescription());
         res.setCode(d.getCode());
         res.setCount(productCount);
+        // Phase 11: owning branch (null = shared/global) for the SPA's Global badge.
+        res.setBranchId(d.getBranch() != null ? d.getBranch().getId() : null);
+        res.setBranchName(d.getBranch() != null ? d.getBranch().getName() : null);
 
         return res;
     }

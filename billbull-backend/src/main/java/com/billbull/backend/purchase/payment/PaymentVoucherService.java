@@ -35,11 +35,19 @@ public class PaymentVoucherService {
     private BranchAccessService branchAccessService;
 
     @Autowired
+    private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
+    @Autowired
     private com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
     public List<PaymentVoucher> getAllVouchers() {
         List<PaymentVoucher> vouchers = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch),
+                        PaymentVoucher::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 vouchers,
                 PaymentVoucher::getPaymentDate,
@@ -59,6 +67,7 @@ public class PaymentVoucherService {
         String normalizedSearch = search == null ? "" : search.trim().toLowerCase(java.util.Locale.ROOT);
 
         BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        ownershipAccessService.enableOwnerFilter(entityManager); // AND ownership onto the paged query
         boolean allStatuses = statuses == null || statuses.isEmpty();
         // Never pass an empty IN () list — supply a harmless sentinel when skipping.
         List<PaymentStatus> statusFilter = allStatuses ? List.of(PaymentStatus.PENDING_APPROVAL) : statuses;
@@ -78,6 +87,7 @@ public class PaymentVoucherService {
      */
     public java.util.Map<String, BigDecimal> statsByMode() {
         BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        ownershipAccessService.enableOwnerFilter(entityManager); // AND ownership onto the scoped sum
         java.util.Map<String, BigDecimal> stats = new java.util.HashMap<>();
         BigDecimal total = BigDecimal.ZERO;
         for (Object[] row : repository.sumPostedByModeScoped(scope.allBranches(), scope.branchIds())) {
@@ -92,7 +102,9 @@ public class PaymentVoucherService {
     }
 
     public Optional<PaymentVoucher> getVoucherById(Long id) {
-        return repository.findById(id);
+        Optional<PaymentVoucher> voucher = repository.findById(id);
+        voucher.ifPresent(v -> ownershipAccessService.assertCanAccessRecord(v.getCreatedByUserId(), "Payment Voucher"));
+        return voucher;
     }
 
     public BigDecimal getPostedAmountForInvoice(Long invoiceId) {
@@ -128,6 +140,7 @@ public class PaymentVoucherService {
     public PaymentVoucher updateStatus(Long id, PaymentStatus status) {
         PaymentVoucher voucher = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Voucher not found with ID: " + id));
+        ownershipAccessService.assertCanAccessRecord(voucher.getCreatedByUserId(), "Payment Voucher");
 
         // Prevent double posting
         if (voucher.getStatus() == PaymentStatus.POSTED && status == PaymentStatus.POSTED) {

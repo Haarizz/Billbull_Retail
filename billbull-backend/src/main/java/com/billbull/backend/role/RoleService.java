@@ -14,8 +14,14 @@ import java.util.Set;
 public class RoleService {
 
     private static final Set<String> SYSTEM_ROLES = Set.of(
-        "ADMIN", "BRANCH_ADMIN", "MANAGER", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR", "DELIVERY_PERSON"
+        "ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR", "SALES", "INVENTORY_MANAGER",
+        "ACCOUNTANT", "HR", "DELIVERY_PERSON"
     );
+
+    /** True when the role is seeded by RBACInitializer and must never be deleted/renamed. */
+    public static boolean isSystemRole(String name) {
+        return name != null && SYSTEM_ROLES.contains(name);
+    }
 
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
@@ -62,6 +68,17 @@ public class RoleService {
         if (roleRepository.findByName(name).isPresent()) {
             throw new RuntimeException("Role already exists with name: " + name);
         }
+        return roleRepository.save(role);
+    }
+
+    /**
+     * Update a role's description. The name is immutable — permission rows,
+     * JWT role claims, and frontend guards all reference roles by name.
+     */
+    @Transactional
+    public Role updateDescription(Long id, String description) {
+        Role role = getRoleById(id);
+        role.setDescription(description);
         return roleRepository.save(role);
     }
 

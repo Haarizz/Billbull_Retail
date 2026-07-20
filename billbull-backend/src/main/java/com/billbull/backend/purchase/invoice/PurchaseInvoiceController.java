@@ -46,7 +46,7 @@ public class PurchaseInvoiceController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> createDraft(
             @RequestBody PurchaseInvoiceRequest request) {
-        modulePermissionService.requireCanCreate("purchases");
+        modulePermissionService.requireCanCreate("purchases.invoice");
 
         PurchaseInvoice invoice = service.createDraft(request);
         return ResponseEntity.ok(service.getResponse(invoice.getId()));
@@ -88,7 +88,7 @@ public class PurchaseInvoiceController {
     @PostMapping("/{id}/approve")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> approve(@PathVariable Long id) {
-        modulePermissionService.requireCanApprove("purchases");
+        modulePermissionService.requireCanApprove("purchases.invoice");
         String approver = SecurityContextHolder
                 .getContext()
                 .getAuthentication()
@@ -113,7 +113,7 @@ public class PurchaseInvoiceController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PurchaseInvoiceResponse>> list() {
-        modulePermissionService.requireCanView("purchases");
+        modulePermissionService.requireCanView("purchases.invoice");
         return ResponseEntity.ok(service.listAll());
     }
 
@@ -124,7 +124,7 @@ public class PurchaseInvoiceController {
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String status) {
-        modulePermissionService.requireCanView("purchases");
+        modulePermissionService.requireCanView("purchases.invoice");
         return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
                 service.listAll(), page, size, search, status));
     }
@@ -132,14 +132,14 @@ public class PurchaseInvoiceController {
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> get(@PathVariable Long id) {
-        modulePermissionService.requireCanView("purchases");
+        modulePermissionService.requireCanView("purchases.invoice");
         return ResponseEntity.ok(service.getResponse(id));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit("purchases");
+        modulePermissionService.requireCanEdit("purchases.invoice");
         service.delete(id);
         return ResponseEntity.noContent().build();
     }

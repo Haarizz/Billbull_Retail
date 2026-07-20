@@ -15,7 +15,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class VendorController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.vendor";
 
     private final VendorService service;
     private final VendorImportService importService;

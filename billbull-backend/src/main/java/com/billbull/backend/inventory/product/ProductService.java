@@ -67,6 +67,9 @@ public class ProductService {
     // (dormant while inventory.branch-scope.enabled=false). Scoped strictly to barcode resolution;
     // no change to catalog/product-save logic in this phase.
     private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+    // Branch-Level Inventory Phase 6 — catalog identity scoping + master-data governance (§15)
+    // and cross-branch reference validation (§16), same helper the Dept/Brand/Unit services use.
+    private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
 
     public ProductService(
             ProductRepository productRepo,
@@ -92,7 +95,8 @@ public class ProductService {
             ModulePermissionService modulePermissionService,
             UserFavouriteProductRepository favouriteRepo,
             UserRepository userRepository,
-            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -117,6 +121,26 @@ public class ProductService {
         this.favouriteRepo = favouriteRepo;
         this.userRepository = userRepository;
         this.branchScopeResolver = branchScopeResolver;
+        this.masterBranch = masterBranch;
+    }
+
+    /** Phase 6: the active branch-id scope for catalog reads, or null when scoping is inactive. */
+    private java.util.Collection<Long> catalogScope() {
+        return branchScopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
+    }
+
+    /**
+     * Phase 6: available-stock totals for a batch of products — branch-scoped (active branch's
+     * warehouses + global) when scoping is active, company-wide otherwise. Single shared source for
+     * every list/aggregate stock attach so the product "stock" column always matches the mode.
+     */
+    private List<Object[]> availableStockRows(List<Long> productIds) {
+        java.util.Collection<Long> scope = catalogScope();
+        return scope != null
+                ? stockMovementRepo.getTotalAvailableStockForProductsAndBranchIdIn(productIds, scope)
+                : stockMovementRepo.getTotalAvailableStockForProducts(productIds);
     }
 
     /**
@@ -191,6 +215,50 @@ public class ProductService {
             product.setSubDepartment(subDept);
         } else {
             product.setSubDepartment(null);
+        }
+    }
+
+    /**
+     * Phase 6: branch-first, global-fallback exact code/SKU resolution (mirrors the Phase-9A
+     * barcode precedence). When scoping is active: the active branch's own product wins over a
+     * same-code global one; a global product still resolves at every branch. Toggle off (or admin
+     * All-Branches) → the original global lookups, byte-identical.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<Product> resolveActiveByCodeOrSku(String q) {
+        java.util.Collection<Long> scope = catalogScope();
+        if (scope == null) {
+            return productRepo.findFirstByCodeIgnoreCaseAndIsActiveTrue(q)
+                    .or(() -> productRepo.findFirstBySkuIgnoreCaseAndIsActiveTrue(q));
+        }
+        List<Product> hits = productRepo.findActiveByCodeInBranches(q, scope);
+        if (hits.isEmpty()) hits = productRepo.findActiveBySkuInBranches(q, scope);
+        if (hits.isEmpty()) hits = productRepo.findActiveGlobalByCode(q);
+        if (hits.isEmpty()) hits = productRepo.findActiveGlobalBySku(q);
+        return hits.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(hits.get(0));
+    }
+
+    /**
+     * Phase 6 (§16): a branch product may reference own-branch or global masters only; a global
+     * product may reference only global masters. No-op while scoping is inactive.
+     */
+    private void validateMasterReferences(Product product) {
+        Long productBranchId = com.billbull.backend.inventory.scope.MasterDataBranchService
+                .branchIdOf(product.getBranch());
+        if (product.getBrand() != null) {
+            masterBranch.assertMasterReferenceAccessible(
+                    com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(product.getBrand().getBranch()),
+                    productBranchId, "Brand");
+        }
+        if (product.getDepartment() != null) {
+            masterBranch.assertMasterReferenceAccessible(
+                    com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(product.getDepartment().getBranch()),
+                    productBranchId, "Department");
+        }
+        if (product.getSubDepartment() != null) {
+            masterBranch.assertMasterReferenceAccessible(
+                    com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(product.getSubDepartment().getBranch()),
+                    productBranchId, "Sub-Department");
         }
     }
 
@@ -316,8 +384,18 @@ public class ProductService {
         Product product = req.getProduct();
         validateTrackingMode(product);
 
-        if (productRepo.existsByCodeAndIsActiveTrue(product.getCode())) {
-            throw new IllegalArgumentException("Product code already exists");
+        // Phase 6: resolve this product's branch (governance-gated; null = global / toggle off) and
+        // check code uniqueness within the branch scope (per-branch + global tier, matching the
+        // V37 partial-index model). Toggle off → the existing global check, byte-identical.
+        product.setBranch(masterBranch.resolveBranchForCreate());
+        java.util.Collection<Long> scope = catalogScope();
+        boolean codeExists = scope != null
+                ? productRepo.existsActiveByCodeInBranchScope(product.getCode(), scope)
+                : productRepo.existsByCodeAndIsActiveTrue(product.getCode());
+        if (codeExists) {
+            throw new IllegalArgumentException(scope != null
+                    ? "Product code already exists in this branch"
+                    : "Product code already exists");
         }
 
         if (product.getSku() != null && !product.getSku().isBlank()
@@ -327,6 +405,7 @@ public class ProductService {
 
         // 1. Fetch real entities to prevent foreign key errors
         resolveRelationships(product);
+        validateMasterReferences(product);
 
         // 2. Save Product
         Product savedProduct = productRepo.save(product);
@@ -383,9 +462,13 @@ public class ProductService {
         updated.setActive(existing.isActive());
         updated.setCreatedAt(existing.getCreatedAt());
         updated.setCreatedBy(existing.getCreatedBy());
+        // Phase 6: the owning branch is immutable on update (the request can't carry it — the
+        // entity field is @JsonIgnore — so re-saving without this would null it out).
+        updated.setBranch(existing.getBranch());
 
         // 1. Resolve relationships again
         resolveRelationships(updated);
+        validateMasterReferences(updated);
 
         // 2. Save Product
         Product savedProduct = productRepo.save(updated);
@@ -750,7 +833,12 @@ public class ProductService {
     // ==================================================
     @Transactional(readOnly = true)
     public List<ProductAggregateResponse> getAll() {
-        return productRepo.findAllByIsActiveTrue().stream().map(this::buildResponse).collect(Collectors.toList());
+        // Phase 6: catalog identity is branch-scoped (own branch + global) when scoping is active.
+        java.util.Collection<Long> scope = catalogScope();
+        List<Product> products = scope != null
+                ? productRepo.findAllActiveInBranchScope(scope)
+                : productRepo.findAllByIsActiveTrue();
+        return products.stream().map(this::buildResponse).collect(Collectors.toList());
     }
 
     /**
@@ -801,8 +889,12 @@ public class ProductService {
         }
         
         org.springframework.data.domain.Pageable limit = org.springframework.data.domain.PageRequest.of(0, 20);
-        org.springframework.data.domain.Page<Product> productPage = productRepo.findAllActiveBySearch(trimmedSearch, limit);
-        
+        // Phase 6: branch-scoped catalog search (own branch + global) when scoping is active.
+        java.util.Collection<Long> scope = catalogScope();
+        org.springframework.data.domain.Page<Product> productPage = scope != null
+                ? productRepo.findAllActiveBySearchInBranchScope(trimmedSearch, scope, limit)
+                : productRepo.findAllActiveBySearch(trimmedSearch, limit);
+
         return productPage.getContent().stream().map(this::buildResponse).collect(Collectors.toList());
     }
 
@@ -829,15 +921,24 @@ public class ProductService {
 
         String trimmedSearch = (search != null) ? search.trim() : "";
         boolean hasDeptOrBrand = (departmentId != null || brandId != null || availableInPos != null);
+        // Phase 6: catalog identity is branch-scoped (own branch + global) when scoping is active.
+        // A specific warehouse already implies its branch, so that path stays as-is.
+        java.util.Collection<Long> scope = catalogScope();
         org.springframework.data.domain.Page<Product> productPage;
 
         if (hasDeptOrBrand) {
             // Use the unified filtered query (handles all combinations via null-safe params)
-            productPage = productRepo.findAllActiveFiltered(trimmedSearch, departmentId, brandId, availableInPos, pageable);
+            productPage = scope != null
+                    ? productRepo.findAllActiveFilteredInBranchScope(trimmedSearch, departmentId, brandId, availableInPos, scope, pageable)
+                    : productRepo.findAllActiveFiltered(trimmedSearch, departmentId, brandId, availableInPos, pageable);
         } else if (warehouseId != null) {
             productPage = trimmedSearch.isBlank()
                     ? productRepo.findAllActiveForListByWarehouse(warehouseId, pageable)
                     : productRepo.findAllActiveBySearchAndWarehouse(trimmedSearch, warehouseId, pageable);
+        } else if (scope != null) {
+            productPage = trimmedSearch.isBlank()
+                    ? productRepo.findAllActiveForListInBranchScope(scope, pageable)
+                    : productRepo.findAllActiveBySearchInBranchScope(trimmedSearch, scope, pageable);
         } else {
             productPage = trimmedSearch.isBlank()
                     ? productRepo.findAllActiveForList(pageable)
@@ -852,7 +953,10 @@ public class ProductService {
         // lists are not covered (the products page never sends a warehouse).
         java.util.Map<String, Long> statusCounts = new java.util.HashMap<>();
         if (warehouseId == null) {
-            for (Object[] row : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId, availableInPos)) {
+            List<Object[]> statusRows = scope != null
+                    ? productRepo.countByStatusFilteredInBranchScope(trimmedSearch, departmentId, brandId, availableInPos, scope)
+                    : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId, availableInPos);
+            for (Object[] row : statusRows) {
                 if (row[0] == null) {
                     continue;
                 }
@@ -904,10 +1008,10 @@ public class ProductService {
         java.util.Map<Long, List<ProductPacking>> packingMap = packingRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
 
-        // Query 8: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere)
+        // Query 8: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere).
+        // Phase 6: branch-scoped when scoping is active so the stock column reflects the branch.
         java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
-        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(ids);
-        for (Object[] row : stockRows) {
+        for (Object[] row : availableStockRows(ids)) {
             stockMap.put((Long) row[0], ((Number) row[1]).intValue());
         }
 
@@ -926,6 +1030,9 @@ public class ProductService {
             item.put("brandName", p.getBrand() != null ? p.getBrand().getName() : null);
             item.put("departmentId", p.getDepartment() != null ? p.getDepartment().getId() : null);
             item.put("departmentName", p.getDepartment() != null ? p.getDepartment().getName() : null);
+            // Phase 11: owning branch (null = shared/global) for the SPA's Global/branch badges.
+            item.put("branchId", p.getBranch() != null ? p.getBranch().getId() : null);
+            item.put("branchName", p.getBranch() != null ? p.getBranch().getName() : null);
 
             ProductPricing basePricing = pricingMap.get(p.getId());
             ProductBranchPricing activeBranchPrice = activeBranchPricingMap.get(p.getId());
@@ -1165,8 +1272,7 @@ public class ProductService {
                 .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
 
         java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
-        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(ids);
-        for (Object[] row : stockRows) {
+        for (Object[] row : availableStockRows(ids)) {
             stockMap.put((Long) row[0], ((Number) row[1]).intValue());
         }
 
@@ -1185,6 +1291,9 @@ public class ProductService {
             item.put("brandName", p.getBrand() != null ? p.getBrand().getName() : null);
             item.put("departmentId", p.getDepartment() != null ? p.getDepartment().getId() : null);
             item.put("departmentName", p.getDepartment() != null ? p.getDepartment().getName() : null);
+            // Phase 11: owning branch (null = shared/global) for the SPA's Global/branch badges.
+            item.put("branchId", p.getBranch() != null ? p.getBranch().getId() : null);
+            item.put("branchName", p.getBranch() != null ? p.getBranch().getName() : null);
 
             ProductPricing basePricing = pricingMap.get(p.getId());
             ProductBranchPricing activeBranchPrice = activeBranchPricingMap.get(p.getId());
@@ -1377,10 +1486,15 @@ public class ProductService {
             res.setPrimaryImage(mediaList.get(0).getImageUrl());
         }
 
-        // Stock — same aggregate query used by the product list page
-        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(List.of(product.getId()));
+        // Stock — same aggregate query used by the product list page (Phase 6: branch-scoped
+        // when scoping is active, company-wide otherwise).
+        List<Object[]> stockRows = availableStockRows(List.of(product.getId()));
         int stock = stockRows.isEmpty() ? 0 : ((Number) stockRows.get(0)[1]).intValue();
         res.setStock(stock);
+
+        // Phase 11: expose the product's branch so the SPA can render Global/branch badges.
+        res.setBranchId(product.getBranch() != null ? product.getBranch().getId() : null);
+        res.setBranchName(product.getBranch() != null ? product.getBranch().getName() : null);
 
         return res;
     }

@@ -51,7 +51,7 @@ public class ProductController {
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> importFromExcel(@RequestParam("file") MultipartFile file) {
-        modulePermissionService.requireCanCreate("inventory");
+        modulePermissionService.requireCanCreate("inventory.product");
         try {
             String result = importService.importProducts(file);
             return ResponseEntity.ok(result);
@@ -64,14 +64,14 @@ public class ProductController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductImportService.ImportJobStatus> startImportFromExcel(
             @RequestParam("file") MultipartFile file) {
-        modulePermissionService.requireCanCreate("inventory");
+        modulePermissionService.requireCanCreate("inventory.product");
         return ResponseEntity.ok(importService.startImport(file));
     }
 
     @GetMapping("/import/excel/progress/{jobId}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductImportService.ImportJobStatus> getImportProgress(@PathVariable String jobId) {
-        modulePermissionService.requireCanView("inventory");
+        modulePermissionService.requireCanView("inventory.product");
         return ResponseEntity.ok(importService.getImportJobStatus(jobId));
     }
 
@@ -92,10 +92,10 @@ public class ProductController {
         if (!modulePermissionService.canCreate("inventory")) {
             if ("pos".equals(source) || isCashier) {
                 if (!modulePermissionService.canView("sales") && !modulePermissionService.canView("inventory")) {
-                    modulePermissionService.requireCanView("inventory");
+                    modulePermissionService.requireCanView("inventory.product");
                 }
             } else {
-                modulePermissionService.requireCanCreate("inventory");
+                modulePermissionService.requireCanCreate("inventory.product");
             }
         }
         ProductAggregateRequest request = objectMapper.readValue(data, ProductAggregateRequest.class);
@@ -108,7 +108,7 @@ public class ProductController {
     @GetMapping("/export/excel")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<org.springframework.core.io.Resource> exportToExcel() {
-        modulePermissionService.requireCanExport("inventory");
+        modulePermissionService.requireCanExport("inventory.product");
         List<ProductAggregateResponse> products = service.getAll();
         java.io.ByteArrayInputStream in = exportService.export(products);
 
@@ -134,7 +134,7 @@ public class ProductController {
             @RequestParam(required = false) Long departmentId,
             @RequestParam(required = false) Long brandId,
             @RequestParam(required = false) Boolean availableInPos) {
-        modulePermissionService.requireCanView("inventory");
+        modulePermissionService.requireCanView("inventory.product");
         return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId, availableInPos));
     }
 
@@ -172,10 +172,10 @@ public class ProductController {
         if (!modulePermissionService.canView("inventory")) {
             if ("pos".equals(source) || isCashier) {
                 if (!modulePermissionService.canView("sales")) {
-                    modulePermissionService.requireCanView("inventory");
+                    modulePermissionService.requireCanView("inventory.product");
                 }
             } else {
-                modulePermissionService.requireCanView("inventory");
+                modulePermissionService.requireCanView("inventory.product");
             }
         }
         return ResponseEntity.ok(service.validateDuplicate(name, code, sku, barcode));
@@ -256,7 +256,7 @@ public class ProductController {
             @PathVariable Long id,
             @RequestPart("data") String data,
             @RequestPart(value = "file", required = false) MultipartFile file) throws JsonProcessingException {
-        modulePermissionService.requireCanEdit("inventory");
+        modulePermissionService.requireCanEdit("inventory.product");
         ProductAggregateRequest request = objectMapper.readValue(data, ProductAggregateRequest.class);
         return ResponseEntity.ok(service.update(id, request, file));
     }
@@ -267,7 +267,7 @@ public class ProductController {
     @DeleteMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        modulePermissionService.requireCanEdit("inventory");
+        modulePermissionService.requireCanEdit("inventory.product");
         service.delete(id);
         return ResponseEntity.ok().build();
     }

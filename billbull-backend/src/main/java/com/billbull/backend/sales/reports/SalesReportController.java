@@ -17,7 +17,7 @@ import java.util.List;
 @RequestMapping("/api/sales/reports")
 public class SalesReportController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.reports";
 
     private final SalesReportDataService reportDataService;
     private final ModulePermissionService modulePermissionService;
