@@ -3,7 +3,7 @@ import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, S
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
-import { toNumber } from './posUtils';
+import { toNumber, getCartPriceWarning } from './posUtils';
 import { computeLineTaxTotals } from '../../../utils/vatMath';
 
 const POSTouchScreen = React.memo((props) => {
@@ -369,7 +369,15 @@ const POSTouchScreen = React.memo((props) => {
                           {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                             className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
                         </div>
-                        <span className={`col-span-2 text-[10px] text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-gray-400'}`}>{item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}</span>
+                        <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-gray-400'}`}>
+                          {(() => {
+                            const priceWarning = getCartPriceWarning(item);
+                            return priceWarning && (
+                              <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
+                            );
+                          })()}
+                          {item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}
+                        </span>
                         <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                         <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
                           className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
@@ -995,7 +1003,15 @@ const POSTouchScreen = React.memo((props) => {
                           <Plus className="h-2.5 w-2.5" />
                         </button>}
                       </div>
-                      <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>{item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}</span>
+                      <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>
+                        {(() => {
+                          const priceWarning = getCartPriceWarning(item);
+                          return priceWarning && (
+                            <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
+                          );
+                        })()}
+                        {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
+                      </span>
                       <span className={`col-span-2 text-[11px] font-bold text-right pr-2 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                       <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
                         className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
