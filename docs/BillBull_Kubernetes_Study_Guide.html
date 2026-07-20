@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull: Docker & Kubernetes — From Basics to the Real Migration</title>
+<style>
+  :root { --bg:#f4f7fb; --card:#fff; --text:#182230; --muted:#667085; --accent:#175cd3; --code:#101828; --codeText:#e6edf3; --border:#d0d5dd; --ok:#12742f; --okbg:#e9f9ee; --warnbg:#fff4e5; --warnborder:#f79009; --dangerbg:#fef3f2; --dangerborder:#b42318; --bugbg:#fdf2f8; --bugborder:#c11574; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.65; }
+  .container { max-width:1150px; margin:40px auto; padding:0 20px 80px; }
+  h1 { margin-bottom:6px; font-size:2.1rem; }
+  h2 { margin-top:0; color:var(--accent); border-bottom:2px solid #eef2f6; padding-bottom:8px; }
+  h3 { margin-bottom:8px; }
+  .subtitle { color:var(--muted); margin-bottom:10px; font-size:1.05rem; }
+  .level-badge { display:inline-block; font-size:11.5px; font-weight:700; padding:3px 10px; border-radius:99px; letter-spacing:.4px; text-transform:uppercase; }
+  .level-basic { background:#e9f9ee; color:#12742f; }
+  .level-inter { background:#eef2ff; color:#3538cd; }
+  .level-adv { background:#fdf2f8; color:#c11574; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:28px; margin:20px 0; box-shadow:0 4px 14px rgba(16,24,40,.05); }
+  table { width:100%; border-collapse:collapse; margin:12px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid #eaecf0; vertical-align:top; }
+  th { background:#f9fafb; }
+  code { font-family:Consolas,Monaco,monospace; background:#eef2f6; padding:1px 5px; border-radius:4px; font-size:0.92em; }
+  pre { background:var(--code); color:var(--codeText); padding:18px; border-radius:10px; overflow:auto; line-height:1.6; font-size:13.5px; }
+  pre code { background:none; padding:0; color:inherit; }
+  .note { border-left:4px solid var(--accent); padding:12px 16px; background:#eff8ff; border-radius:6px; margin:14px 0; }
+  .ok { border-left:4px solid var(--ok); padding:12px 16px; background:var(--okbg); border-radius:6px; margin:14px 0; }
+  .warn { border-left:4px solid var(--warnborder); padding:12px 16px; background:var(--warnbg); border-radius:6px; margin:14px 0; }
+  .danger { border-left:4px solid var(--dangerborder); padding:12px 16px; background:var(--dangerbg); border-radius:6px; margin:14px 0; }
+  .bug { border-left:4px solid var(--bugborder); padding:14px 16px; background:var(--bugbg); border-radius:6px; margin:14px 0; }
+  .bug-title { font-weight:700; color:var(--bugborder); margin-bottom:6px; }
+  .toc { columns:2; gap:30px; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc li { margin-bottom:7px; }
+  .analogy { border:1px dashed var(--accent); border-radius:8px; padding:12px 16px; background:#f7fbff; margin:14px 0; font-style:italic; }
+  .diagram { background:#101828; color:#e6edf3; padding:20px; border-radius:10px; font-family:Consolas,Monaco,monospace; font-size:13px; overflow:auto; white-space:pre; line-height:1.5; }
+  @media print { body{background:#fff} .container{margin:0;max-width:none} .card{box-shadow:none;break-inside:avoid} }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Docker & Kubernetes, From Basics to the Real BillBull Migration</h1>
+  <p class="subtitle">A complete study guide: what containers and Kubernetes actually are, why BillBull is moving to them, and a full narrated walkthrough of the real <code>max.billbull.app</code> migration — including every bug we hit and why the fix worked.</p>
+
+  <div class="card">
+    <h2>Contents</h2>
+    <ul class="toc">
+      <li><span class="level-badge level-basic">Basic</span> <a href="#part1">Part 1 — What is a container, really?</a></li>
+      <li><span class="level-badge level-basic">Basic</span> <a href="#part2">Part 2 — Docker: images, layers, the Dockerfile</a></li>
+      <li><span class="level-badge level-inter">Intermediate</span> <a href="#part3">Part 3 — What is Kubernetes, and why not just Docker?</a></li>
+      <li><span class="level-badge level-inter">Intermediate</span> <a href="#part4">Part 4 — The core k8s objects, one at a time</a></li>
+      <li><span class="level-badge level-inter">Intermediate</span> <a href="#part5">Part 5 — BillBull's actual architecture, mapped to k8s</a></li>
+      <li><span class="level-badge level-adv">Advanced</span> <a href="#part6">Part 6 — The real migration, narrated end-to-end</a></li>
+      <li><span class="level-badge level-adv">Advanced</span> <a href="#part7">Part 7 — Every bug we hit, and the reasoning that fixed it</a></li>
+      <li><span class="level-badge level-adv">Advanced</span> <a href="#part8">Part 8 — Day-2 operations: how to actually run this</a></li>
+      <li><span class="level-badge level-adv">Advanced</span> <a href="#part9">Part 9 — Glossary + mental model cheat sheet</a></li>
+    </ul>
+  </div>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part1">
+    <h2><span class="level-badge level-basic">Basic</span> Part 1 — What is a container, really?</h2>
+
+    <h3>The problem containers solve</h3>
+    <p>Before containers, "it works on my machine" was a real, constant problem. Your Java app needs a specific JDK version, specific system libraries (like the ones Playwright/Chromium need — <code>libnss3</code>, <code>libgbm1</code>, etc.), a specific working directory layout. The server it runs on needs all of that to match, exactly, or it breaks in ways that are hard to reproduce.</p>
+
+    <div class="analogy">Think of a container like a shipping container in the real world: it doesn't matter what's inside (furniture, electronics, food) — any ship, truck, or crane can move it because the <em>outside</em> shape and interface are standardized. A software container does the same thing: it packages your app plus everything it needs to run, in a standard shape that any machine with a container runtime can execute identically.</div>
+
+    <h3>Container vs. Virtual Machine — the key difference</h3>
+    <p>You may have used VMs (VirtualBox, VMware) before. A VM virtualizes an entire computer — its own kernel, its own OS, booting takes minutes, uses gigabytes of RAM just for the OS. A container shares the host machine's kernel and only isolates the application layer — processes, filesystem, network — so it starts in milliseconds and uses only the memory the app itself needs.</p>
+
+    <table>
+      <thead><tr><th></th><th>Virtual Machine</th><th>Container</th></tr></thead>
+      <tbody>
+        <tr><td>What's virtualized</td><td>Entire hardware + OS kernel</td><td>Just the process's view of the filesystem/network — shares host's kernel</td></tr>
+        <tr><td>Startup time</td><td>Minutes</td><td>Milliseconds to seconds</td></tr>
+        <tr><td>Size</td><td>Gigabytes (full OS)</td><td>Megabytes to low-hundreds-MB (just your app + deps)</td></tr>
+        <tr><td>What BillBull uses it for</td><td>—</td><td>Packaging the Spring Boot backend + React frontend, exactly what we did</td></tr>
+      </tbody>
+    </table>
+
+    <h3>What's actually inside a running container</h3>
+    <p>When our <code>billbull-backend:pilot</code> container runs, it is <em>one Linux process</em> (the JVM) on the host machine (77.37.49.42) — but that process believes it has its own private filesystem (starting from <code>/app</code>), its own process list (it can't see nginx or Postgres running alongside it), and its own network stack. This isolation is built from Linux kernel features called <strong>namespaces</strong> (isolate what a process can see) and <strong>cgroups</strong> (limit how much CPU/memory it can use — this is exactly what our <code>resources.limits</code> in <code>deployment.yaml</code> configures).</p>
+
+    <div class="note">This is why, inside the container, <code>upload.path=uploads/</code> resolves to <code>/app/uploads</code> — <code>/app</code> is the container's own private root-relative working directory, completely separate from anything at <code>/app</code> on the actual host server.</div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part2">
+    <h2><span class="level-badge level-basic">Basic</span> Part 2 — Docker: images, layers, the Dockerfile</h2>
+
+    <h3>Image vs. container — the distinction that trips everyone up</h3>
+    <p>An <strong>image</strong> is a read-only template — a frozen snapshot of a filesystem plus metadata about how to run it (what command to execute, what port it listens on). A <strong>container</strong> is a running (or stopped) <em>instance</em> of that image — the same relationship as a class and an object in programming, or a recipe and a cooked meal.</p>
+    <pre><code>docker build -t billbull-backend:pilot .     # builds the IMAGE (the recipe)
+docker run billbull-backend:pilot            # runs a CONTAINER (an instance of it)</code></pre>
+    <p>You can run the same image many times, getting independent containers each time — this is exactly how our Deployment's <code>replicas: 2</code> for the frontend works: two separate running containers, both instances of the one <code>billbull-frontend:pilot</code> image.</p>
+
+    <h3>Layers — why builds get faster after the first one</h3>
+    <p>A Dockerfile builds an image as a stack of layers, one per instruction. Each layer is cached. If a layer's inputs haven't changed, Docker reuses the cached result instead of re-running it. This is exactly why our real backend build looked like this the second time:</p>
+    <pre><code>=> CACHED [build 3/7] COPY pom.xml .                    0.0s
+=> CACHED [build 4/7] RUN mvn -B dependency:go-offline   0.0s
+=> CACHED [build 5/7] COPY src ./src                     0.0s
+=> CACHED [build 6/7] RUN mvn -B clean package            0.0s
+=> [build 7/7] RUN mvn ... copy-dependencies             15.1s   ← only this changed, so only this re-ran</code></pre>
+    <p>This is <strong>why the Dockerfile orders instructions the way it does</strong> — <code>COPY pom.xml .</code> and <code>RUN mvn dependency:go-offline</code> happen <em>before</em> <code>COPY src ./src</code>, deliberately. Dependencies (`pom.xml`) change far less often than source code. If we copied everything at once, editing a single Java file would invalidate the dependency-download layer too, and every build would re-download the entire Maven dependency tree. Ordering "things that change rarely" before "things that change often" is the single most important Dockerfile optimization technique.</p>
+
+    <h3>Multi-stage builds — why our Dockerfile has two <code>FROM</code> lines</h3>
+    <p>Look at the real backend Dockerfile:</p>
+    <pre><code>FROM maven:3.9-eclipse-temurin-17 AS build   # Stage 1: "build" — has Maven, JDK, full toolchain
+WORKDIR /app
+...
+RUN mvn -B clean package -DskipTests          # produces the .jar
+
+FROM eclipse-temurin:17-jre-jammy             # Stage 2: fresh, slim — just a JRE, no Maven
+WORKDIR /app
+...
+COPY --from=build /app/target/billbull-backend-*.jar app.jar   # only the JAR crosses the bridge</code></pre>
+    <p>Stage 1 needs the full Maven build toolchain (hundreds of MB) to <em>produce</em> the jar. Stage 2 only needs a JRE (much smaller) to <em>run</em> it. The final image that actually gets shipped and deployed is stage 2 — Maven, the JDK compiler, and all of `~/.m2` never make it into the final image at all. This keeps the deployed image lean and reduces attack surface (no build tools sitting in production).</p>
+
+    <div class="bug">
+      <div class="bug-title">Real bug we hit: the Playwright classpath problem</div>
+      <p>This is where multi-stage builds get subtle. We needed the Playwright CLI's <code>install --with-deps chromium</code> command to run <em>during the image build</em>, so Chromium is baked in and every deployed container has it already — no runtime download needed. But we tried three approaches before one worked:</p>
+      <ol>
+        <li><code>java -cp app.jar com.microsoft.playwright.CLI ...</code> — failed. <strong>Why:</strong> a Spring Boot "fat jar" (built by <code>spring-boot-maven-plugin</code>) doesn't lay its dependencies out as plain files on a classpath — it nests them inside <code>BOOT-INF/lib/*.jar</code>, in a custom format only Spring Boot's own bootstrap loader knows how to unpack at runtime. A plain <code>java -cp app.jar</code> can only see <code>app.jar</code>'s own top-level classes, not what's zipped inside its nested jars.</li>
+        <li><code>java -jar playwright-1.49.0.jar ...</code> — failed differently. <strong>Why:</strong> running a jar with <code>-jar</code> requires that jar's own <code>META-INF/MANIFEST.MF</code> to declare a <code>Main-Class</code>. We checked directly: <code>unzip -p playwright-1.49.0.jar META-INF/MANIFEST.MF</code> — no such line existed. Playwright's own jar is a <em>library</em>, not runnable standalone.</li>
+        <li><strong>What worked:</strong> use Maven's dependency plugin to copy Playwright and its actual runtime dependencies into a plain folder, then run the class directly against that folder as a classpath:
+<pre><code>RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies \
+    -DincludeGroupIds=com.microsoft.playwright \
+    -DoutputDirectory=/app/playwright-lib \
+    -DincludeScope=runtime && ...
+RUN java -cp "playwright-lib/*" com.microsoft.playwright.CLI install --with-deps chromium</code></pre>
+        </li>
+      </ol>
+      <p><strong>The lesson generalizes:</strong> "run a class from a dependency jar" always needs either (a) that jar's own manifest to declare a runnable main class, or (b) you assemble a real classpath folder with that class's dependencies present, and invoke with <code>-cp folder/*</code> not <code>-jar single-file.jar</code>. We even hit a sub-trap: <code>-DincludeArtifactIds=playwright</code> looked correct but silently only grabbed the one named jar, not its transitive dependencies — we caught this by inspecting the actual build stage's output folder before running the full (slow) build:</p>
+      <pre><code>docker build --target build -t debug-build-stage .
+docker run --rm debug-build-stage ls -la /app/playwright-lib</code></pre>
+      <p>That command is worth remembering on its own: <strong>you can build just one stage of a multi-stage Dockerfile</strong> (<code>--target build</code>) and inspect it directly with <code>docker run</code>, without paying for the rest of the build. This turned a ~2 minute guess-and-rebuild cycle into a ~15 second check.</p>
+    </div>
+
+    <h3>.dockerignore — the file we almost forgot</h3>
+    <p>Just like <code>.gitignore</code> tells Git what to skip, <code>.dockerignore</code> tells <code>docker build</code> what not to send into the build context. Without it, our first frontend build transferred 370MB (all of <code>node_modules</code>) into the build context every single time, even though <code>npm ci</code> inside the container immediately overwrites it. We fixed this after the fact:</p>
+    <pre><code># billbull-frontend/.dockerignore
+node_modules
+dist
+dist_check
+.vite
+.env
+.env.local
+.env.*.local</code></pre>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part3">
+    <h2><span class="level-badge level-inter">Intermediate</span> Part 3 — What is Kubernetes, and why not just Docker?</h2>
+
+    <h3>The problem Kubernetes solves</h3>
+    <p>Docker alone answers "how do I package and run one container." It doesn't answer: What happens when the container crashes — does it restart automatically? What happens when I want zero-downtime updates? How does traffic find the right container out of several? How do I manage TLS certificates for a dozen different client domains without doing it by hand for each one? That's the gap Kubernetes (often shortened "k8s" — k, 8 letters, s) fills: it's an orchestrator that keeps a <em>declared desired state</em> running, automatically, continuously.</p>
+
+    <div class="analogy">If Docker is like knowing how to drive one truck, Kubernetes is a dispatch system for a whole fleet: it decides which truck goes where, replaces a truck automatically if it breaks down, and routes new orders to whichever truck is free — all from a plan you wrote down once, not by manually radioing each driver every time something changes.</div>
+
+    <h3>The core idea: declarative, not imperative</h3>
+    <p>With systemd (what BillBull uses today), you give <em>imperative</em> instructions: "restart this service now." With Kubernetes, you give a <em>declarative</em> description: "I want 1 replica of this container running, with this much memory, connected to this database." Kubernetes then continuously works to make reality match that description — if the pod dies, Kubernetes notices the actual state (0 running) doesn't match the desired state (1 running) and starts a new one, with no human needing to notice or act.</p>
+
+    <p>This is the single biggest conceptual shift from what BillBull runs today:</p>
+    <table>
+      <thead><tr><th>systemd (today, for nest/hilite/albadar)</th><th>Kubernetes (now live for max)</th></tr></thead>
+      <tbody>
+        <tr><td>You write a <code>.service</code> file, run <code>systemctl start</code></td><td>You write a <code>.yaml</code> manifest, run <code>kubectl apply</code></td></tr>
+        <tr><td><code>Restart=always</code> restarts a crashed process on <em>this one machine</em></td><td>Kubernetes restarts a crashed pod, and could reschedule it to any healthy node in a multi-node cluster</td></tr>
+        <tr><td>You manually pick a free port per client (8080, 8081, 8082...)</td><td>Ingress routes by hostname; every client can use the same port internally</td></tr>
+        <tr><td>nginx config + certbot, by hand, per client</td><td>One Ingress resource + cert-manager auto-issues and auto-renews certs</td></tr>
+      </tbody>
+    </table>
+
+    <h3>What "k3s" specifically is</h3>
+    <p>Kubernetes itself is a specification with a fairly heavy reference implementation. <strong>k3s</strong> is a lightweight, single-binary distribution of real, conformant Kubernetes — built by Rancher specifically for resource-constrained or simpler environments (edge devices, small clusters, single-node setups like ours on 77.37.49.42). It bundles sensible defaults (Traefik as the Ingress controller, a simple `local-path` storage provisioner) so you don't have to separately install and wire together a dozen components. Everything you learn about "real" Kubernetes applies directly to k3s — the API, the object types, `kubectl` — it's just packaged more conveniently for our use case.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part4">
+    <h2><span class="level-badge level-inter">Intermediate</span> Part 4 — The core k8s objects, one at a time</h2>
+    <p>Kubernetes has many object types, but our entire <code>max</code> deployment only needed eight. Understanding each one, in the order they build on each other, covers essentially everything we did.</p>
+
+    <h3>1. Pod — the smallest deployable unit</h3>
+    <p>A Pod wraps one or more containers that always run together on the same machine, sharing a network address. In practice, 95% of the time (including all of ours) a Pod has exactly one container — the extra wrapping exists for advanced cases (sidecar containers) we didn't need. You almost never create a Pod directly — you create a <strong>Deployment</strong>, which creates Pods for you.</p>
+
+    <h3>2. Deployment — "keep N copies of this running"</h3>
+    <p>This is the object that actually says what to run. Our real one:</p>
+    <pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: max-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      containers:
+        - name: backend
+          image: billbull-backend:pilot
+          ports: [{ containerPort: 8082 }]</code></pre>
+    <p><code>replicas: 1</code> means "always keep exactly one pod matching this template alive." If it crashes, Kubernetes creates a replacement automatically — this is the direct replacement for systemd's <code>Restart=always</code>, except Kubernetes can additionally reschedule the replacement onto a <em>different machine</em> in a multi-node cluster (not relevant to our single-node setup today, but the mechanism is the same).</p>
+    <p><strong>strategy: Recreate</strong> vs. the k8s default (<code>RollingUpdate</code>): RollingUpdate would start a *new* pod before killing the old one, briefly running both. We explicitly chose <code>Recreate</code> (old pod fully stops, then new one starts) because our storage (<code>ReadWriteOnce</code> PVC) can only be mounted by one pod at a time, and because <code>ddl-auto=update</code> makes running two schema-differing app versions against one DB simultaneously risky.</p>
+
+    <h3>3. Service — a stable address for a moving target</h3>
+    <p>Pods are ephemeral — they get recreated with new internal IPs constantly. A Service gives a stable name/address that always routes to whichever pod(s) currently match its label selector, load-balancing between them if there's more than one.</p>
+    <pre><code>apiVersion: v1
+kind: Service
+metadata:
+  name: max-backend
+spec:
+  selector: { app: max-backend }
+  ports: [{ port: 8080, targetPort: 8082 }]</code></pre>
+    <p><code>selector: { app: max-backend }</code> is the whole mechanism: any Pod carrying the label <code>app: max-backend</code> (set in the Deployment's <code>template.metadata.labels</code>) automatically becomes a target of this Service. This label-matching, not any explicit list of pod names, is how Kubernetes wiring works everywhere. <code>port: 8080</code> is this Service's own arbitrary internal number; <code>targetPort: 8082</code> is where it actually forwards to inside the container — this indirection is exactly why the Ingress (below) never needs to know the real container port.</p>
+
+    <h3>4. ConfigMap & Secret — external configuration</h3>
+    <p>Both hold key-value data injected into a container as environment variables (via <code>envFrom</code>). The only real difference: Secrets are base64-encoded at rest and treated as more sensitive by tooling (not shown in plain text by default `kubectl describe`). Neither is really "encrypted" in a strong sense by default — the real protection is RBAC (who's allowed to read Secret objects at all) plus, in our case, simply never committing the filled-in file to git.</p>
+    <div class="note">This is precisely the mechanism that replaced our systemd unit's <code>Environment=</code> lines. <code>SPRING_PROFILES_ACTIVE=client2</code> in the ConfigMap and <code>SPRING_DATASOURCE_PASSWORD=...</code> in the Secret both become real environment variables inside the container the moment it starts — Spring Boot then reads them exactly the same way it always has.</div>
+
+    <h3>5. PersistentVolumeClaim (PVC) — durable storage</h3>
+    <p>A container's own filesystem is thrown away the instant it's recreated — anything written there (like an uploaded product image) would vanish on the next restart. A PVC is a request for storage that <em>outlives</em> any individual pod. Our PVC uses k3s's built-in <code>local-path</code> storage class, which just carves out a real directory on the node's disk — conceptually similar to today's local <code>/uploads</code> folder, just managed by k8s instead of directly by the filesystem.</p>
+    <div class="warn">The catch: <code>accessModes: ["ReadWriteOnce"]</code> means only one pod can mount this volume at a time. That's exactly why we pinned <code>replicas: 1</code> and <code>strategy: Recreate</code> — two pods trying to mount the same ReadWriteOnce volume simultaneously would fail.</div>
+
+    <h3>6. Ingress — routing by hostname, with automatic TLS</h3>
+    <pre><code>apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: ["max.billbull.app"]
+      secretName: max-tls
+  rules:
+    - host: max.billbull.app
+      http:
+        paths:
+          - path: /api
+            backend: { service: { name: max-backend, port: { number: 8080 } } }
+          - path: /
+            backend: { service: { name: billbull-frontend, port: { number: 80 } } }</code></pre>
+    <p>This is the k8s equivalent of an nginx <code>server { server_name max.billbull.app; ... }</code> block. Traefik (k3s's built-in Ingress controller) reads this object and does the actual routing: requests to <code>max.billbull.app/api/*</code> go to the backend Service, everything else goes to the shared frontend Service. The <code>cert-manager.io/cluster-issuer</code> annotation is what triggers automatic certificate issuance — no manual certbot step.</p>
+
+    <h3>7. ClusterIssuer + cert-manager — TLS certificates on autopilot</h3>
+    <p>cert-manager is itself a small application that runs inside the cluster (we saw its 3 pods: <code>cert-manager</code>, <code>cert-manager-cainjector</code>, <code>cert-manager-webhook</code>). It watches for Ingress objects with the right annotation, automatically requests a certificate from Let's Encrypt via the ACME protocol, proves domain ownership (HTTP-01 challenge — briefly serving a special response at a well-known URL that Let's Encrypt checks), and stores the resulting certificate in a Secret (<code>max-tls</code>) that the Ingress then uses. It also auto-renews before expiry. This replaced every manual <code>certbot renew</code> the old guide mentioned.</p>
+
+    <h3>8. Namespace — a folder for related objects</h3>
+    <p>Just a logical grouping. All BillBull clients share one namespace, <code>billbull</code> — matching today's model of one server hosting multiple clients side by side. Namespaces matter more when you want hard isolation (RBAC boundaries, resource quotas per team) — not needed here yet.</p>
+
+    <h3>How they all connect — the full picture</h3>
+    <div class="diagram">Internet request to https://max.billbull.app
+        │
+        ▼
+  ┌─────────────┐
+  │   Traefik   │  (reads the Ingress object, terminates TLS using max-tls Secret)
+  │  (Ingress)  │
+  └──────┬──────┘
+         │  path /api/* ──────────────┐   path / ─────────────────┐
+         ▼                            ▼
+┌──────────────────┐         ┌─────────────────────┐
+│  Service          │         │  Service             │
+│  max-backend:8080  │         │  billbull-frontend:80 │
+└─────────┬──────────┘         └──────────┬────────────┘
+          │ forwards to targetPort 8082    │ forwards to targetPort 80
+          ▼                                ▼
+┌──────────────────────┐         ┌──────────────────────┐
+│ Pod: max-backend-xxx   │         │ Pod: billbull-frontend-x │
+│ (from Deployment,       │         │ (from Deployment,        │
+│  replicas: 1)            │         │  replicas: 2)              │
+│                           │         │                             │
+│ env vars injected from:  │         └──────────────────────┘
+│  - ConfigMap (profile)    │
+│  - Secret (DB creds, JWT) │
+│                           │
+│ volume mounted from:      │
+│  - PVC (uploads)           │
+│  - emptyDir (Chromium /dev/shm)│
+└──────────────┬────────────┘
+               │ connects out to
+               ▼
+    Postgres on the HOST (77.37.49.42:5432)
+    — NOT inside the cluster, reached over the pod network</div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part5">
+    <h2><span class="level-badge level-inter">Intermediate</span> Part 5 — BillBull's actual architecture, mapped to k8s</h2>
+
+    <h3>Before: two servers, systemd, nginx</h3>
+    <table>
+      <thead><tr><th>Server</th><th>Clients (before migration)</th></tr></thead>
+      <tbody>
+        <tr><td>62.72.59.119</td><td>royaltools, leroyalflowers, leroyalgifts, demo, agi, helenz, qa, geebu — one systemd unit + dedicated port each, one shared nginx/frontend build</td></tr>
+        <tr><td>77.37.49.42</td><td>nest, max, hilite, albadar — same pattern</td></tr>
+      </tbody>
+    </table>
+    <p>Every client backend was its own JVM process, its own systemd unit, its own port, with DB credentials injected via <code>Environment=</code> lines or (as we discovered for <code>max</code>) sometimes just hardcoded in the checked-in <code>application-&lt;profile&gt;.properties</code> file with no override at all.</p>
+
+    <h3>After (so far): 77.37.49.42 is a single-node k3s cluster</h3>
+    <p>One node (still the same physical server) runs the k3s control plane and all workloads. <code>max</code> is fully migrated; <code>nest</code>, <code>hilite</code>, <code>albadar</code> are currently stopped (a deliberate choice made to free ports 80/443 for Traefik during this pilot — see Part 6). Postgres was <strong>not</strong> containerized — it stays exactly where it was, running directly on the host via its own systemd/apt-installed service, and pods reach it over the network by IP.</p>
+
+    <h3>Why Postgres stayed outside the cluster</h3>
+    <p>This is a deliberate, common pattern called "day-2 stateful services stay external." Running a production database *inside* Kubernetes is possible but adds real operational complexity (StatefulSets, storage replication, backup tooling built for k8s specifically) that isn't worth taking on here — the existing Postgres install already works, has existing backups, existing tooling. The only thing that had to change was making it reachable from the new pod network:</p>
+    <table>
+      <thead><tr><th>Change</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>listen_addresses = '*'</code> (was <code>localhost</code>-only, commented out)</td><td>Postgres was refusing any connection not from the same machine's loopback — a pod, despite being on the same physical machine, has its own network namespace and connects via a real (if internal) IP, not <code>127.0.0.1</code></td></tr>
+        <tr><td><code>pg_hba.conf</code>: <code>host billbull_max postgres 10.42.0.0/24 md5</code></td><td>Even with the port open, Postgres's host-based access control separately decides <em>who</em> may connect from <em>where</em>. This line allows exactly the k3s pod network range, for exactly this one DB/user pair — not a blanket "allow everyone."</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note">This mirrors exactly the concern raised earlier in this project's planning: "where do uploaded images live in k8s, and is Postgres containerized?" The answer that emerged from actually doing it: Postgres stays external (confirmed the right call), and file uploads use a PVC per client for now — with a note that this constrains every client backend to <code>replicas: 1</code> forever unless uploads move to object storage (S3/MinIO) later.</div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part6">
+    <h2><span class="level-badge level-adv">Advanced</span> Part 6 — The real migration, narrated end-to-end</h2>
+    <p>This is the actual sequence of what happened on 77.37.49.42, in order, with the reasoning behind each decision — not the idealized plan, the real one, including the parts where the plan changed mid-execution.</p>
+
+    <h3>Step 1 — Reconcile git state before touching anything</h3>
+    <p>Before any infrastructure work, <code>git pull origin main</code> on the server failed: local uncommitted edits to <code>application.properties</code> conflicted with incoming changes. Investigation showed the local edit (stripping <code>server.port</code> and dev-only DB defaults from the base properties file) was a deliberate, safe hardening someone had made directly on the server — but had never been committed, so it kept re-conflicting on every pull. <strong>Lesson:</strong> infrastructure changes should never proceed on top of unexamined uncommitted state — <code>git status</code>/<code>git diff</code> first, always. The fix was committed properly to the repo so it stops recurring.</p>
+
+    <h3>Step 2 — Build the Docker images (see Part 2 for the Playwright saga)</h3>
+    <p>Built directly on the target server rather than pushing to a registry, since this was a pilot — a deliberate scope-reduction (see Part 8 for what changes once this goes to multiple clients).</p>
+
+    <h3>Step 3 — Install k3s, then immediately discover the port conflict</h3>
+    <p>The instant <code>curl -sfL https://get.k3s.io | sh -</code> completes, k3s starts Traefik, which by default wants to bind host ports 80 and 443 — the same ports nginx already owned for <code>nest</code>/<code>hilite</code>/<code>albadar</code>. We verified this precisely rather than guessing:</p>
+    <pre><code>kubectl get svc -n kube-system traefik -o wide
+# NAME      TYPE           EXTERNAL-IP    PORT(S)
+# traefik   LoadBalancer   77.37.49.42    80:32563/TCP,443:32322/TCP</code></pre>
+    <p>Traefik's Service already listed the host's real IP as its <code>EXTERNAL-IP</code> — meaning k3s's built-in load-balancer implementation (called <strong>ServiceLB</strong>, sometimes "klipper-lb") intended to bind the real host ports. It hadn't succeeded yet only because nginx got there first at boot. This was a live, so-far-invisible race condition that could have flipped and taken down three production clients with no warning, the next time either service restarted.</p>
+    <p>The original plan (written before touching the server) was to run Traefik on alternate ports so nginx could keep serving the other three clients during testing. <strong>The plan changed at execution time</strong>: given `nest`/`hilite`/`albadar` weren't needed at that moment, the deliberate decision was made to stop nginx outright and let Traefik take 80/443 immediately — trading "keep everything running" for "move faster on the pilot," a real tradeoff, made consciously, not by accident.</p>
+    <pre><code>sudo systemctl stop nginx
+sudo systemctl disable nginx</code></pre>
+
+    <h3>Step 4 — Diagnosing "is Traefik actually working" the right way</h3>
+    <div class="bug">
+      <div class="bug-title">Real bug (well, false alarm) we hit: `ss` showed nothing listening</div>
+      <p>After stopping nginx, <code>sudo ss -tlnp | grep -E ':80|:443'</code> returned nothing — no process at all appeared to be listening. This looked alarming (did Traefik fail to start?), but <code>curl -sI http://127.0.0.1:80</code> immediately returned a real HTTP response (Traefik's own 404 page, since no Ingress existed yet). <strong>The lesson:</strong> k3s's ServiceLB does port-forwarding via iptables/nftables DNAT rules from inside its own pod's network namespace, not a classic host-level <code>bind()+listen()</code> — so <code>ss</code>, which only sees host-level sockets, is the wrong tool to check whether it's working. <code>curl</code> against the actual port is the correct verification. This is a good general principle: when a "is it listening" check disagrees with an "is it actually answering" check, trust the one that tests real behavior.</p>
+    </div>
+
+    <h3>Step 5 — Postgres network access (see Part 5 for the why; here's the how)</h3>
+    <div class="bug">
+      <div class="bug-title">Real bug we hit: a `sed` that silently did nothing</div>
+      <p>The first attempt to uncomment <code>listen_addresses</code> used <code>sed -i "s/^listen_addresses = 'localhost'/listen_addresses = '*'/"</code> — anchored on a line starting exactly with <code>listen_addresses</code>. It ran without error and changed nothing, because the real line in the file was <code>#listen_addresses = 'localhost'</code> — <strong>commented out</strong>, so it didn't start with <code>listen_addresses</code> at all, it started with <code>#</code>. <code>sed</code> doesn't warn you when its pattern matches zero lines; it just succeeds silently having done nothing. <strong>The lesson:</strong> always <code>grep -n</code> the exact current text before writing a substitution command — never assume the format of a config line from memory or from documentation, verify it directly on the real file.</p>
+    </div>
+    <p>Once the exact line was confirmed (line 60, with a trailing comment), a line-number-anchored <code>sed</code> fixed it correctly, and this was verified two ways — checking the config value itself (<code>SHOW listen_addresses</code>) and checking the actual listening socket (<code>ss -tlnp | grep 5432</code> now showing <code>0.0.0.0:5432</code>).</p>
+
+    <h3>Step 6 — Secrets, filled in on the server, never in git</h3>
+    <p>The Secret template (<code>k8s/max/secret.template.yaml</code>) was copied to <code>secret.yaml</code>, filled with the real DB URL/user/password and JWT secret <em>directly on the server via <code>nano</code></em>, applied with <code>kubectl apply</code>, and confirmed with <code>git status --short k8s/max/</code> to show nothing pending — because <code>k8s/**/secret.yaml</code> is in <code>.gitignore</code>. This is a deliberate two-file pattern worth internalizing: a <em>template</em> with placeholder values is safe to commit and documents the shape of what's needed; the <em>real, filled-in</em> file never touches version control.</p>
+    <div class="danger">During this project, an earlier draft of <code>RUNBOOK.md</code> briefly had the real DB password written directly into the markdown documentation (not the Secret file) as an example — this was caught by an automated safety check before it reached the public GitHub repo, and fixed by keeping the doc's guidance structural ("the systemd unit has no password override, so the live value is whatever's in the properties file — verify it directly, don't paste it here") rather than stating the literal secret value. The general rule: documentation should explain <em>how to find</em> a secret, never <em>contain</em> the secret itself.</div>
+
+    <h3>Step 7 — Deploy, verify, cut over</h3>
+    <p>Applying the Deployment produced a pod that went straight to <code>Running</code>, and its logs showed live Hibernate SQL queries executing — strong evidence the DB connection worked on the first real attempt (a payoff from carefully verifying each prerequisite — Postgres listening, `pg_hba.conf`, Secret values — independently before this step, rather than debugging all of it at once from inside a failing pod). The frontend, Ingress, and TLS certificate all came up cleanly. Because DNS for <code>max.billbull.app</code> already pointed at 77.37.49.42 (it had been serving this client from this exact IP for a long time already), no DNS change was needed at all — the Let's Encrypt HTTP-01 challenge resolved immediately.</p>
+    <p>Final verification was manual, in a real browser, against the real domain: login, existing data visibility, PDF generation, and file upload were each checked by hand — because passing type-checks or a clean `kubectl get pods` proves the infrastructure is technically running, not that the actual product works end-to-end for a real user.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part7">
+    <h2><span class="level-badge level-adv">Advanced</span> Part 7 — Every bug we hit, and the reasoning that fixed it</h2>
+    <p>Collected here as a single reference — notice the pattern across all of them: <strong>verify the specific, real state of the system before writing a fix, rather than pattern-matching to what "should" be true.</strong></p>
+    <table>
+      <thead><tr><th>Bug</th><th>Wrong assumption</th><th>How it was actually diagnosed</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td><code>java -cp app.jar CLI</code> fails</td><td>A fat jar's classpath includes everything inside it</td><td>Read how Spring Boot fat jars actually nest dependencies (<code>BOOT-INF/lib</code>)</td><td>Don't run library code through the app's own fat jar; give it its own classpath</td></tr>
+        <tr><td><code>java -jar playwright.jar</code> fails</td><td>Any jar can be run with <code>-jar</code></td><td><code>unzip -p playwright-1.49.0.jar META-INF/MANIFEST.MF</code> — no Main-Class</td><td>Use <code>-cp</code> against an assembled folder instead</td></tr>
+        <tr><td><code>-DincludeArtifactIds=playwright</code> only copies 1 of 3 needed jars</td><td>This Maven flag captures the full dependency subtree</td><td><code>docker build --target build</code> + <code>docker run --rm ... ls</code> to inspect the intermediate stage directly, before a full rebuild</td><td>Switch to <code>-DincludeGroupIds</code>, which does capture the transitive tree</td></tr>
+        <tr><td>Traefik seemed to not be running</td><td><code>ss -tlnp</code> is the correct way to check any listening service</td><td><code>curl -sI http://127.0.0.1:80</code> got a real response despite <code>ss</code> showing nothing</td><td>Understood ServiceLB uses iptables DNAT inside its own netns — a different check is needed</td></tr>
+        <tr><td><code>sed</code> to uncomment <code>listen_addresses</code> did nothing</td><td>The line in the file matches the pattern from documentation/memory</td><td><code>grep -n listen_addresses postgresql.conf</code> showed the real line had a leading <code>#</code></td><td>Anchor the <code>sed</code> on the exact real text, including the comment</td></tr>
+        <tr><td><code>billbull-max.service</code> showed <code>failed</code> after a Postgres restart</td><td>Our Postgres restart broke it</td><td><code>journalctl -u billbull-max --since ... --until ...</code> showed a graceful <code>SIGTERM</code> shutdown an hour <em>before</em> the Postgres restart, not a crash</td><td>Nothing to fix — it was a deliberate, earlier <code>systemctl stop</code> by the operator, unrelated</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part8">
+    <h2><span class="level-badge level-adv">Advanced</span> Part 8 — Day-2 operations: how to actually run this</h2>
+
+    <h3>Deploying a code change</h3>
+    <p>Nothing auto-rebuilds or auto-redeploys — this is the same manual trigger model as systemd's <code>restart</code>, just via different commands:</p>
+    <pre><code># backend
+cd ~/Billbull/Billbull_Retail && git pull origin main
+cd billbull-backend
+docker build -t billbull-backend:pilot .
+docker save billbull-backend:pilot | sudo k3s ctr images import -
+kubectl rollout restart deployment/max-backend -n billbull
+kubectl rollout status deployment/max-backend -n billbull   # watch it succeed
+
+# frontend — remember, this is SHARED across every client on this server
+cd ../billbull-frontend
+docker build -t billbull-frontend:pilot .
+docker save billbull-frontend:pilot | sudo k3s ctr images import -
+kubectl rollout restart deployment/billbull-frontend -n billbull</code></pre>
+    <p><code>kubectl rollout restart</code> is necessary (not optional) even though the image tag (<code>:pilot</code>) didn't change — Kubernetes doesn't know the <em>content</em> behind that tag changed unless told to restart explicitly. Config changes (editing a ConfigMap/Secret) similarly need an explicit rollout restart afterward — env vars are only read at container start, not live-reloaded. Editing the Deployment manifest itself (e.g. changing memory limits) and re-applying it *does* trigger a rollout automatically, since the pod spec itself changed.</p>
+
+    <h3>Checking on things</h3>
+    <table>
+      <thead><tr><th>Question</th><th>Command</th></tr></thead>
+      <tbody>
+        <tr><td>Is it up?</td><td><code>kubectl get pods -n billbull -l app=max-backend</code></td></tr>
+        <tr><td>Why isn't it starting?</td><td><code>kubectl describe pod -n billbull &lt;pod-name&gt;</code> (events at the bottom are usually the answer)</td></tr>
+        <tr><td>What is it logging?</td><td><code>kubectl logs -n billbull deploy/max-backend -f</code> (add <code>--previous</code> to see a crashed instance's last logs)</td></tr>
+        <tr><td>Is the cert valid?</td><td><code>kubectl get certificate -n billbull max-tls</code></td></tr>
+        <tr><td>Get a shell inside the running container</td><td><code>kubectl exec -it -n billbull deploy/max-backend -- /bin/sh</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>What's still manual vs. what k8s automates, honestly</h3>
+    <ul>
+      <li><strong>Automated now:</strong> crash recovery (pod restarts itself), TLS issuance/renewal, routing by hostname.</li>
+      <li><strong>Still manual:</strong> building and importing new images (no CI/CD pipeline yet — see below), the initial per-client Secret/PVC/DB-access setup for each new client migration.</li>
+      <li><strong>Deliberately deferred, not solved:</strong> uploads still constrain every client to <code>replicas: 1</code> — genuine horizontal scaling or true zero-downtime rolling updates need uploads moved to object storage (S3/MinIO) first.</li>
+    </ul>
+
+    <h3>What changes once more clients get migrated</h3>
+    <p>Building images by hand on the server and <code>k3s ctr images import</code>-ing them was a deliberate pilot shortcut — fine for one client, but it doesn't scale to rebuilding on every server for every client. The next real step (already flagged in the main migration guide) is standing up a proper registry (GitHub Container Registry) so one build produces one image that every server/client pulls from, plus templating the per-client manifests via Helm instead of hand-copying <code>k8s/max/</code> for each new client.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="card" id="part9">
+    <h2><span class="level-badge level-adv">Advanced</span> Part 9 — Glossary + mental model cheat sheet</h2>
+    <table>
+      <thead><tr><th>Term</th><th>One-line definition</th><th>BillBull example</th></tr></thead>
+      <tbody>
+        <tr><td>Image</td><td>Read-only template for a container</td><td><code>billbull-backend:pilot</code></td></tr>
+        <tr><td>Container</td><td>A running instance of an image</td><td>The one JVM process serving <code>max</code> right now</td></tr>
+        <tr><td>Dockerfile</td><td>Recipe describing how to build an image, layer by layer</td><td><code>billbull-backend/Dockerfile</code></td></tr>
+        <tr><td>Registry</td><td>A server that stores and serves images (like npm/Maven Central, but for images)</td><td>GHCR — planned, not yet used (pilot built locally instead)</td></tr>
+        <tr><td>Pod</td><td>Smallest deployable k8s unit; usually one container</td><td><code>max-backend-7649fdcc-4nmmj</code></td></tr>
+        <tr><td>Deployment</td><td>"Keep N pods matching this spec running, always"</td><td><code>max-backend</code> Deployment, replicas: 1</td></tr>
+        <tr><td>Service</td><td>Stable internal address that load-balances to matching pods</td><td><code>max-backend</code> Service, port 8080 → 8082</td></tr>
+        <tr><td>Ingress</td><td>Routes external traffic by hostname/path to Services</td><td><code>max-ingress</code>, routes <code>max.billbull.app</code></td></tr>
+        <tr><td>ConfigMap</td><td>Non-secret key-value config injected as env vars</td><td><code>SPRING_PROFILES_ACTIVE=client2</code></td></tr>
+        <tr><td>Secret</td><td>Same as ConfigMap, treated as sensitive</td><td>DB password, JWT secret</td></tr>
+        <tr><td>PersistentVolumeClaim (PVC)</td><td>A request for storage that outlives any one pod</td><td><code>max-uploads-pvc</code></td></tr>
+        <tr><td>Namespace</td><td>A logical folder grouping related objects</td><td><code>billbull</code> (shared by all clients)</td></tr>
+        <tr><td>cert-manager</td><td>In-cluster app that auto-issues/renews TLS certs</td><td>Issued <code>max-tls</code> via Let's Encrypt</td></tr>
+        <tr><td>ClusterIssuer</td><td>Cluster-wide config telling cert-manager how/where to get certs</td><td><code>letsencrypt-prod</code></td></tr>
+        <tr><td>k3s</td><td>Lightweight, single-binary, fully-conformant Kubernetes distribution</td><td>What's actually installed on 77.37.49.42</td></tr>
+        <tr><td>Traefik</td><td>k3s's built-in Ingress controller — the thing that actually routes traffic</td><td>Replaced nginx entirely on this server</td></tr>
+        <tr><td>ServiceLB / klipper-lb</td><td>k3s's built-in mechanism for exposing a Service on the host's real IP/ports</td><td>What actually binds 80/443 for Traefik, via iptables not a classic socket</td></tr>
+        <tr><td><code>kubectl</code></td><td>The command-line tool for talking to a k8s cluster's API</td><td>Used for every step after k3s install</td></tr>
+        <tr><td>Declarative vs. imperative</td><td>Describing desired end-state vs. giving step-by-step commands</td><td>A YAML manifest vs. a <code>systemctl restart</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>The one-paragraph mental model, if you remember nothing else</h3>
+    <div class="ok">You write YAML files describing what you want running (a Deployment), how it should be reachable internally (a Service) and externally (an Ingress), and what config/secrets/storage it needs (ConfigMap, Secret, PVC). You hand all of that to Kubernetes via <code>kubectl apply</code>, and Kubernetes continuously works to keep reality matching that description — restarting crashed pods, renewing certificates, routing traffic — without you having to notice and react by hand, the way systemd + nginx + certbot required.</div>
+  </section>
+
+</div>
+</body>
+</html>
